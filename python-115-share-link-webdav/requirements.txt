@@ -1,0 +1,6 @@
+cheroot
+pycryptodome
+pyyaml
+qrcode
+requests
+wsgidav

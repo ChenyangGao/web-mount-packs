@@ -1,0 +1,47 @@
+# Python:
+*.py[cod]
+*.so
+*.egg
+*.egg-info
+dist
+build
+_build
+
+# Compiled C++ files
+*.out
+
+# Temp File
+*.sw[aop]
+
+# github merge file
+*.orig
+
+#vscode 
+.vscode
+
+# Folder view configuration files
+.DS_Store
+
+# Thumbnail cache files
+._*
+Thumbs.db
+
+# Files that might appear on external disks
+.Spotlight-V100
+.Trashes
+
+# cache path
+.idea/
+__pycache__/
+
+# Log file
+*.log
+
+# Zipped file
+*.zip
+*.7z
+*.rar
+
+# config file
+config.json
+

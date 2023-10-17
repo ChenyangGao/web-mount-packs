@@ -1,0 +1,370 @@
+# WsgiDAV configuration file
+#
+#      _      __         _ ___  ___ _   __
+#     | | /| / /__ ___  (_) _ \/ _ | | / /
+#     | |/ |/ (_-</ _ `/ / // / __ | |/ /
+#     |__/|__/___/\_, /_/____/_/ |_|___/
+#                /___/
+#
+# 1. Rename this file to `wsgidav.yaml`.
+# 2. Adjust settings as appropriate.
+# 3. Run `wsgidav` from the same directory or pass file path with `--config` option.
+#
+# See https://wsgidav.readthedocs.io/en/latest/user_guide_configure.html
+#
+# ============================================================================
+# SERVER OPTIONS
+
+#: Run WsgiDAV inside this  WSGI server.
+#: Supported servers:
+#:     cheroot, ext-wsgiutils, gevent, gunicorn, paste, uvicorn, wsgiref
+#: 'wsgiref' and 'ext_wsgiutils' are simple builtin servers that should *not* be
+#: used in production.
+#: All other servers must have been installed before, e.g. `pip install cheroot`.
+#: (The binary MSI distribution already includes 'cheroot'.)
+#: Default: 'cheroot', use the `--server` command line option to change this.
+
+server: cheroot
+
+#: Server specific arguments, passed to the server. For example cheroot:
+#:   https://cheroot.cherrypy.dev/en/latest/pkg/cheroot.wsgi.html#cheroot.wsgi.Server
+# server_args:
+#     max: -1
+#     numthreads: 10
+#     request_queue_size: 5
+#     shutdown_timeout: 5
+#     timeout: 10
+
+# Server hostname (default: localhost, use --host on command line)
+host: 0.0.0.0
+
+# Server port (default: 8080, use --port on command line)
+port: 8080
+
+# Transfer block size in bytes
+block_size: 8192
+
+#: Add the MS-Author-Via Response Header to OPTIONS command to allow editing
+#: with Microsoft Office (default: true)
+add_header_MS_Author_Via: true
+
+hotfixes:
+    #: Handle Microsoft's Win32LastModifiedTime property.
+    #: This is useful only in the case when you copy files from a Windows
+    #: client into a WebDAV share. Windows sends the "last modified" time of
+    #: the file in a Microsoft extended property called "Win32LastModifiedTime"
+    #: instead of the standard WebDAV property "getlastmodified". So without
+    #: this config option set to "True", the "last modified" time of the copied
+    #: file will be "now" instead of its original value.
+    #: The proper solution for dealing with the Windows WebDAV client is to use
+    #: a persistent property manager. This setting is merely a work-around.
+    #: NOTE: Works with Win10, can't work with Win7. Other versions untested.
+    emulate_win32_lastmod: false
+    #: Re-encode PATH_INFO using UTF-8 (falling back to ISO-8859-1).
+    #: This seems to be wrong, since per PEP 3333 PATH_INFO is always ISO-8859-1
+    #: encoded (see https://www.python.org/dev/peps/pep-3333/#unicode-issues).
+    #: However it also seems to resolve errors when accessing resources with
+    #: Chinese characters, for example (see issue #73).
+    re_encode_path_info: true
+    #: Force unquoting of PATH_INFO. This should already be done by the WSGI
+    #: Framework, so this setting should only be used to fix unexpected problems
+    #: there (false fixes issue #8, true fixes issue #228).
+    unquote_path_info: false
+    #: Hotfix for WinXP / Vista: accept 'OPTIONS /' for a 'OPTIONS *'
+    #: (default: false)
+    treat_root_options_as_asterisk: false
+    #: (See issue #10, #282)
+    # accept_put_without_content_length: true
+    # win_accept_anonymous_options: false
+    # winxp_accept_root_share_login: false
+
+# ----------------------------------------------------------------------------
+# SSL Support
+
+#: The certificate should match the servers hostname, so the bogus certs will
+#: not work in all scenarios.
+#: (Paths can be absolute or relative to this config file.)
+
+# ssl_certificate: 'wsgidav/server/sample_bogo_server.crt'
+# ssl_private_key: 'wsgidav/server/sample_bogo_server.key'
+# ssl_certificate_chain: null
+
+#: Cheroot server supports 'builtin' and 'pyopenssl' (default: 'builtin')
+# ssl_adapter: 'pyopenssl'
+
+# ----------------------------------------------------------------------------
+
+#: Modify to customize the WSGI application stack.
+#: See here for an example how to add custom middlewares:
+#:   https://wsgidav.readthedocs.io/en/latest/user_guide_configure.html#middleware-stack
+middleware_stack:
+    - wsgidav.mw.cors.Cors
+    # - wsgidav.mw.debug_filter.WsgiDavDebugFilter
+    - wsgidav.error_printer.ErrorPrinter
+    - wsgidav.http_authenticator.HTTPAuthenticator
+    - wsgidav.dir_browser.WsgiDavDirBrowser     # configured under dir_browser option (see below)
+    - wsgidav.request_resolver.RequestResolver  # this must be the last middleware item
+
+# ==============================================================================
+# SHARES
+
+#: Application root, applied before provider mapping shares, e.g. 
+#:   <mount_path>/<share_name>/<res_path>
+#: Set this to the mount point (aka location) when WsgiDAV is running behind a 
+#: reverse proxy.
+#: If set, the mount path must have a leading (but not trailing) slash.
+mount_path: null
+
+#: Route share paths to DAVProvider instances
+#: By default a writable `FilesystemProvider` is assumed, but can be forced
+#: to read-only.
+#: Note that a DomainController may still restrict access completely or prevent
+#: editing depending on authentication.
+#:
+#: The following syntax variants are supported to use FilesystemProvider:
+#:     <share_path>: <folder_path>
+#: or
+#:     <share_path>: { 'root': <folder_path>, 'readonly': <bool> }
+#:
+#: or instantiate an arbitrary custom class:
+#:
+#:     <share_path>: { 'class': <class_path>, args: [<arg>, ...], kwargs: {<arg>: <val>, ...} }
+
+# provider_mapping:
+#     '/': '/path/to/share1'
+#     '/pub':
+#         root: '/path/to/share2'
+#         readonly: true
+#     '/share3':
+#         class: path.to.CustomDAVProviderClass
+#         args:
+#             - foo
+#             - 42
+#         kwargs:
+#             path: '/path/to/share3'
+#             another_arg: 42
+
+#: Addional configuration passed to `FilesystemProvider(..., fs_opts)`
+fs_dav_provider:
+    #: Mapping from request URL to physical file location, e.g.
+    #: make sure that a `/favicon.ico` URL is resolved, even if a `*.html`
+    #: or `*.txt` resource file was opened using the DirBrowser
+    # shadow_map:
+    #     '/favicon.ico': 'file_path/to/favicon.ico'
+    
+    #: Serve symbolic link files and folders (default: false)
+    follow_symlinks: false
+
+# ==============================================================================
+# AUTHENTICATION
+http_authenticator:
+    #: Allow basic authentication
+    accept_basic: true
+    #: Allow digest authentication
+    accept_digest: true
+    #: true (default digest) or false (default basic)
+    default_to_digest: true
+    #: Header field that will be accepted as authorized user.
+    #: Including quotes, for example: trusted_auth_header = 'REMOTE_USER'
+    trusted_auth_header: null
+    #: Domain controller that is used to resolve realms and authorization.
+    #: Default null: which uses SimpleDomainController and the
+    #: `simple_dc.user_mapping` option below.
+    #: (See http://wsgidav.readthedocs.io/en/latest/user_guide_configure.html
+    #: for details.)
+    domain_controller: null
+    # domain_controller: wsgidav.dc.simple_dc.SimpleDomainController
+    # domain_controller: wsgidav.dc.pam_dc.PAMDomainController
+    # domain_controller: wsgidav.dc.nt_dc.NTDomainController
+
+
+# Additional options for SimpleDomainController only:
+simple_dc:
+    # Access control per share.
+    # These routes must match the provider mapping.
+    # NOTE: Provider routes without a matching entry here, are inaccessible.
+    user_mapping:
+        '*':  true # USE anonymous access by default
+    # user_mapping
+    #     '*' # default (used for all shares that are not explicitly listed)
+    #         'user1':
+    #             password: 'abc123'
+    #             # Optional: passed to downstream middleware as environ["wsgidav.auth.roles"]
+    #             roles: ['editor']
+    #         'user2':
+    #             password: 'def456'
+    #             password: 'qwerty'
+    #     '/pub': true  # Pass true to allow anonymous access
+
+# Additional options for NTDomainController only:
+nt_dc:
+    preset_domain: null
+    preset_server: null
+
+# Additional options for PAMDomainController only:
+pam_dc:
+    service: 'login'
+    encoding: 'utf-8'
+    resetcreds: true
+
+
+# ----------------------------------------------------------------------------
+# CORS
+# (Requires `wsgidav.mw.cors.Cors`, which is enabled by default.)
+cors:
+    #: List of allowed Origins or '*'
+    #: Default: false, i.e. prevent CORS
+    allow_origin: null
+    # allow_origin: '*'
+    # allow_origin:
+    #   - 'https://example.com'
+    #   - 'https://localhost:8081'
+
+    #: List or comma-separated string of allowed methods (returned as
+    #: response to preflight request)
+    allow_methods:
+    # allow_methods: POST,HEAD
+    #: List or comma-separated string of allowed header names (returned as
+    #: response to preflight request)
+    allow_headers:
+    #   - X-PINGOTHER
+    #: List or comma-separated string of allowed headers that JavaScript in
+    #: browsers is allowed to access.
+    expose_headers:
+    #: Set to true to allow responses on requests with credentials flag set
+    allow_credentials: false
+    #: Time in seconds for how long the response to the preflight request can
+    #: be cached (default: 5)
+    max_age: 600
+    #: Add custom response headers (dict of header-name -> header-value items)
+    #: (This is not related to CORS or required to implement CORS functionality)
+    add_always:
+    #    'X-Foo-Header: 'qux'
+
+# ----------------------------------------------------------------------------
+# Property Manager
+# null: (default) no support for dead properties
+# true: Use wsgidav.prop_man.property_manager.PropertyManager
+#       which is an in-memory property manager (NOT persistent)
+#
+# Example: Use persistent shelve based property manager
+#     property_manager:
+#        class: wsgidav.prop_man.property_manager.ShelvePropertyManager
+#        kwargs:
+#            storage_path: 'wsgidav-props.shelve'
+
+property_manager: null
+
+#: Optional additional live property modification
+#: Note: by default live properties like file size and last-modified time are
+#: read-only, but that can be overriden here if the underlying DAV provider
+#: supports it. For now only the FileSystemProvider supports it and only namely
+#: changes to the last-modified timestamp. Enable it with the mutable_live_props
+#: list as below to allow clients to use the utime system call or e.g. the
+#: touch or cp / rsync commands with the preserve-timestamp flags on a mounted
+#: DAV share.
+#: Please note that the timestamp is set on the actual file or directory, so it
+#: is persistent even for in-memory property managers. It should also be noted
+#: that mutable last-modified may not be compliant with the RFC 4918.
+mutable_live_props:
+    #: Enable to allow clients to use e.g. the touch or cp / rsync commands with the
+    #: preserve-timestamp flags in a mounted DAV share (may be RFC4918 incompliant)
+    # - '{DAV:}getlastmodified'
+
+
+# ----------------------------------------------------------------------------
+# Lock Manager Storage
+#
+# null: No lock support
+# true: (default) shortcut for
+#     lock_storage: wsgidav.lock_man.lock_storage.LockStorageDict
+#
+# Note that the default LockStorageDict works in-memory, so it is
+# NOT persistent.
+#
+# Example: Use persistent shelve based lock storage:
+#     lock_storage:
+#         class: wsgidav.lock_man.lock_storage.LockStorageShelve
+#         kwargs:
+#             storage_path: /path/to/wsgidav_locks.shelve
+#
+# Check the documentation on how to develop custom lock storage.
+
+lock_storage: true
+
+
+# ==============================================================================
+# DEBUGGING
+
+#: Set verbosity level (can be overridden by -v or -q arguments)
+#: Verbose Output
+#: 0 - no output
+#: 1 - no output (excepting application exceptions)
+#: 2 - show warnings
+#: 3 - show single line request summaries (for HTTP logging)
+#: 4 - show additional events
+#: 5 - show full request/response header info (HTTP Logging)
+#:     request body and GET response bodies not shown
+verbose: 3
+
+logging:
+    #: Enable logging when using wsgidav in library mode (always on, when running as CLI)
+    enable: null
+    #: Set logging output format
+    #: (see https://docs.python.org/3/library/logging.html#logging.Formatter)
+    logger_date_format: '%H:%M:%S'
+    logger_format: '%(asctime)s.%(msecs)03d - %(levelname)-8s: %(message)s'
+    # Example: Add date,thread id, and logger name:
+    # logger_date_format: '%Y-%m-%d %H:%M:%S'
+    # logger_format: '%(asctime)s.%(msecs)03d - <%(thread)05d> %(name)-27s %(levelname)-8s: %(message)s'
+
+    #: Enable specific module loggers
+    #: E.g. ['lock_manager', 'property_manager', 'http_authenticator', ...]
+    # enable_loggers: ['http_authenticator', ]
+
+    # Enable max. logging for certain http methods
+    # E.g. ['COPY', 'DELETE', 'GET', 'HEAD', 'LOCK', 'MOVE', 'OPTIONS', 'PROPFIND', 'PROPPATCH', 'PUT', 'UNLOCK']
+    debug_methods: []
+
+    # Enable max. logging during  litmus suite tests that contain certain strings
+    # E.g. ['lock_excl', 'notowner_modify', 'fail_cond_put_unlocked', ...]
+    debug_litmus: []
+
+
+# ----------------------------------------------------------------------------
+# WsgiDavDirBrowser
+
+dir_browser:
+    #: Render HTML listing for GET requests on collections
+    enable: true
+    #: List of fnmatch patterns that will be hidden in the directory listing
+    ignore:
+        - '.DS_Store'  # macOS folder meta data
+        - '._*'  # macOS hidden data files
+        - 'Thumbs.db'  # Windows image previews
+    #: Add a trailing slash to directory URLs (by generating a 301 redirect)
+    directory_slash: true
+    #: Display WsgiDAV icon in header
+    icon: true
+    #: Raw HTML code, appended as footer (true: use a default trailer)
+    response_trailer: true
+    #: Display the name and realm of the authenticated user (or 'anomymous')
+    show_user: true
+    show_logout: true
+    #: Send <dm:mount> response if request URL contains '?davmount'
+    #: (See https://tools.ietf.org/html/rfc4709)
+    davmount: true
+    #: Add a 'Mount' link at the top of the listing
+    davmount_links: false
+    #: Invoke MS Office documents for editing using WebDAV by adding a JavaScript
+    #: click handler.
+    #: - For IE 11 and below invokes the SharePoint ActiveXObject("SharePoint.OpenDocuments")
+    #: - If the custom legacy Firefox plugin is available, it will be used
+    #:   https://docs.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ff407576(v%3Doffice.14)
+    #: - Otherwise the Office URL prefix is used (e.g. 'ms-word:ofe|u|http://server/path/file.docx')
+    ms_sharepoint_support: true
+    #: Invoke Libre Office documents for editing using WebDAV
+    libre_office_support: true
+    #: The path to the directory that contains template.html and associated assets.
+    #: The default is the htdocs directory within the dir_browser directory.
+    htdocs_path: null
