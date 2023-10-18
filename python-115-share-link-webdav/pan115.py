@@ -186,14 +186,17 @@ class Pan115Client:
     def __init__(self, /, cookie=None):
         self.__session = session = Session()
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
+        need_login = True
         if cookie:
             self.cookie = cookie
             resp = self.user_info()
-            if not resp["state"]:
-                cookie = self.login_with_qrcode()["data"]["cookie"]
-        else:
+            need_login = not resp["state"]
+        if need_login:
             cookie = self.login_with_qrcode()["data"]["cookie"]
-        self.cookie = cookie
+            self.cookie = cookie
+            resp = self.user_info()
+            if not resp["state"]:
+                raise LoginError("bad cookie")
         self.userid = str(resp["data"]["user_id"])
         self.rsa_encoder = Pan115RSACipher()
 

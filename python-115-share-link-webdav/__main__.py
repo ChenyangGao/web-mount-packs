@@ -108,7 +108,8 @@ from pan115_sharelink_dav_provider import Pan115ShareLinkFilesystemProvider
 
 client = Pan115Client(cookie)
 if client.cookie != cookie:
-    open(cookie_path, "w", encoding="latin-1").write(client.cookie)
+    cookie = client.cookie
+    open(cookie_path, "w", encoding="latin-1").write(cookie)
 
 from pkgutil import get_data
 
