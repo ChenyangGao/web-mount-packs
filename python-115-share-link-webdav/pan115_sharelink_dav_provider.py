@@ -1,22 +1,29 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
 __all__ = ["Pan115ShareLinkFilesystemProvider"]
 
 from hashlib import md5
-from http.cookiejar import CookieJar
 from posixpath import join as joinpath, normpath
 
-from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider
-from yaml import load as yaml_load, Loader as yaml_Loader
+from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
+from yaml import load as yaml_load, Loader as yaml_Loader # NEED: pip install types-PyYAML
 
 from pan115 import HTTPFileReader, Pan115Client, Pan115ShareLinkFileSystem
 
 
 class FileResource(DAVNonCollection):
 
-    def __init__(self, path: str, environ: dict, share_link_fs, filepath):
+    def __init__(
+        self, /, 
+        path: str, 
+        environ: dict, 
+        share_link_fs, 
+        filepath: str, 
+    ):
         super().__init__(path, environ)
         self.share_link_fs = share_link_fs
         self.filepath = filepath
@@ -61,7 +68,14 @@ class FileResource(DAVNonCollection):
 
 class FolderResource(DAVCollection):
 
-    def __init__(self, path: str, environ: dict, share_link_fs, filepath):
+    def __init__(
+        self, 
+        /, 
+        path: str, 
+        environ: dict, 
+        share_link_fs, 
+        filepath: str, 
+    ):
         super().__init__(path, environ)
         self.share_link_fs = share_link_fs
         self.filepath = filepath
@@ -84,10 +98,10 @@ class FolderResource(DAVCollection):
     def get_last_modified(self):
         return self.time
 
-    def get_member_names(self):
+    def get_member_names(self) -> list[str]:
         return self.share_link_fs.listdir(self.filepath)
 
-    def get_member(self, name: str) -> FileResource:
+    def get_member(self, name: str) -> FileResource | FolderResource:
         share_link_fs = self.share_link_fs
         filepath = joinpath(self.filepath, name)
         path = joinpath(self.path, name)
@@ -102,7 +116,13 @@ class FolderResource(DAVCollection):
 
 class RootResource(DAVCollection):
 
-    def __init__(self, path: str, environ: dict, share_link_fs):
+    def __init__(
+        self, 
+        /, 
+        path: str, 
+        environ: dict, 
+        share_link_fs, 
+    ):
         super().__init__(path, environ)
         self.share_link_fs = share_link_fs
 
@@ -112,7 +132,11 @@ class RootResource(DAVCollection):
             return list(share_link_fs)
         return share_link_fs.listdir("/")
 
-    def get_member(self, name: str) -> FileResource:
+    def get_member(
+        self, 
+        /, 
+        name: str, 
+    ) -> None | RootResource | FileResource | FolderResource:
         share_link_fs = self.share_link_fs
         path = joinpath(self.path, name)
         if type(share_link_fs) is dict:
@@ -131,12 +155,12 @@ class RootResource(DAVCollection):
 
 class Pan115ShareLinkFilesystemProvider(DAVProvider):
 
-    def __init__(self, share_link_fs):
+    def __init__(self, /, share_link_fs):
         super().__init__()
         self.share_link_fs = share_link_fs
 
     @staticmethod
-    def make_share_link_fs(client, config):
+    def make_share_link_fs(client: Pan115Client, config):
         if isinstance(config, str):
             return Pan115ShareLinkFileSystem(client, config)
         else:
@@ -144,13 +168,13 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
                 name.replace("/", "｜"): (
                     Pan115ShareLinkFileSystem(client, conf)
                     if isinstance(config, str) else
-                    __class__.make_share_link_fs(client, conf)
+                    __class__.make_share_link_fs(client, conf) # type: ignore
                 )
                 for name, conf in config.items()
             }
 
     @classmethod
-    def from_config(cls, cookie_or_client, config_text, /):
+    def from_config(cls, cookie_or_client, config_text: bytes | str, /):
         if isinstance(cookie_or_client, Pan115Client):
             client = cookie_or_client
         else:
@@ -158,7 +182,12 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
         config = yaml_load(config_text, Loader=yaml_Loader)
         return cls(cls.make_share_link_fs(client, config))
 
-    def get_resource_inst(self, path: str, environ: dict) -> FileResource:
+    def get_resource_inst(
+        self, 
+        /, 
+        path: str, 
+        environ: dict, 
+    ) -> None | RootResource | FolderResource | FileResource:
         filepath = normpath(path).strip("/")
         path = "/" + filepath
         share_link_fs = self.share_link_fs

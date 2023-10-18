@@ -3,6 +3,17 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
 
+import sys
+
+if sys.version_info < (3, 10):
+    msg = f"""\
+Python version at least 3.10, got
+    * executable: {sys.executable!r}
+    * version: {sys.version}
+    * version_info: {sys.version_info!r}
+"""
+    raise RuntimeError(msg)
+
 from argparse import ArgumentParser, RawTextHelpFormatter
 
 parser = ArgumentParser(
@@ -88,10 +99,10 @@ from pan115 import Pan115Client
 try:
     cookie = open(cookie_path, encoding="latin-1").read().strip()
 except FileNotFoundError:
-    cookie = None
+    cookie = None # type: ignore
 
 from cheroot import wsgi
-from wsgidav.wsgidav_app import WsgiDAVApp
+from wsgidav.wsgidav_app import WsgiDAVApp # type: ignore
 
 from pan115_sharelink_dav_provider import Pan115ShareLinkFilesystemProvider
 
@@ -99,14 +110,21 @@ client = Pan115Client(cookie)
 if client.cookie != cookie:
     open(cookie_path, "w", encoding="latin-1").write(client.cookie)
 
-try:
-    wsgidav_config_raw = open(wsgidav_config_file, encoding="utf-8").read()
-except FileNotFoundError:
-    from pkgutil import get_data
-    wsgidav_config_raw = get_data("src", "sample_wsgidav.yaml")
-    open(wsgidav_config_file, "wb").write(wsgidav_config_raw)
+from pkgutil import get_data
 
-wsgidav_config = yaml_load(wsgidav_config_raw, Loader=yaml_Loader)
+try:
+    links_config_text = open(links_file, "rb").read()
+except FileNotFoundError:
+    links_config_text = get_data("src", "links.yml") # type: ignore
+    open(links_file, "wb").write(links_config_text)
+
+try:
+    wsgidav_config_text = open(wsgidav_config_file, "rb").read()
+except FileNotFoundError:
+    wsgidav_config_text = get_data("src", "sample_wsgidav.yaml") # type: ignore
+    open(wsgidav_config_file, "wb").write(wsgidav_config_text)
+
+wsgidav_config = yaml_load(wsgidav_config_text, Loader=yaml_Loader)
 
 if host is not None:
     wsgidav_config["host"] = host
@@ -115,7 +133,7 @@ if port is not None:
 if verbose is not None:
     wsgidav_config["verbose"] = verbose
 wsgidav_config["provider_mapping"] = {
-    "/": Pan115ShareLinkFilesystemProvider.from_config(cookie, open(links_file, encoding="utf-8").read())
+    "/": Pan115ShareLinkFilesystemProvider.from_config(cookie, links_config_text)
 }
 
 app = WsgiDAVApp(wsgidav_config)

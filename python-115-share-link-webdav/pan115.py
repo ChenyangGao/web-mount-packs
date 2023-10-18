@@ -2,41 +2,43 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__all__ = ["Pan115Client", "Pan115ShareLinkFileSystem", "HTTPFileReader"]
+__all__ = ["LoginError", "BadRequest", "Pan115Client", "Pan115ShareLinkFileSystem", "HTTPFileReader"]
 __requirements__ = ["pycryptodome", "qrcode", "requests"]
 
 from base64 import b64decode, b64encode
 from collections import deque
 from copy import deepcopy
 from datetime import datetime
-from io import RawIOBase, TextIOWrapper
+from http.cookiejar import Cookie, CookieJar
+from io import RawIOBase
 from json import dumps, loads
 from posixpath import dirname, join as joinpath, normpath
 from re import compile as re_compile
 from time import time
-from typing import Callable, Iterable, Iterator, Optional
+from typing import cast, Callable, Final, Iterable, Iterator, Optional
 from urllib.parse import parse_qsl, urlparse
 
 from requests.cookies import create_cookie
 from requests.exceptions import Timeout
 from requests.models import Response
 from requests.sessions import Session
+from urllib3.exceptions import ProtocolError
 from Crypto import Random
 from Crypto.Cipher import PKCS1_v1_5, AES
 from Crypto.PublicKey import RSA
 from Crypto.Util.number import bytes_to_long, long_to_bytes
 
-import qrcode # 或者用 pyqrcode？
+import qrcode # type: ignore
 
 
-Response.__del__ = Response.close
-CRE_SHARE_LINK = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?")
+Response.__del__ = Response.close # type: ignore
 
-APP_VERSION = "99.99.99.99"
-G_key_l = bytes((
+CRE_SHARE_LINK: Final = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?")
+APP_VERSION: Final = "99.99.99.99"
+G_key_l: Final = bytes((
     0x78, 0x06, 0xad, 0x4c, 0x33, 0x86, 0x5d, 0x18, 0x4c, 0x01, 0x3f, 0x46, 
 ))
-G_kts = bytes((
+G_kts: Final = bytes((
     0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73, 0xb8, 
     0xde, 0x8f, 0xe7, 0xc4, 0x45, 0xda, 0x86, 0xc4, 0x9b, 0x64, 0x8b, 0x14, 0x6a, 0xb4, 0xf1, 0xaa, 
     0x38, 0x01, 0x35, 0x9e, 0x26, 0x69, 0x2c, 0x86, 0x00, 0x6b, 0x4f, 0xa5, 0x36, 0x34, 0x62, 0xa6, 
@@ -47,7 +49,7 @@ G_kts = bytes((
     0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77, 0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e, 
     0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c, 0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5, 
 ))
-RSA_PUBLIC_KEY = RSA.construct((
+RSA_PUBLIC_KEY: Final = RSA.construct((
     0x8686980c0f5a24c4b9d43020cd2c22703ff3f450756529058b1cf88f09b8602136477198a6e2683149659bd122c33592fdb5ad47944ad1ea4d36c6b172aad6338c3bb6ac6227502d010993ac967d1aef00f0c8e038de2e4d3bc2ec368af2e9f10a6f1eda4f7262f136420c07c331b871bf139f74f3010e3c4fe57df3afb71683, 
     0x10001, 
 ))
@@ -57,34 +59,30 @@ class LoginError(Exception):
     ...
 
 
-class AuthenticationError(LoginError):
-    ...
-
-
 class BadRequest(ValueError):
     ...
 
 
-def check_get(resp, exc_cls=BadRequest):
+def check_get(resp: dict, exc_cls: type[BaseException] = BadRequest):
     if resp["state"]:
         return resp.get("data")
     raise exc_cls(resp)
 
 
-def text_to_dict(s, /, entry_sep="\n", kv_sep="="):
+def text_to_dict(s: str, /, entry_sep: str = "\n", kv_sep: str = "=") -> dict[str, str]:
     return dict(
-        map(str.strip, e.split(kv_sep, 1)) 
+        map(str.strip, e.split(kv_sep, 1)) # type: ignore
         for e in s.strip(entry_sep).split(entry_sep)
     )
 
 
-def console_qrcode(text):
+def console_qrcode(text: str):
     qr = qrcode.QRCode(border=1)
     qr.add_data(text)
     qr.print_ascii(tty=True)
 
 
-def normalize_info(info):
+def normattr(info: dict) -> dict:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -126,8 +124,8 @@ class Pan115RSACipher:
         self.key = __class__.gen_key(self.rand_key, 4)
 
     @staticmethod
-    def gen_key(rand_key, sk_len):
-        xor = __class__.xor
+    def gen_key(rand_key: bytes, sk_len: int = 4) -> bytes:
+        xor = __class__.xor # type: ignore
         xor_key = bytearray()
         if rand_key and sk_len > 0:
             length = sk_len * (sk_len - 1)
@@ -140,7 +138,7 @@ class Pan115RSACipher:
         return xor_key
 
     @staticmethod
-    def xor(src, key):
+    def xor(src: bytes, key: bytes) -> bytes:
         secret = bytearray()
         pad = len(src) % 4
         if pad:
@@ -150,28 +148,27 @@ class Pan115RSACipher:
         secret.extend(c ^ key[i % key_len] for i, c in enumerate(src))
         return secret
 
-    def encode(self, text, /):
-        xor = __class__.xor
-        rsa_block_size = 128
-        rsa_encrypt_block_size = rsa_block_size - 11
+    def encode(self, text: bytes | str, /) -> str:
         if isinstance(text, str):
             text = bytes(text, "utf-8")
+        xor = __class__.xor # type: ignore
+        rsa_block_size = 128
+        rsa_encrypt_block_size = rsa_block_size - 11
         tmp = xor(text, self.key)[::-1]
         xor_text = self.rand_key + xor(tmp, G_key_l)
-        cipher = PKCS1_v1_5.new(RSA_PUBLIC_KEY)
+        encrypt = PKCS1_v1_5.new(RSA_PUBLIC_KEY).encrypt
         cipher_text = bytearray()
         for i in range(-(-len(xor_text)//rsa_encrypt_block_size)):
-            cipher_text += cipher.encrypt(xor_text[i*rsa_encrypt_block_size:(i+1)*rsa_encrypt_block_size])
+            cipher_text += encrypt(xor_text[i*rsa_encrypt_block_size:(i+1)*rsa_encrypt_block_size])
         return b64encode(cipher_text).decode("ascii")
 
-    def decode(self, cipher_text, /):
-        xor = __class__.xor
+    def decode(self, cipher_text: bytes | str, /) -> str:
+        xor = __class__.xor # type: ignore
         rsa_key_size = 16
         rsa_block_size = 128
         cipher_text = b64decode(cipher_text)
         block_count = len(cipher_text) // rsa_block_size
         text = bytearray()
-        cipher = PKCS1_v1_5.new(RSA_PUBLIC_KEY)
         for i in range(block_count):
             n = bytes_to_long(cipher_text[i*rsa_block_size:(i+1)*rsa_block_size])
             m = pow(n, RSA_PUBLIC_KEY.e, RSA_PUBLIC_KEY.n)
@@ -179,7 +176,7 @@ class Pan115RSACipher:
             text += b[b.index(0)+1:]
         rand_key = text[0:rsa_key_size]
         text = text[rsa_key_size:]
-        key_l = __class__.gen_key(rand_key, 12)
+        key_l = __class__.gen_key(rand_key, 12) # type: ignore
         tmp = xor(text, key_l)[::-1]
         return xor(tmp, self.key)
 
@@ -189,12 +186,14 @@ class Pan115Client:
     def __init__(self, /, cookie=None):
         self.__session = session = Session()
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
-        if not cookie:
+        if cookie:
+            self.cookie = cookie
+            resp = self.user_info()
+            if not resp["state"]:
+                cookie = self.login_with_qrcode()["data"]["cookie"]
+        else:
             cookie = self.login_with_qrcode()["data"]["cookie"]
         self.cookie = cookie
-        resp = self.user_info()
-        if not resp["state"]:
-            cookie = self.login_with_qrcode()["data"]["cookie"]
         self.userid = str(resp["data"]["user_id"])
         self.rsa_encoder = Pan115RSACipher()
 
@@ -209,7 +208,7 @@ class Pan115Client:
         return self.__cookie
 
     @cookie.setter
-    def cookie(self, cookie, /):
+    def cookie(self, cookie: str | dict | Iterable[dict | Cookie] | CookieJar, /):
         if isinstance(cookie, str):
             cookie = text_to_dict(cookie, entry_sep=";")
         cookiejar = self.__session.cookies
@@ -225,10 +224,10 @@ class Pan115Client:
         self.__cookie = "; ".join(f"{key}={cookies[key]}" for key in ("UID", "CID", "SEID"))
 
     @property
-    def session(self, /):
+    def session(self, /) -> Session:
         return self.__session
 
-    def login_with_qrcode(self, /, **request_kwargs):
+    def login_with_qrcode(self, /, **request_kwargs) -> dict:
         qrcode_token = self.login_qrcode_token(**request_kwargs)["data"]
         qrcode = qrcode_token.pop("qrcode")
         console_qrcode(qrcode)
@@ -253,14 +252,14 @@ class Pan115Client:
                 raise LoginError(f"qrcode: aborted with {resp!r}")
         return self.login_qrcode_result(qrcode_token["uid"], **request_kwargs)
 
-    def request(self, api, /, method="GET", *, parse=False, **request_kwargs):
+    def request(self, api: str, /, method: str = "GET", *, parse: bool | Callable = False, **request_kwargs):
         request_kwargs["stream"] = True
         resp = self.__session.request(method, api, **request_kwargs)
         resp.raise_for_status()
         if callable(parse):
             return parse(resp.content)
         if parse:
-            if kwargs.get("stream"):
+            if request_kwargs.get("stream"):
                 return resp
             else:
                 content_type = resp.headers.get("Content-Type", "")
@@ -273,41 +272,41 @@ class Pan115Client:
 
     ########## Account API ##########
 
-    def login_check(self, /, **request_kwargs):
+    def login_check(self, /, **request_kwargs) -> dict:
         api = "https://passportapi.115.com/app/1.0/web/1.0/check/sso/"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def login_qrcode_status(self, /, payload, **request_kwargs):
+    def login_qrcode_status(self, /, payload: dict, **request_kwargs) -> dict:
         api = "https://qrcodeapi.115.com/get/status/"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def login_qrcode_result(self, /, uid, **request_kwargs):
+    def login_qrcode_result(self, /, uid: int | str, **request_kwargs) -> dict:
         api = "https://passportapi.115.com/app/1.0/web/1.0/login/qrcode/"
         return self.request(api, "POST", data={"account": uid, "app": "web"}, parse=loads, **request_kwargs)
 
-    def login_qrcode_token(self, /, **request_kwargs):
+    def login_qrcode_token(self, /, **request_kwargs) -> dict:
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def logout(self, /, **request_kwargs):
+    def logout(self, /, **request_kwargs) -> None:
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/logout/"
         self.request(api, **request_kwargs)
 
-    def login_status(self, /, **request_kwargs):
+    def login_status(self, /, **request_kwargs) -> dict:
         api = "https://my.115.com/?ct=guide&ac=status"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def user_info(self, /, **request_kwargs):
+    def user_info(self, /, **request_kwargs) -> dict:
         api = "https://my.115.com/?ct=ajax&ac=nav"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def user_info2(self, /, **request_kwargs):
+    def user_info2(self, /, **request_kwargs) -> dict:
         api = "https://my.115.com/?ct=ajax&ac=get_user_aq"
         return self.request(api, parse=loads, **request_kwargs)
 
     ########## Share API ##########
 
-    def share_snap(self, payload, /, **request_kwargs):
+    def share_snap(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
         GET https://webapi.115.com/share/snap
         payload:
@@ -322,7 +321,7 @@ class Pan115Client:
         payload = {"offset": 0, "limit": 100, "cid": 0, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_downlist(self, payload, /, **request_kwargs):
+    def share_downlist(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         GET https://proapi.115.com/app/share/downlist
         payload:
@@ -333,7 +332,7 @@ class Pan115Client:
         api = "https://proapi.115.com/app/share/downlist"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_receive(self, payload, /, **request_kwargs):
+    def share_receive(self, payload: dict, /, **request_kwargs) -> dict:
         """接收分享链接的某些文件或文件夹
         POST https://webapi.115.com/share/receive
         payload:
@@ -347,7 +346,7 @@ class Pan115Client:
         payload = {"cid": 0, "uid": self.userid, **payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def share_download_url(self, payload, /, **request_kwargs):
+    def share_download_url(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接中某个文件的下载链接
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -379,9 +378,9 @@ class Pan115ShareLinkFileSystem:
         self._params = {"share_code": m["share_code"], "receive_code": m["receive_code"] or ""}
         self._path_to_id = {"/": 0}
         self._id_to_path = {0: "/"}
-        self._id_to_attr = {}
-        self._id_to_url = {}
-        self._pid_to_attrs = {}
+        self._id_to_attr: dict[int, dict] = {}
+        self._id_to_url: dict[int, dict] = {}
+        self._pid_to_attrs: dict[int, list[dict]]  = {}
         self._full_loaded = False
         self._path = "/" + normpath(path).rstrip("/")
 
@@ -399,7 +398,7 @@ class Pan115ShareLinkFileSystem:
         else:
             return self._attr(id_or_path)
 
-    def _attr_id(self, id: str, /) -> dict:
+    def _attr_id(self, id: int, /) -> dict:
         if id == 0:
             raise PermissionError(1, "the attributes of the root are not readable")
         if id in self._id_to_attr:
@@ -463,13 +462,13 @@ class Pan115ShareLinkFileSystem:
             raise FileNotFoundError(2, f"no such cid/file_id: {id!r}")
         params = {**self._params, "cid": id, "offset": 0, "limit": 100}
         data = check_get(self.client.share_snap(params))
-        ls = list(map(normalize_info, data["list"]))
+        ls = list(map(normattr, data["list"]))
         count = data["count"]
         if count > 100:
             for offset in range(100, count, 100):
                 params["offset"] = offset
                 data = check_get(self.client.share_snap(params))
-                ls.extend(map(normalize_info, data["list"]))
+                ls.extend(map(normattr, data["list"]))
         self._id_to_attr.update((attr["id"], attr) for attr in ls)
         self._pid_to_attrs[id] = ls
         return ls
@@ -507,6 +506,7 @@ class Pan115ShareLinkFileSystem:
         return self._path
 
     def get_download_url(self, id_or_path: int | str = 0, /) -> str:
+        id: int
         if isinstance(id_or_path, str):
             id = self._attr_path(id_or_path)["id"]
         else:
@@ -677,8 +677,8 @@ class Pan115ShareLinkFileSystem:
         if not ls:
             yield top, [], []
             return
-        dirs: list[str] = []
-        files: list[str] = []
+        dirs: list[dict] = []
+        files: list[dict] = []
         for attr in ls:
             if attr["is_dir"]:
                 dirs.append(attr)
@@ -706,7 +706,7 @@ class Pan115ShareLinkFileSystem:
 
 class HTTPFileReader(RawIOBase):
 
-    def __init__(self, /, url: str, urlopen=None):
+    def __init__(self, /, url: str, urlopen: Optional[Callable] = None):
         if urlopen is None:
             urlopen = Session().get
         self.__resp = resp = urlopen(url, headers={"Accept-Encoding": "identity"}, stream=True)
@@ -714,7 +714,7 @@ class HTTPFileReader(RawIOBase):
         self.__size = int(resp.headers['Content-Length'])
         self.__file = resp.raw
         self.__url = url
-        self.__urlopen = urlopen
+        self.__urlopen: Callable = urlopen
         self.__start = 0
         self.__closed = False
 
@@ -746,7 +746,7 @@ class HTTPFileReader(RawIOBase):
         name = cls.__qualname__
         if module != "__main__":
             name = module + "." + name
-        return f"<{name}(url={self.url!r}) at {hex(self)}>"
+        return f"<{name}(url={self.url!r}) at {hex(id(self))}>"
 
     def close(self, /):
         self.__resp.close()
@@ -763,7 +763,7 @@ class HTTPFileReader(RawIOBase):
     def flush(self, /):
         return self.__file.flush()
 
-    def isatty(self, /):
+    def isatty(self, /) -> bool:
         return False
 
     @property
@@ -779,7 +779,19 @@ class HTTPFileReader(RawIOBase):
             raise ValueError("I/O operation on closed file.")
         if size == 0:
             return b""
-        return self.__file.read(size if size > 0 else None)
+        if size <= 0:
+            return self.__file.read()
+        # If the connection breaks while reading, retry 5 times
+        curpos = self.tell()
+        e = None
+        for _ in range(5):
+            try:
+                return self.__file.read(size)
+            except ProtocolError as exc:
+                if e is None:
+                    e = exc
+                self.reconnect(curpos)
+        raise cast(BaseException, e)
 
     def readable(self, /) -> bool:
         return True
@@ -787,7 +799,17 @@ class HTTPFileReader(RawIOBase):
     def readinto(self, buffer, /) -> int:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        return self.__file.readinto(buffer)
+        # If the connection breaks while reading, retry 5 times
+        curpos = self.tell()
+        e = None
+        for _ in range(5):
+            try:
+                return self.__file.readinto(buffer)
+            except ProtocolError as exc:
+                if e is None:
+                    e = exc
+                self.reconnect(curpos)
+        raise cast(BaseException, e)
 
     def readline(self, size: Optional[int] = -1, /) -> bytes:
         if self.closed:
@@ -796,7 +818,17 @@ class HTTPFileReader(RawIOBase):
             return b""
         if size is None:
             size = -1
-        return self.__file.readline(size)
+        # If the connection breaks while reading, retry 5 times
+        curpos = self.tell()
+        e = None
+        for _ in range(5):
+            try:
+                return self.__file.readline(size)
+            except ProtocolError as exc:
+                if e is None:
+                    e = exc
+                self.reconnect(curpos)
+        raise cast(BaseException, e)
 
     def readlines(self, hint: int = -1, /) -> list[bytes]:
         if self.closed:
@@ -804,23 +836,23 @@ class HTTPFileReader(RawIOBase):
         return self.__file.readlines(hint)
 
     def reconnect(self, /, start: Optional[int] = None):
-        self.__resp.close()
         if start is None:
             start = self.tell()
         elif start < 0:
             start = self.size + start
             if start < 0:
                 start = 0
-        self.__start = start
+        self.__resp.close()
         self.__resp = resp = self.__urlopen(
             self.__url, 
             headers={"Accept-Encoding": "identity", "Range": "bytes=%d-" % start}, 
             stream=True, 
         )
         self.__file = resp.raw
+        self.__start = start
 
     def seek(self, pos: int, whence: int = 0, /) -> int:
-        if not self.seekable:
+        if not self.__seekable:
             raise TypeError("not a seekable stream")
         if whence == 0:
             if pos < 0:
@@ -828,14 +860,21 @@ class HTTPFileReader(RawIOBase):
             old_pos = self.tell()
             if old_pos == pos:
                 return pos
+            # If only moving forward within 1MB, directly read and discard
+            elif old_pos < pos <= old_pos + 1024 * 1024:
+                try:
+                    self.__file.read(pos - old_pos)
+                    return pos
+                except ProtocolError:
+                    pass
             self.__resp.close()
-            self.__start = pos
             self.__resp = resp = self.__urlopen(
                 self.__url, 
                 headers={"Accept-Encoding": "identity", "Range": "bytes=%d-" % pos}, 
                 stream=True, 
             )
             self.__file = resp.raw
+            self.__start = pos
             return pos
         elif whence == 1:
             if pos == 0:

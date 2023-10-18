@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-PROJDIR=`dirname "$0"`
-PROJNAME=`basename ${PROJDIR}`
-CURDIR=`pwd`
-VERSION=`head -1 ${PROJDIR}/VERSION || echo latest`
+PROJDIR=$(dirname "$0")
+PROJNAME=$(basename ${PROJDIR})
+CURDIR=$(pwd)
+VERSION=$(head -1 ${PROJDIR}/VERSION || echo latest)
 
 function createpack() {
     local file=$1/${PROJNAME}_${VERSION}.pyz
@@ -17,6 +17,8 @@ function createpack() {
 
 shopt -s globstar
 rm -rf ${PROJDIR}/**/__pycache__
-rm -rf ${PROJDIR}/**/.DS_store
-rm -rf ${PROJDIR}/**/._*
+if [ $(uname -s) = 'Darwin' ]; then
+    rm -rf ${PROJDIR}/**/.DS_store
+    rm -rf ${PROJDIR}/**/._*
+fi
 createpack ${CURDIR} || createpack ${HOME} || createpack ${PROJDIR} || echo Cannot create package file

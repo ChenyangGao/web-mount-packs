@@ -10,6 +10,8 @@ usage: python-115-share-link-webdav [-h] [-ck COOKIE_PATH] [-l LINKS_FILE]
 
     115 分享链接 webdav 挂载工具 (version: x.y.z)
 
+源码地址：https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-share-link-webdav
+
 options:
   -h, --help            show this help message and exit
   -ck COOKIE_PATH, --cookie-path COOKIE_PATH
