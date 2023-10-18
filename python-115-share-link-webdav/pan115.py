@@ -782,7 +782,7 @@ class HTTPFileReader(RawIOBase):
             raise ValueError("I/O operation on closed file.")
         if size == 0:
             return b""
-        if size <= 0:
+        elif size < 0:
             return self.__file.read()
         # If the connection breaks while reading, retry 5 times
         curpos = self.tell()
