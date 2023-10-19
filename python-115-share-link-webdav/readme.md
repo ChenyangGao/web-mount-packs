@@ -4,11 +4,10 @@
 
 ```console
 $ python python-115-share-link-webdav -h
-usage: python-115-share-link-webdav [-h] [-ck COOKIE_PATH] [-l LINKS_FILE]
-                                    [-c CONFIG] [-H HOST] [-p PORT]
-                                    [-v {0,1,2,3,4,5}]
+usage: python-115-share-link-webdav_0.0.4.pyz [-h] [-ck COOKIE_PATH] [-l LINKS_FILE] [-c CONFIG] [-H HOST] [-p PORT] [-v {0,1,2,3,4,5}]
+                                              [-w]
 
-    115 分享链接 webdav 挂载工具 (version: x.y.z)
+    115 分享链接 webdav 挂载工具 (version: 0.0.4)
 
 源码地址：https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-share-link-webdav
 
@@ -46,7 +45,7 @@ options:
                         WsgiDav 的配置文件（必须 yaml 文件格式，UTF-8编码），
                         缺省时则用当前工作目录下的 wsgidav.yaml 文件，不存在时会自动创建，
                         命令行的 --host|-H、--port|-p|-P 和 --verbose|-v 有更高优先级
-  -H HOST, --host HOST  端口号，默认 0.0.0.0
+  -H HOST, --host HOST  主机地址，默认 0.0.0.0，你也可以用 localhost、127.0.0.1 或者其它
   -p PORT, -P PORT, --port PORT
                         端口号，默认 8080
   -v {0,1,2,3,4,5}, --verbose {0,1,2,3,4,5}
@@ -62,6 +61,7 @@ options:
                         4 - show additional events
                         5 - show full request/response header info (HTTP Logging)
                             request body and GET response bodies not shown
+  -w, --watch-links     如果指定此参数，则会检测 links-file 的变化
 ```
 
 ## 打包程序
