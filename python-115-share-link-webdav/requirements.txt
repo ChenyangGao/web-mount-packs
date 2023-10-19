@@ -3,4 +3,5 @@ pycryptodome
 pyyaml
 qrcode
 requests
+watchdog
 wsgidav

@@ -10,13 +10,14 @@ from collections import deque
 from copy import deepcopy
 from datetime import datetime
 from http.cookiejar import Cookie, CookieJar
-from io import RawIOBase
+from io import RawIOBase, BufferedReader, TextIOWrapper, DEFAULT_BUFFER_SIZE
 from json import dumps, loads
 from posixpath import dirname, join as joinpath, normpath
 from re import compile as re_compile
 from time import time
 from typing import cast, Callable, Final, Iterable, Iterator, Optional
 from urllib.parse import parse_qsl, urlparse
+from warnings import warn
 
 from requests.cookies import create_cookie
 from requests.exceptions import Timeout
@@ -114,6 +115,20 @@ def normattr(info: dict) -> dict:
     #     info2["star"] = bool(info["m"])
     #info2["raw"] = info
     return info2
+
+
+class lazyproperty:
+
+    def __init__(self, func):
+        self.func = func
+        self.name = func.__name__
+
+    def __get__(self, instance, type):
+        if instance is None:
+            return self
+        value = self.func(instance)
+        setattr(instance, self.name, value)
+        return value
 
 
 class Pan115RSACipher:
@@ -589,6 +604,60 @@ class Pan115ShareLinkFileSystem:
     def listdir_attr(self, id_or_path: int | str = 0, /) -> list[dict]:
         return deepcopy(self._listdir(id_or_path))
 
+    def open(
+        self, 
+        id_or_path: int | str, 
+        /, 
+        mode: str = "r", 
+        buffering: Optional[int] = None, 
+        encoding: Optional[str] = None, 
+        errors: Optional[str] = None, 
+        newline: Optional[str] = None, 
+    ):
+        orig_mode = mode
+        if "b" in mode:
+            mode = mode.replace("b", "", 1)
+            open_text_mode = False
+        else:
+            mode = mode.replace("t", "", 1)
+            open_text_mode = True
+        if mode not in ("r", "rt", "tr"):
+            raise ValueError(f"invalid (or unsupported) mode: {orig_mode!r}")
+        url = self.get_download_url(id_or_path)
+        if buffering is None:
+            if open_text_mode:
+                buffering = DEFAULT_BUFFER_SIZE
+            else:
+                buffering = 0
+        if buffering == 0:
+            if open_text_mode:
+                raise ValueError("can't have unbuffered text I/O")
+            return HTTPFileReader(url, self.client.request)
+        line_buffering = False
+        buffer_size: int
+        if buffering < 0:
+            buffer_size = DEFAULT_BUFFER_SIZE
+        elif buffering == 1:
+            if not open_text_mode:
+                warn("line buffering (buffering=1) isn't supported in binary mode, "
+                     "the default buffer size will be used", RuntimeWarning)
+            buffer_size = DEFAULT_BUFFER_SIZE
+            line_buffering = True
+        else:
+            buffer_size = buffering
+        raw = HTTPFileReader(url, self.client.request)
+        buffer = BufferedReader(raw, buffer_size)
+        if open_text_mode:
+            return TextIOWrapper(
+                buffer, 
+                encoding=encoding, 
+                errors=errors, 
+                newline=newline, 
+                line_buffering=line_buffering, 
+            )
+        else:
+            return buffer
+
     path = property(getcwd, chdir)
 
     def receive(self, ids: int | str | Iterable[int | str], cid=0):
@@ -601,7 +670,7 @@ class Pan115ShareLinkFileSystem:
         payload = {**self._params, "file_id": file_id, "cid": cid}
         check_get(self.client.share_receive(payload))
 
-    @property
+    @lazyproperty
     def shareinfo(self, /) -> dict:
         return check_get(self.client.share_snap({**self._params, "limit": 1}))["shareinfo"]
 
@@ -709,9 +778,7 @@ class Pan115ShareLinkFileSystem:
 
 class HTTPFileReader(RawIOBase):
 
-    def __init__(self, /, url: str, urlopen: Optional[Callable] = None):
-        if urlopen is None:
-            urlopen = Session().get
+    def __init__(self, /, url: str, urlopen: Callable = Session().get):
         self.__resp = resp = urlopen(url, headers={"Accept-Encoding": "identity"}, stream=True)
         self.__seekable = resp.headers.get("Accept-Ranges") == "bytes"
         self.__size = int(resp.headers['Content-Length'])

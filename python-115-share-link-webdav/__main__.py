@@ -18,7 +18,7 @@ from argparse import ArgumentParser, RawTextHelpFormatter
 
 parser = ArgumentParser(
     description="""
-    115 分享链接 webdav 挂载工具 (version: 0.0.2)
+    115 分享链接 webdav 挂载工具 (version: 0.0.4)
 
 源码地址：https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-share-link-webdav
 """, formatter_class=RawTextHelpFormatter)
@@ -69,6 +69,7 @@ Verbose Output:
 5 - show full request/response header info (HTTP Logging)
     request body and GET response bodies not shown
 """)
+parser.add_argument("-w", "--watch-links", action="store_true", help="如果指定此参数，则会检测 links-file 的变化")
 
 args = parser.parse_args()
 
@@ -78,9 +79,9 @@ wsgidav_config_file = args.config
 host = args.host
 port = args.port
 verbose = args.verbose
+watch_links = args.watch_links
 
 from os import environ, path as os_path
-from yaml import load as yaml_load, Loader as yaml_Loader
 from pip_tool import ensure_install
 
 environ["PIP_INDEX_URL"] = "http://mirrors.aliyun.com/pypi/simple/"
@@ -93,6 +94,8 @@ ensure_install("cheroot")
 ensure_install("wsgidav")
 # NOTE: 二次尝试，确保一定装上 😂
 ensure_install("wsgidav.wsgidav_app", "wsgidav")
+if watch_links:
+    ensure_install("watchdog")
 
 from pan115 import Pan115Client
 
@@ -113,17 +116,17 @@ if client.cookie != cookie:
 
 from pkgutil import get_data
 
-try:
-    links_config_text = open(links_file, "rb").read()
-except FileNotFoundError:
-    links_config_text = get_data("src", "links.yml") # type: ignore
-    open(links_file, "wb").write(links_config_text)
+if not os_path.exists(links_file):
+    links_config_text = get_data("src", "links.yml")
+    open(links_file, "wb", buffering=0).write(links_config_text) # type: ignore
 
 try:
-    wsgidav_config_text = open(wsgidav_config_file, "rb").read()
+    wsgidav_config_text = open(wsgidav_config_file, "rb", buffering=0).read()
 except FileNotFoundError:
     wsgidav_config_text = get_data("src", "sample_wsgidav.yaml") # type: ignore
-    open(wsgidav_config_file, "wb").write(wsgidav_config_text)
+    open(wsgidav_config_file, "wb", buffering=0).write(wsgidav_config_text)
+
+from yaml import load as yaml_load, Loader as yaml_Loader
 
 wsgidav_config = yaml_load(wsgidav_config_text, Loader=yaml_Loader)
 
@@ -134,7 +137,7 @@ if port is not None:
 if verbose is not None:
     wsgidav_config["verbose"] = verbose
 wsgidav_config["provider_mapping"] = {
-    "/": Pan115ShareLinkFilesystemProvider.from_config(cookie, links_config_text)
+    "/": Pan115ShareLinkFilesystemProvider.from_config_file(cookie, links_file, watch=watch_links)
 }
 
 app = WsgiDAVApp(wsgidav_config)

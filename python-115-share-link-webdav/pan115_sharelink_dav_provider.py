@@ -8,11 +8,17 @@ __all__ = ["Pan115ShareLinkFilesystemProvider"]
 
 from hashlib import md5
 from posixpath import join as joinpath, normpath
+from weakref import WeakValueDictionary
 
+from wsgidav.dav_error import HTTP_FORBIDDEN, DAVError # type: ignore
 from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
+from wsgidav.util import get_module_logger # type: ignore
 from yaml import load as yaml_load, Loader as yaml_Loader # NEED: pip install types-PyYAML
 
-from pan115 import HTTPFileReader, Pan115Client, Pan115ShareLinkFileSystem
+from pan115 import BadRequest, Pan115Client, Pan115ShareLinkFileSystem
+
+
+_logger = get_module_logger(__name__)
 
 
 class FileResource(DAVNonCollection):
@@ -58,9 +64,7 @@ class FileResource(DAVNonCollection):
         return True
 
     def get_content(self):
-        share_link_fs = self.share_link_fs
-        downurl = share_link_fs.get_download_url(self.filepath)
-        return HTTPFileReader(downurl, share_link_fs.client.request)
+        return self.share_link_fs.open(self.filepath, "rb")
 
     def is_link(self, /):
         return False
@@ -125,8 +129,31 @@ class RootResource(DAVCollection):
     ):
         super().__init__(path, environ)
         self.share_link_fs = share_link_fs
+        self.time = None
+        self.size = None
+        self.bad_share_link = False
+        if isinstance(share_link_fs, Pan115ShareLinkFileSystem):
+            try:
+                shareinfo = share_link_fs.shareinfo
+                self.time = int(shareinfo["create_time"])
+                self.size = int(shareinfo["file_size"])
+            except BadRequest as e:
+                _logger.error(f"{path!r} :: {type(e).__qualname__}: {e}")
+                self.bad_share_link = True
+                self.bad_reason = e
+
+    def get_content_length(self):
+        return self.size
+
+    def get_creation_date(self):
+        return self.time
+
+    def get_last_modified(self):
+        return self.time
 
     def get_member_names(self):
+        if self.bad_share_link:
+            raise DAVError(HTTP_FORBIDDEN, self.bad_reason)
         share_link_fs = self.share_link_fs
         if type(share_link_fs) is dict:
             return list(share_link_fs)
@@ -137,6 +164,8 @@ class RootResource(DAVCollection):
         /, 
         name: str, 
     ) -> None | RootResource | FileResource | FolderResource:
+        if self.bad_share_link:
+            raise DAVError(HTTP_FORBIDDEN, self.bad_reason)
         share_link_fs = self.share_link_fs
         path = joinpath(self.path, name)
         if type(share_link_fs) is dict:
@@ -159,28 +188,55 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
         super().__init__()
         self.share_link_fs = share_link_fs
 
-    @staticmethod
-    def make_share_link_fs(client: Pan115Client, config):
-        if isinstance(config, str):
-            return Pan115ShareLinkFileSystem(client, config)
-        else:
-            return {
-                name.replace("/", "｜"): (
-                    Pan115ShareLinkFileSystem(client, conf)
-                    if isinstance(config, str) else
-                    __class__.make_share_link_fs(client, conf) # type: ignore
-                )
-                for name, conf in config.items()
-            }
-
     @classmethod
     def from_config(cls, cookie_or_client, config_text: bytes | str, /):
+        def make_share_link_fs(client: Pan115Client, config):
+            if isinstance(config, str):
+                return Pan115ShareLinkFileSystem(client, config)
+            else:
+                return {
+                    name.replace("/", "｜"): make_share_link_fs(client, conf)
+                    for name, conf in config.items()
+                }
         if isinstance(cookie_or_client, Pan115Client):
             client = cookie_or_client
         else:
             client = Pan115Client(cookie_or_client)
         config = yaml_load(config_text, Loader=yaml_Loader)
-        return cls(cls.make_share_link_fs(client, config))
+        return cls(make_share_link_fs(client, config))
+
+    @classmethod
+    def from_config_file(cls, cookie_or_client, config_path, /, watch: bool = False):
+        config_text = open(config_path, "rb").read()
+        if not watch:
+            return cls.from_config(cookie_or_client, config_text)
+        from watch_links import WatchFileEventHandler
+        link_to_inst: WeakValueDictionary[str, Pan115ShareLinkFileSystem] = WeakValueDictionary()
+        def make_share_link_fs(client: Pan115Client, config):
+            if isinstance(config, str):
+                if config in link_to_inst:
+                    inst = link_to_inst[config]
+                else:
+                    inst = link_to_inst[config] = Pan115ShareLinkFileSystem(client, config)
+                return inst
+            else:
+                return {
+                    name.replace("/", "｜"): make_share_link_fs(client, conf)
+                    for name, conf in config.items()
+                }
+        def handle_update(path):
+            config_text = open(path, "rb").read()
+            config = yaml_load(config_text, Loader=yaml_Loader)
+            new_share_link_fs = make_share_link_fs(client, config)
+            instance.share_link_fs = new_share_link_fs
+        if isinstance(cookie_or_client, Pan115Client):
+            client = cookie_or_client
+        else:
+            client = Pan115Client(cookie_or_client)
+        config = yaml_load(config_text, Loader=yaml_Loader)
+        instance = cls(make_share_link_fs(client, config))
+        WatchFileEventHandler.start(config_path, handle_update)
+        return instance
 
     def get_resource_inst(
         self, 
@@ -201,6 +257,11 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
             if not sep:
                 return RootResource(path, environ, share_link_fs)
         filepath = "/" + filepath
+        try:
+            share_link_fs.shareinfo
+        except BadRequest as e:
+            _logger.error(f"{path!r} :: {type(e).__qualname__}: {e}")
+            raise DAVError(HTTP_FORBIDDEN, e)
         if not share_link_fs.exists(filepath):
             return None
         if share_link_fs.isdir(filepath):
