@@ -130,20 +130,10 @@ class RootResource(DAVCollection):
         super().__init__(path, environ)
         self.share_link_fs = share_link_fs
         self.time = None
-        self.size = None
-        self.bad_share_link = False
         if isinstance(share_link_fs, Pan115ShareLinkFileSystem):
-            try:
-                shareinfo = share_link_fs.shareinfo
+            shareinfo = share_link_fs.__dict__.get("shareinfo")
+            if shareinfo:
                 self.time = int(shareinfo["create_time"])
-                self.size = int(shareinfo["file_size"])
-            except BadRequest as e:
-                _logger.error(f"{path!r} :: {type(e).__qualname__}: {e}")
-                self.bad_share_link = True
-                self.bad_reason = e
-
-    def get_content_length(self):
-        return self.size
 
     def get_creation_date(self):
         return self.time
@@ -152,11 +142,13 @@ class RootResource(DAVCollection):
         return self.time
 
     def get_member_names(self):
-        if self.bad_share_link:
-            raise DAVError(HTTP_FORBIDDEN, self.bad_reason)
         share_link_fs = self.share_link_fs
         if type(share_link_fs) is dict:
             return list(share_link_fs)
+        try:
+            share_link_fs.shareinfo
+        except BadRequest as e:
+            raise DAVError(HTTP_FORBIDDEN, e)
         return share_link_fs.listdir("/")
 
     def get_member(
@@ -164,14 +156,16 @@ class RootResource(DAVCollection):
         /, 
         name: str, 
     ) -> None | RootResource | FileResource | FolderResource:
-        if self.bad_share_link:
-            raise DAVError(HTTP_FORBIDDEN, self.bad_reason)
         share_link_fs = self.share_link_fs
         path = joinpath(self.path, name)
         if type(share_link_fs) is dict:
             if name not in share_link_fs:
                 return None
             return RootResource(path, self.environ, share_link_fs[name])
+        try:
+            share_link_fs.shareinfo
+        except BadRequest as e:
+            raise DAVError(HTTP_FORBIDDEN, e)
         filepath = "/" + name
         if share_link_fs.isdir(filepath):
             return FolderResource(path, self.environ, share_link_fs, filepath)
