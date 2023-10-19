@@ -148,6 +148,7 @@ class RootResource(DAVCollection):
         try:
             share_link_fs.shareinfo
         except BadRequest as e:
+            _logger.error(f"{self.path!r} :: {type(e).__qualname__}: {e}")
             raise DAVError(HTTP_FORBIDDEN, e)
         return share_link_fs.listdir("/")
 
@@ -165,6 +166,7 @@ class RootResource(DAVCollection):
         try:
             share_link_fs.shareinfo
         except BadRequest as e:
+            _logger.error(f"{self.path!r} :: {type(e).__qualname__}: {e}")
             raise DAVError(HTTP_FORBIDDEN, e)
         filepath = "/" + name
         if share_link_fs.isdir(filepath):
@@ -250,12 +252,12 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
             share_link_fs = share_link_fs[name]
             if not sep:
                 return RootResource(path, environ, share_link_fs)
-        filepath = "/" + filepath
         try:
             share_link_fs.shareinfo
         except BadRequest as e:
             _logger.error(f"{path!r} :: {type(e).__qualname__}: {e}")
             raise DAVError(HTTP_FORBIDDEN, e)
+        filepath = "/" + filepath
         if not share_link_fs.exists(filepath):
             return None
         if share_link_fs.isdir(filepath):
