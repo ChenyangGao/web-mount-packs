@@ -308,8 +308,8 @@ lock_storage: true
 verbose: 3
 
 logging:
-    #: Enable logging when using wsgidav in library mode (always on, when running as CLI)
-    enable: null
+    #: Enable logging when using wsgidav in library mode
+    enable: true
     #: Set logging output format
     #: (see https://docs.python.org/3/library/logging.html#logging.Formatter)
     logger_date_format: '%H:%M:%S'

@@ -15,7 +15,7 @@ from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # 
 from wsgidav.util import get_module_logger # type: ignore
 from yaml import load as yaml_load, Loader as yaml_Loader # NEED: pip install types-PyYAML
 
-from pan115 import BadRequest, Pan115Client, Pan115ShareLinkFileSystem
+from .pan115 import BadRequest, Pan115Client, Pan115ShareLinkFileSystem
 
 
 _logger = get_module_logger(__name__)
@@ -145,6 +145,9 @@ class RootResource(DAVCollection):
         share_link_fs = self.share_link_fs
         if type(share_link_fs) is dict:
             return list(share_link_fs)
+        if share_link_fs is None:
+            _logger.warn(f"{self.path!r} :: the corresponding link is not available")
+            return []
         try:
             share_link_fs.shareinfo
         except BadRequest as e:
@@ -163,6 +166,9 @@ class RootResource(DAVCollection):
             if name not in share_link_fs:
                 return None
             return RootResource(path, self.environ, share_link_fs[name])
+        if share_link_fs is None:
+            _logger.warn(f"{self.path!r} :: the corresponding link is not available")
+            return None
         try:
             share_link_fs.shareinfo
         except BadRequest as e:
@@ -188,7 +194,11 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
     def from_config(cls, cookie_or_client, config_text: bytes | str, /):
         def make_share_link_fs(client: Pan115Client, config):
             if isinstance(config, str):
-                return Pan115ShareLinkFileSystem(client, config)
+                try:
+                    return Pan115ShareLinkFileSystem(client, config)
+                except Exception as e:
+                    _logger.error(e)
+                    return None
             else:
                 return {
                     name.replace("/", "｜"): make_share_link_fs(client, conf)
@@ -203,28 +213,41 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
 
     @classmethod
     def from_config_file(cls, cookie_or_client, config_path, /, watch: bool = False):
-        config_text = open(config_path, "rb").read()
+        config_text = open(config_path, "rb", buffering=0).read()
         if not watch:
             return cls.from_config(cookie_or_client, config_text)
-        from watch_links import WatchFileEventHandler
+        from .watch_links import WatchFileEventHandler
         link_to_inst: WeakValueDictionary[str, Pan115ShareLinkFileSystem] = WeakValueDictionary()
         def make_share_link_fs(client: Pan115Client, config):
             if isinstance(config, str):
                 if config in link_to_inst:
                     inst = link_to_inst[config]
                 else:
-                    inst = link_to_inst[config] = Pan115ShareLinkFileSystem(client, config)
+                    try:
+                        inst = link_to_inst[config] = Pan115ShareLinkFileSystem(client, config)
+                    except Exception as e:
+                        _logger.error(e)
+                        return None
                 return inst
             else:
                 return {
                     name.replace("/", "｜"): make_share_link_fs(client, conf)
-                    for name, conf in config.items()
+                    for name, conf in config.items() if conf
                 }
         def handle_update(path):
-            config_text = open(path, "rb").read()
-            config = yaml_load(config_text, Loader=yaml_Loader)
-            new_share_link_fs = make_share_link_fs(client, config)
-            instance.share_link_fs = new_share_link_fs
+            try:
+                config_text = open(path, "rb", buffering=0).read()
+                config = yaml_load(config_text, Loader=yaml_Loader)
+            except Exception as e:
+                _logger.error(e)
+                return
+            if config is None:
+                return
+            if config:
+                new_share_link_fs = make_share_link_fs(client, config)
+                instance.share_link_fs = new_share_link_fs
+            else:
+                instance.share_link_fs = {}
         if isinstance(cookie_or_client, Pan115Client):
             client = cookie_or_client
         else:
@@ -252,6 +275,9 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
             share_link_fs = share_link_fs[name]
             if not sep:
                 return RootResource(path, environ, share_link_fs)
+        if share_link_fs is None:
+            _logger.warn(f"{path!r} :: the corresponding link is not available")
+            return None
         try:
             share_link_fs.shareinfo
         except BadRequest as e:

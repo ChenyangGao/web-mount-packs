@@ -4,4 +4,4 @@ pyyaml
 qrcode
 requests
 watchdog
-wsgidav
+WsgiDAV

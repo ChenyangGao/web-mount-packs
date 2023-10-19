@@ -7,7 +7,7 @@ $ python python-115-share-link-webdav -h
 usage: python-115-share-link-webdav_0.0.4.pyz [-h] [-ck COOKIE_PATH] [-l LINKS_FILE] [-c CONFIG] [-H HOST] [-p PORT] [-v {0,1,2,3,4,5}]
                                               [-w]
 
-    115 分享链接 webdav 挂载工具 (version: 0.0.4)
+    115 分享链接 webdav 挂载工具
 
 源码地址：https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-share-link-webdav
 

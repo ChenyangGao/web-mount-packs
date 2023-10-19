@@ -17,6 +17,7 @@ function createpack() {
 
 shopt -s globstar
 rm -rf ${PROJDIR}/**/__pycache__
+rm -rf ${PROJDIR}/**/.*.swp
 if [ $(uname -s) = 'Darwin' ]; then
     rm -rf ${PROJDIR}/**/.DS_store
     rm -rf ${PROJDIR}/**/._*
