@@ -97,10 +97,21 @@ docker run --rm -it \
     chenyanggao/python-115-share-link-webdav
 ```
 
-扫码登录成功，本地就有缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
+扫码登录成功，本地就有 cookie 缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
 
 ```console
 docker run -d \
+    -p 8080:8080 \
+    -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    --restart=always \
+    --name="python-115-share-link-webdav" \
+    chenyanggao/python-115-share-link-webdav
+```
+
+如果第 1 次也想要后台运行，而且以后也运行相同的命令，可以运行下面的命令，在 docker 后台看运行日志，有二维码可以扫
+
+```console
+docker run -d -t \
     -p 8080:8080 \
     -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
     --restart=always \
@@ -122,7 +133,7 @@ cd /path/to/python-115-share-link-webdav
 docker compose up
 ```
 
-扫码登录成功，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
+扫码登录成功，本地就有 cookie 缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
 
 ```console
 docker compose up -d
@@ -154,7 +165,7 @@ docker run --rm -it \
     chenyanggao/python-115-share-link-webdav
 ```
 
-扫码登录成功，本地就有缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
+扫码登录成功，本地就有 cookie 缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
 
 ```console
 docker run -d \
@@ -164,3 +175,15 @@ docker run -d \
     --name="python-115-share-link-webdav" \
     chenyanggao/python-115-share-link-webdav
 ```
+
+如果第 1 次也想要后台运行，而且以后也运行相同的命令，可以运行下面的命令，在 docker 后台看运行日志，有二维码可以扫
+
+```console
+docker run -d -t \
+    -p 8080:8080 \
+    -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    --restart=always \
+    --name="python-115-share-link-webdav" \
+    chenyanggao/python-115-share-link-webdav
+```
+
