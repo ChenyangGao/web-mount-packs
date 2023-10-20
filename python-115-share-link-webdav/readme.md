@@ -93,6 +93,7 @@ docker pull chenyanggao/python-115-share-link-webdav:latest
 docker run --rm -it \
     -p 8080:8080 \
     -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    --name="python-115-share-link-webdav" \
     chenyanggao/python-115-share-link-webdav
 ```
 
@@ -103,6 +104,7 @@ docker run -d \
     -p 8080:8080 \
     -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
     --restart=always \
+    --name="python-115-share-link-webdav" \
     chenyanggao/python-115-share-link-webdav
 ```
 
@@ -148,6 +150,7 @@ docker build --rm -t chenyanggao/python-115-share-link-webdav
 docker run --rm -it \
     -p 8080:8080 \
     -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    --name="python-115-share-link-webdav" \
     chenyanggao/python-115-share-link-webdav
 ```
 
@@ -158,5 +161,6 @@ docker run -d \
     -p 8080:8080 \
     -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
     --restart=always \
+    --name="python-115-share-link-webdav" \
     chenyanggao/python-115-share-link-webdav
 ```
