@@ -146,8 +146,6 @@ def _init_config():
     wsgidav_config.setdefault("logging", {}).setdefault("enable", True)
     wsgidav_config.setdefault("server", "cheroot")
 
-    import wsgidav.wsgidav_app # It must be imported first!!!
-
     from util.pan115_sharelink_dav_provider import Pan115ShareLinkFilesystemProvider
 
     wsgidav_config["provider_mapping"] = {

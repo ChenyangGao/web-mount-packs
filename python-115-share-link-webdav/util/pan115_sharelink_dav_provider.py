@@ -10,6 +10,7 @@ from hashlib import md5
 from posixpath import join as joinpath, normpath
 from weakref import WeakValueDictionary
 
+import wsgidav.wsgidav_app # It must be imported first!!!
 from wsgidav.dav_error import HTTP_FORBIDDEN, DAVError # type: ignore
 from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
 from wsgidav.util import get_module_logger # type: ignore

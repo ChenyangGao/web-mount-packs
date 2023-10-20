@@ -4,7 +4,7 @@
 
 ```console
 $ python python-115-share-link-webdav -h
-usage: python-115-share-link-webdav_0.0.4.pyz [-h] [-ck COOKIE_PATH] [-l LINKS_FILE] [-c CONFIG] [-H HOST] [-p PORT] [-v {0,1,2,3,4,5}]
+usage: python-115-share-link-webdav [-h] [-ck COOKIE_PATH] [-l LINKS_FILE] [-c CONFIG] [-H HOST] [-p PORT] [-v {0,1,2,3,4,5}]
                                               [-w]
 
     115 分享链接 webdav 挂载工具
@@ -70,4 +70,93 @@ options:
 $ bash python-115-share-link-webdav/pack.sh 
 Created a package file located in 
 	/path/to/python-115-share-link-webdav_x.y.z.pyz
+```
+
+## Docker 运行
+
+> 配置文件会在 `~/python-115-share-link-webdav` 中生成，你可以进行修改。
+>   - cookie.txt: cookie文件
+>   - wsgidav.yaml: [wsgidav](https://github.com/mar10/wsgidav) 的 [配置文件](https://wsgidav.readthedocs.io/en/latest/user_guide_configure.html)
+>   - links.yml: 115分享链接的配置文件
+
+### 1. 直接拉取镜像运行
+
+直接从 [docker hub](https://hub.docker.com/repository/docker/chenyanggao/python-115-share-link-webdav) 上拉取镜像
+
+```console
+docker pull chenyanggao/python-115-share-link-webdav:latest
+```
+
+第 1 次运行需要扫码登录，所以不要后台运行
+
+```console
+docker run --rm -it \
+    -p 8080:8080 \
+    -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    chenyanggao/python-115-share-link-webdav
+```
+
+扫码登录成功，本地就有缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
+
+```console
+docker run -d \
+    -p 8080:8080 \
+    -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    --restart=always \
+    chenyanggao/python-115-share-link-webdav
+```
+
+### 2. docker compose 运行
+
+首先你需要进入这个项目的目录下
+
+```console
+cd /path/to/python-115-share-link-webdav
+```
+
+第 1 次运行需要扫码登录，所以不要后台运行
+
+```console
+docker compose up
+```
+
+扫码登录成功，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
+
+```console
+docker compose up -d
+```
+
+### 3. docker run 运行
+
+首先你需要进入这个项目的目录下
+
+```console
+cd /path/to/python-115-share-link-webdav
+```
+
+然后构建镜像，这里取名为 `chenyanggao/python-115-share-link-webdav`
+
+```console
+docker build --rm -t chenyanggao/python-115-share-link-webdav 
+```
+
+以后你就可以直接运行镜像了。
+
+第 1 次运行需要扫码登录，所以不要后台运行
+
+```console
+docker run --rm -it \
+    -p 8080:8080 \
+    -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    chenyanggao/python-115-share-link-webdav
+```
+
+扫码登录成功，本地就有缓存，可以输入 <keyboard>CTRL</keyboard>-<keyboard>C</keyboard> 结束进程，以后就可以指定后台运行
+
+```console
+docker run -d \
+    -p 8080:8080 \
+    -v ~/python-115-share-link-webdav:/etc/python-115-share-link-webdav \
+    --restart=always \
+    chenyanggao/python-115-share-link-webdav
 ```

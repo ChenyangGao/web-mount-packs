@@ -1,0 +1,19 @@
+version: "3.3"
+services:
+  python-115-share-link-webdav:
+    build: .
+    image: chenyanggao/python-115-share-link-webdav
+    container_name: python-115-share-link-webdav
+    ports:
+      - "8080:8080"
+    networks:
+      - local
+    volumes:
+      - "~/python-115-share-link-webdav:/etc/python-115-share-link-webdav"
+    restart: always
+    stdin_open: true
+    tty: true
+
+networks:
+  local:
+    driver: bridge
