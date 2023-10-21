@@ -10,13 +10,13 @@ from hashlib import md5
 from posixpath import join as joinpath, normpath
 from weakref import WeakValueDictionary
 
-import wsgidav.wsgidav_app # It must be imported first!!!
+import wsgidav.wsgidav_app # type: ignore # It must be imported first!!!
 from wsgidav.dav_error import HTTP_FORBIDDEN, DAVError # type: ignore
 from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
 from wsgidav.util import get_module_logger # type: ignore
 from yaml import load as yaml_load, Loader as yaml_Loader # NEED: pip install types-PyYAML
 
-from .pan115 import BadRequest, Pan115Client, Pan115ShareLinkFileSystem
+from .pan115 import BadRequest, LoginError, Pan115Client, Pan115ShareLinkFileSystem
 
 
 _logger = get_module_logger(__name__)
@@ -198,7 +198,7 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
                 try:
                     return Pan115ShareLinkFileSystem(client, config)
                 except Exception as e:
-                    _logger.error(e)
+                    _logger.error(f"{type(e).__qualname__}: {e}")
                     return None
             else:
                 return {
@@ -213,13 +213,18 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
         return cls(make_share_link_fs(client, config))
 
     @classmethod
-    def from_config_file(cls, cookie_or_client, config_path, /, watch: bool = False):
+    def from_config_file(cls, cookie_path, config_path, wsgidav_config_path=None, /, watch: bool = False):
+        cookie_text = open(cookie_path, "r", encoding="latin-1").read()
         config_text = open(config_path, "rb", buffering=0).read()
+
         if not watch:
-            return cls.from_config(cookie_or_client, config_text)
-        from .watch_links import WatchFileEventHandler
+            return cls.from_config(cookie_text, config_text)
+
+        from .watch_links import WatchMultiFileEventHandler
+
         link_to_inst: WeakValueDictionary[str, Pan115ShareLinkFileSystem] = WeakValueDictionary()
-        def make_share_link_fs(client: Pan115Client, config):
+
+        def make_share_link_fs(config):
             if isinstance(config, str):
                 if config in link_to_inst:
                     inst = link_to_inst[config]
@@ -227,35 +232,77 @@ class Pan115ShareLinkFilesystemProvider(DAVProvider):
                     try:
                         inst = link_to_inst[config] = Pan115ShareLinkFileSystem(client, config)
                     except Exception as e:
-                        _logger.error(e)
+                        _logger.error(f"{type(e).__qualname__}: {e}")
                         return None
                 return inst
             else:
                 return {
-                    name.replace("/", "｜"): make_share_link_fs(client, conf)
+                    name.replace("/", "｜"): make_share_link_fs(conf)
                     for name, conf in config.items() if conf
                 }
-        def handle_update(path):
+
+        def handle_update_cookie():
+            nonlocal client
             try:
-                config_text = open(path, "rb", buffering=0).read()
+                cookie_text = open(cookie_path, "rb", buffering=0).read().decode("latin-1")
+                # if currently unreadable or empty file
+                if not cookie_text:
+                    return
+                if client.cookie == cookie_text.strip():
+                    return
+                client_new = Pan115Client(cookie_text, try_login=False)
+            except Exception as e:
+                _logger.error(f"{type(e).__qualname__}: {e}")
+                return
+            client = client_new
+            for inst in tuple(link_to_inst.values()):
+                inst.client = client_new
+
+        def handle_update_config():
+            try:
+                config_text = open(config_path, "rb", buffering=0).read()
+                # if currently unreadable or empty file
+                if not config_text:
+                    return
                 config = yaml_load(config_text, Loader=yaml_Loader)
             except Exception as e:
-                _logger.error(e)
+                _logger.error(f"{type(e).__qualname__}: {e}")
                 return
+            # if empty config
             if config is None:
                 return
             if config:
-                new_share_link_fs = make_share_link_fs(client, config)
+                new_share_link_fs = make_share_link_fs(config)
                 instance.share_link_fs = new_share_link_fs
             else:
                 instance.share_link_fs = {}
-        if isinstance(cookie_or_client, Pan115Client):
-            client = cookie_or_client
-        else:
-            client = Pan115Client(cookie_or_client)
+
+        def handle_wsgidav_config_update():
+            try:
+                # if currently unreadable or empty file
+                if not open(wsgidav_config_path, "rb", buffering=0).read(1):
+                    return
+            except FileNotFoundError:
+                pass
+            except Exception:
+                _logger.error(f"{type(e).__qualname__}: {e}")
+                return
+            from os import execl
+            from sys import executable, argv
+            execl(executable, executable, *argv)
+
+        client = Pan115Client(cookie_text)
         config = yaml_load(config_text, Loader=yaml_Loader)
-        instance = cls(make_share_link_fs(client, config))
-        WatchFileEventHandler.start(config_path, handle_update)
+        instance = cls(make_share_link_fs(config))
+
+        handles = {
+            cookie_path: handle_update_cookie, 
+            config_path: handle_update_config, 
+        }
+        if wsgidav_config_path is not None:
+            handles[wsgidav_config_path] = handle_wsgidav_config_update
+        WatchMultiFileEventHandler.start(handles)
+
         return instance
 
     def get_resource_inst(

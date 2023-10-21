@@ -198,7 +198,7 @@ class Pan115RSACipher:
 
 class Pan115Client:
 
-    def __init__(self, /, cookie=None):
+    def __init__(self, /, cookie=None, try_login: bool = True):
         self.__session = session = Session()
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
         need_login = True
@@ -206,6 +206,8 @@ class Pan115Client:
             self.cookie = cookie
             resp = self.user_info()
             need_login = not resp["state"]
+            if need_login and not try_login:
+                raise LoginError("bad cookie")
         if need_login:
             cookie = self.login_with_qrcode()["data"]["cookie"]
             self.cookie = cookie
@@ -228,7 +230,7 @@ class Pan115Client:
     @cookie.setter
     def cookie(self, cookie: str | dict | Iterable[dict | Cookie] | CookieJar, /):
         if isinstance(cookie, str):
-            cookie = text_to_dict(cookie, entry_sep=";")
+            cookie = text_to_dict(cookie.strip(), entry_sep=";")
         cookiejar = self.__session.cookies
         cookiejar.clear()
         if isinstance(cookie, dict):
@@ -510,6 +512,12 @@ class Pan115ShareLinkFileSystem:
     @property
     def client(self, /) -> Pan115Client:
         return self._client
+
+    @client.setter
+    def client(self, client, /):
+        if not isinstance(client, Pan115Client):
+            raise TypeError(f"{client!r} is not a Pan115Client")
+        self._client = client
 
     def exists(self, id_or_path: int | str = 0, /):
         try:

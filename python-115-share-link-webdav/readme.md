@@ -4,8 +4,8 @@
 
 ```console
 $ python python-115-share-link-webdav -h
-usage: python-115-share-link-webdav [-h] [-ck COOKIE_PATH] [-l LINKS_FILE] [-c CONFIG] [-H HOST] [-p PORT] [-v {0,1,2,3,4,5}]
-                                              [-w]
+python /Users/gcy/project_github/web-mount-packs/python-115-share-link-webdav -h            
+usage: python-115-share-link-webdav [-h] [-ck COOKIE_PATH] [-l LINKS_FILE] [-c CONFIG] [-H HOST] [-p PORT] [-v {0,1,2,3,4,5}] [-w]
 
     115 分享链接 webdav 挂载工具
 
@@ -54,14 +54,19 @@ options:
                         Set verbosity level
                         
                         Verbose Output:
-                        0 - no output
-                        1 - no output (excepting application exceptions)
-                        2 - show warnings
-                        3 - show single line request summaries (for HTTP logging)
-                        4 - show additional events
-                        5 - show full request/response header info (HTTP Logging)
-                            request body and GET response bodies not shown
-  -w, --watch-links     如果指定此参数，则会检测 links-file 的变化
+                            0 - no output
+                            1 - no output (excepting application exceptions)
+                            2 - show warnings
+                            3 - show single line request summaries (for HTTP logging)
+                            4 - show additional events
+                            5 - show full request/response header info (HTTP Logging)
+                                request body and GET response bodies not shown
+  -w, --watch-config    如果指定此参数，则会监测配置文件的变化
+                            针对 -ck/--cookie-path: 默认时 cookie.txt，更新cookie
+                            针对 -l/--links-file:   默认是 links.yml，更新分享链接
+                            针对 -c/--config:       默认是 wsgidav.yaml，更新配置文件，会重启服务器（慎用）
+                        
+                        因为有些用户提到，找不到配置文件，所以我额外增加了一个挂载目录，在 webdav 服务的 /_workdir 路径，默认情况下配置文件在这个目录里面，你可以单独挂载此路径，然后修改配置文件
 ```
 
 ## 打包程序

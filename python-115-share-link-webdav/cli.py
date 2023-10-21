@@ -63,16 +63,21 @@ def _init_command_line_options():
 Set verbosity level
 
 Verbose Output:
-0 - no output
-1 - no output (excepting application exceptions)
-2 - show warnings
-3 - show single line request summaries (for HTTP logging)
-4 - show additional events
-5 - show full request/response header info (HTTP Logging)
-    request body and GET response bodies not shown
+    0 - no output
+    1 - no output (excepting application exceptions)
+    2 - show warnings
+    3 - show single line request summaries (for HTTP logging)
+    4 - show additional events
+    5 - show full request/response header info (HTTP Logging)
+        request body and GET response bodies not shown
 """)
-    parser.add_argument("-w", "--watch-links", action="store_true", help="如果指定此参数，则会检测 links-file 的变化")
+    parser.add_argument("-w", "--watch-config", action="store_true", help="""如果指定此参数，则会监测配置文件的变化
+    针对 -ck/--cookie-path: 默认时 cookie.txt，更新cookie
+    针对 -l/--links-file:   默认是 links.yml，更新分享链接
+    针对 -c/--config:       默认是 wsgidav.yaml，更新配置文件，会重启服务器（慎用）
 
+因为有些用户提到，找不到配置文件，所以我额外增加了一个挂载目录，在 webdav 服务的 /_workdir 路径，默认情况下配置文件在这个目录里面，你可以单独挂载此路径，然后修改配置文件
+""")
     return parser.parse_args()
 
 
@@ -85,7 +90,7 @@ def _init_config():
     host         = args.host
     port         = args.port
     verbose      = args.verbose
-    watch_links  = args.watch_links
+    watch_config = args.watch_config
 
     from os import environ, path as os_path
     from util.pip_tool import ensure_install
@@ -98,7 +103,7 @@ def _init_config():
     ensure_install("requests")
     ensure_install("wsgidav", "WsgiDAV")
     ensure_install("cheroot")
-    if watch_links:
+    if watch_config:
         ensure_install("watchdog")
 
     try:
@@ -147,9 +152,11 @@ def _init_config():
     wsgidav_config.setdefault("server", "cheroot")
 
     from util.pan115_sharelink_dav_provider import Pan115ShareLinkFilesystemProvider
+    from wsgidav.fs_dav_provider import FilesystemProvider # type: ignore
 
     wsgidav_config["provider_mapping"] = {
-        "/": Pan115ShareLinkFilesystemProvider.from_config_file(cookie, links_file, watch=watch_links)
+        "/": Pan115ShareLinkFilesystemProvider.from_config_file(cookie_path, links_file, davconf_file, watch=watch_config), 
+        "/_workdir": FilesystemProvider("."), 
     }
 
     return wsgidav_config
@@ -158,9 +165,9 @@ def _init_config():
 def run():
     config = _init_config()
 
-    from wsgidav.wsgidav_app import WsgiDAVApp
-    from wsgidav.server.server_cli import SUPPORTED_SERVERS
-    from wsgidav.xml_tools import use_lxml
+    from wsgidav.wsgidav_app import WsgiDAVApp # type: ignore
+    from wsgidav.server.server_cli import SUPPORTED_SERVERS # type: ignore
+    from wsgidav.xml_tools import use_lxml # type: ignore
 
     app = WsgiDAVApp(config)
 
