@@ -9,8 +9,8 @@
 ```python
 >>> # 导入模块
 >>> from clouddrive import CloudDriveClient, CloudDriveFileSystem
->>> # 创建客户端对象，登录 alist：此处，用户名是 "test"，密码是 "test@test"
->>> client = AlistClient("http://localhost:5244", "test", "test@test")
+>>> # 创建客户端对象，登录 cd2：此处，用户名是 "test"，密码是 "test@test"
+>>> client = CloudDriveClient("http://localhost:5244", "test", "test@test")
 >>> # 创建文件系统对象
 >>> fs = CloudDriveFileSystem(client)
 >>> # 获取当前位置
@@ -80,7 +80,7 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 >>> # 获取当前目录下所有 .mkv 文件的 url
 >>> for path in fs.iterdir(max_depth=-1):
 >>>     if path.name.endswith(".mkv"):
->>>         # 获取下载链接（要么是直链，不然就是 alist 的下载链接）
+>>>         # 获取下载链接（注意：不是直链）
 >>>         print(path.url)
 http://localhost:19798/static/http/localhost:19798/False/%2F115%2F%E4%BA%91%E4%B8%8B%E8%BD%BD%2F57.Seconds.2023.1080p.WEB-DL.DDP5.1.H264-EniaHD%5BTGx%5D%2F57.Seconds.2023.1080p.WEB-DL.DDP5.1.H264-EniaHD.mkv
 http://localhost:19798/static/http/localhost:19798/False/%2F115%2F%E4%BA%91%E4%B8%8B%E8%BD%BD%2FA.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies%5BTGx%5D%2FA.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies.mkv
