@@ -2,12 +2,11 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__all__ = ["WatchFileEventHandler"]
+__all__ = ["WatchFileEventHandler", "WatchMultiFileEventHandler"]
 
 from atexit import register
 from os import lstat
 from os.path import abspath, commonpath, dirname, normcase
-from re import escape
 from typing import Callable, Mapping
 
 from watchdog.observers import Observer # type: ignore
