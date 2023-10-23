@@ -6,6 +6,8 @@ from __future__ import annotations
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
 __all__ = ["CloudDrivePath", "CloudDriveFile", "CloudDriveFileSystem"]
 
+import errno
+
 from functools import update_wrapper
 from http.client import HTTPResponse
 from io import BufferedReader, BytesIO, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
@@ -48,16 +50,17 @@ def grpc_exc_redirect(fn, /):
                 raise
             match e.code():
                 case StatusCode.PERMISSION_DENIED:
-                    raise PermissionError(1, args)
+                    raise PermissionError(errno.EPERM, args) from e
                 case StatusCode.NOT_FOUND:
-                    raise FileNotFoundError(2, args)
+                    raise FileNotFoundError(errno.ENOENT, args) from e
                 case StatusCode.ALREADY_EXISTS:
-                    raise FileExistsError(17, args)
+                    raise FileExistsError(errno.EEXIST, args) from e
                 case StatusCode.UNIMPLEMENTED:
-                    raise UnsupportedOperation(22, args)
-                # case StatusCode.UNAUTHENTICATED:
-                #     ...
-            raise OSError(22, args) from e
+                    raise UnsupportedOperation(errno.ENOSYS, args) from e
+                case StatusCode.UNAUTHENTICATED:
+                    raise PermissionError(errno.EACCES, args) from e
+                case _:
+                    raise OSError(errno.EREMOTEIO, args) from e
     return update_wrapper(wrapper, fn)
 
 
@@ -173,7 +176,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.fs.exists(self.path, _check=False)
 
     def glob(self, /, pattern: str) -> Iterator[CloudDrivePath]:
-        raise NotImplementedError("glob")
+        raise UnsupportedOperation(errno.ENOSYS, "glob")
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, _check=False)
@@ -221,7 +224,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return type(self)(self.fs, path)
 
     def match(self, /, path_pattern: str) -> bool:
-        raise NotImplementedError("match")
+        raise UnsupportedOperation(errno.ENOSYS, "match")
 
     def mkdir(self, /):
         self.fs.mkdir(self.path, _check=False)
@@ -248,7 +251,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
             mode = mode.replace("t", "", 1)
             open_text_mode = True
         if mode not in ("r", "rt", "tr", "rb", "br"):
-            raise ValueError(f"invalid (or unsupported) mode: {orig_mode!r}")
+            raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {orig_mode!r}")
         if buffering is None:
             if open_text_mode:
                 buffering = DEFAULT_BUFFER_SIZE
@@ -256,7 +259,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
                 buffering = 0
         if buffering == 0:
             if open_text_mode:
-                raise ValueError("can't have unbuffered text I/O")
+                raise OSError(errno.EINVAL, "can't have unbuffered text I/O")
             return CloudDriveFile(self, mode)
         line_buffering = False
         buffer_size: int
@@ -338,7 +341,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return type(self)(self.fs, dst_path)
 
     def rglob(self, /, pattern: str) -> Iterator[CloudDrivePath]:
-        raise NotImplementedError("rglob")
+        raise UnsupportedOperation(errno.ENOSYS, "rglob")
 
     def rmdir(self, /):
         self.fs.rmdir(self.path, _check=False)
@@ -423,8 +426,8 @@ class CloudDriveFile(RawIOBase):
     def __init__(self, /, path: CloudDrivePath, mode: str = "r"):
         if mode != "r":
             if mode in ("r+", "+r", "w", "w+", "+w", "a", "a+", "+a", "x", "x+", "+x"):
-                raise NotImplementedError(f"`mode` not currently supported: {mode!r}")
-            raise ValueError(f"invalid mode: {mode!r}")
+                raise UnsupportedOperation(errno.ENOSYS, f"`mode` not currently supported: {mode!r}")
+            raise OSError(errno.EINVAL, f"invalid mode: {mode!r}")
         ns = self.__dict__
         ns["path"] = path
         ns["mode"] = mode
@@ -475,7 +478,7 @@ class CloudDriveFile(RawIOBase):
 
     @property
     def fileno(self, /):
-        raise self.file.fileno()
+        return self.file.fileno()
 
     def flush(self, /):
         return self.file.flush()
@@ -547,10 +550,10 @@ class CloudDriveFile(RawIOBase):
 
     def seek(self, pos: int, whence: int = 0, /) -> int:
         if not self._seekable:
-            raise TypeError("not a seekable stream")
+            raise OSError(errno.EINVAL, "not a seekable stream")
         if whence == 0:
             if pos < 0:
-                raise ValueError(f"negative seek position: {pos!r}")
+                raise OSError(errno.EINVAL, f"negative seek position: {pos!r}")
             old_pos = self.position
             if old_pos == pos:
                 return pos
@@ -570,7 +573,7 @@ class CloudDriveFile(RawIOBase):
         elif whence == 2:
             return self.seek(self.length + pos)
         else:
-            raise ValueError(f"whence value unsupported: {whence!r}")
+            raise OSError(errno.EINVAL, f"whence value unsupported: {whence!r}")
 
     def seekable(self, /) -> bool:
         return True
@@ -579,16 +582,16 @@ class CloudDriveFile(RawIOBase):
         return self.position
 
     def truncate(self, size: Optional[int] = None, /):
-        raise UnsupportedOperation("truncate")
+        raise UnsupportedOperation(errno.ENOTSUP, "truncate")
 
     def writable(self, /) -> bool:
         return False
 
     def write(self, b, /) -> int:
-        raise UnsupportedOperation("write")
+        raise UnsupportedOperation(errno.ENOTSUP, "write")
 
     def writelines(self, lines, /):
-        raise UnsupportedOperation("writelines")
+        raise UnsupportedOperation(errno.ENOTSUP, "writelines")
 
 
 class CloudDriveFileSystem:
@@ -665,7 +668,7 @@ class CloudDriveFileSystem:
     @grpc_exc_redirect
     def _move(self, paths: Sequence[str], dst_dir: str, /):
         if not paths:
-            raise ValueError("empty paths")
+            raise OSError(errno.EINVAL, "empty `paths`")
         return self.client.MoveFile(CloudDrive_pb2.MoveFileRequest(theFilePaths=paths, destPath=dst_dir))
 
     @grpc_exc_redirect
@@ -752,7 +755,7 @@ class CloudDriveFileSystem:
         elif self._attr(path).isDirectory:
             self.__dict__["path"] = path
         else:
-            raise NotADirectoryError(20, path)
+            raise NotADirectoryError(errno.ENOTDIR, path)
 
     def copy(
         self, 
@@ -762,7 +765,7 @@ class CloudDriveFileSystem:
         overwrite_or_ignore: Optional[bool] = True, 
         _check: bool = True, 
     ):
-        raise UnsupportedOperation("copy")
+        raise UnsupportedOperation(errno.ENOSYS, "copy")
 
     def copytree(
         self, 
@@ -772,7 +775,7 @@ class CloudDriveFileSystem:
         overwrite_or_ignore: Optional[bool] = None, 
         _check: bool = True, 
     ) -> str:
-        raise UnsupportedOperation("copytree")
+        raise UnsupportedOperation(errno.ENOSYS, "copytree")
 
     def download(
         self, 
@@ -785,7 +788,7 @@ class CloudDriveFileSystem:
         if _check:
             path = self.abspath(path)
             if self._attr(path).isDirectory:
-                raise IsADirectoryError(21, path)
+                raise IsADirectoryError(errno.EISDIR, path)
         path = cast(str, path)
         url = self.client.download_baseurl + quote(path, safe="?&=")
         f = urlopen(url)
@@ -1028,7 +1031,7 @@ class CloudDriveFileSystem:
         if path == "/":
             return
         if not exist_ok and self.exists(path, _check=False):
-            raise FileExistsError(17, path)
+            raise FileExistsError(errno.EEXIST, path)
         self._mkdir(path)
 
     def mkdir(
@@ -1041,18 +1044,18 @@ class CloudDriveFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         if path == "/":
-            raise PermissionError(1, "create root directory is not allowed (because it has always existed)")
+            raise PermissionError(errno.EPERM, "create root directory is not allowed (because it has always existed)")
         elif dirname(path) == "/":
-            raise PermissionError(1, f"can't directly create a cloud/storage by `mkdir`: {path!r}")
+            raise PermissionError(errno.EPERM, f"can't directly create a cloud/storage by `mkdir`: {path!r}")
         try:
             self._attr(path)
         except FileNotFoundError as e:
             dir_ = dirname(path)
             if not self._attr(dir_).isDirectory:
-                raise NotADirectoryError(20, dir_) from e
+                raise NotADirectoryError(errno.ENOTDIR, dir_) from e
             self._mkdir(path)
         else:
-            raise FileExistsError(17, path)
+            raise FileExistsError(errno.EEXIST, path)
 
     def move(
         self, 
@@ -1069,7 +1072,7 @@ class CloudDriveFileSystem:
         if src_path == dst_path:
             raise SameFileError(src_path)
         if dst_path.startswith(src_path):
-            raise PermissionError(1, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
+            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_attr = self._attr(src_path)
         try:
             dst_attr = self._attr(dst_path)
@@ -1080,7 +1083,7 @@ class CloudDriveFileSystem:
                 dst_filename = basename(src_path)
                 dst_filepath = joinpath(dst_path, dst_filename)
                 if self.exists(dst_filepath, _check=False):
-                    raise FileExistsError(17, f"destination path {dst_filepath!r} already exists")
+                    raise FileExistsError(errno.EEXIST, f"destination path {dst_filepath!r} already exists")
                 self._move([src_path], dst_path)
                 return dst_filepath
             else:
@@ -1125,13 +1128,13 @@ class CloudDriveFileSystem:
                     self._delete_cloud(attr.name, attr.CloudAPI.userName)
                 return
             else:
-                raise PermissionError(1, "remove the root directory is not allowed")
+                raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         attr = self._attr(path)
         if attr.isDirectory:
             if not recursive:
                 if dirname(path) == "/":
-                    raise PermissionError(1, f"remove a storage is not allowed: {path!r}")
-                raise IsADirectoryError(21, path)
+                    raise PermissionError(errno.EPERM, f"remove a storage is not allowed: {path!r}")
+                raise IsADirectoryError(errno.EISDIR, path)
             elif dirname(path) == "/":
                 self._delete_cloud(attr.name, attr.CloudAPI.userName)
                 return
@@ -1172,9 +1175,9 @@ class CloudDriveFileSystem:
         if src_path == dst_path:
             return
         if src_path == "/" or dst_path == "/":
-            raise OSError(22, f"invalid argument: {src_path!r} -> {dst_path!r}")
+            raise OSError(errno.EINVAL, f"invalid argument: {src_path!r} -> {dst_path!r}")
         if dst_path.startswith(src_path):
-            raise PermissionError(1, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
+            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_dir, src_name = split(src_path)
         dst_dir, dst_name = split(dst_path)
         src_attr = self._attr(src_path)
@@ -1185,7 +1188,7 @@ class CloudDriveFileSystem:
                 self._rename((src_path, dst_name))
                 return
             if not self._attr(dst_dir).isDirectory:
-                raise NotADirectoryError(20, f"{dst_dir!r} is not a directory: {src_path!r} -> {dst_path!r}")
+                raise NotADirectoryError(errno.ENOTDIR, f"{dst_dir!r} is not a directory: {src_path!r} -> {dst_path!r}")
         else:
             if replace:
                 if src_attr.isDirectory:
@@ -1195,18 +1198,18 @@ class CloudDriveFileSystem:
                         except StopIteration:
                             pass
                         else:
-                            raise OSError(9, f"directory {dst_path!r} is not empty: {src_path!r} -> {dst_path!r}")
+                            raise OSError(errno.ENOTEMPTY, f"directory {dst_path!r} is not empty: {src_path!r} -> {dst_path!r}")
                     else:
-                        raise NotADirectoryError(20, f"{dst_path!r} is not a directory: {src_path!r} -> {dst_path!r}")
+                        raise NotADirectoryError(errno.ENOTDIR, f"{dst_path!r} is not a directory: {src_path!r} -> {dst_path!r}")
                 elif dst_attr.isDirectory:
-                    raise IsADirectoryError(21, f"{dst_path!r} is a directory: {src_path!r} -> {dst_path!r}")
+                    raise IsADirectoryError(errno.EISDIR, f"{dst_path!r} is a directory: {src_path!r} -> {dst_path!r}")
                 self._delete(dst_path)
             else:
-                raise FileExistsError(17, f"destination path already exists: {src_path!r} -> {dst_path!r}")
+                raise FileExistsError(errno.EEXIST, f"destination path already exists: {src_path!r} -> {dst_path!r}")
         if src_dir == "/":
-            raise PermissionError(1, f"move a cloud/storage into another cloud/storage is not allowed: {src_path!r} -> {dst_path!r}")
+            raise PermissionError(errno.EPERM, f"move a cloud/storage into another cloud/storage is not allowed: {src_path!r} -> {dst_path!r}")
         elif dst_path == "/":
-            raise PermissionError(1, f"move a folder to the root directory (as a cloud/storage) is not allowed: {src_path!r} -> {dst_path!r}")
+            raise PermissionError(errno.EPERM, f"move a folder to the root directory (as a cloud/storage) is not allowed: {src_path!r} -> {dst_path!r}")
         if src_name == dst_name:
             if commonpath((src_dir, dst_dir)) == "/":
                 warn("cross clouds/storages transport will retain the original file: {src_path!r} <-> {dst_path!r}")
@@ -1215,7 +1218,7 @@ class CloudDriveFileSystem:
             self._rename((src_path, dst_name))
         else:
             if commonpath((src_dir, dst_dir)) == "/":
-                raise PermissionError(1, f"cross clouds/storages transport does not allow renaming: {src_path!r} -> {dst_path!r}")
+                raise PermissionError(errno.EPERM, f"cross clouds/storages transport does not allow renaming: {src_path!r} -> {dst_path!r}")
             tempname = f"{uuid4()}{splitext(src_name)[1]}"
             self._rename((src_path, tempname))
             try:
@@ -1268,13 +1271,13 @@ class CloudDriveFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         if path == "/":
-            raise PermissionError(1, "remove the root directory is not allowed")
+            raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         elif dirname(path) == "/":
-            raise PermissionError(1, f"remove a cloud/storage is not allowed: {path!r}")
+            raise PermissionError(errno.EPERM, f"remove a cloud/storage is not allowed: {path!r}")
         elif _check and not self._attr(path).isDirectory:
-            raise NotADirectoryError(20, path)
+            raise NotADirectoryError(errno.ENOTDIR, path)
         elif not self.is_empty(path, _check=False):
-            raise OSError(9, f"directory is not empty: {path!r}")
+            raise OSError(errno.ENOTEMPTY, f"directory is not empty: {path!r}")
         self._delete(path)
 
     def rmtree(
@@ -1292,7 +1295,7 @@ class CloudDriveFileSystem:
         refresh: Optional[bool] = None, 
         _check: bool = True, 
     ):
-        raise NotImplementedError(
+        raise UnsupportedOperation(errno.ENOSYS, 
             "`scandir()` is currently not supported, use `iterdir()` instead."
         )
 
@@ -1320,7 +1323,7 @@ class CloudDriveFileSystem:
         path: str | PathLike[str] = "", 
         _check: bool = True, 
     ):
-        raise NotImplementedError(
+        raise UnsupportedOperation(errno.ENOSYS, 
             "`stat()` is currently not supported, use `attr()` instead."
         )
 
@@ -1338,9 +1341,9 @@ class CloudDriveFileSystem:
         except FileNotFoundError:
             dir_ = dirname(path)
             if dir_ == "/":
-                raise PermissionError(1, f"can't create file in the root directory directly: {path!r}")
+                raise PermissionError(errno.EPERM, f"can't create file in the root directory directly: {path!r}")
             if not self._attr(dir_).isDirectory:
-                raise NotADirectoryError(2, f"parent path {dir_!r} is not a directory: {path!r}")
+                raise NotADirectoryError(errno.ENOTDIR, f"parent path {dir_!r} is not a directory: {path!r}")
         self._upload(path)
 
     def upload(
@@ -1360,7 +1363,7 @@ class CloudDriveFileSystem:
                 try:
                     path = os_path.basename(file.name) # type: ignore
                 except AttributeError as e:
-                    raise OSError(3, "Please specify the upload path") from e
+                    raise OSError(errno.EINVAL, "Please specify the upload path") from e
         else:
             file = open(local_path_or_file, "rb")
             if not path:
@@ -1375,9 +1378,9 @@ class CloudDriveFileSystem:
             pass
         else:
             if overwrite_or_ignore is None:
-                raise FileExistsError(17, path)
+                raise FileExistsError(errno.EEXIST, path)
             elif attr.isDirectory:
-                raise IsADirectoryError(21, path)
+                raise IsADirectoryError(errno.EISDIR, path)
             elif not overwrite_or_ignore:
                 return
             self._delete(path)
@@ -1398,7 +1401,7 @@ class CloudDriveFileSystem:
         path = cast(str, path)
         try:
             if not self._attr(path).isDirectory:
-                raise NotADirectoryError(20, path)
+                raise NotADirectoryError(errno.ENOTDIR, path)
         except FileNotFoundError:
             self.makedirs(path, exist_ok=True, _check=False)
         try:

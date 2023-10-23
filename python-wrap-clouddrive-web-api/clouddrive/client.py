@@ -27,23 +27,50 @@ class CloudDriveClient:
         origin: str = "http://localhost:19798", 
         username: str = "", 
         password: str = "", 
+        channel = None, 
     ):
         urlp = urlsplit(origin)
-        self.origin = f"{urlp.scheme}://{urlp.netloc}"
+        self._origin = f"{urlp.scheme}://{urlp.netloc}"
         self.download_baseurl = f"{urlp.scheme}://{urlp.netloc}/static/{urlp.scheme}/{urlp.netloc}/False/"
         self.username = username
         self.password = password
         self.metadata: list[tuple[str, str]] = []
-        self.channel = insecure_channel(urlp.netloc)
-        self.stub = CloudDrive_pb2_grpc.CloudDriveFileSrvStub(self.channel)
+        if channel is None:
+            channel = insecure_channel(urlp.netloc)
+        self.channel = channel
         if username:
             self.login()
+
+    def __del__(self, /):
+        try:
+            self._channel.close()
+        except Exception:
+            pass
 
     def __eq__(self, other, /):
         return isinstance(other, CloudDriveClient) and self.origin == other.origin
 
     def __hash__(self, /):
         return hash(self.origin)
+
+    @property
+    def channel(self, /):
+        return self._channel
+
+    @channel.setter
+    def channel(self, channel, /):
+        if callable(channel):
+            channel = channel(self.origin)
+        self._channel = channel
+        self._stub = CloudDrive_pb2_grpc.CloudDriveFileSrvStub(channel)
+
+    @property
+    def origin(self, /):
+        return self._origin
+
+    @property
+    def stub(self, /):
+        return self._stub
 
     def login(
         self, 
@@ -55,7 +82,7 @@ class CloudDriveClient:
             username = self.username
         if not password:
             password = self.password
-        response = self.stub.GetToken(CloudDrive_pb2.GetTokenRequest(userName=username, password=password))
+        response = self._stub.GetToken(CloudDrive_pb2.GetTokenRequest(userName=username, password=password))
         self.metadata = [("authorization", "Bearer " + response.token),]
 
     def GetSystemInfo(self, /) -> CloudDrive_pb2.CloudDriveSystemInfo:
@@ -80,7 +107,7 @@ class CloudDriveClient:
           string UserName = 2;
         }
         """
-        return self.stub.GetSystemInfo(Empty(), metadata=self.metadata)
+        return self._stub.GetSystemInfo(Empty(), metadata=self.metadata)
 
     def GetToken(self, arg: CloudDrive_pb2.GetTokenRequest, /) -> CloudDrive_pb2.JWTToken:
         """
@@ -108,7 +135,7 @@ class CloudDriveClient:
           google.protobuf.Timestamp expiration = 4;
         }
         """
-        return self.stub.GetToken(arg, metadata=self.metadata)
+        return self._stub.GetToken(arg, metadata=self.metadata)
 
     def Login(self, arg: CloudDrive_pb2.UserLoginRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -135,7 +162,7 @@ class CloudDriveClient:
           bool synDataToCloud = 3;
         }
         """
-        return self.stub.Login(arg, metadata=self.metadata)
+        return self._stub.Login(arg, metadata=self.metadata)
 
     def Register(self, arg: CloudDrive_pb2.UserRegisterRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -161,7 +188,7 @@ class CloudDriveClient:
           string password = 2;
         }
         """
-        return self.stub.Register(arg, metadata=self.metadata)
+        return self._stub.Register(arg, metadata=self.metadata)
 
     def SendResetAccountEmail(self, arg: CloudDrive_pb2.SendResetAccountEmailRequest, /) -> None:
         """
@@ -181,7 +208,7 @@ class CloudDriveClient:
 
         message SendResetAccountEmailRequest { string email = 1; }
         """
-        return self.stub.SendResetAccountEmail(arg, metadata=self.metadata)
+        return self._stub.SendResetAccountEmail(arg, metadata=self.metadata)
 
     def ResetAccount(self, arg: CloudDrive_pb2.ResetAccountRequest, /) -> None:
         """
@@ -203,7 +230,7 @@ class CloudDriveClient:
           string newPassword = 2;
         }
         """
-        return self.stub.ResetAccount(arg, metadata=self.metadata)
+        return self._stub.ResetAccount(arg, metadata=self.metadata)
 
     def SendConfirmEmail(self, /) -> None:
         """
@@ -218,7 +245,7 @@ class CloudDriveClient:
         // asks cloudfs server to send confirm email with confirm link
         rpc SendConfirmEmail(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return self.stub.SendConfirmEmail(Empty(), metadata=self.metadata)
+        return self._stub.SendConfirmEmail(Empty(), metadata=self.metadata)
 
     def ConfirmEmail(self, arg: CloudDrive_pb2.ConfirmEmailRequest, /) -> None:
         """
@@ -237,7 +264,7 @@ class CloudDriveClient:
 
         message ConfirmEmailRequest { string confirmCode = 1; }
         """
-        return self.stub.ConfirmEmail(arg, metadata=self.metadata)
+        return self._stub.ConfirmEmail(arg, metadata=self.metadata)
 
     def GetAccountStatus(self, /) -> CloudDrive_pb2.AccountStatusResult:
         """
@@ -274,7 +301,7 @@ class CloudDriveClient:
           repeated AccountRole accountRoles = 5;
         }
         """
-        return self.stub.GetAccountStatus(Empty(), metadata=self.metadata)
+        return self._stub.GetAccountStatus(Empty(), metadata=self.metadata)
 
     def GetSubFiles(self, arg: CloudDrive_pb2.ListSubFileRequest, /) -> Iterator[CloudDrive_pb2.SubFilesReply]:
         """
@@ -335,7 +362,7 @@ class CloudDriveClient:
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
-        return self.stub.GetSubFiles(arg, metadata=self.metadata)
+        return self._stub.GetSubFiles(arg, metadata=self.metadata)
 
     def GetSearchResults(self, arg: CloudDrive_pb2.SearchRequest, /) -> Iterator[CloudDrive_pb2.SubFilesReply]:
         """
@@ -398,7 +425,7 @@ class CloudDriveClient:
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
-        return self.stub.GetSearchResults(arg, metadata=self.metadata)
+        return self._stub.GetSearchResults(arg, metadata=self.metadata)
 
     def FindFileByPath(self, arg: CloudDrive_pb2.FindFileByPathRequest, /) -> CloudDrive_pb2.CloudDriveFile:
         """
@@ -472,7 +499,7 @@ class CloudDriveClient:
           string path = 2;
         }
         """
-        return self.stub.FindFileByPath(arg, metadata=self.metadata)
+        return self._stub.FindFileByPath(arg, metadata=self.metadata)
 
     def CreateFolder(self, arg: CloudDrive_pb2.CreateFolderRequest, /) -> CloudDrive_pb2.CreateFolderResult:
         """
@@ -540,7 +567,7 @@ class CloudDriveClient:
           string errorMessage = 2;
         }
         """
-        return self.stub.CreateFolder(arg, metadata=self.metadata)
+        return self._stub.CreateFolder(arg, metadata=self.metadata)
 
     def RenameFile(self, arg: CloudDrive_pb2.RenameFileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -566,7 +593,7 @@ class CloudDriveClient:
           string newName = 2;
         }
         """
-        return self.stub.RenameFile(arg, metadata=self.metadata)
+        return self._stub.RenameFile(arg, metadata=self.metadata)
 
     def RenameFiles(self, arg: CloudDrive_pb2.RenameFilesRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -593,7 +620,7 @@ class CloudDriveClient:
         }
         message RenameFilesRequest { repeated RenameFileRequest renameFiles = 1; }
         """
-        return self.stub.RenameFiles(arg, metadata=self.metadata)
+        return self._stub.RenameFiles(arg, metadata=self.metadata)
 
     def MoveFile(self, arg: CloudDrive_pb2.MoveFileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -619,7 +646,7 @@ class CloudDriveClient:
           string destPath = 2;
         }
         """
-        return self.stub.MoveFile(arg, metadata=self.metadata)
+        return self._stub.MoveFile(arg, metadata=self.metadata)
 
     def DeleteFile(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -642,7 +669,7 @@ class CloudDriveClient:
         }
         message FileRequest { string path = 1; }
         """
-        return self.stub.DeleteFile(arg, metadata=self.metadata)
+        return self._stub.DeleteFile(arg, metadata=self.metadata)
 
     def DeleteFilePermanently(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -665,7 +692,7 @@ class CloudDriveClient:
         }
         message FileRequest { string path = 1; }
         """
-        return self.stub.DeleteFilePermanently(arg, metadata=self.metadata)
+        return self._stub.DeleteFilePermanently(arg, metadata=self.metadata)
 
     def DeleteFiles(self, arg: CloudDrive_pb2.MultiFileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -688,7 +715,7 @@ class CloudDriveClient:
         }
         message MultiFileRequest { repeated string path = 1; }
         """
-        return self.stub.DeleteFiles(arg, metadata=self.metadata)
+        return self._stub.DeleteFiles(arg, metadata=self.metadata)
 
     def DeleteFilesPermanently(self, arg: CloudDrive_pb2.MultiFileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -711,7 +738,7 @@ class CloudDriveClient:
         }
         message MultiFileRequest { repeated string path = 1; }
         """
-        return self.stub.DeleteFilesPermanently(arg, metadata=self.metadata)
+        return self._stub.DeleteFilesPermanently(arg, metadata=self.metadata)
 
     def AddOfflineFiles(self, arg: CloudDrive_pb2.AddOfflineFileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -739,7 +766,7 @@ class CloudDriveClient:
           string errorMessage = 2;
         }
         """
-        return self.stub.AddOfflineFiles(arg, metadata=self.metadata)
+        return self._stub.AddOfflineFiles(arg, metadata=self.metadata)
 
     def ListOfflineFilesByPath(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.OfflineFileListResult:
         """
@@ -778,7 +805,7 @@ class CloudDriveClient:
           uint32 total = 2;
         }
         """
-        return self.stub.ListOfflineFilesByPath(arg, metadata=self.metadata)
+        return self._stub.ListOfflineFilesByPath(arg, metadata=self.metadata)
 
     def ListAllOfflineFiles(self, arg: CloudDrive_pb2.OfflineFileListAllRequest, /) -> CloudDrive_pb2.OfflineFileListAllResult:
         """
@@ -826,7 +853,7 @@ class CloudDriveClient:
           uint32 total = 2;
         }
         """
-        return self.stub.ListAllOfflineFiles(arg, metadata=self.metadata)
+        return self._stub.ListAllOfflineFiles(arg, metadata=self.metadata)
 
     def AddSharedLink(self, arg: CloudDrive_pb2.AddSharedLinkRequest, /) -> None:
         """
@@ -849,7 +876,7 @@ class CloudDriveClient:
           string toFolder = 3;
         }
         """
-        return self.stub.AddSharedLink(arg, metadata=self.metadata)
+        return self._stub.AddSharedLink(arg, metadata=self.metadata)
 
     def GetFileDetailProperties(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.FileDetailProperties:
         """
@@ -878,7 +905,7 @@ class CloudDriveClient:
         }
         message FileRequest { string path = 1; }
         """
-        return self.stub.GetFileDetailProperties(arg, metadata=self.metadata)
+        return self._stub.GetFileDetailProperties(arg, metadata=self.metadata)
 
     def GetSpaceInfo(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.SpaceInfo:
         """
@@ -902,7 +929,7 @@ class CloudDriveClient:
           int64 freeSpace = 3;
         }
         """
-        return self.stub.GetSpaceInfo(arg, metadata=self.metadata)
+        return self._stub.GetSpaceInfo(arg, metadata=self.metadata)
 
     def GetCloudMemberships(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.CloudMemberships:
         """
@@ -927,7 +954,7 @@ class CloudDriveClient:
         message CloudMemberships { repeated CloudMembership memberships = 1; }
         message FileRequest { string path = 1; }
         """
-        return self.stub.GetCloudMemberships(arg, metadata=self.metadata)
+        return self._stub.GetCloudMemberships(arg, metadata=self.metadata)
 
     def GetRuntimeInfo(self, /) -> CloudDrive_pb2.RuntimeInfo:
         """
@@ -951,7 +978,7 @@ class CloudDriveClient:
           string osInfo = 4;
         }
         """
-        return self.stub.GetRuntimeInfo(Empty(), metadata=self.metadata)
+        return self._stub.GetRuntimeInfo(Empty(), metadata=self.metadata)
 
     def GetRunningInfo(self, /) -> CloudDrive_pb2.RunInfo:
         """
@@ -977,7 +1004,7 @@ class CloudDriveClient:
           uint64 tempFileCount = 6;
         }
         """
-        return self.stub.GetRunningInfo(Empty(), metadata=self.metadata)
+        return self._stub.GetRunningInfo(Empty(), metadata=self.metadata)
 
     def Logout(self, arg: CloudDrive_pb2.UserLogoutRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -1000,7 +1027,7 @@ class CloudDriveClient:
         }
         message UserLogoutRequest { bool logoutFromCloudFS = 1; }
         """
-        return self.stub.Logout(arg, metadata=self.metadata)
+        return self._stub.Logout(arg, metadata=self.metadata)
 
     def CanAddMoreMountPoints(self, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -1023,7 +1050,7 @@ class CloudDriveClient:
           string errorMessage = 2;
         }
         """
-        return self.stub.CanAddMoreMountPoints(Empty(), metadata=self.metadata)
+        return self._stub.CanAddMoreMountPoints(Empty(), metadata=self.metadata)
 
     def GetMountPoints(self, /) -> CloudDrive_pb2.GetMountPointsResult:
         """
@@ -1054,7 +1081,7 @@ class CloudDriveClient:
           string failReason = 10;
         }
         """
-        return self.stub.GetMountPoints(Empty(), metadata=self.metadata)
+        return self._stub.GetMountPoints(Empty(), metadata=self.metadata)
 
     def AddMountPoint(self, arg: CloudDrive_pb2.MountOption, /) -> CloudDrive_pb2.MountPointResult:
         """
@@ -1087,7 +1114,7 @@ class CloudDriveClient:
           string failReason = 2;
         }
         """
-        return self.stub.AddMountPoint(arg, metadata=self.metadata)
+        return self._stub.AddMountPoint(arg, metadata=self.metadata)
 
     def RemoveMountPoint(self, arg: CloudDrive_pb2.MountPointRequest, /) -> CloudDrive_pb2.MountPointResult:
         """
@@ -1110,7 +1137,7 @@ class CloudDriveClient:
           string failReason = 2;
         }
         """
-        return self.stub.RemoveMountPoint(arg, metadata=self.metadata)
+        return self._stub.RemoveMountPoint(arg, metadata=self.metadata)
 
     def Mount(self, arg: CloudDrive_pb2.MountPointRequest, /) -> CloudDrive_pb2.MountPointResult:
         """
@@ -1133,7 +1160,7 @@ class CloudDriveClient:
           string failReason = 2;
         }
         """
-        return self.stub.Mount(arg, metadata=self.metadata)
+        return self._stub.Mount(arg, metadata=self.metadata)
 
     def Unmount(self, arg: CloudDrive_pb2.MountPointRequest, /) -> CloudDrive_pb2.MountPointResult:
         """
@@ -1156,7 +1183,7 @@ class CloudDriveClient:
           string failReason = 2;
         }
         """
-        return self.stub.Unmount(arg, metadata=self.metadata)
+        return self._stub.Unmount(arg, metadata=self.metadata)
 
     def UpdateMountPoint(self, arg: CloudDrive_pb2.UpdateMountPointRequest, /) -> CloudDrive_pb2.MountPointResult:
         """
@@ -1193,7 +1220,7 @@ class CloudDriveClient:
           MountOption newMountOption = 2;
         }
         """
-        return self.stub.UpdateMountPoint(arg, metadata=self.metadata)
+        return self._stub.UpdateMountPoint(arg, metadata=self.metadata)
 
     def GetAvailableDriveLetters(self, /) -> CloudDrive_pb2.GetAvailableDriveLettersResult:
         """
@@ -1215,7 +1242,7 @@ class CloudDriveClient:
 
         message GetAvailableDriveLettersResult { repeated string driveLetters = 1; }
         """
-        return self.stub.GetAvailableDriveLetters(Empty(), metadata=self.metadata)
+        return self._stub.GetAvailableDriveLetters(Empty(), metadata=self.metadata)
 
     def HasDriveLetters(self, /) -> CloudDrive_pb2.HasDriveLettersResult:
         """
@@ -1234,7 +1261,7 @@ class CloudDriveClient:
 
         message HasDriveLettersResult { bool hasDriveLetters = 1; }
         """
-        return self.stub.HasDriveLetters(Empty(), metadata=self.metadata)
+        return self._stub.HasDriveLetters(Empty(), metadata=self.metadata)
 
     def LocalGetSubFiles(self, arg: CloudDrive_pb2.LocalGetSubFilesRequest, /) -> Iterator[CloudDrive_pb2.LocalGetSubFilesResult]:
         """
@@ -1260,7 +1287,7 @@ class CloudDriveClient:
         }
         message LocalGetSubFilesResult { repeated string subFiles = 1; }
         """
-        return self.stub.LocalGetSubFiles(arg, metadata=self.metadata)
+        return self._stub.LocalGetSubFiles(arg, metadata=self.metadata)
 
     def GetAllTasksCount(self, /) -> CloudDrive_pb2.GetAllTasksCountResult:
         """
@@ -1286,7 +1313,7 @@ class CloudDriveClient:
         }
         message PushMessage { string clouddriveVersion = 1; }
         """
-        return self.stub.GetAllTasksCount(Empty(), metadata=self.metadata)
+        return self._stub.GetAllTasksCount(Empty(), metadata=self.metadata)
 
     def GetDownloadFileCount(self, /) -> CloudDrive_pb2.GetDownloadFileCountResult:
         """
@@ -1306,7 +1333,7 @@ class CloudDriveClient:
 
         message GetDownloadFileCountResult { uint32 fileCount = 1; }
         """
-        return self.stub.GetDownloadFileCount(Empty(), metadata=self.metadata)
+        return self._stub.GetDownloadFileCount(Empty(), metadata=self.metadata)
 
     def GetDownloadFileList(self, /) -> CloudDrive_pb2.GetDownloadFileListResult:
         """
@@ -1337,7 +1364,7 @@ class CloudDriveClient:
           repeated DownloadFileInfo downloadFiles = 4;
         }
         """
-        return self.stub.GetDownloadFileList(Empty(), metadata=self.metadata)
+        return self._stub.GetDownloadFileList(Empty(), metadata=self.metadata)
 
     def GetUploadFileCount(self, /) -> CloudDrive_pb2.GetUploadFileCountResult:
         """
@@ -1357,7 +1384,7 @@ class CloudDriveClient:
 
         message GetUploadFileCountResult { uint32 fileCount = 1; }
         """
-        return self.stub.GetUploadFileCount(Empty(), metadata=self.metadata)
+        return self._stub.GetUploadFileCount(Empty(), metadata=self.metadata)
 
     def GetUploadFileList(self, arg: CloudDrive_pb2.GetUploadFileListRequest, /) -> CloudDrive_pb2.GetUploadFileListResult:
         """
@@ -1396,7 +1423,7 @@ class CloudDriveClient:
           string errorMessage = 6;
         }
         """
-        return self.stub.GetUploadFileList(arg, metadata=self.metadata)
+        return self._stub.GetUploadFileList(arg, metadata=self.metadata)
 
     def CancelAllUploadFiles(self, /) -> None:
         """
@@ -1410,7 +1437,7 @@ class CloudDriveClient:
         rpc CancelAllUploadFiles(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return self.stub.CancelAllUploadFiles(Empty(), metadata=self.metadata)
+        return self._stub.CancelAllUploadFiles(Empty(), metadata=self.metadata)
 
     def CancelUploadFiles(self, arg: CloudDrive_pb2.MultpleUploadFileKeyRequest, /) -> None:
         """
@@ -1430,7 +1457,7 @@ class CloudDriveClient:
 
         message MultpleUploadFileKeyRequest { repeated string keys = 1; }
         """
-        return self.stub.CancelUploadFiles(arg, metadata=self.metadata)
+        return self._stub.CancelUploadFiles(arg, metadata=self.metadata)
 
     def PauseAllUploadFiles(self, /) -> None:
         """
@@ -1444,7 +1471,7 @@ class CloudDriveClient:
         rpc PauseAllUploadFiles(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return self.stub.PauseAllUploadFiles(Empty(), metadata=self.metadata)
+        return self._stub.PauseAllUploadFiles(Empty(), metadata=self.metadata)
 
     def PauseUploadFiles(self, arg: CloudDrive_pb2.MultpleUploadFileKeyRequest, /) -> None:
         """
@@ -1464,7 +1491,7 @@ class CloudDriveClient:
 
         message MultpleUploadFileKeyRequest { repeated string keys = 1; }
         """
-        return self.stub.PauseUploadFiles(arg, metadata=self.metadata)
+        return self._stub.PauseUploadFiles(arg, metadata=self.metadata)
 
     def ResumeAllUploadFiles(self, /) -> None:
         """
@@ -1478,7 +1505,7 @@ class CloudDriveClient:
         rpc ResumeAllUploadFiles(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return self.stub.ResumeAllUploadFiles(Empty(), metadata=self.metadata)
+        return self._stub.ResumeAllUploadFiles(Empty(), metadata=self.metadata)
 
     def ResumeUploadFiles(self, arg: CloudDrive_pb2.MultpleUploadFileKeyRequest, /) -> None:
         """
@@ -1498,7 +1525,7 @@ class CloudDriveClient:
 
         message MultpleUploadFileKeyRequest { repeated string keys = 1; }
         """
-        return self.stub.ResumeUploadFiles(arg, metadata=self.metadata)
+        return self._stub.ResumeUploadFiles(arg, metadata=self.metadata)
 
     def CanAddMoreCloudApis(self, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -1521,7 +1548,7 @@ class CloudDriveClient:
           string errorMessage = 2;
         }
         """
-        return self.stub.CanAddMoreCloudApis(Empty(), metadata=self.metadata)
+        return self._stub.CanAddMoreCloudApis(Empty(), metadata=self.metadata)
 
     def APILogin115Editthiscookie(self, arg: CloudDrive_pb2.Login115EditthiscookieRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1545,7 +1572,7 @@ class CloudDriveClient:
         }
         message Login115EditthiscookieRequest { string editThiscookieString = 1; }
         """
-        return self.stub.APILogin115Editthiscookie(arg, metadata=self.metadata)
+        return self._stub.APILogin115Editthiscookie(arg, metadata=self.metadata)
 
     def APILogin115QRCode(self, arg: CloudDrive_pb2.Login115QrCodeRequest, /) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
         """
@@ -1576,7 +1603,7 @@ class CloudDriveClient:
           ERROR = 4;
         }
         """
-        return self.stub.APILogin115QRCode(arg, metadata=self.metadata)
+        return self._stub.APILogin115QRCode(arg, metadata=self.metadata)
 
     def APILoginAliyundriveOAuth(self, arg: CloudDrive_pb2.LoginAliyundriveOAuthRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1604,7 +1631,7 @@ class CloudDriveClient:
           uint64 expires_in = 3;
         }
         """
-        return self.stub.APILoginAliyundriveOAuth(arg, metadata=self.metadata)
+        return self._stub.APILoginAliyundriveOAuth(arg, metadata=self.metadata)
 
     def APILoginAliyundriveRefreshtoken(self, arg: CloudDrive_pb2.LoginAliyundriveRefreshtokenRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1631,7 +1658,7 @@ class CloudDriveClient:
           bool useOpenAPI = 2;
         }
         """
-        return self.stub.APILoginAliyundriveRefreshtoken(arg, metadata=self.metadata)
+        return self._stub.APILoginAliyundriveRefreshtoken(arg, metadata=self.metadata)
 
     def APILoginAliyunDriveQRCode(self, arg: CloudDrive_pb2.LoginAliyundriveQRCodeRequest, /) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
         """
@@ -1662,7 +1689,7 @@ class CloudDriveClient:
           ERROR = 4;
         }
         """
-        return self.stub.APILoginAliyunDriveQRCode(arg, metadata=self.metadata)
+        return self._stub.APILoginAliyunDriveQRCode(arg, metadata=self.metadata)
 
     def APILoginBaiduPanOAuth(self, arg: CloudDrive_pb2.LoginBaiduPanOAuthRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1690,7 +1717,7 @@ class CloudDriveClient:
           uint64 expires_in = 3;
         }
         """
-        return self.stub.APILoginBaiduPanOAuth(arg, metadata=self.metadata)
+        return self._stub.APILoginBaiduPanOAuth(arg, metadata=self.metadata)
 
     def APILoginOneDriveOAuth(self, arg: CloudDrive_pb2.LoginOneDriveOAuthRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1718,7 +1745,7 @@ class CloudDriveClient:
           uint64 expires_in = 3;
         }
         """
-        return self.stub.APILoginOneDriveOAuth(arg, metadata=self.metadata)
+        return self._stub.APILoginOneDriveOAuth(arg, metadata=self.metadata)
 
     def ApiLoginGoogleDriveOAuth(self, arg: CloudDrive_pb2.LoginGoogleDriveOAuthRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1746,7 +1773,7 @@ class CloudDriveClient:
           uint64 expires_in = 3;
         }
         """
-        return self.stub.ApiLoginGoogleDriveOAuth(arg, metadata=self.metadata)
+        return self._stub.ApiLoginGoogleDriveOAuth(arg, metadata=self.metadata)
 
     def ApiLoginGoogleDriveRefreshToken(self, arg: CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1774,7 +1801,7 @@ class CloudDriveClient:
           string refresh_token = 3;
         }
         """
-        return self.stub.ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
+        return self._stub.ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
 
     def APILogin189QRCode(self, /) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
         """
@@ -1804,7 +1831,7 @@ class CloudDriveClient:
           ERROR = 4;
         }
         """
-        return self.stub.APILogin189QRCode(Empty(), metadata=self.metadata)
+        return self._stub.APILogin189QRCode(Empty(), metadata=self.metadata)
 
     def APILoginPikPak(self, arg: CloudDrive_pb2.UserLoginRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1831,7 +1858,7 @@ class CloudDriveClient:
           bool synDataToCloud = 3;
         }
         """
-        return self.stub.APILoginPikPak(arg, metadata=self.metadata)
+        return self._stub.APILoginPikPak(arg, metadata=self.metadata)
 
     def APILoginWebDav(self, arg: CloudDrive_pb2.LoginWebDavRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1858,7 +1885,7 @@ class CloudDriveClient:
           string password = 3;
         }
         """
-        return self.stub.APILoginWebDav(arg, metadata=self.metadata)
+        return self._stub.APILoginWebDav(arg, metadata=self.metadata)
 
     def APIAddLocalFolder(self, arg: CloudDrive_pb2.AddLocalFolderRequest, /) -> CloudDrive_pb2.APILoginResult:
         """
@@ -1881,7 +1908,7 @@ class CloudDriveClient:
         }
         message AddLocalFolderRequest { string localFolderPath = 1; }
         """
-        return self.stub.APIAddLocalFolder(arg, metadata=self.metadata)
+        return self._stub.APIAddLocalFolder(arg, metadata=self.metadata)
 
     def RemoveCloudAPI(self, arg: CloudDrive_pb2.RemoveCloudAPIRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -1908,7 +1935,7 @@ class CloudDriveClient:
           bool permanentRemove = 3;
         }
         """
-        return self.stub.RemoveCloudAPI(arg, metadata=self.metadata)
+        return self._stub.RemoveCloudAPI(arg, metadata=self.metadata)
 
     def GetAllCloudApis(self, /) -> CloudDrive_pb2.CloudAPIList:
         """
@@ -1935,7 +1962,7 @@ class CloudDriveClient:
           repeated CloudAPI apis = 1;
         }
         """
-        return self.stub.GetAllCloudApis(Empty(), metadata=self.metadata)
+        return self._stub.GetAllCloudApis(Empty(), metadata=self.metadata)
 
     def GetCloudAPIConfig(self, arg: CloudDrive_pb2.GetCloudAPIConfigRequest, /) -> CloudDrive_pb2.CloudAPIConfig:
         """
@@ -1966,7 +1993,7 @@ class CloudDriveClient:
           string userName = 2;
         }
         """
-        return self.stub.GetCloudAPIConfig(arg, metadata=self.metadata)
+        return self._stub.GetCloudAPIConfig(arg, metadata=self.metadata)
 
     def SetCloudAPIConfig(self, arg: CloudDrive_pb2.SetCloudAPIConfigRequest, /) -> None:
         """
@@ -1999,7 +2026,7 @@ class CloudDriveClient:
           CloudAPIConfig config = 3;
         }
         """
-        return self.stub.SetCloudAPIConfig(arg, metadata=self.metadata)
+        return self._stub.SetCloudAPIConfig(arg, metadata=self.metadata)
 
     def GetSystemSettings(self, /) -> CloudDrive_pb2.SystemSettings:
         """
@@ -2032,7 +2059,7 @@ class CloudDriveClient:
           optional StringList uploadIgnoredExtensions = 9;
         }
         """
-        return self.stub.GetSystemSettings(Empty(), metadata=self.metadata)
+        return self._stub.GetSystemSettings(Empty(), metadata=self.metadata)
 
     def SetSystemSettings(self, arg: CloudDrive_pb2.SystemSettings, /) -> None:
         """
@@ -2065,7 +2092,7 @@ class CloudDriveClient:
           optional StringList uploadIgnoredExtensions = 9;
         }
         """
-        return self.stub.SetSystemSettings(arg, metadata=self.metadata)
+        return self._stub.SetSystemSettings(arg, metadata=self.metadata)
 
     def SetDirCacheTimeSecs(self, arg: CloudDrive_pb2.SetDirCacheTimeRequest, /) -> None:
         """
@@ -2089,7 +2116,7 @@ class CloudDriveClient:
           optional uint64 dirCachTimeToLiveSecs = 2;
         }
         """
-        return self.stub.SetDirCacheTimeSecs(arg, metadata=self.metadata)
+        return self._stub.SetDirCacheTimeSecs(arg, metadata=self.metadata)
 
     def GetEffectiveDirCacheTimeSecs(self, arg: CloudDrive_pb2.GetEffectiveDirCacheTimeRequest, /) -> CloudDrive_pb2.GetEffectiveDirCacheTimeResult:
         """
@@ -2110,7 +2137,7 @@ class CloudDriveClient:
         message GetEffectiveDirCacheTimeRequest { string path = 1; }
         message GetEffectiveDirCacheTimeResult { uint64 dirCacheTimeSecs = 1; }
         """
-        return self.stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
+        return self._stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
 
     def GetOpenFileTable(self, arg: CloudDrive_pb2.GetOpenFileTableRequest, /) -> CloudDrive_pb2.OpenFileTable:
         """
@@ -2133,7 +2160,7 @@ class CloudDriveClient:
           uint64 localOpenFileCount = 2;
         }
         """
-        return self.stub.GetOpenFileTable(arg, metadata=self.metadata)
+        return self._stub.GetOpenFileTable(arg, metadata=self.metadata)
 
     def GetDirCacheTable(self, /) -> CloudDrive_pb2.DirCacheTable:
         """
@@ -2152,7 +2179,7 @@ class CloudDriveClient:
 
         message DirCacheTable { map<string, DirCacheItem> dirCacheTable = 1; }
         """
-        return self.stub.GetDirCacheTable(Empty(), metadata=self.metadata)
+        return self._stub.GetDirCacheTable(Empty(), metadata=self.metadata)
 
     def GetReferencedEntryPaths(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.StringList:
         """
@@ -2172,7 +2199,7 @@ class CloudDriveClient:
         message FileRequest { string path = 1; }
         message StringList { repeated string values = 1; }
         """
-        return self.stub.GetReferencedEntryPaths(arg, metadata=self.metadata)
+        return self._stub.GetReferencedEntryPaths(arg, metadata=self.metadata)
 
     def GetTempFileTable(self, /) -> CloudDrive_pb2.TempFileTable:
         """
@@ -2194,7 +2221,7 @@ class CloudDriveClient:
           repeated string tempFiles = 2;
         }
         """
-        return self.stub.GetTempFileTable(Empty(), metadata=self.metadata)
+        return self._stub.GetTempFileTable(Empty(), metadata=self.metadata)
 
     def PushTaskChange(self, /) -> Iterator[CloudDrive_pb2.GetAllTasksCountResult]:
         """
@@ -2222,7 +2249,7 @@ class CloudDriveClient:
         }
         message PushMessage { string clouddriveVersion = 1; }
         """
-        return self.stub.PushTaskChange(Empty(), metadata=self.metadata)
+        return self._stub.PushTaskChange(Empty(), metadata=self.metadata)
 
     def GetCloudDrive1UserData(self, /) -> CloudDrive_pb2.StringResult:
         """
@@ -2241,7 +2268,7 @@ class CloudDriveClient:
 
         message StringResult { string result = 1; }
         """
-        return self.stub.GetCloudDrive1UserData(Empty(), metadata=self.metadata)
+        return self._stub.GetCloudDrive1UserData(Empty(), metadata=self.metadata)
 
     def RestartService(self, /) -> None:
         """
@@ -2254,7 +2281,7 @@ class CloudDriveClient:
         // restart service
         rpc RestartService(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return self.stub.RestartService(Empty(), metadata=self.metadata)
+        return self._stub.RestartService(Empty(), metadata=self.metadata)
 
     def ShutdownService(self, /) -> None:
         """
@@ -2267,7 +2294,7 @@ class CloudDriveClient:
         // shutdown service
         rpc ShutdownService(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return self.stub.ShutdownService(Empty(), metadata=self.metadata)
+        return self._stub.ShutdownService(Empty(), metadata=self.metadata)
 
     def HasUpdate(self, /) -> CloudDrive_pb2.UpdateResult:
         """
@@ -2290,7 +2317,7 @@ class CloudDriveClient:
           string description = 3;
         }
         """
-        return self.stub.HasUpdate(Empty(), metadata=self.metadata)
+        return self._stub.HasUpdate(Empty(), metadata=self.metadata)
 
     def CheckUpdate(self, /) -> CloudDrive_pb2.UpdateResult:
         """
@@ -2313,7 +2340,7 @@ class CloudDriveClient:
           string description = 3;
         }
         """
-        return self.stub.CheckUpdate(Empty(), metadata=self.metadata)
+        return self._stub.CheckUpdate(Empty(), metadata=self.metadata)
 
     def DownloadUpdate(self, /) -> None:
         """
@@ -2326,7 +2353,7 @@ class CloudDriveClient:
         // download newest version
         rpc DownloadUpdate(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return self.stub.DownloadUpdate(Empty(), metadata=self.metadata)
+        return self._stub.DownloadUpdate(Empty(), metadata=self.metadata)
 
     def UpdateSystem(self, /) -> None:
         """
@@ -2339,7 +2366,7 @@ class CloudDriveClient:
         // update to newest version
         rpc UpdateSystem(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return self.stub.UpdateSystem(Empty(), metadata=self.metadata)
+        return self._stub.UpdateSystem(Empty(), metadata=self.metadata)
 
     def GetMetaData(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.FileMetaData:
         """
@@ -2359,7 +2386,7 @@ class CloudDriveClient:
         message FileMetaData { map<string, string> metadata = 1; }
         message FileRequest { string path = 1; }
         """
-        return self.stub.GetMetaData(arg, metadata=self.metadata)
+        return self._stub.GetMetaData(arg, metadata=self.metadata)
 
     def GetOriginalPath(self, arg: CloudDrive_pb2.FileRequest, /) -> CloudDrive_pb2.StringResult:
         """
@@ -2379,7 +2406,7 @@ class CloudDriveClient:
         message FileRequest { string path = 1; }
         message StringResult { string result = 1; }
         """
-        return self.stub.GetOriginalPath(arg, metadata=self.metadata)
+        return self._stub.GetOriginalPath(arg, metadata=self.metadata)
 
     def ChangePassword(self, arg: CloudDrive_pb2.ChangePasswordRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -2405,7 +2432,7 @@ class CloudDriveClient:
           string errorMessage = 2;
         }
         """
-        return self.stub.ChangePassword(arg, metadata=self.metadata)
+        return self._stub.ChangePassword(arg, metadata=self.metadata)
 
     def CreateFile(self, arg: CloudDrive_pb2.CreateFileRequest, /) -> CloudDrive_pb2.CreateFileResult:
         """
@@ -2428,7 +2455,7 @@ class CloudDriveClient:
         }
         message CreateFileResult { uint64 fileHandle = 1; }
         """
-        return self.stub.CreateFile(arg, metadata=self.metadata)
+        return self._stub.CreateFile(arg, metadata=self.metadata)
 
     def CloseFile(self, arg: CloudDrive_pb2.CloseFileRequest, /) -> CloudDrive_pb2.FileOperationResult:
         """
@@ -2451,7 +2478,7 @@ class CloudDriveClient:
           string errorMessage = 2;
         }
         """
-        return self.stub.CloseFile(arg, metadata=self.metadata)
+        return self._stub.CloseFile(arg, metadata=self.metadata)
 
     def WriteToFileStream(self, arg: Iterator[CloudDrive_pb2.WriteFileRequest], /) -> CloudDrive_pb2.WriteFileResult:
         """
@@ -2477,7 +2504,7 @@ class CloudDriveClient:
         }
         message WriteFileResult { uint64 bytesWritten = 1; }
         """
-        return self.stub.WriteToFileStream(arg, metadata=self.metadata)
+        return self._stub.WriteToFileStream(arg, metadata=self.metadata)
 
     def WriteToFile(self, arg: CloudDrive_pb2.WriteFileRequest, /) -> CloudDrive_pb2.WriteFileResult:
         """
@@ -2503,7 +2530,7 @@ class CloudDriveClient:
         }
         message WriteFileResult { uint64 bytesWritten = 1; }
         """
-        return self.stub.WriteToFile(arg, metadata=self.metadata)
+        return self._stub.WriteToFile(arg, metadata=self.metadata)
 
     def GetPromotions(self, /) -> CloudDrive_pb2.GetPromotionsResult:
         """
@@ -2531,7 +2558,7 @@ class CloudDriveClient:
           string url = 7;
         }
         """
-        return self.stub.GetPromotions(Empty(), metadata=self.metadata)
+        return self._stub.GetPromotions(Empty(), metadata=self.metadata)
 
     def UpdatePromotionResult(self, /) -> None:
         """
@@ -2544,7 +2571,7 @@ class CloudDriveClient:
         // update promotion result after purchased
         rpc UpdatePromotionResult(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return self.stub.UpdatePromotionResult(Empty(), metadata=self.metadata)
+        return self._stub.UpdatePromotionResult(Empty(), metadata=self.metadata)
 
     def GetCloudDrivePlans(self, /) -> CloudDrive_pb2.GetCloudDrivePlansResult:
         """
@@ -2575,7 +2602,7 @@ class CloudDriveClient:
         }
         message GetCloudDrivePlansResult { repeated CloudDrivePlan plans = 1; }
         """
-        return self.stub.GetCloudDrivePlans(Empty(), metadata=self.metadata)
+        return self._stub.GetCloudDrivePlans(Empty(), metadata=self.metadata)
 
     def JoinPlan(self, arg: CloudDrive_pb2.JoinPlanRequest, /) -> CloudDrive_pb2.JoinPlanResult:
         """
@@ -2610,7 +2637,7 @@ class CloudDriveClient:
           map<string, string> paymentMethods = 3;
         }
         """
-        return self.stub.JoinPlan(arg, metadata=self.metadata)
+        return self._stub.JoinPlan(arg, metadata=self.metadata)
 
     def BindCloudAccount(self, arg: CloudDrive_pb2.BindCloudAccountRequest, /) -> None:
         """
@@ -2633,7 +2660,7 @@ class CloudDriveClient:
           string cloudAccountId = 2;
         }
         """
-        return self.stub.BindCloudAccount(arg, metadata=self.metadata)
+        return self._stub.BindCloudAccount(arg, metadata=self.metadata)
 
     def TransferBalance(self, arg: CloudDrive_pb2.TransferBalanceRequest, /) -> None:
         """
@@ -2657,7 +2684,7 @@ class CloudDriveClient:
           string password = 3;
         }
         """
-        return self.stub.TransferBalance(arg, metadata=self.metadata)
+        return self._stub.TransferBalance(arg, metadata=self.metadata)
 
     def ChangeEmail(self, arg: CloudDrive_pb2.ChangeUserNameEmailRequest, /) -> None:
         """
@@ -2681,7 +2708,7 @@ class CloudDriveClient:
           string password = 3;
         }
         """
-        return self.stub.ChangeEmail(arg, metadata=self.metadata)
+        return self._stub.ChangeEmail(arg, metadata=self.metadata)
 
     def GetBalanceLog(self, /) -> CloudDrive_pb2.BalanceLogResult:
         """
@@ -2717,7 +2744,7 @@ class CloudDriveClient:
           repeated BalanceLog logs = 1;
         }
         """
-        return self.stub.GetBalanceLog(Empty(), metadata=self.metadata)
+        return self._stub.GetBalanceLog(Empty(), metadata=self.metadata)
 
     def CheckActivationCode(self, arg: CloudDrive_pb2.StringValue, /) -> CloudDrive_pb2.CheckActivationCodeResult:
         """
@@ -2742,7 +2769,7 @@ class CloudDriveClient:
         }
         message StringValue { string value = 1; }
         """
-        return self.stub.CheckActivationCode(arg, metadata=self.metadata)
+        return self._stub.CheckActivationCode(arg, metadata=self.metadata)
 
     def ActivatePlan(self, arg: CloudDrive_pb2.StringValue, /) -> CloudDrive_pb2.JoinPlanResult:
         """
@@ -2775,7 +2802,7 @@ class CloudDriveClient:
         }
         message StringValue { string value = 1; }
         """
-        return self.stub.ActivatePlan(arg, metadata=self.metadata)
+        return self._stub.ActivatePlan(arg, metadata=self.metadata)
 
     def CheckCouponCode(self, arg: CloudDrive_pb2.CheckCouponCodeRequest, /) -> CloudDrive_pb2.CouponCodeResult:
         """
@@ -2804,7 +2831,7 @@ class CloudDriveClient:
           double couponDiscountAmount = 4;
         }
         """
-        return self.stub.CheckCouponCode(arg, metadata=self.metadata)
+        return self._stub.CheckCouponCode(arg, metadata=self.metadata)
 
     def GetReferralCode(self, /) -> CloudDrive_pb2.StringValue:
         """
@@ -2822,5 +2849,5 @@ class CloudDriveClient:
 
         message StringValue { string value = 1; }
         """
-        return self.stub.GetReferralCode(Empty(), metadata=self.metadata)
+        return self._stub.GetReferralCode(Empty(), metadata=self.metadata)
 

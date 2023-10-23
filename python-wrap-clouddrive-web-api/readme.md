@@ -1,5 +1,31 @@
 # CloudDrive web API 的 Python 封装
 
+## 开始准备
+
+首先进入 `python-wrap-clouddrive-web-api` 目录
+
+```console
+$ cd /path/to/python-wrap-clouddrive-web-api
+```
+
+然后安装[依赖模块](https://grpc.io/docs/languages/python/quickstart/)
+
+```console
+$ pip install -r requirements.txt
+```
+
+如果安装依赖后，还是运行失败，建议强制编译安装依赖，而不是直接安装已经编译的二进制包
+
+```console
+$ pip install --no-binary :all: --ignore-installed -r requirements.txt
+```
+
+之后就可以在 python 环境中运行了
+
+```python
+from clouddrive import *
+```
+
 ## 使用实例
 
 实例只提供最简单的使用例子，也没有覆盖所有方法，具体建议自己看源代码阅读理解 😂。

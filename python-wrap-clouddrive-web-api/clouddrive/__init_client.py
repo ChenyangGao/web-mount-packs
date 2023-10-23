@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__all__: list = []
+__all__: list[str] = []
 
 #:------------------------------:#
 
@@ -112,7 +112,7 @@ for name, meta in rpcs.items():
         refs.update(messages[rettype]["refs"])
     if argtype == "google.protobuf.Empty":
         method_header = f"def {name}(self, /) -> {ret_anno}:"
-        method_body = f"return self.stub.{name}(Empty(), metadata=self.metadata)"
+        method_body = f"return self._stub.{name}(Empty(), metadata=self.metadata)"
     else:
         if argtype not in messages:
             raise NotImplementedError(meta)
@@ -127,7 +127,7 @@ for name, meta in rpcs.items():
         refs.add(argtype)
         refs.update(messages[argtype]["refs"])
         method_header = f"def {name}(self, arg: {arg_anno}, /) -> {ret_anno}:"
-        method_body = f"return self.stub.{name}(arg, metadata=self.metadata)"
+        method_body = f"return self._stub.{name}(arg, metadata=self.metadata)"
     method_doc_parts = [
         CRE_comment_prefix_sub("", meta["comment"]), 
         "-" * 64, 
@@ -182,23 +182,50 @@ class CloudDriveClient:
         origin: str = "http://localhost:19798", 
         username: str = "", 
         password: str = "", 
+        channel = None, 
     ):
         urlp = urlsplit(origin)
-        self.origin = f"{urlp.scheme}://{urlp.netloc}"
+        self._origin = f"{urlp.scheme}://{urlp.netloc}"
         self.download_baseurl = f"{urlp.scheme}://{urlp.netloc}/static/{urlp.scheme}/{urlp.netloc}/False/"
         self.username = username
         self.password = password
         self.metadata: list[tuple[str, str]] = []
-        self.channel = insecure_channel(urlp.netloc)
-        self.stub = CloudDrive_pb2_grpc.CloudDriveFileSrvStub(self.channel)
+        if channel is None:
+            channel = insecure_channel(urlp.netloc)
+        self.channel = channel
         if username:
             self.login()
+
+    def __del__(self, /):
+        try:
+            self._channel.close()
+        except Exception:
+            pass
 
     def __eq__(self, other, /):
         return isinstance(other, CloudDriveClient) and self.origin == other.origin
 
     def __hash__(self, /):
         return hash(self.origin)
+
+    @property
+    def channel(self, /):
+        return self._channel
+
+    @channel.setter
+    def channel(self, channel, /):
+        if callable(channel):
+            channel = channel(self.origin)
+        self._channel = channel
+        self._stub = CloudDrive_pb2_grpc.CloudDriveFileSrvStub(channel)
+
+    @property
+    def origin(self, /):
+        return self._origin
+
+    @property
+    def stub(self, /):
+        return self._stub
 
     def login(
         self, 
@@ -210,7 +237,7 @@ class CloudDriveClient:
             username = self.username
         if not password:
             password = self.password
-        response = self.stub.GetToken(CloudDrive_pb2.GetTokenRequest(userName=username, password=password))
+        response = self._stub.GetToken(CloudDrive_pb2.GetTokenRequest(userName=username, password=password))
         self.metadata = [("authorization", "Bearer " + response.token),]
 
 """)
