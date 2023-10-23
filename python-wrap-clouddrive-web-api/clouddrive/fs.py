@@ -8,6 +8,7 @@ __all__ = ["CloudDrivePath", "CloudDriveFile", "CloudDriveFileSystem"]
 
 import errno
 
+from datetime import datetime
 from functools import update_wrapper
 from http.client import HTTPResponse
 from io import BufferedReader, BytesIO, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
@@ -15,7 +16,10 @@ from os import PathLike, fspath, makedirs, scandir, path as os_path
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
 from shutil import copyfileobj, SameFileError
 from socket import SocketIO
-from typing import cast, Callable, Iterator, Mapping, Optional, Protocol, Sequence, TypeVar
+from typing import (
+    cast, Callable, ItemsView, Iterator, KeysView, Mapping, Optional, Protocol, Sequence, 
+    TypeVar, ValuesView, 
+)
 from types import MappingProxyType
 from urllib.parse import quote
 from urllib.request import urlopen, Request
@@ -41,26 +45,27 @@ class SupportsRead(Protocol[_T_co]):
     def read(self, __length: int = ...) -> _T_co: ...
 
 
-def grpc_exc_redirect(fn, /):
+def _grpc_exc_redirect(fn, /):
     def wrapper(*args, **kwds):
         try:
             return fn(*args, **kwds)
         except RpcError as e:
             if not hasattr(e, "code"):
                 raise
+            fargs = (fn, args, kwds)
             match e.code():
                 case StatusCode.PERMISSION_DENIED:
-                    raise PermissionError(errno.EPERM, args) from e
+                    raise PermissionError(errno.EPERM, fargs, e.details()) from e
                 case StatusCode.NOT_FOUND:
-                    raise FileNotFoundError(errno.ENOENT, args) from e
+                    raise FileNotFoundError(errno.ENOENT, fargs, e.details()) from e
                 case StatusCode.ALREADY_EXISTS:
-                    raise FileExistsError(errno.EEXIST, args) from e
+                    raise FileExistsError(errno.EEXIST, fargs, e.details()) from e
                 case StatusCode.UNIMPLEMENTED:
-                    raise UnsupportedOperation(errno.ENOSYS, args) from e
+                    raise UnsupportedOperation(errno.ENOSYS, fargs, e.details()) from e
                 case StatusCode.UNAUTHENTICATED:
-                    raise PermissionError(errno.EACCES, args) from e
+                    raise PermissionError(errno.EACCES, fargs, e.details()) from e
                 case _:
-                    raise OSError(errno.EREMOTEIO, args) from e
+                    raise OSError(errno.EREMOTEIO, fargs, e.details()) from e
     return update_wrapper(wrapper, fn)
 
 
@@ -93,12 +98,14 @@ class CloudDrivePath(Mapping, PathLike[str]):
         super().__setattr__("__dict__", attr)
         attr["fs"] = fs
         attr["path"] = fs.abspath(path)
+        attr["attr_last_fetched"] = None
 
     def __and__(self, path: str | PathLike[str], /) -> CloudDrivePath:
         return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
 
     def __call__(self, /):
         self.__dict__.update(self.fs.attr(self.path, _check=False))
+        self.__dict__["attr_last_fetched"] = datetime.now()
         return self
 
     def __contains__(self, key, /):
@@ -111,7 +118,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.path
 
     def __getitem__(self, key, /):
-        if "name" not in self.__dict__:
+        if key not in self.__dict__ and not self.attr_last_fetched:
             self()
         return self.__dict__[key]
 
@@ -126,7 +133,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return commonpath((self.path, path.path)) == path.path
 
     def __hash__(self, /):
-        return hash(self.fs.client.origin) ^ hash(self.path)
+        return hash(self.fs.client) ^ hash(self.path)
 
     def __iter__(self, /):
         return iter(self.__dict__)
@@ -135,12 +142,12 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return len(self.__dict__)
 
     def __le__(self, path, /):
-        if not isinstance(path, CloudDrivePath) or self.fs.client.origin != path.fs.client.origin:
+        if not isinstance(path, CloudDrivePath) or self.fs.client != path.fs.client:
             return False
         return commonpath((self.path, path.path)) == self.path
 
     def __lt__(self, path, /):
-        if not isinstance(path, CloudDrivePath) or self.fs.client.origin != path.fs.client.origin or self.path == path.path:
+        if not isinstance(path, CloudDrivePath) or self.fs.client != path.fs.client or self.path == path.path:
             return False
         return commonpath((self.path, path.path)) == self.path
 
@@ -160,6 +167,15 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     def __truediv__(self, path: str | PathLike[str], /) -> CloudDrivePath:
         return type(self).joinpath(self, path)
+
+    def keys(self) -> KeysView:
+        return self.__dict__.keys()
+
+    def values(self) -> ValuesView:
+        return self.__dict__.values()
+
+    def items(self) -> ItemsView:
+        return self.__dict__.items()
 
     @property
     def anchor(self, /) -> str:
@@ -219,9 +235,9 @@ class CloudDrivePath(Mapping, PathLike[str]):
             return self
         path = self.path
         path_new = normpath(joinpath(path, *args))
-        if path == path:
+        if path == path_new:
             return self
-        return type(self)(self.fs, path)
+        return type(self)(self.fs, path_new)
 
     def match(self, /, path_pattern: str) -> bool:
         raise UnsupportedOperation(errno.ENOSYS, "match")
@@ -326,7 +342,11 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def remove(self, /, recursive: bool = False):
         self.fs.remove(self.path, recursive=recursive, _check=False)
 
-    def rename(self, /, dst_path: str | PathLike[str]) -> CloudDrivePath:
+    def rename(
+        self, 
+        /, 
+        dst_path: str | PathLike[str], 
+    ) -> CloudDrivePath:
         dst_path = self.fs.abspath(dst_path)
         self.fs.rename(self.path, dst_path, _check=False)
         return type(self)(self.fs, dst_path)
@@ -347,7 +367,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         self.fs.rmdir(self.path, _check=False)
 
     @lazyproperty
-    def root(self, /):
+    def root(self, /) -> CloudDrivePath:
         parents = self.parents
         if not parents:
             return self
@@ -356,21 +376,23 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return parents[-2]
 
     def samefile(self, path: str | PathLike[str], /) -> bool:
+        if isinstance(path, CloudDrivePath):
+            return self == path
         return self.path == self.fs.abspath(path)
 
     def stat(self, /):
         return self.fs.stat(self.path, _check=False)
 
     @lazyproperty
-    def stem(self, /):
+    def stem(self, /) -> str:
         return splitext(basename(self.path))[0]
 
     @lazyproperty
-    def suffix(self, /):
+    def suffix(self, /) -> str:
         return splitext(basename(self.path))[1]
 
     @lazyproperty
-    def suffixes(self, /):
+    def suffixes(self, /) -> tuple[str, ...]:
         return tuple("." + part for part in basename(self.path).split(".")[1:])
 
     def touch(self, /):
@@ -576,7 +598,7 @@ class CloudDriveFile(RawIOBase):
             raise OSError(errno.EINVAL, f"whence value unsupported: {whence!r}")
 
     def seekable(self, /) -> bool:
-        return True
+        return self._seekable
 
     def tell(self, /) -> int:
         return self.position
@@ -595,7 +617,7 @@ class CloudDriveFile(RawIOBase):
 
 
 class CloudDriveFileSystem:
-    """Implemented some file system methods by utilizing clouddrive's web API 
+    """Implemented some file system methods by utilizing CloudDrive's web API 
     and referencing modules such as `os` and `shutil`."""
     client: CloudDriveClient
     path: str
@@ -639,39 +661,39 @@ class CloudDriveFileSystem:
         else:
             raise TypeError("can't set attribute")
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _attr(self, path: str, /):
         return self.client.FindFileByPath(CloudDrive_pb2.FindFileByPathRequest(path=path))
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _delete(self, path: str, /, *paths: str):
         if paths:
             return self.client.DeleteFiles(CloudDrive_pb2.MultiFileRequest(path=[path, *paths]))
         else:
             return self.client.DeleteFile(CloudDrive_pb2.FileRequest(path=path))
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _delete_cloud(self, name: str, username: str, /):
         return self.client.RemoveCloudAPI(CloudDrive_pb2.RemoveCloudAPIRequest(
                 cloudName=name, userName=username))
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _iterdir(self, path: str, /, refresh: bool = False):
         it = self.client.GetSubFiles(CloudDrive_pb2.ListSubFileRequest(path=path, forceRefresh=refresh))
         return (a for m in it for a in m.subFiles)
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _mkdir(self, path: str, /):
         dir_, name = split(path)
         return self.client.CreateFolder(CloudDrive_pb2.CreateFolderRequest(parentPath=dir_, folderName=name))
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _move(self, paths: Sequence[str], dst_dir: str, /):
         if not paths:
             raise OSError(errno.EINVAL, "empty `paths`")
         return self.client.MoveFile(CloudDrive_pb2.MoveFileRequest(theFilePaths=paths, destPath=dst_dir))
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _search_iter(
         self, 
         path: str, 
@@ -688,7 +710,7 @@ class CloudDriveFileSystem:
         ))
         return (a for m in it for a in m.subFiles)
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _rename(self, pair: tuple[str, str], /, *pairs: tuple[str, str]):
         if pairs:
             return self.client.RenameFiles(CloudDrive_pb2.RenameFilesRequest(
@@ -701,7 +723,7 @@ class CloudDriveFileSystem:
             path, name = pair
             return self.client.RenameFile(CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name))
 
-    @grpc_exc_redirect
+    @_grpc_exc_redirect
     def _upload(self, path: str, file=None, /):
         client = self.client
         dir_, name = split(path)
