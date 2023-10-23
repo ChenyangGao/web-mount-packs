@@ -15,7 +15,6 @@ from io import BufferedReader, BytesIO, RawIOBase, TextIOWrapper, UnsupportedOpe
 from os import PathLike, fspath, makedirs, scandir, path as os_path
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
 from shutil import copyfileobj, SameFileError
-from socket import SocketIO
 from typing import (
     cast, Callable, ItemsView, Iterator, KeysView, Mapping, Optional, Protocol, Sequence, 
     TypeVar, ValuesView, 
@@ -65,7 +64,7 @@ def _grpc_exc_redirect(fn, /):
                 case StatusCode.UNAUTHENTICATED:
                     raise PermissionError(errno.EACCES, fargs, e.details()) from e
                 case _:
-                    raise OSError(errno.EREMOTEIO, fargs, e.details()) from e
+                    raise OSError(errno.EREMOTE, fargs, e.details()) from e
     return update_wrapper(wrapper, fn)
 
 
@@ -438,8 +437,7 @@ class CloudDriveFile(RawIOBase):
     path: CloudDrivePath
     mode: str
     url: str
-    resp: HTTPResponse
-    file: SocketIO
+    file: HTTPResponse
     _seekable: bool
     length: int
     position: int
@@ -454,8 +452,7 @@ class CloudDriveFile(RawIOBase):
         ns["path"] = path
         ns["mode"] = mode
         ns["url"]  = path.url
-        ns["resp"] = resp = urlopen(ns["url"])
-        ns["file"] = resp.fp.raw
+        ns["file"] = resp = urlopen(ns["url"])
         ns["_seekable"] = resp.headers.get("accept-ranges") == "bytes"
         ns["length"] = ns["size"] = resp.length
         ns["position"] = 0
@@ -495,7 +492,7 @@ class CloudDriveFile(RawIOBase):
         raise TypeError("can't set attribute")
 
     def close(self, /):
-        self.resp.close()
+        self.file.close()
         self.__dict__["closed"] = True
 
     @property
@@ -564,11 +561,11 @@ class CloudDriveFile(RawIOBase):
             start = self.length + start
             if start < 0:
                 start = 0
-        self.resp.close()
-        ns = self.__dict__
-        ns["resp"] = resp = urlopen(Request(self.url, headers={"Range": f"bytes={start}-"}))
-        ns["file"] = resp.fp.raw
-        ns["position"] = start
+        self.file.close()
+        self.__dict__.update(
+            file=urlopen(Request(self.url, headers={"Range": f"bytes={start}-"})), 
+            position=start, 
+        )
 
     def seek(self, pos: int, whence: int = 0, /) -> int:
         if not self._seekable:
@@ -644,6 +641,7 @@ class CloudDriveFileSystem:
 
     def __itruediv__(self, /, path: str | PathLike[str]):
         self.chdir(path)
+        return self
 
     def __repr__(self, /) -> str:
         cls = type(self)
@@ -786,7 +784,7 @@ class CloudDriveFileSystem:
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = True, 
         _check: bool = True, 
-    ):
+    ) -> str:
         raise UnsupportedOperation(errno.ENOSYS, "copy")
 
     def copytree(
@@ -955,6 +953,18 @@ class CloudDriveFileSystem:
         else:
             return int(attr.get("size", 0)) == 0
 
+    def is_storage(
+        self, 
+        /, 
+        path: str | PathLike[str], 
+        password: str = "", 
+        _check: bool = True, 
+    ) -> bool:
+        if _check:
+            path = self.abspath(path)
+        path = cast(str, path)
+        return path == "/" or dirname(path) == path
+
     def iterdir(
         self, 
         /, 
@@ -1006,6 +1016,9 @@ class CloudDriveFileSystem:
                 )
             if not topdown and yield_me:
                 yield path
+
+    def list_storages(self, /) -> list[dict]:
+        return [MessageToDict(a) for a in self._iterdir("/")]
 
     def listdir(
         self, 
@@ -1067,7 +1080,7 @@ class CloudDriveFileSystem:
         path = cast(str, path)
         if path == "/":
             raise PermissionError(errno.EPERM, "create root directory is not allowed (because it has always existed)")
-        elif dirname(path) == "/":
+        if dirname(path) == "/":
             raise PermissionError(errno.EPERM, f"can't directly create a cloud/storage by `mkdir`: {path!r}")
         try:
             self._attr(path)
@@ -1155,7 +1168,7 @@ class CloudDriveFileSystem:
         if attr.isDirectory:
             if not recursive:
                 if dirname(path) == "/":
-                    raise PermissionError(errno.EPERM, f"remove a storage is not allowed: {path!r}")
+                    raise PermissionError(errno.EPERM, f"remove a cloud/storage is not allowed: {path!r}")
                 raise IsADirectoryError(errno.EISDIR, path)
             elif dirname(path) == "/":
                 self._delete_cloud(attr.name, attr.CloudAPI.userName)
@@ -1213,7 +1226,9 @@ class CloudDriveFileSystem:
                 raise NotADirectoryError(errno.ENOTDIR, f"{dst_dir!r} is not a directory: {src_path!r} -> {dst_path!r}")
         else:
             if replace:
-                if src_attr.isDirectory:
+                if dirname(dst_path) == "/":
+                    raise PermissionError(errno.EPERM, f"replace a storage {dst_path!r} is not allowed: {src_path!r} -> {dst_path!r}")
+                elif src_attr.isDirectory:
                     if dst_attr.isDirectory:
                         try:
                             next(self._iterdir(dst_path))
@@ -1227,20 +1242,20 @@ class CloudDriveFileSystem:
                     raise IsADirectoryError(errno.EISDIR, f"{dst_path!r} is a directory: {src_path!r} -> {dst_path!r}")
                 self._delete(dst_path)
             else:
-                raise FileExistsError(errno.EEXIST, f"destination path already exists: {src_path!r} -> {dst_path!r}")
+                raise FileExistsError(errno.EEXIST, f"{dst_path!r} already exists: {src_path!r} -> {dst_path!r}")
         if src_dir == "/":
             raise PermissionError(errno.EPERM, f"move a cloud/storage into another cloud/storage is not allowed: {src_path!r} -> {dst_path!r}")
         elif dst_path == "/":
             raise PermissionError(errno.EPERM, f"move a folder to the root directory (as a cloud/storage) is not allowed: {src_path!r} -> {dst_path!r}")
         if src_name == dst_name:
             if commonpath((src_dir, dst_dir)) == "/":
-                warn("cross clouds/storages transport will retain the original file: {src_path!r} <-> {dst_path!r}")
+                warn("cross clouds/storages movement will retain the original file: {src_path!r} |-> {dst_path!r}")
             self._move([src_path], dst_dir)
         elif src_dir == dst_dir:
             self._rename((src_path, dst_name))
         else:
             if commonpath((src_dir, dst_dir)) == "/":
-                raise PermissionError(errno.EPERM, f"cross clouds/storages transport does not allow renaming: {src_path!r} -> {dst_path!r}")
+                raise PermissionError(errno.EPERM, f"cross clouds/storages movement does not allow renaming: [{src_dir!r}]{src_path!r} -> [{src_dir!r}]{dst_path!r}")
             tempname = f"{uuid4()}{splitext(src_name)[1]}"
             self._rename((src_path, tempname))
             try:
@@ -1295,7 +1310,7 @@ class CloudDriveFileSystem:
         if path == "/":
             raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         elif dirname(path) == "/":
-            raise PermissionError(errno.EPERM, f"remove a cloud/storage is not allowed: {path!r}")
+            raise PermissionError(errno.EPERM, f"remove a cloud/storage by `rmdir` is not allowed: {path!r}")
         elif _check and not self._attr(path).isDirectory:
             raise NotADirectoryError(errno.ENOTDIR, path)
         elif not self.is_empty(path, _check=False):
@@ -1349,6 +1364,22 @@ class CloudDriveFileSystem:
             "`stat()` is currently not supported, use `attr()` instead."
         )
 
+    def storage_of(
+        self, 
+        /, 
+        path: str | PathLike[str] = "", 
+        _check: bool = True, 
+    ) -> str:
+        if _check:
+            path = self.abspath(path)
+        path = cast(str, path)
+        if path == "/":
+            return "/"
+        try:
+            return path[:path.index("/", 1)]
+        except ValueError:
+            return path
+
     def touch(
         self, 
         /, 
@@ -1358,9 +1389,7 @@ class CloudDriveFileSystem:
         if _check:
             path = self.abspath(path)
         path = cast(str, path)
-        try:
-            self._attr(path)
-        except FileNotFoundError:
+        if not self.exists(path, _check=False):
             dir_ = dirname(path)
             if dir_ == "/":
                 raise PermissionError(errno.EPERM, f"can't create file in the root directory directly: {path!r}")
@@ -1377,8 +1406,9 @@ class CloudDriveFileSystem:
         overwrite_or_ignore: Optional[bool] = None, 
         _check: bool = True, 
     ):
+        file: SupportsRead[bytes]
         if hasattr(local_path_or_file, "read"):
-            file = local_path_or_file
+            file = cast(SupportsRead[bytes], local_path_or_file)
             if isinstance(file, TextIOWrapper):
                 file = file.buffer
             if not path:

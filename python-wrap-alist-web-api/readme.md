@@ -2,6 +2,26 @@
 
 - [Alist Web API 官方文档](https://alist.nn.ci/guide/api/)
 
+## 开始准备
+
+首先进入 `python-wrap-alist-web-api` 目录
+
+```console
+$ cd /path/to/python-wrap-alist-web-api
+```
+
+然后安装依赖模块
+
+```console
+$ pip install -r requirements.txt
+```
+
+之后就可以在 python 环境中运行了
+
+```python
+from alist import *
+```
+
 ## 使用实例
 
 实例只提供最简单的使用例子，也没有覆盖所有方法，具体建议自己看源代码阅读理解 😂。
@@ -23,7 +43,7 @@
 ['115', '阿里云盘']
 >>> # 使用 listdir_attr 罗列当前目录，可以获取属性
 >>> fs.listdir_attr()
-[<alist.AlistPath(client=alist.AlistClient(origin='http://localhost:5244', username='admin', password='******'), path='/115'){'name': '115', 'size': 0, 'is_dir': True, 'modified': '2023-10-18T13:34:15.683368+08:00', 'created': '2023-10-18T13:34:15.683368+08:00', 'sign': '', 'thumb': '', 'type': 1, 'hashinfo': 'null', 'hash_info': None} at 0x10776f410>, <alist.AlistPath(client=alist.AlistClient(origin='http://localhost:5244', username='admin', password='******'), path='/阿里云盘'){'name': '阿里云盘', 'size': 0, 'is_dir': True, 'modified': '2023-10-01T16:26:52.862197+08:00', 'created': '2023-10-01T16:26:52.862197+08:00', 'sign': '', 'thumb': '', 'type': 1, 'hashinfo': 'null', 'hash_info': None} at 0x10776ebd0>]
+[<alist.AlistPath(name='115', size=0, is_dir=True, modified='2023-10-23T19:54:21.483857+08:00', created='2023-10-23T19:54:21.483857+08:00', sign='', thumb='', type=1, hashinfo='null', hash_info=None, fs=alist.AlistFileSystem(client=alist.AlistClient(origin='http://localhost:5244', username=None, password='******'), path='/', refresh=False), path='/115', password='', attr_last_fetched=None)>, <alist.AlistPath(name='阿里云盘', size=0, is_dir=True, modified='2023-10-01T16:26:52.862197+08:00', created='2023-10-01T16:26:52.862197+08:00', sign='', thumb='', type=1, hashinfo='null', hash_info=None, fs=alist.AlistFileSystem(client=alist.AlistClient(origin='http://localhost:5244', username=None, password='******'), path='/', refresh=False), path='/阿里云盘', password='', attr_last_fetched=None)>]
 >>> # 进入 "115" 目录
 >>> fs.chdir("115")
 >>> # 下面是我的 "115" 目录的罗列结果，你肯定和我不同😄
@@ -39,11 +59,11 @@
 ['Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.简体&英文.ass', 'Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv']
 >>> # 查看一个文件的属性信息
 >>> fs.attr("Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv")
-{'name': 'Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv', 'size': 924544482, 'is_dir': False, 'modified': '2023-02-24T11:42:00+08:00', 'created': '2023-02-24T11:42:51+08:00', 'sign': '', 'thumb': '', 'type': 2, 'hashinfo': '{"sha1":"7F4121B68A4E467ABF30A84627E20A8978895A4E"}', 'hash_info': {'sha1': '7F4121B68A4E467ABF30A84627E20A8978895A4E'}, 'raw_url': 'http://localhost:5244/p/115/%E7%94%B5%E8%A7%86%E5%89%A7/%E6%AC%A7%E7%BE%8E%E5%89%A7/A/A%E3%80%8A%E7%88%B1%E3%80%81%E6%AD%BB%E4%BA%A1%E5%92%8C%E6%9C%BA%E5%99%A8%E4%BA%BA%E3%80%8B%28Love.Death.and.Robot%29%5Btt9561862%5D/%E7%88%B1%E3%80%81%E6%AD%BB%E4%BA%A1%E5%92%8C%E6%9C%BA%E5%99%A8%E4%BA%BAS01.Love.Death.and.Robots.1080p.NF.WEB-DL.DDP5.1.x264-NTG%EF%BC%8818%E9%9B%86%EF%BC%89/Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv', 'readme': '', 'provider': '115 Cloud', 'related': [{'name': 'Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.简体&英文.ass', 'size': 48910, 'is_dir': False, 'modified': '2023-03-23T22:09:00+08:00', 'created': '2023-03-23T22:09:09+08:00', 'sign': '', 'thumb': '', 'type': 4, 'hashinfo': '{"sha1":"30AB3A1A376DE83049B35F135A774980F5C7C558"}', 'hash_info': {'sha1': '30AB3A1A376DE83049B35F135A774980F5C7C558'}}], 'path': '/115/电视剧/欧美剧/A/A《爱、死亡和机器人》(Love.Death.and.Robot)[tt9561862]/爱、死亡和机器人S01.Love.Death.and.Robots.1080p.NF.WEB-DL.DDP5.1.x264-NTG（18集）/Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv'}
+{'name': 'Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv', 'size': 924544482, 'is_dir': False, 'modified': '2023-02-24T11:42:00+08:00', 'created': '2023-02-24T11:42:51+08:00', 'sign': '', 'thumb': '', 'type': 2, 'hashinfo': '{"sha1":"7F4121B68A4E467ABF30A84627E20A8978895A4E"}', 'hash_info': {'sha1': '7F4121B68A4E467ABF30A84627E20A8978895A4E'}, 'raw_url': 'http://localhost:5244/p/115/%E7%94%B5%E8%A7%86%E5%89%A7/%E6%AC%A7%E7%BE%8E%E5%89%A7/A/A%E3%80%8A%E7%88%B1%E3%80%81%E6%AD%BB%E4%BA%A1%E5%92%8C%E6%9C%BA%E5%99%A8%E4%BA%BA%E3%80%8B%28Love.Death.and.Robot%29%5Btt9561862%5D/%E7%88%B1%E3%80%81%E6%AD%BB%E4%BA%A1%E5%92%8C%E6%9C%BA%E5%99%A8%E4%BA%BAS01.Love.Death.and.Robots.1080p.NF.WEB-DL.DDP5.1.x264-NTG%EF%BC%8818%E9%9B%86%EF%BC%89/Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv', 'readme': '', 'provider': '115 Cloud', 'related': [{'name': 'Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.简体&英文.ass', 'size': 48910, 'is_dir': False, 'modified': '2023-03-23T22:09:00+08:00', 'created': '2023-03-23T22:09:09+08:00', 'sign': '', 'thumb': '', 'type': 4, 'hashinfo': '{"sha1":"30AB3A1A376DE83049B35F135A774980F5C7C558"}', 'hash_info': {'sha1': '30AB3A1A376DE83049B35F135A774980F5C7C558'}}]}
 >>> # 打开一个文本文件
 >>> f = fs.open("Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.简体&英文.ass", encoding="UTF-16")
 >>> f
-<_io.TextIOWrapper name='/115/电视剧/欧美剧/A/A《爱、死亡和机器人》(Love.Death.and.Robot)[tt9561862]/爱、死亡和机器人S01.Love.Death.and.Robots.1080p.NF.WEB-DL.DDP5.1.x264-NTG（18集）/Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.简体&英文.ass' encoding='UTF-16'>
+<_io.TextIOWrapper name='Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.简体&英文.ass' encoding='UTF-16'>
 >>> # 读取 100 个字符
 >>> f.read(100)
 '[Script Info]\n;SrtEdit 6.3.2012.1001\n;Copyright(C) 2005-2012 Yuan Weiguo\n\nTitle: YYeTs\nOriginal Scri'
@@ -78,7 +98,7 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 ('/', ['115', '阿里云盘'], [])
 >>> # 使用 walk_attr，可以获取属性
 >>> next(fs.walk_attr())
-('/', [<alist.AlistPath(client=alist.AlistClient(origin='http://localhost:5244', username='admin', password='******'), path='/115'){'name': '115', 'size': 0, 'is_dir': True, 'modified': '2023-10-18T13:34:15.683368+08:00', 'created': '2023-10-18T13:34:15.683368+08:00', 'sign': '', 'thumb': '', 'type': 1, 'hashinfo': 'null', 'hash_info': None} at 0x107788510>, <alist.AlistPath(client=alist.AlistClient(origin='http://localhost:5244', username='admin', password='******'), path='/阿里云盘'){'name': '阿里云盘', 'size': 0, 'is_dir': True, 'modified': '2023-10-01T16:26:52.862197+08:00', 'created': '2023-10-01T16:26:52.862197+08:00', 'sign': '', 'thumb': '', 'type': 1, 'hashinfo': 'null', 'hash_info': None} at 0x1077ff310>], [])
+('/', [<alist.AlistPath(name='115', size=0, is_dir=True, modified='2023-10-23T19:54:21.483857+08:00', created='2023-10-23T19:54:21.483857+08:00', sign='', thumb='', type=1, hashinfo='null', hash_info=None, fs=alist.AlistFileSystem(client=alist.AlistClient(origin='http://localhost:5244', username=None, password='******'), path='/', refresh=False), path='/115', password='', attr_last_fetched=None)>, <alist.AlistPath(name='阿里云盘', size=0, is_dir=True, modified='2023-10-01T16:26:52.862197+08:00', created='2023-10-01T16:26:52.862197+08:00', sign='', thumb='', type=1, hashinfo='null', hash_info=None, fs=alist.AlistFileSystem(client=alist.AlistClient(origin='http://localhost:5244', username=None, password='******'), path='/', refresh=False), path='/阿里云盘', password='', attr_last_fetched=None)>], [])
 >>> # 获取当前目录下所有 .mkv 文件的 url
 >>> for alist_path in fs.iterdir(max_depth=-1):
 >>>     if alist_path.name.endswith(".mkv"):
