@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-"""This module provides some utilities for encapsulating and using CloudDrive's web APIs.
+"""Python clouddrive web API wrapper.
 
-- `CloudDrive official website <https://www.clouddrive2.com/index.html>` 
+This is a web API wrapper works with the running "clouddrive" server, and provide some methods, which refer to `os` and `shutil` modules.
+
+- `clouddrive official website <https://www.clouddrive2.com/index.html>` 
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 
 from .client import *
 from .fs import *

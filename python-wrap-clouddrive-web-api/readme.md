@@ -1,4 +1,4 @@
-# CloudDrive web API 的 Python 封装
+# clouddrive web API 的 Python 封装
 
 ## 开始准备
 
@@ -36,9 +36,11 @@ from clouddrive import *
 >>> # 导入模块
 >>> from clouddrive import CloudDriveClient, CloudDriveFileSystem
 >>> # 创建客户端对象，登录 cd2：此处，用户名是 "test"，密码是 "test@test"
->>> client = CloudDriveClient("http://localhost:5244", "test", "test@test")
+>>> client = CloudDriveClient("http://localhost:19798", "test", "test@test")
 >>> # 创建文件系统对象
 >>> fs = CloudDriveFileSystem(client)
+>>> # 或者，直接用 CloudDriveFileSystem.login 方法登录
+>>> fs = CloudDriveFileSystem.login("http://localhost:19798", "test", "test@test")
 >>> # 获取当前位置
 >>> fs.getcwd()
 '/'
@@ -103,7 +105,7 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 >>> # 使用 walk_attr，可以获取属性
 >>> next(fs.walk_attr())
 ('/', [<clouddrive.fs.CloudDrivePath(id='0', name='115', fullPathName='/115', createTime='2023-10-22T16:01:44.430846Z', writeTime='2023-10-22T16:01:44.430846Z', accessTime='2023-10-22T16:01:44.430846Z', CloudAPI={'name': '115', 'userName': '306576686', 'nickName': '306576686'}, isDirectory=True, isCloudRoot=True, isCloudDirectory=True, canSearch=True, hasDetailProperties=True, canOfflineDownload=True, fs=clouddrive.fs.CloudDriveFileSystem(client=<clouddrive.client.CloudDriveClient object at 0x103791450>, path='/', refresh=False), path='/115')>, <clouddrive.fs.CloudDrivePath(id='58188691_root', name='阿里云盘Open', fullPathName='/阿里云盘Open', createTime='2023-10-22T16:01:44.964617Z', writeTime='2023-10-22T16:01:44.964617Z', accessTime='2023-10-22T16:01:44.964617Z', CloudAPI={'name': '阿里云盘Open', 'userName': '4d1769fb91ba4752ac417f77c1da8082', 'nickName': '请设置昵称？'}, isDirectory=True, isCloudRoot=True, isCloudDirectory=True, canSearch=True, canDeletePermanently=True, fs=clouddrive.fs.CloudDriveFileSystem(client=<clouddrive.client.CloudDriveClient object at 0x103791450>, path='/', refresh=False), path='/阿里云盘Open')>], [])
->>> # 获取当前目录下所有 .mkv 文件的 url
+>>> # 获取当前目录下所有 .mkv 文件的 url，方法 1
 >>> for path in fs.iterdir(max_depth=-1):
 >>>     if path.name.endswith(".mkv"):
 >>>         # 获取下载链接（注意：不是直链）
@@ -111,4 +113,10 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 http://localhost:19798/static/http/localhost:19798/False/%2F115%2F%E4%BA%91%E4%B8%8B%E8%BD%BD%2F57.Seconds.2023.1080p.WEB-DL.DDP5.1.H264-EniaHD%5BTGx%5D%2F57.Seconds.2023.1080p.WEB-DL.DDP5.1.H264-EniaHD.mkv
 http://localhost:19798/static/http/localhost:19798/False/%2F115%2F%E4%BA%91%E4%B8%8B%E8%BD%BD%2FA.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies%5BTGx%5D%2FA.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies.mkv
 ...
+>>> # 获取当前目录下所有 .mkv 文件的 url，方法 2
+>>> for path in fs.glob("**/*.mkv"):
+>>>     print(path.url)
+>>> # 获取当前目录下所有 .mkv 文件的 url，方法 3
+>>> for path in fs.rglob("*.mkv"):
+>>>     print(path.url)
 ```

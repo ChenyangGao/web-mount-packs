@@ -20,7 +20,7 @@ import CloudDrive_pb2_grpc # type: ignore
 
 
 class CloudDriveClient:
-    "CloudDrive client that encapsulates grpc APIs"
+    "clouddrive client that encapsulates grpc APIs"
     def __init__(
         self, 
         /, 

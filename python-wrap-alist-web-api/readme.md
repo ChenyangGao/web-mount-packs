@@ -35,6 +35,8 @@ from alist import *
 >>> client = AlistClient("http://localhost:5244", "admin", "123456")
 >>> # 创建文件系统对象
 >>> fs = AlistFileSystem(client)
+>>> # 或者，直接用 AlistFileSystem.login 方法登录
+>>> fs = AlistFileSystem.login("http://localhost:5244", "admin", "123456")
 >>> # 获取当前位置
 >>> fs.getcwd()
 '/'
@@ -99,12 +101,18 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 >>> # 使用 walk_attr，可以获取属性
 >>> next(fs.walk_attr())
 ('/', [<alist.AlistPath(name='115', size=0, is_dir=True, modified='2023-10-23T19:54:21.483857+08:00', created='2023-10-23T19:54:21.483857+08:00', sign='', thumb='', type=1, hashinfo='null', hash_info=None, fs=alist.AlistFileSystem(client=alist.AlistClient(origin='http://localhost:5244', username=None, password='******'), path='/', refresh=False), path='/115', password='', attr_last_fetched=None)>, <alist.AlistPath(name='阿里云盘', size=0, is_dir=True, modified='2023-10-01T16:26:52.862197+08:00', created='2023-10-01T16:26:52.862197+08:00', sign='', thumb='', type=1, hashinfo='null', hash_info=None, fs=alist.AlistFileSystem(client=alist.AlistClient(origin='http://localhost:5244', username=None, password='******'), path='/', refresh=False), path='/阿里云盘', password='', attr_last_fetched=None)>], [])
->>> # 获取当前目录下所有 .mkv 文件的 url
->>> for alist_path in fs.iterdir(max_depth=-1):
->>>     if alist_path.name.endswith(".mkv"):
+>>> # 获取当前目录下所有 .mkv 文件的 url，方法 1
+>>> for path in fs.iterdir(max_depth=-1):
+>>>     if path.name.endswith(".mkv"):
 >>>         # 获取下载链接（要么是直链，不然就是 alist 的下载链接）
->>>         print(alist_path.url)
+>>>         print(path.url)
 http://localhost:5244/d/115/%E4%BA%91%E4%B8%8B%E8%BD%BD/A.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies%5BTGx%5D/A.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies.mkv
 http://localhost:5244/d/115/%E4%BA%91%E4%B8%8B%E8%BD%BD/About.My.Father.2023.720p.AMZN.WEBRip.800MB.x264-GalaxyRG%5BTGx%5D/About.My.Father.2023.720p.AMZN.WEBRip.800MB.x264-GalaxyRG.mkv
 ...
+>>> # 获取当前目录下所有 .mkv 文件的 url，方法 2
+>>> for path in fs.glob("**/*.mkv"):
+>>>     print(path.url)
+>>> # 获取当前目录下所有 .mkv 文件的 url，方法 3
+>>> for path in fs.rglob("*.mkv"):
+>>>     print(path.url)
 ```

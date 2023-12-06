@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+// v0.5.8
+
 package clouddrive;
 
 option csharp_namespace = "CloudDriveSrv.Protos";

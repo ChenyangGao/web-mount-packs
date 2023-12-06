@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-"""This module provides some utilities for encapsulating and using Alist's web APIs.
+"""Python alist web API wrapper.
+
+This is a web API wrapper works with the running "alist" server, and provide some methods, which refer to `os` and `shutil` modules.
 
 - `Alist Web API official documentation <https://alist.nn.ci/guide/api/>` 
 """
@@ -9,19 +11,21 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = ["AlistClient", "AlistPath", "AlistFile", "AlistFileSystem"]
 
 import errno
 
 from asyncio import run
 from datetime import datetime
-from functools import update_wrapper
+from fnmatch import translate as wildcard_translate
+from functools import cached_property, partial, update_wrapper
 from http.client import HTTPResponse
 from inspect import isawaitable
 from io import BufferedReader, BytesIO, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
 from os import PathLike, fspath, fstat, makedirs, scandir, path as os_path
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
+from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from typing import (
     cast, Callable, ItemsView, Iterable, Iterator, KeysView, Literal, Mapping, Optional, Protocol, 
@@ -41,6 +45,47 @@ filterwarnings("ignore", category=DeprecationWarning)
 
 _T_co = TypeVar("_T_co", covariant=True)
 _T_contra = TypeVar("_T_contra", contravariant=True)
+RESUB_REMOVE_WRAP_BRACKET = partial(re_compile("(?s:\\[(.[^]]*)\\])").sub, "\\1")
+
+
+def posix_glob_translate_iter(pattern: str) -> Iterator[tuple[str, str, str]]:
+    def is_pat(part: str) -> bool:
+        it = enumerate(part)
+        try:
+            for _, c in it:
+                if c in ("*", "?"):
+                    return True
+                elif c == "[":
+                    _, c2 = next(it)
+                    if c2 == "]":
+                        continue
+                    i, c3 = next(it)
+                    if c3 == "]":
+                        continue
+                    if part.find("]", i + 1) > -1:
+                        return True
+            return False
+        except StopIteration:
+            return False
+    last_type = None
+    for part in pattern.split("/"):
+        if not part:
+            continue
+        if part == "*":
+            last_type = "star"
+            yield "[^/]*", last_type, ""
+        elif len(part) >=2 and not part.strip("*"):
+            if last_type == "dstar":
+                continue
+            last_type = "dstar"
+            yield "[^/]*(?:/[^/]*)*", last_type, ""
+        elif is_pat(part):
+            last_type = "pat"
+            yield wildcard_translate(part)[4:-3].replace(".*", "[^/]*"), last_type, ""
+        else:
+            last_type = "orig"
+            tidy_part = RESUB_REMOVE_WRAP_BRACKET(part)
+            yield re_escape(tidy_part), last_type, tidy_part
 
 
 class SupportsWrite(Protocol[_T_contra]):
@@ -74,20 +119,6 @@ def _check_response(fn, /):
     return update_wrapper(wrapper, fn)
 
 
-class lazyproperty:
-
-    def __init__(self, func):
-        self.func = func
-        self.name = func.__name__
-
-    def __get__(self, instance, type):
-        if instance is None:
-            return self
-        value = self.func(instance)
-        instance.__dict__[self.name] = value
-        return value
-
-
 class AlistClient:
     """Alist client that encapsulates web APIs
 
@@ -119,7 +150,7 @@ class AlistClient:
         name = cls.__qualname__
         if module != "__main__":
             name = module + "." + name
-        return f"{name}(origin={self.origin!r}, username={self.username!r}, password='******')"
+        return f"{name}(origin={self._origin!r}, username={self._username!r}, password='******')"
 
     def close(self, /):
         try:
@@ -1332,13 +1363,14 @@ class AlistPath(Mapping, PathLike[str]):
     def exists(self, /) -> bool:
         return self.fs.exists(self.path, self.password, _check=False)
 
-    def glob(self, /, pattern: str) -> Iterator[AlistPath]:
-        raise UnsupportedOperation(errno.ENOSYS, "glob")
+    def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
+        dirname = self.path if self.is_dir() else self.parent.path
+        return self.fs.glob(pattern, dirname, self.password, ignore_case=ignore_case)
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, self.password, _check=False)
 
-    @lazyproperty
+    @cached_property
     def is_dir(self, /):
         return self["is_dir"]
 
@@ -1354,6 +1386,7 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         refresh: Optional[bool] = None, 
         topdown: bool = True, 
+        min_depth: int = 0, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
@@ -1363,6 +1396,7 @@ class AlistPath(Mapping, PathLike[str]):
             self.password, 
             refresh=refresh, 
             topdown=topdown, 
+            min_depth=min_depth, 
             max_depth=max_depth, 
             predicate=predicate, 
             onerror=onerror, 
@@ -1378,8 +1412,11 @@ class AlistPath(Mapping, PathLike[str]):
             return self
         return type(self)(self.fs, path_new, self.password)
 
-    def match(self, /, path_pattern: str) -> bool:
-        raise UnsupportedOperation(errno.ENOSYS, "match")
+    def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
+        pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
+        if ignore_case:
+            pattern = "(?i:%s)" % pattern
+        return re_compile(pattern).fullmatch(self.path) is not None
 
     def mkdir(self, /):
         self.fs.mkdir(self.path, self.password, _check=False)
@@ -1454,7 +1491,7 @@ class AlistPath(Mapping, PathLike[str]):
         else:
             return buffer
 
-    @lazyproperty
+    @cached_property
     def parent(self, /) -> AlistPath:
         path = self.path
         if path == "/":
@@ -1464,7 +1501,7 @@ class AlistPath(Mapping, PathLike[str]):
             return self
         return type(self)(self.fs, parent, self.password)
 
-    @lazyproperty
+    @cached_property
     def parents(self, /) -> tuple[AlistPath, ...]:
         path = self.path
         if path == "/":
@@ -1476,7 +1513,7 @@ class AlistPath(Mapping, PathLike[str]):
             parents.append(cls(fs, parent, password))
         return tuple(parents)
 
-    @lazyproperty
+    @cached_property
     def parts(self, /) -> tuple[str, ...]:
         return ("/", *self.path[1:].split("/"))
 
@@ -1530,8 +1567,9 @@ class AlistPath(Mapping, PathLike[str]):
         )
         return type(self)(self.fs, dst_path, dst_password)
 
-    def rglob(self, /, pattern: str) -> Iterator[AlistPath]:
-        raise UnsupportedOperation(errno.ENOSYS, "rglob")
+    def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
+        dirname = self.path if self.is_dir() else self.parent.path
+        return self.fs.rglob(pattern, dirname, self.password, ignore_case=ignore_case)
 
     def rmdir(self, /):
         self.fs.rmdir(self.path, self.password, _check=False)
@@ -1552,15 +1590,15 @@ class AlistPath(Mapping, PathLike[str]):
     def stat(self, /):
         return self.fs.stat(self.path, self.password, _check=False)
 
-    @lazyproperty
+    @cached_property
     def stem(self, /) -> str:
         return splitext(basename(self.path))[0]
 
-    @lazyproperty
+    @cached_property
     def suffix(self, /) -> str:
         return splitext(basename(self.path))[1]
 
-    @lazyproperty
+    @cached_property
     def suffixes(self, /) -> tuple[str, ...]:
         return tuple("." + part for part in basename(self.path).split(".")[1:])
 
@@ -1676,7 +1714,7 @@ class AlistFile(RawIOBase):
     def isatty(self, /):
         return False
 
-    @lazyproperty
+    @cached_property
     def name(self, /) -> str:
         return self.path["name"]
 
@@ -1835,6 +1873,16 @@ class AlistFileSystem:
             self.__dict__["refresh"] = val
         else:
             raise TypeError("can't set attribute")
+
+    @classmethod
+    def login(
+        cls, 
+        /, 
+        origin: str = "http://localhost:5244", 
+        username: str = "", 
+        password: str = "", 
+    ) -> AlistFileSystem:
+        return cls(AlistClient(origin, username, password))
 
     @_check_response
     def fs_batch_rename(
@@ -2329,6 +2377,80 @@ class AlistFileSystem:
     def getcwd(self, /) -> str:
         return self.path
 
+    def glob(
+        self, 
+        /, 
+        pattern: str, 
+        dirname: str = "", 
+        password: str = "", 
+        ignore_case: bool = False, 
+    ) -> Iterator[AlistPath]:
+        if pattern == "*":
+            return self.iterdir(dirname, password)
+        elif pattern == "**":
+            return self.iterdir(dirname, password, max_depth=-1)
+        elif not pattern:
+            if self.exists(dirname):
+                return (AlistPath(self, self.abspath(dirname), password),)
+            return
+        elif not pattern.lstrip("/"):
+            return (AlistPath(self, "/", password),)
+        splitted_pats = tuple(posix_glob_translate_iter(pattern))
+        if pattern.startswith("/"):
+            dirname = "/"
+        else:
+            dirname = self.abspath(dirname)
+        if ignore_case:
+            pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
+            match = re_compile("(?i:%s)" % pattern).fullmatch
+            if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                return self.iterdir(
+                    dirname, 
+                    password, 
+                    max_depth=-1, 
+                    predicate=lambda p: match(p.path) is not None, 
+                )
+            else:
+                depth = len(splitted_pats)
+                return self.iterdir(
+                    dirname, 
+                    password, 
+                    min_depth=depth, 
+                    max_depth=depth, 
+                    predicate=lambda p: match(p.path) is not None, 
+                )
+        else:
+            i = 0
+            typ = None
+            for i, (pat, typ, orig) in enumerate(splitted_pats):
+                if typ != "orig":
+                    break
+                dirname = joinpath(dirname, orig)
+            if typ == "orig":
+                if self.exists(dirname):
+                    return (AlistPath(self, dirname, password),)
+                return
+            elif typ == "dstar" and i + 1 == len(splitted_pats):
+                return self.iterdir(dirname, max_depth=-1)
+            pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
+            match = re_compile(pattern).fullmatch
+            if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                return self.iterdir(
+                    dirname, 
+                    password, 
+                    max_depth=-1, 
+                    predicate=lambda p: match(p.path) is not None, 
+                )
+            else:
+                depth = len(splitted_pats) - i
+                return self.iterdir(
+                    dirname, 
+                    password, 
+                    min_depth=depth, 
+                    max_depth=depth, 
+                    predicate=lambda p: match(p.path) is not None, 
+                )
+
     def isdir(
         self, 
         /, 
@@ -2400,6 +2522,7 @@ class AlistFileSystem:
         password: str = "", 
         refresh: Optional[bool] = None, 
         topdown: bool = True, 
+        min_depth: int = 0, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
@@ -2421,16 +2544,18 @@ class AlistFileSystem:
             elif onerror:
                 raise
             return
+        if min_depth > 0:
+            min_depth -= 1
         if max_depth > 0:
             max_depth -= 1
         for path in ls:
-            yield_me = True
-            if predicate:
+            yield_me = min_depth <= 0
+            if yield_me and predicate:
                 pred = predicate(path)
                 if pred is None:
                     continue
                 yield_me = pred
-            if topdown and yield_me:
+            if yield_me and topdown:
                 yield path
             if path["is_dir"]:
                 yield from self.iterdir(
@@ -2438,12 +2563,13 @@ class AlistFileSystem:
                     password, 
                     refresh=refresh, 
                     topdown=topdown, 
+                    min_depth=min_depth, 
                     max_depth=max_depth, 
                     predicate=predicate, 
                     onerror=onerror, 
                     _check=_check, 
                 )
-            if not topdown and yield_me:
+            if yield_me and not topdown:
                 yield path
 
     def list_storages(self, /) -> list[dict]:
@@ -2770,6 +2896,22 @@ class AlistFileSystem:
     ):
         self.rename(src_path, dst_path, src_password, dst_password, replace=True, _check=_check)
 
+    def rglob(
+        self, 
+        /, 
+        pattern: str, 
+        dirname: str = "", 
+        password: str = "", 
+        ignore_case: bool = False, 
+    ) -> Iterator[AlistPath]:
+        if not pattern:
+            return self.iterdir(dirname, password, max_depth=-1)
+        if pattern.startswith("/"):
+            pattern = joinpath("/", "**", pattern.lstrip("/"))
+        else:
+            pattern = joinpath("**", pattern)
+        return self.glob(pattern, dirname, password, ignore_case=ignore_case)
+
     def rmdir(
         self, 
         /, 
@@ -2991,6 +3133,7 @@ class AlistFileSystem:
         password: str = "", 
         refresh: Optional[bool] = None, 
         topdown: bool = True, 
+        min_depth: int = 1, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         _check: bool = True, 
@@ -3023,21 +3166,25 @@ class AlistFileSystem:
                 dirs.append(attr["name"])
             else:
                 files.append(attr["name"])
-        if topdown:
-            yield top, dirs, files
+        if min_depth > 0:
+            min_depth -= 1
         if max_depth > 0:
             max_depth -= 1
+        yield_me = min_depth <= 0
+        if yield_me and topdown:
+            yield top, dirs, files
         for dir_ in dirs:
             yield from self.walk(
                 joinpath(top, dir_), 
                 password, 
                 refresh=refresh, 
                 topdown=topdown, 
+                min_depth=min_depth, 
                 max_depth=max_depth, 
                 onerror=onerror, 
                 _check=False, 
             )
-        if not topdown:
+        if yield_me and not topdown:
             yield top, dirs, files
 
     def walk_attr(
@@ -3047,6 +3194,7 @@ class AlistFileSystem:
         password: str = "", 
         refresh: Optional[bool] = None, 
         topdown: bool = True, 
+        min_depth: int = 1, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         _check: bool = True, 
@@ -3077,21 +3225,25 @@ class AlistFileSystem:
                 dirs.append(path)
             else:
                 files.append(path)
-        if topdown:
-            yield top, dirs, files
+        if min_depth > 0:
+            min_depth -= 1
         if max_depth > 0:
             max_depth -= 1
+        yield_me = min_depth <= 0
+        if yield_me and topdown:
+            yield top, dirs, files
         for dir_ in dirs:
             yield from self.walk_attr(
                 joinpath(top, dir_["name"]), 
                 password, 
                 refresh=refresh, 
                 topdown=topdown, 
+                min_depth=min_depth, 
                 max_depth=max_depth, 
                 onerror=onerror, 
                 _check=False, 
             )
-        if not topdown:
+        if yield_me and not topdown:
             yield top, dirs, files
 
     cd = chdir
