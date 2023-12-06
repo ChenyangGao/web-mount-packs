@@ -220,7 +220,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.fs.exists(self.path, _check=False)
 
     def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[CloudDrivePath]:
-        dirname = self.path if self.is_dir() else self.parent.path
+        dirname = self.path if self.is_dir else self.parent.path
         return self.fs.glob(pattern, dirname, ignore_case=ignore_case)
 
     def isdir(self, /) -> bool:
@@ -395,7 +395,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return type(self)(self.fs, dst_path)
 
     def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[CloudDrivePath]:
-        dirname = self.path if self.is_dir() else self.parent.path
+        dirname = self.path if self.is_dir else self.parent.path
         return self.fs.rglob(pattern, dirname, ignore_case=ignore_case)
 
     def rmdir(self, /):

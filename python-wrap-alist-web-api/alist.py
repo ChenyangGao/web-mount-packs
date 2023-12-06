@@ -1364,13 +1364,13 @@ class AlistPath(Mapping, PathLike[str]):
         return self.fs.exists(self.path, self.password, _check=False)
 
     def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
-        dirname = self.path if self.is_dir() else self.parent.path
+        dirname = self.path if self.is_dir else self.parent.path
         return self.fs.glob(pattern, dirname, self.password, ignore_case=ignore_case)
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, self.password, _check=False)
 
-    @cached_property
+    @property
     def is_dir(self, /):
         return self["is_dir"]
 
@@ -1568,7 +1568,7 @@ class AlistPath(Mapping, PathLike[str]):
         return type(self)(self.fs, dst_path, dst_password)
 
     def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
-        dirname = self.path if self.is_dir() else self.parent.path
+        dirname = self.path if self.is_dir else self.parent.path
         return self.fs.rglob(pattern, dirname, self.password, ignore_case=ignore_case)
 
     def rmdir(self, /):
