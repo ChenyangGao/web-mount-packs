@@ -221,7 +221,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[CloudDrivePath]:
         dirname = self.path if self.is_dir else self.parent.path
-        return self.fs.glob(pattern, dirname, ignore_case=ignore_case)
+        return self.fs.glob(pattern, dirname, ignore_case=ignore_case, _check=False)
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, _check=False)
@@ -230,6 +230,8 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def is_dir(self, /):
         try:
             return self["isDirectory"]
+        except FileNotFoundError:
+            return False
         except KeyError:
             return False
 
@@ -238,7 +240,12 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     @property
     def is_file(self, /) -> bool:
-        return not self.is_dir
+        try:
+            return not self["isDirectory"]
+        except FileNotFoundError:
+            return False
+        except KeyError:
+            return True
 
     def iterdir(
         self, 
@@ -269,6 +276,28 @@ class CloudDrivePath(Mapping, PathLike[str]):
         if path == path_new:
             return self
         return type(self)(self.fs, path_new)
+
+    def listdir(
+        self, 
+        /, 
+        refresh: Optional[bool] = None, 
+    ) -> list[str]:
+        return self.fs.listdir(
+            self.path, 
+            refresh=refresh, 
+            _check=False, 
+        )
+
+    def listdir_attr(
+        self, 
+        /, 
+        refresh: Optional[bool] = None, 
+    ) -> list[CloudDrivePath]:
+        return self.fs.listdir_attr(
+            self.path, 
+            refresh=refresh, 
+            _check=False, 
+        )
 
     def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
         pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
@@ -396,7 +425,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[CloudDrivePath]:
         dirname = self.path if self.is_dir else self.parent.path
-        return self.fs.rglob(pattern, dirname, ignore_case=ignore_case)
+        return self.fs.rglob(pattern, dirname, ignore_case=ignore_case, _check=False)
 
     def rmdir(self, /):
         self.fs.rmdir(self.path, _check=False)
@@ -526,17 +555,6 @@ class CloudDriveFile(RawIOBase):
 
     def __setattr__(self, attr, val, /):
         raise TypeError("can't set attribute")
-
-    @classmethod
-    def login(
-        cls, 
-        /, 
-        origin: str = "http://localhost:19798", 
-        username: str = "", 
-        password: str = "", 
-        channel = None, 
-    ) -> CloudDriveFileSystem:
-        return cls(CloudDriveClient(origin, username, password, channel=channel))
 
     def close(self, /):
         self.file.close()
@@ -705,6 +723,17 @@ class CloudDriveFileSystem:
             self.__dict__["refresh"] = val
         else:
             raise TypeError("can't set attribute")
+
+    @classmethod
+    def login(
+        cls, 
+        /, 
+        origin: str = "http://localhost:19798", 
+        username: str = "", 
+        password: str = "", 
+        channel = None, 
+    ) -> CloudDriveFileSystem:
+        return cls(CloudDriveClient(origin, username, password, channel=channel))
 
     @_grpc_exc_redirect
     def _attr(self, path: str, /):
@@ -956,68 +985,93 @@ class CloudDriveFileSystem:
         pattern: str, 
         dirname: str = "", 
         ignore_case: bool = False, 
+        _check: bool = True, 
     ) -> Iterator[CloudDrivePath]:
         if pattern == "*":
-            return self.iterdir(dirname)
+            return self.iterdir(dirname, _check=_check)
         elif pattern == "**":
-            return self.iterdir(dirname, max_depth=-1)
+            return self.iterdir(dirname, max_depth=-1, _check=_check)
         elif not pattern:
-            if self.exists(dirname):
-                return (CloudDrivePath(self, self.abspath(dirname)),)
-            return
+            if _check:
+                dirname = self.abspath(dirname)
+            if self.exists(dirname, _check=False):
+                return iter((CloudDrivePath(self, dirname),))
+            return iter(())
         elif not pattern.lstrip("/"):
-            return (CloudDrivePath(self, "/"),)
+            return iter((CloudDrivePath(self, "/"),))
         splitted_pats = tuple(posix_glob_translate_iter(pattern))
         if pattern.startswith("/"):
             dirname = "/"
-        else:
+        elif _check:
             dirname = self.abspath(dirname)
+        i = 0
         if ignore_case:
-            pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
-            match = re_compile("(?i:%s)" % pattern).fullmatch
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
+                match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iterdir(
                     dirname, 
                     max_depth=-1, 
                     predicate=lambda p: match(p.path) is not None, 
-                )
-            else:
-                depth = len(splitted_pats)
-                return self.iterdir(
-                    dirname, 
-                    min_depth=depth, 
-                    max_depth=depth, 
-                    predicate=lambda p: match(p.path) is not None, 
+                    _check=False, 
                 )
         else:
-            i = 0
             typ = None
             for i, (pat, typ, orig) in enumerate(splitted_pats):
                 if typ != "orig":
                     break
                 dirname = joinpath(dirname, orig)
             if typ == "orig":
-                if self.exists(dirname):
-                    return (CloudDrivePath(self, dirname),)
-                return
+                if self.exists(dirname, _check=False):
+                    return iter((CloudDrivePath(self, dirname),))
+                return iter(())
             elif typ == "dstar" and i + 1 == len(splitted_pats):
-                return self.iterdir(dirname, max_depth=-1)
-            pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
-            match = re_compile(pattern).fullmatch
+                return self.iterdir(dirname, max_depth=-1, _check=False)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
+                match = re_compile(pattern).fullmatch
                 return self.iterdir(
                     dirname, 
                     max_depth=-1, 
                     predicate=lambda p: match(p.path) is not None, 
+                    _check=False, 
                 )
+        cref_cache: dict[int, Callable] = {}
+        def glob_step_match(path, i):
+            j = i + 1
+            at_end = j == len(splitted_pats)
+            pat, typ, orig = splitted_pats[i]
+            if typ == "orig":
+                subpath = path.joinpath(orig)
+                if at_end:
+                    if subpath.exists():
+                        yield subpath
+                elif subpath.is_dir:
+                    yield from glob_step_match(subpath, j)
+            elif typ == "star":
+                if at_end:
+                    yield from path.listdir_attr()
+                else:
+                    for subpath in path.listdir_attr():
+                        if subpath.is_dir:
+                            yield from glob_step_match(subpath, j)
             else:
-                depth = len(splitted_pats) - i
-                return self.iterdir(
-                    dirname, 
-                    min_depth=depth, 
-                    max_depth=depth, 
-                    predicate=lambda p: match(p.path) is not None, 
-                )
+                for subpath in path.listdir_attr():
+                    try:
+                        cref = cref_cache[i]
+                    except KeyError:
+                        if ignore_case:
+                            pat = "(?i:%s)" % pat
+                        cref = cref_cache[i] = re_compile(pat).fullmatch
+                    if cref(subpath.name):
+                        if at_end:
+                            yield subpath
+                        elif subpath.is_dir:
+                            yield from glob_step_match(subpath, j)
+        path = CloudDrivePath(self, dirname)
+        if not path.is_dir:
+            return iter(())
+        return glob_step_match(path, i)
 
     def isdir(
         self, 
@@ -1073,7 +1127,6 @@ class CloudDriveFileSystem:
         self, 
         /, 
         path: str | PathLike[str], 
-        password: str = "", 
         _check: bool = True, 
     ) -> bool:
         if _check:
@@ -1424,14 +1477,15 @@ class CloudDriveFileSystem:
         pattern: str, 
         dirname: str = "", 
         ignore_case: bool = False, 
+        _check: bool = True, 
     ) -> Iterator[CloudDrivePath]:
         if not pattern:
-            return self.iterdir(dirname, max_depth=-1)
+            return self.iterdir(dirname, max_depth=-1, _check=_check)
         if pattern.startswith("/"):
             pattern = joinpath("/", "**", pattern.lstrip("/"))
         else:
             pattern = joinpath("**", pattern)
-        return self.glob(pattern, dirname, ignore_case=ignore_case)
+        return self.glob(pattern, dirname, ignore_case=ignore_case, _check=_check)
 
     def rmdir(
         self, 

@@ -1365,21 +1365,27 @@ class AlistPath(Mapping, PathLike[str]):
 
     def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
         dirname = self.path if self.is_dir else self.parent.path
-        return self.fs.glob(pattern, dirname, self.password, ignore_case=ignore_case)
+        return self.fs.glob(pattern, dirname, self.password, ignore_case=ignore_case, _check=False)
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, self.password, _check=False)
 
     @property
     def is_dir(self, /):
-        return self["is_dir"]
+        try:
+            return self["is_dir"]
+        except FileNotFoundError:
+            return False
 
     def isfile(self, /) -> bool:
         return self.fs.isfile(self.path, self.password, _check=False)
 
     @property
     def is_file(self, /) -> bool:
-        return not self["is_dir"]
+        try:
+            return not self["is_dir"]
+        except FileNotFoundError:
+            return False
 
     def iterdir(
         self, 
@@ -1411,6 +1417,38 @@ class AlistPath(Mapping, PathLike[str]):
         if path == path_new:
             return self
         return type(self)(self.fs, path_new, self.password)
+
+    def listdir(
+        self, 
+        /, 
+        refresh: Optional[bool] = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+    ) -> list[str]:
+        return self.fs.listdir(
+            self.path, 
+            self.password, 
+            refresh=refresh, 
+            page=page, 
+            per_page=per_page, 
+            _check=False, 
+        )
+
+    def listdir_attr(
+        self, 
+        /, 
+        refresh: Optional[bool] = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+    ) -> list[AlistPath]:
+        return self.fs.listdir_attr(
+            self.path, 
+            self.password, 
+            refresh=refresh, 
+            page=page, 
+            per_page=per_page, 
+            _check=False, 
+        )
 
     def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
         pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
@@ -1569,7 +1607,7 @@ class AlistPath(Mapping, PathLike[str]):
 
     def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
         dirname = self.path if self.is_dir else self.parent.path
-        return self.fs.rglob(pattern, dirname, self.password, ignore_case=ignore_case)
+        return self.fs.rglob(pattern, dirname, self.password, ignore_case=ignore_case, _check=False)
 
     def rmdir(self, /):
         self.fs.rmdir(self.path, self.password, _check=False)
@@ -2384,72 +2422,95 @@ class AlistFileSystem:
         dirname: str = "", 
         password: str = "", 
         ignore_case: bool = False, 
+        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         if pattern == "*":
-            return self.iterdir(dirname, password)
+            return self.iterdir(dirname, password, _check=_check)
         elif pattern == "**":
-            return self.iterdir(dirname, password, max_depth=-1)
+            return self.iterdir(dirname, password, max_depth=-1, _check=_check)
         elif not pattern:
-            if self.exists(dirname):
-                return (AlistPath(self, self.abspath(dirname), password),)
-            return
+            if _check:
+                dirname = self.abspath(dirname)
+            if self.exists(dirname, password, _check=False):
+                return iter((AlistPath(self, dirname, password),))
+            return iter(())
         elif not pattern.lstrip("/"):
-            return (AlistPath(self, "/", password),)
+            return iter((AlistPath(self, "/", password),))
         splitted_pats = tuple(posix_glob_translate_iter(pattern))
         if pattern.startswith("/"):
             dirname = "/"
-        else:
+        elif _check:
             dirname = self.abspath(dirname)
+        i = 0
         if ignore_case:
-            pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
-            match = re_compile("(?i:%s)" % pattern).fullmatch
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
+                match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iterdir(
                     dirname, 
                     password, 
                     max_depth=-1, 
                     predicate=lambda p: match(p.path) is not None, 
-                )
-            else:
-                depth = len(splitted_pats)
-                return self.iterdir(
-                    dirname, 
-                    password, 
-                    min_depth=depth, 
-                    max_depth=depth, 
-                    predicate=lambda p: match(p.path) is not None, 
+                    _check=False, 
                 )
         else:
-            i = 0
             typ = None
             for i, (pat, typ, orig) in enumerate(splitted_pats):
                 if typ != "orig":
                     break
                 dirname = joinpath(dirname, orig)
             if typ == "orig":
-                if self.exists(dirname):
-                    return (AlistPath(self, dirname, password),)
-                return
+                if self.exists(dirname, password, _check=False):
+                    return iter((AlistPath(self, dirname, password),))
+                return iter(())
             elif typ == "dstar" and i + 1 == len(splitted_pats):
-                return self.iterdir(dirname, max_depth=-1)
-            pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
-            match = re_compile(pattern).fullmatch
+                return self.iterdir(dirname, password, max_depth=-1, _check=False)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
+                match = re_compile(pattern).fullmatch
                 return self.iterdir(
                     dirname, 
                     password, 
                     max_depth=-1, 
                     predicate=lambda p: match(p.path) is not None, 
+                    _check=False, 
                 )
+        cref_cache: dict[int, Callable] = {}
+        def glob_step_match(path, i):
+            j = i + 1
+            at_end = j == len(splitted_pats)
+            pat, typ, orig = splitted_pats[i]
+            if typ == "orig":
+                subpath = path.joinpath(orig)
+                if at_end:
+                    if subpath.exists():
+                        yield subpath
+                elif subpath.is_dir:
+                    yield from glob_step_match(subpath, j)
+            elif typ == "star":
+                if at_end:
+                    yield from path.listdir_attr()
+                else:
+                    for subpath in path.listdir_attr():
+                        if subpath.is_dir:
+                            yield from glob_step_match(subpath, j)
             else:
-                depth = len(splitted_pats) - i
-                return self.iterdir(
-                    dirname, 
-                    password, 
-                    min_depth=depth, 
-                    max_depth=depth, 
-                    predicate=lambda p: match(p.path) is not None, 
-                )
+                for subpath in path.listdir_attr():
+                    try:
+                        cref = cref_cache[i]
+                    except KeyError:
+                        if ignore_case:
+                            pat = "(?i:%s)" % pat
+                        cref = cref_cache[i] = re_compile(pat).fullmatch
+                    if cref(subpath.name):
+                        if at_end:
+                            yield subpath
+                        elif subpath.is_dir:
+                            yield from glob_step_match(subpath, j)
+        path = AlistPath(self, dirname, password)
+        if not path.is_dir:
+            return iter(())
+        return glob_step_match(path, i)
 
     def isdir(
         self, 
@@ -2903,14 +2964,15 @@ class AlistFileSystem:
         dirname: str = "", 
         password: str = "", 
         ignore_case: bool = False, 
+        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         if not pattern:
-            return self.iterdir(dirname, password, max_depth=-1)
+            return self.iterdir(dirname, password, max_depth=-1, _check=_check)
         if pattern.startswith("/"):
             pattern = joinpath("/", "**", pattern.lstrip("/"))
         else:
             pattern = joinpath("**", pattern)
-        return self.glob(pattern, dirname, password, ignore_case=ignore_case)
+        return self.glob(pattern, dirname, password, ignore_case=ignore_case, _check=_check)
 
     def rmdir(
         self, 
