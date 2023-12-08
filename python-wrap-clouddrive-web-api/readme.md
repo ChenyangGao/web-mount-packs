@@ -1,29 +1,11 @@
 # clouddrive web API 的 Python 封装
 
-## 开始准备
+## 安装
 
-首先进入 `python-wrap-clouddrive-web-api` 目录
-
-```console
-$ cd /path/to/python-wrap-clouddrive-web-api
-```
-
-然后安装[依赖模块](https://grpc.io/docs/languages/python/quickstart/)
+通过 [pypi](https://pypi.org/project/clouddrive/)
 
 ```console
-$ pip install -r requirements.txt
-```
-
-如果安装依赖后，还是运行失败，建议强制编译安装依赖，而不是直接安装已经编译的二进制包
-
-```console
-$ pip install --no-binary :all: --ignore-installed -r requirements.txt
-```
-
-之后就可以在 python 环境中运行了
-
-```python
-from clouddrive import *
+pip install -U clouddrive
 ```
 
 ## 使用实例
@@ -120,3 +102,7 @@ http://localhost:19798/static/http/localhost:19798/False/%2F115%2F%E4%BA%91%E4%B
 >>> for path in fs.rglob("*.mkv"):
 >>>     print(path.url)
 ```
+
+## 文档
+
+正在编写，不要急 。。。

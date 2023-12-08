@@ -1,0 +1,6 @@
+ecdsa
+lz4
+oss2
+pycryptodome
+qrcode
+requests

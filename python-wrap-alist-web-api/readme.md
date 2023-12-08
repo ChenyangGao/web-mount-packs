@@ -2,24 +2,12 @@
 
 - [Alist Web API 官方文档](https://alist.nn.ci/guide/api/)
 
-## 开始准备
+## 安装
 
-首先进入 `python-wrap-alist-web-api` 目录
-
-```console
-$ cd /path/to/python-wrap-alist-web-api
-```
-
-然后安装依赖模块
+通过 [pypi](https://pypi.org/project/python-alist/)
 
 ```console
-$ pip install -r requirements.txt
-```
-
-之后就可以在 python 环境中运行了
-
-```python
-from alist import *
+pip install -U python-alist
 ```
 
 ## 使用实例
@@ -116,3 +104,7 @@ http://localhost:5244/d/115/%E4%BA%91%E4%B8%8B%E8%BD%BD/About.My.Father.2023.720
 >>> for path in fs.rglob("*.mkv"):
 >>>     print(path.url)
 ```
+
+## 文档
+
+正在编写，不要急 。。。

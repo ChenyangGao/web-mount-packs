@@ -199,7 +199,7 @@ class Pan115RSACipher:
 class Pan115Client:
 
     def __init__(self, /, cookie=None, try_login: bool = True):
-        self.__session = session = Session()
+        self._session = session = Session()
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
         need_login = True
         if cookie:
@@ -221,17 +221,17 @@ class Pan115Client:
         self.close()
 
     def close(self, /):
-        self.__session.close()
+        self._session.close()
 
     @property
     def cookie(self, /) -> str:
-        return self.__cookie
+        return self._cookie
 
     @cookie.setter
     def cookie(self, cookie: str | dict | Iterable[dict | Cookie] | CookieJar, /):
         if isinstance(cookie, str):
             cookie = text_to_dict(cookie.strip(), entry_sep=";")
-        cookiejar = self.__session.cookies
+        cookiejar = self._session.cookies
         cookiejar.clear()
         if isinstance(cookie, dict):
             for key in ("UID", "CID", "SEID"):
@@ -241,11 +241,11 @@ class Pan115Client:
         else:
             cookiejar.update(cookie)
         cookies = cookiejar.get_dict()
-        self.__cookie = "; ".join(f"{key}={cookies[key]}" for key in ("UID", "CID", "SEID"))
+        self._cookie = "; ".join(f"{key}={cookies[key]}" for key in ("UID", "CID", "SEID"))
 
     @property
     def session(self, /) -> Session:
-        return self.__session
+        return self._session
 
     def login_with_qrcode(self, /, **request_kwargs) -> dict:
         qrcode_token = self.login_qrcode_token(**request_kwargs)["data"]
@@ -274,7 +274,7 @@ class Pan115Client:
 
     def request(self, api: str, /, method: str = "GET", *, parse: bool | Callable = False, **request_kwargs):
         request_kwargs["stream"] = True
-        resp = self.__session.request(method, api, **request_kwargs)
+        resp = self._session.request(method, api, **request_kwargs)
         resp.raise_for_status()
         if callable(parse):
             return parse(resp.content)
@@ -787,14 +787,14 @@ class Pan115ShareLinkFileSystem:
 class HTTPFileReader(RawIOBase):
 
     def __init__(self, /, url: str, urlopen: Callable = Session().get):
-        self.__resp = resp = urlopen(url, headers={"Accept-Encoding": "identity"}, stream=True)
-        self.__seekable = resp.headers.get("Accept-Ranges") == "bytes"
-        self.__size = int(resp.headers['Content-Length'])
-        self.__file = resp.raw
-        self.__url = url
-        self.__urlopen: Callable = urlopen
-        self.__start = 0
-        self.__closed = False
+        self._resp = resp = urlopen(url, headers={"Accept-Encoding": "identity"}, stream=True)
+        self._seekable = resp.headers.get("Accept-Ranges") == "bytes"
+        self._size = int(resp.headers['Content-Length'])
+        self._file = resp.raw
+        self._url = url
+        self._urlopen: Callable = urlopen
+        self._start = 0
+        self._closed = False
 
     def __del__(self, /):
         try:
@@ -827,19 +827,19 @@ class HTTPFileReader(RawIOBase):
         return f"<{name}(url={self.url!r}) at {hex(id(self))}>"
 
     def close(self, /):
-        self.__resp.close()
-        self.__closed = True
+        self._resp.close()
+        self._closed = True
 
     @property
     def closed(self, /) -> bool:
-        return self.__closed
+        return self._closed
 
     @property
     def fileno(self, /):
-        raise self.__file.fileno()
+        raise self._file.fileno()
 
     def flush(self, /):
-        return self.__file.flush()
+        return self._file.flush()
 
     def isatty(self, /) -> bool:
         return False
@@ -850,7 +850,7 @@ class HTTPFileReader(RawIOBase):
 
     @property
     def name(self, /) -> str:
-        return self.__url
+        return self._url
 
     def read(self, size: int = -1, /) -> bytes:
         if self.closed:
@@ -858,13 +858,13 @@ class HTTPFileReader(RawIOBase):
         if size == 0:
             return b""
         elif size < 0:
-            return self.__file.read()
+            return self._file.read()
         # If the connection breaks while reading, retry 5 times
         curpos = self.tell()
         e = None
         for _ in range(5):
             try:
-                return self.__file.read(size)
+                return self._file.read(size)
             except ProtocolError as exc:
                 if e is None:
                     e = exc
@@ -882,7 +882,7 @@ class HTTPFileReader(RawIOBase):
         e = None
         for _ in range(5):
             try:
-                return self.__file.readinto(buffer)
+                return self._file.readinto(buffer)
             except ProtocolError as exc:
                 if e is None:
                     e = exc
@@ -901,7 +901,7 @@ class HTTPFileReader(RawIOBase):
         e = None
         for _ in range(5):
             try:
-                return self.__file.readline(size)
+                return self._file.readline(size)
             except ProtocolError as exc:
                 if e is None:
                     e = exc
@@ -911,7 +911,7 @@ class HTTPFileReader(RawIOBase):
     def readlines(self, hint: int = -1, /) -> list[bytes]:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        return self.__file.readlines(hint)
+        return self._file.readlines(hint)
 
     def reconnect(self, /, start: Optional[int] = None):
         if start is None:
@@ -920,17 +920,17 @@ class HTTPFileReader(RawIOBase):
             start = self.size + start
             if start < 0:
                 start = 0
-        self.__resp.close()
-        self.__resp = resp = self.__urlopen(
-            self.__url, 
+        self._resp.close()
+        self._resp = resp = self._urlopen(
+            self._url, 
             headers={"Accept-Encoding": "identity", "Range": "bytes=%d-" % start}, 
             stream=True, 
         )
-        self.__file = resp.raw
-        self.__start = start
+        self._file = resp.raw
+        self._start = start
 
     def seek(self, pos: int, whence: int = 0, /) -> int:
-        if not self.__seekable:
+        if not self._seekable:
             raise TypeError("not a seekable stream")
         if whence == 0:
             if pos < 0:
@@ -941,41 +941,41 @@ class HTTPFileReader(RawIOBase):
             # If only moving forward within 1MB, directly read and discard
             elif old_pos < pos <= old_pos + 1024 * 1024:
                 try:
-                    self.__file.read(pos - old_pos)
+                    self._file.read(pos - old_pos)
                     return pos
                 except ProtocolError:
                     pass
-            self.__resp.close()
-            self.__resp = resp = self.__urlopen(
-                self.__url, 
+            self._resp.close()
+            self._resp = resp = self._urlopen(
+                self._url, 
                 headers={"Accept-Encoding": "identity", "Range": "bytes=%d-" % pos}, 
                 stream=True, 
             )
-            self.__file = resp.raw
-            self.__start = pos
+            self._file = resp.raw
+            self._start = pos
             return pos
         elif whence == 1:
             if pos == 0:
                 return self.tell()
             return self.seek(self.tell() + pos)
         elif whence == 2:
-            return self.seek(self.__size + pos)
+            return self.seek(self._size + pos)
         else:
             raise ValueError(f"whence value unsupported: {whence!r}")
 
     def seekable(self, /) -> bool:
-        return self.__seekable
+        return self._seekable
 
     @property
     def size(self, /) -> int:
-        return self.__size
+        return self._size
 
     def tell(self, /) -> int:
-        return self.__file.tell() + self.__start
+        return self._file.tell() + self._start
 
     @property
-    def url(self) -> str:
-        return self.__url
+    def url(self, /) -> str:
+        return self._url
 
     def writable(self, /) -> bool:
         return False

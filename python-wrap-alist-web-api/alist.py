@@ -1744,7 +1744,7 @@ class AlistFile(RawIOBase):
 
     @property
     def fileno(self, /):
-        raise self.file.fileno()
+        return self.file.fileno()
 
     def flush(self, /):
         return self.file.flush()
@@ -3195,7 +3195,7 @@ class AlistFileSystem:
         password: str = "", 
         refresh: Optional[bool] = None, 
         topdown: bool = True, 
-        min_depth: int = 1, 
+        min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         _check: bool = True, 
@@ -3256,7 +3256,7 @@ class AlistFileSystem:
         password: str = "", 
         refresh: Optional[bool] = None, 
         topdown: bool = True, 
-        min_depth: int = 1, 
+        min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         _check: bool = True, 
