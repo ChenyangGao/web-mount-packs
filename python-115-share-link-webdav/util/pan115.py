@@ -416,7 +416,7 @@ class Pan115ShareLinkFileSystem:
         if isinstance(id_or_path, str):
             return self._attr_path(id_or_path)
         else:
-            return self._attr(id_or_path)
+            return self._attr_id(id_or_path)
 
     def _attr_id(self, id: int, /) -> dict:
         if id == 0:

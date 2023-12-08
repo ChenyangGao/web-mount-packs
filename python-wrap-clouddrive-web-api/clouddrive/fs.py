@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-__author__ = "ChenyangGao <https://chenyanggao.github.io/>"
+__author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["CloudDrivePath", "CloudDriveFile", "CloudDriveFileSystem"]
 
 import errno
