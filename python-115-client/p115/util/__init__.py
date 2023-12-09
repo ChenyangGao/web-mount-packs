@@ -5,5 +5,7 @@ from .cipher import *
 from .file import *
 from .hash import *
 from .iter import *
-from .urlopen import urlopen
+from .property import *
+from .text import *
+from .urlopen import *
 

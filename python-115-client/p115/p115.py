@@ -6,7 +6,7 @@ from __future__ import annotations
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
-    "P115ZipPath", "P115ZipFileSystem", "P115Offline", 
+    "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin"
 ]
 
 import errno
@@ -20,12 +20,12 @@ from functools import cached_property
 from hashlib import md5, sha1
 from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
 from json import dumps, loads
-from os import fsdecode, fstat, stat, PathLike
+from os import fsdecode, fspath, fstat, stat, PathLike
 from os import path as os_path
 from posixpath import dirname, join as joinpath, normpath
 from re import compile as re_compile
 from time import time
-from typing import Callable, Final, Iterable, Iterator, Optional, Sequence
+from typing import Callable, Final, Iterable, Iterator, Mapping, Optional, Sequence
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlencode, urlparse
 from uuid import uuid4
@@ -42,10 +42,12 @@ from .exception import AuthenticationError, BadRequest, LoginError
 from .util.cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
 from .util.file import get_filesize, RequestsFileReader
 from .util.hash import file_digest
-from .util.iter import cut_iter
+from .util.iter import cut_iter, posix_glob_translate_iter
+from .util.property import funcproperty
+from .util.text import cookies_str_to_dict
 
 
-ID_OR_PATH_TYPE = int | str | Sequence[str]
+ID_OR_PATH_TYPE = int | str | PathLike[str] | Sequence[str]
 CRE_SHARE_LINK = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?")
 APP_VERSION: Final = "99.99.99.99"
 rsa_encoder = P115RSACipher()
@@ -58,13 +60,6 @@ def check_get(resp, exc_cls=BadRequest):
     if resp["state"]:
         return resp.get("data")
     raise exc_cls(resp)
-
-
-def text_to_dict(s, /, entry_sep="\n", kv_sep="="):
-    return dict(
-        map(str.strip, e.split(kv_sep, 1)) 
-        for e in s.strip(entry_sep).split(entry_sep)
-    )
 
 
 def console_qrcode(text):
@@ -125,6 +120,12 @@ class P115Client:
     def __del__(self, /):
         self.close()
 
+    def __eq__(self, other, /):
+        return type(self) is type(other) and self.user_id == other.user_id
+
+    def __hash__(self, /):
+        return hash((self.user_id, self.cookie))
+
     def close(self, /):
         self._session.close()
 
@@ -135,7 +136,7 @@ class P115Client:
     @cookie.setter
     def cookie(self, cookie, /):
         if isinstance(cookie, str):
-            cookie = text_to_dict(cookie, entry_sep=";")
+            cookie = cookies_str_to_dict(cookie)
         cookiejar = self._session.cookies
         cookiejar.clear()
         if isinstance(cookie, dict):
@@ -1197,23 +1198,35 @@ class P115Client:
     ########## Other Encapsulations ##########
 
     @cached_property
-    def fs(self, /):
+    def fs(self, /) -> P115FileSystem:
+        """
+        """
         return P115FileSystem(self)
 
     @cached_property
-    def offline(self, /):
+    def offline(self, /) -> P115Offline:
+        """
+        """
         return P115Offline(self)
 
     def get_share_fs(self, share_link: str, /) -> P115ShareFileSystem:
+        """
+        """
         return P115ShareFileSystem(self, share_link)
 
     def get_zip_fs(self, id: int, /) -> P115ZipFileSystem:
+        """
+        """
         return P115ZipFileSystem(self, id)
 
     def open(self, url, /, **request_kwargs) -> RequestsFileReader:
+        """
+        """
         return RequestsFileReader(url, urlopen=self.session.get)
 
     def read_bytes_range(self, url, /, bytes_range="0-", headers=None, **request_kwargs) -> bytes:
+        """
+        """
         if headers:
             headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         else:
@@ -1221,7 +1234,9 @@ class P115Client:
         with self.session.get(url, headers=headers, **request_kwargs) as resp:
             return resp.content
 
-    def readrange(self, url, /, start=0, stop=None, headers=None, **request_kwargs) -> bytes:
+    def read_range(self, url, /, start=0, stop=None, headers=None, **request_kwargs) -> bytes:
+        """
+        """
         length = None
         if start < 0:
             length = int(cli.session.head(url).headers["Content-Length"])
@@ -1253,13 +1268,13 @@ class P115Path(Mapping, PathLike[str]):
         **attr, 
     ):
         super().__setattr__("__dict__", attr)
-        attr.update(fs=fs, path=fs.abspath(path), attr_last_fetched=None)
+        attr.update(fs=fs, path=fs.abspath(path))
 
     def __and__(self, path: str | PathLike[str], /) -> P115Path:
         return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
 
     def __call__(self, /):
-        self.__dict__.update(self.fs.attr(self.path))
+        self.__dict__.update(self.fs.attr(self.id))
         self.__dict__["attr_last_fetched"] = datetime.now()
         return self
 
@@ -1267,28 +1282,28 @@ class P115Path(Mapping, PathLike[str]):
         return key in self.__dict__
 
     def __eq__(self, path, /) -> bool:
-        return isinstance(path, P115Path) and self.fs.client == path.fs.client and self.path == path.path
+        return type(self) is type(path) and self.fs.client == path.fs.client and self.path == path.path
 
     def __fspath__(self, /) -> str:
         return self.path
 
     def __getitem__(self, key, /):
-        if key not in self.__dict__ and not self.attr_last_fetched:
+        if key not in self.__dict__ and not self.__dict__.get("attr_last_fetched"):
             self()
         return self.__dict__[key]
 
     def __ge__(self, path, /):
-        if not isinstance(path, P115Path) or self.fs.client != path.fs.client:
+        if type(self) is not type(path) or self.fs.client != path.fs.client:
             return False
         return commonpath((self.path, path.path)) == path.path
 
     def __gt__(self, path, /):
-        if not isinstance(path, P115Path) or self.fs.client != path.fs.client or self.path == path.path:
+        if type(self) is not type(path) or self.fs.client != path.fs.client or self.path == path.path:
             return False
         return commonpath((self.path, path.path)) == path.path
 
     def __hash__(self, /):
-        return hash(self.fs.client) ^ hash(self.path)
+        return hash((self.fs.client, self.path))
 
     def __iter__(self, /):
         return iter(self.__dict__)
@@ -1297,12 +1312,12 @@ class P115Path(Mapping, PathLike[str]):
         return len(self.__dict__)
 
     def __le__(self, path, /):
-        if not isinstance(path, P115Path) or self.fs.client != path.fs.client:
+        if ype(self) is not type(path) or self.fs.client != path.fs.client:
             return False
         return commonpath((self.path, path.path)) == self.path
 
     def __lt__(self, path, /):
-        if not isinstance(path, P115Path) or self.fs.client != path.fs.client or self.path == path.path:
+        if ype(self) is not type(path) or self.fs.client != path.fs.client or self.path == path.path:
             return False
         return commonpath((self.path, path.path)) == self.path
 
@@ -1321,7 +1336,7 @@ class P115Path(Mapping, PathLike[str]):
         return self.path
 
     def __truediv__(self, path: str | PathLike[str], /) -> P115Path:
-        return type(self).joinpath(self, path)
+        return self.joinpath(path)
 
     @cached_property
     def id(self, /):
@@ -1348,31 +1363,41 @@ class P115Path(Mapping, PathLike[str]):
         return MappingProxyType(self.__dict__)
 
     def exists(self, /) -> bool:
-        return self.fs.exists(self.path)
+        return self.fs.exists(self)
 
-    def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[P115Path]:
-        dirname = self.path if self.is_dir else self.parent.path
-        return self.fs.glob(pattern, dirname, ignore_case=ignore_case)
+    def glob(
+        self, 
+        /, 
+        pattern: str, 
+        ignore_case: bool = False, 
+        offset_size: int = 100, 
+    ) -> Iterator[P115Path]:
+        return self.fs.glob(
+            pattern, 
+            self if self["is_dir"] else self.parent, 
+            ignore_case=ignore_case, 
+            offset_size=offset_size, 
+        )
 
     def isdir(self, /) -> bool:
-        return self.fs.isdir(self.path)
+        return self.fs.isdir(self)
 
-    @property
+    @funcproperty
     def is_dir(self, /):
         try:
-            return self["isDirectory"]
+            return self["is_dir"]
         except FileNotFoundError:
             return False
         except KeyError:
             return False
 
     def isfile(self, /) -> bool:
-        return self.fs.isfile(self.path)
+        return self.fs.isfile(self)
 
     @property
     def is_file(self, /) -> bool:
         try:
-            return not self["isDirectory"]
+            return not self["is_dir"]
         except FileNotFoundError:
             return False
         except KeyError:
@@ -1381,21 +1406,21 @@ class P115Path(Mapping, PathLike[str]):
     def iterdir(
         self, 
         /, 
-        refresh: Optional[bool] = None, 
         topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[P115Path], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
+        offset_size: int = 100, 
     ) -> Iterator[P115Path]:
         return self.fs.iterdir(
-            self.path, 
-            refresh=refresh, 
+            self, 
             topdown=topdown, 
             min_depth=min_depth, 
             max_depth=max_depth, 
             predicate=predicate, 
             onerror=onerror, 
+            offset_size=offset_size, 
         )
 
     def joinpath(self, *args: str | PathLike[str]) -> P115Path:
@@ -1407,25 +1432,11 @@ class P115Path(Mapping, PathLike[str]):
             return self
         return type(self)(self.fs, path_new)
 
-    def listdir(
-        self, 
-        /, 
-        refresh: Optional[bool] = None, 
-    ) -> list[str]:
-        return self.fs.listdir(
-            self.path, 
-            refresh=refresh, 
-        )
+    def listdir(self, /) -> list[str]:
+        return self.fs.listdir(self)
 
-    def listdir_attr(
-        self, 
-        /, 
-        refresh: Optional[bool] = None, 
-    ) -> list[P115Path]:
-        return self.fs.listdir_attr(
-            self.path, 
-            refresh=refresh, 
-        )
+    def listdir_attr(self, /) -> list[P115Path]:
+        return self.fs.listdir_attr(self)
 
     def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
         pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
@@ -1434,12 +1445,18 @@ class P115Path(Mapping, PathLike[str]):
         return re_compile(pattern).fullmatch(self.path) is not None
 
     def mkdir(self, /):
-        self.fs.mkdir(self.path)
+        return self.fs.mkdir(self)
 
-    def move(self, /, dst_path: str | PathLike[str]) -> P115Path:
-        dst_path = self.fs.abspath(dst_path)
-        dst_path = self.fs.move(self.path, dst_path)
-        return type(self)(self.fs, dst_path)
+    def move(
+        self, 
+        /, 
+        dst_path: str | PathLike[str] | Sequence[str], 
+    ) -> P115Path:
+        dst_path = self.fs.getpath(dst_path, self.id)
+        if self.path == dst_path:
+            return self
+        dst_path = self.fs.move(self, dst_path)
+        return type(self)(self.fs, dst_path, id=self.id)
 
     def open(
         self, 
@@ -1450,58 +1467,21 @@ class P115Path(Mapping, PathLike[str]):
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
     ):
-        orig_mode = mode
-        if "b" in mode:
-            mode = mode.replace("b", "", 1)
-            open_text_mode = False
-        else:
-            mode = mode.replace("t", "", 1)
-            open_text_mode = True
-        if mode not in ("r", "rt", "tr", "rb", "br"):
-            raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {orig_mode!r}")
-        if buffering is None:
-            if open_text_mode:
-                buffering = DEFAULT_BUFFER_SIZE
-            else:
-                buffering = 0
-        if buffering == 0:
-            if open_text_mode:
-                raise OSError(errno.EINVAL, "can't have unbuffered text I/O")
-            return CloudDriveFile(self, mode)
-        line_buffering = False
-        buffer_size: int
-        if buffering < 0:
-            buffer_size = DEFAULT_BUFFER_SIZE
-        elif buffering == 1:
-            if not open_text_mode:
-                warn("line buffering (buffering=1) isn't supported in binary mode, "
-                     "the default buffer size will be used", RuntimeWarning)
-            buffer_size = DEFAULT_BUFFER_SIZE
-            line_buffering = True
-        else:
-            buffer_size = buffering
-        raw = CloudDriveFile(self, mode)
-        buffer = BufferedReader(raw, buffer_size)
-        if open_text_mode:
-            return TextIOWrapper(
-                buffer, 
-                encoding=encoding, 
-                errors=errors, 
-                newline=newline, 
-                line_buffering=line_buffering, 
-            )
-        else:
-            return buffer
+        return self.fs.open(
+            self, 
+            mode=mode, 
+            buffering=buffering, 
+            encoding=encoding, 
+            errors=errors, 
+            newline=newline, 
+        )
 
     @cached_property
     def parent(self, /) -> P115Path:
         path = self.path
         if path == "/":
             return self
-        parent = dirname(path)
-        if path == parent:
-            return self
-        return type(self)(self.fs, parent)
+        return type(self)(self.fs, dirname(path), id=self["parent_id"])
 
     @cached_property
     def parents(self, /) -> tuple[P115Path, ...]:
@@ -1520,9 +1500,24 @@ class P115Path(Mapping, PathLike[str]):
         return ("/", *self.path[1:].split("/"))
 
     def read_bytes(self, /):
-        return self.open("rb").read()
+        return self.read_bytes(self)
 
-    # TODO def read_range
+    def read_bytes_range(
+        self, 
+        /, 
+        bytes_range: str = "0-", 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        return self.read_bytes_range(self, bytes_range, headers=headers)
+
+    def read_range(
+        self, 
+        /, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        return self.read_range(self, start, stop, headers=headers)
 
     def read_text(
         self, 
@@ -1530,52 +1525,65 @@ class P115Path(Mapping, PathLike[str]):
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
     ):
-        return self.open(encoding=encoding, errors=errors).read()
+        return self.read_text(self, encoding=encoding, errors=errors)
 
     def remove(self, /, recursive: bool = False):
-        self.fs.remove(self.path, recursive=recursive)
+        return self.fs.remove(self, recursive=recursive)
 
     def rename(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
+        dst_path: str | PathLike[str] | Sequence[str], 
     ) -> P115Path:
-        dst_path = self.fs.abspath(dst_path)
-        self.fs.rename(self.path, dst_path)
-        return type(self)(self.fs, dst_path)
+        dst_path = self.fs.getpath(dst_path, self.id)
+        if self.path == dst_path:
+            return self
+        self.fs.rename(self, dst_path)
+        return type(self)(self.fs, dst_path, id=self.id)
 
     def replace(
         self, 
         /, 
         dst_path: str | PathLike[str], 
     ) -> P115Path:
-        dst_path = self.fs.abspath(dst_path)
-        self.fs.replace(self.path, dst_path)
-        return type(self)(self.fs, dst_path)
+        dst_path = self.fs.getpath(dst_path, self.id)
+        if self.path == dst_path:
+            return self
+        self.fs.replace(self, dst_path)
+        return type(self)(self.fs, dst_path, id=self.id)
 
-    def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[P115Path]:
-        dirname = self.path if self.is_dir else self.parent.path
-        return self.fs.rglob(pattern, dirname, ignore_case=ignore_case)
+    def rglob(
+        self, 
+        /, 
+        pattern: str, 
+        ignore_case: bool = False, 
+        offset_size: int = 100, 
+    ) -> Iterator[P115Path]:
+        return self.fs.rglob(
+            pattern, 
+            self if self["is_dir"] else self.parent, 
+            ignore_case=ignore_case, 
+            offset_size=offset_size, 
+        )
 
     def rmdir(self, /):
-        self.fs.rmdir(self.path)
+        return self.fs.rmdir(self)
 
     @cached_property
     def root(self, /) -> P115Path:
-        parents = self.parents
-        if not parents:
-            return self
-        elif len(parents) == 1:
-            return self
-        return parents[-2]
+        return type(self)(self.fs, "/", id=0)
 
     def samefile(self, path: str | PathLike[str], /) -> bool:
         if isinstance(path, P115Path):
-            return self == path
-        return self.path == self.fs.abspath(path)
+            try:
+                return self["id"] == path["id"]
+            except FileNotFoundError:
+                return False
+        path = normpath(path)
+        return path in ("", ".") or path.startswith("/") and self.path == path
 
     def stat(self, /):
-        return self.fs.stat(self.path)
+        return self.fs.stat(self)
 
     @cached_property
     def stem(self, /) -> str:
@@ -1590,13 +1598,47 @@ class P115Path(Mapping, PathLike[str]):
         return tuple("." + part for part in basename(self.path).split(".")[1:])
 
     def touch(self, /):
-        self.fs.touch(self.path)
+        return self.fs.touch(self)
 
     unlink = remove
 
     @property
     def url(self, /) -> str:
-        return self.fs.get_url(self.id)
+        return self.fs.get_url(self)
+
+    def walk(
+        self, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        return self.fs.walk(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            _top=self.path, 
+        )
+
+    def walk_attr(
+        self, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        return self.fs.walk_attr(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            _top=self.path, 
+        )
 
     def with_name(self, name: str, /) -> P115Path:
         return self.parent.joinpath(name)
@@ -1607,24 +1649,23 @@ class P115Path(Mapping, PathLike[str]):
     def with_suffix(self, suffix: str, /) -> P115Path:
         return self.parent.joinpath(self.stem + suffix)
 
-    def write_bytes(self, data: bytes | bytearray, /):
-        bio = BytesIO(data)
-        return self.fs.upload(bio, self.path, overwrite_or_ignore=True)
+    def write_bytes(self, data: bytes | bytearray = b"", /):
+        return self.fs.write_bytes(self, data)
 
     def write_text(
         self, 
-        text: str, 
+        text: str = "", 
         /, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
     ):
-        bio = BytesIO()
-        if text:
-            tio = TextIOWrapper(bio, encoding=encoding, errors=errors, newline=newline)
-            tio.write(text)
-            bio.seek(0)
-        return self.fs.upload(bio, self.path, overwrite_or_ignore=True)
+        return self.fs.write_text(
+            text, 
+            encoding=encoding, 
+            errors=errors, 
+            newline=newline, 
+        )
 
 # TODO 增加几种文件系统：普通（增删改查）、压缩包（查，解压(extract)）、分享文件夹（查，转存(transfer)）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
@@ -1637,7 +1678,7 @@ class P115FileSystem:
     cid: int
     path: str
 
-    def __init__(self, client, /):
+    def __init__(self, client: P115Client, /):
         self.__dict__.update(
             client = client, 
             cid = 0, 
@@ -1647,8 +1688,8 @@ class P115FileSystem:
     def __iter__(self, /):
         return self.iterdir(max_depth=-1)
 
-    def __itruediv__(self, /, id_or_path: ID_OR_PATH_TYPE):
-        self.chdir(path)
+    def __itruediv__(self, id_or_path: ID_OR_PATH_TYPE, /):
+        self.chdir(id_or_path)
         return self
 
     def __repr__(self, /) -> str:
@@ -1662,20 +1703,24 @@ class P115FileSystem:
     def __setattr__(self, attr, val, /):
         raise TypeError("can't set attribute")
 
-    def abspath(self, path: str = "", /) -> str:
+    def abspath(self, path: str | PathLike[str] = "", /) -> str:
         if path in ("", "."):
             return self.path
         return normpath(joinpath(self.path, path))
 
+    def as_path(self, /) -> P115Path:
+        return P115Path(self, self.path, id=self.cid)
+
     def _attr(self, id: int, /) -> dict:
         if id == 0:
-            raise PermissionError(errno.EPERM, "the attributes of the root are not readable")
+            return {"id": 0, "parent_id": 0, "name": "", "is_dir": True}
         resp = self.client.fs_info({"file_id": id})
         if not resp["state"]:
             raise FileNotFoundError(errno.ENOENT, f"no such cid/file_id: {id!r}")
         return normalize_info(resp["data"][0])
 
-    def _attr_path(self, path: str, pid: Optional[int] = None, /) -> dict:
+    def _attr_path(self, path: str | PathLike[str], pid: Optional[int] = None, /) -> dict:
+        path = fspath(path)
         if path:
             path = normpath(path)
             if path.startswith("/"):
@@ -1683,7 +1728,7 @@ class P115FileSystem:
                 path = path.lstrip("/")
         if pid is None:
             pid = self.cid
-        if not path:
+        if path in ("", "."):
             return self._attr(pid)
         if pid:
             attr = self._attr(pid)
@@ -1707,7 +1752,7 @@ class P115FileSystem:
             else:
                 raise FileNotFoundError(errno.ENOENT, f"no such file {path!r} in the directory {pid!r}")
         if pid == 0:
-            raise PermissionError(errno.EPERM, "the attributes of the root are not readable")
+            return {"id": 0, "parent_id": 0, "name": "", "is_dir": True}
         return attr
 
     def _attr_patht(self, patht: Sequence[str], pid: Optional[int] = None, /) -> dict:
@@ -1735,9 +1780,13 @@ class P115FileSystem:
         return attr
 
     def attr(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> dict:
-        if isinstance(id_or_path, int):
+        if isinstance(id_or_path, P115Path):
+            if not id_or_path.get("attr_last_fetched"):
+                id_or_path()
+            return id_or_path.__dict__.copy()
+        elif isinstance(id_or_path, int):
             return self._attr(id_or_path)
-        elif isinstance(id_or_path, str):
+        elif isinstance(id_or_path, (str, PathLike)):
             return self._attr_path(id_or_path, pid)
         else:
             return self._attr_patht(id_or_path, pid)
@@ -1745,25 +1794,21 @@ class P115FileSystem:
     # TODO 各种 batch_* 方法
 
     def chdir(self, /, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None):
-        if id_or_path in (0, "/"):
+        if isinstance(id_or_path, P115Path):
+            self.__dict__.update(cid=id_or_path.id, path=id_or_path.path)
+            return id_or_path.id
+        elif id_or_path in (0, "/"):
             self.__dict__.update(cid=0, path="/")
             return 0
-        elif id_or_path == "":
+        if isinstance(id_or_path, PathLike):
+            id_or_path = fspath(id_or_path)
+        if not id_or_path or id_or_path == ".":
             return self.cid
         attr = self.attr(id_or_path, pid)
         if self.cid == attr["id"]:
             return self.cid
         elif attr["is_dir"]:
-            if isinstance(id_or_path, int):
-                path = self.getpath(id_or_path)
-            elif isinstance(id_or_path, str):
-                if id_or_path.startswith("/"):
-                    path = normpath(id_or_path)
-                else:
-                    path = normpath(joinpath(self.getpath(pid), id_or_path))
-            else:
-                path = joinpath(self.getpath(pid), *(p.replace("/", "|") for p in id_or_path if p))
-            self.__dict__.update(cid=attr["id"], path=path)
+            self.__dict__.update(cid=attr["id"], path=self.getpath(id_or_path, pid))
             return attr["id"]
         else:
             raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
@@ -1775,9 +1820,10 @@ class P115FileSystem:
 
     def exists(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> bool:
         try:
-            self.attr(id_or_path, pid)
-            return True
-        except PermissionError:
+            if isinstance(id_or_path, P115Path):
+                id_or_path()
+            else:
+                self.attr(id_or_path, pid)
             return True
         except FileNotFoundError:
             return False
@@ -1791,51 +1837,186 @@ class P115FileSystem:
             raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
         return self.client.download_url(attr["pick_code"])
 
-    def getid(self, path: str | Sequence[str], pid: Optional[int] = None, /) -> int:
-        try:
-            if isinstance(pid, str):
-                return self._attr_path(path, pid)["id"]
+    def getid(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> int:
+        if isinstance(id_or_path, P115Path):
+            return id_or_path.id
+        if isinstance(id_or_path, int):
+            return id_or_path
+        return self.attr(id_or_path, pid)["id"]
+
+    def getpath(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> str:
+        if isinstance(id_or_path, P115Path):
+            return id_or_path.path
+        if isinstance(id_or_path, int):
+            id = id_or_path
+            if id == 0:
+                return "/"
+            ls = []
+            add = ls.append
+            while id:
+                attr = self._attr(id)
+                add(attr["name"].replace("/", "|"))
+                id = attr["parent_id"]
+            return "/" + "/".join(reversed(ls))
+        elif isinstance(id_or_path, str):
+            path = id_or_path
+            if pid is None:
+                return self.abspath(path)
             else:
-                return self._attr_patht(path, pid)["id"]
-        except PermissionError:
-            return 0
+                return normpath(joinpath(self.getpath(pid), path))
+        patht = id_or_path
+        dir_ = self.path if pid is None else self.getpath(pid)
+        return joinpath(patht, *(p.replace("/", "|") for p in patht if p))
 
-    def getpath(self, id: Optional[int] = None, /) -> str:
-        if id is None:
-            return self.path
-        elif id == 0:
-            return "/"
-        ls = []
-        add = ls.append
-        while id:
-            attr = self._attr(id)
-            add(attr["name"].replace("/", "|"))
-            id = attr["parent_id"]
-        return "/" + "/".join(reversed(ls))
-
-    # TODO def glob
+    def glob(
+        self, 
+        /, 
+        pattern: str, 
+        dirname: ID_OR_PATH_TYPE = "", 
+        ignore_case: bool = False, 
+        offset_size: int = 100, 
+    ) -> Iterator[P115Path]:
+        if pattern == "*":
+            return self.iterdir(dirname, offset_size=offset_size)
+        elif pattern == "**":
+            return self.iterdir(dirname, max_depth=-1, offset_size=offset_size)
+        elif not pattern:
+            try:
+                attr = self.attr(dirname)
+            except FileNotFoundError:
+                return iter(())
+            else:
+                return iter((P115Path(self, self.getpath(dirname), **attr),))
+        elif not pattern.lstrip("/"):
+            return iter((P115Path(self, "/", id=0),))
+        splitted_pats = tuple(posix_glob_translate_iter(pattern))
+        dirname_as_id = isinstance(dirname, (int, P115Path))
+        if pattern.startswith("/"):
+            dir_ = "/"
+        else:
+            dir_ = self.getpath(dirname)
+        i = 0
+        dir2 = ""
+        if ignore_case:
+            if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                pattern = joinpath(re_escape(dir_), *(t[0] for t in splitted_pats))
+                match = re_compile("(?i:%s)" % pattern).fullmatch
+                return self.iterdir(
+                    dirname, 
+                    max_depth=-1, 
+                    predicate=lambda p: match(p.path) is not None, 
+                    offset_size=offset_size, 
+                )
+        else:
+            typ = None
+            for i, (pat, typ, orig) in enumerate(splitted_pats):
+                if typ != "orig":
+                    break
+                dir2 = joinpath(dir2, orig)
+            dir_ = joinpath(dir_, dir2)
+            if dirname_as_id:
+                dir_args = (dir2, dirname)
+            else:
+                dir_args = (dir_,)
+            if typ == "orig":
+                try:
+                    attr = self._attr_path(*dir_args)
+                except FileNotFoundError:
+                    return iter(())
+                else:
+                    return iter((P115Path(self, dir_, **attr),))
+            elif typ == "dstar" and i + 1 == len(splitted_pats):
+                return self.iterdir(*dir_args, max_depth=-1, offset_size=offset_size)
+            if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                pattern = joinpath(re_escape(dir_), *(t[0] for t in splitted_pats[i:]))
+                match = re_compile(pattern).fullmatch
+                return self.iterdir(
+                    *dir_args, 
+                    max_depth=-1, 
+                    predicate=lambda p: match(p.path) is not None, 
+                    offset_size=offset_size, 
+                )
+        cref_cache: dict[int, Callable] = {}
+        def glob_step_match(path, i):
+            j = i + 1
+            at_end = j == len(splitted_pats)
+            pat, typ, orig = splitted_pats[i]
+            if typ == "orig":
+                subpath = path.joinpath(orig)
+                if at_end:
+                    yield subpath
+                elif subpath["is_dir"]:
+                    yield from glob_step_match(subpath, j)
+            elif typ == "star":
+                if at_end:
+                    yield from path.iterdir(offset_size=offset_size)
+                else:
+                    for subpath in path.iterdir(offset_size=offset_size):
+                        if subpath["is_dir"]:
+                            yield from glob_step_match(subpath, j)
+            else:
+                for subpath in path.iterdir(offset_size=offset_size):
+                    try:
+                        cref = cref_cache[i]
+                    except KeyError:
+                        if ignore_case:
+                            pat = "(?i:%s)" % pat
+                        cref = cref_cache[i] = re_compile(pat).fullmatch
+                    if cref(subpath["name"]):
+                        if at_end:
+                            yield subpath
+                        elif subpath["is_dir"]:
+                            yield from glob_step_match(subpath, j)
+        path = P115Path(self, dir_)
+        if isinstance(dirname, int):
+            path.__dict__["id"] = self.getid(dir2, dirname)
+        elif isinstance(dirname, int):
+            path.__dict__["id"] = self.getid(dir2, dirname.id)
+        if not path["is_dir"]:
+            return iter(())
+        return glob_step_match(path, i)
 
     def isdir(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> bool:
+        if isinstance(id_or_path, P115Path):
+            return id_or_path["is_dir"]
         try:
             return self.attr(id_or_path, pid)["is_dir"]
-        except PermissionError:
-            return True
         except FileNotFoundError:
             return False
 
     def isfile(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> bool:
+        if isinstance(id_or_path, P115Path):
+            return not id_or_path["is_dir"]
         try:
             return not self.attr(id_or_path, pid)["is_dir"]
-        except PermissionError:
-            return False
         except FileNotFoundError:
             return False
 
-    # TODO def is_empty
+    def is_empty(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> bool:
+        if isinstance(id_or_path, P115Path):
+            attr = id_or_path
+        else:
+            try:
+                attr = self.attr(id_or_path, pid)
+            except FileNotFoundError:
+                return True
+        if attr["is_dir"]:
+            return next(self._iterdir(attr["id"]), None) is None
+        return attr["size"] == 0
 
-    def _iterdir(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /, offset_size: int = 100):
+    def _iterdir(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        offset_size: int = 100, 
+        as_path: bool = False, 
+    ):
         assert offset_size > 0
-        attr = self.attr(id_or_path, pid)
+        if isinstance(id_or_path, P115Path):
+            attr = id_or_path
+        else:
+            attr = self.attr(id_or_path, pid)
         if not attr["is_dir"]:
             raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
         fs_files = self.client.fs_files
@@ -1845,40 +2026,204 @@ class P115FileSystem:
             "limit": offset_size, 
             "show_dir": 1, 
         }
+        if as_path:
+            dir_ = self.getpath(id_or_path, pid)
+            def wrap(attr):
+                attr = normalize_info(attr)
+                return P115Path(self, joinpath(dir_, attr["name"]), **attr)
+        else:
+            wrap = normalize_info
         resp = fs_files(payload)
-        yield from map(normalize_info, resp["data"])
+        if not resp["state"]:
+            raise OSError(errno.EIO, resp)
+        yield from map(wrap, resp["data"])
         for offset in range(offset_size, resp["count"], offset_size):
             payload["offset"] = offset
             resp = fs_files(payload)
-            yield from map(normalize_info, resp["data"])
+            if not resp["state"]:
+                raise OSError(errno.EIO, resp)
+            yield from map(wrap, resp["data"])
 
-    # TODO def iterdir
+    def iterdir(
+        self, 
+        top: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[P115Path], Optional[bool]]] = None, 
+        onerror: Optional[bool] = None, 
+        offset_size: int = 100, 
+    ) -> Iterator[P115Path]:
+        if not max_depth:
+            return
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        try:
+            for path in self._iterdir(top, pid, offset_size=offset_size, as_path=True):
+                yield_me = min_depth <= 0
+                if yield_me and predicate:
+                    pred = predicate(path)
+                    if pred is None:
+                        continue
+                    yield_me = pred 
+                if yield_me and topdown:
+                    yield path
+                if path["is_dir"]:
+                    yield from self.iterdir(
+                        path.path, 
+                        topdown=topdown, 
+                        min_depth=min_depth, 
+                        max_depth=max_depth, 
+                        predicate=predicate, 
+                        onerror=onerror, 
+                        offset_size=offset_size, 
+                    )
+                if yield_me and not topdown:
+                    yield path
+        except OSError as e:
+            if callable(onerror):
+                onerror(e)
+            elif onerror:
+                raise
 
-    def listdir(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> list[str]:
+    def listdir(self, id_or_path: ID_OR_PATH_TYPE = "", pid: Optional[int] = None, /) -> list[str]:
         return [attr["name"] for attr in self._iterdir(id_or_path, pid, 1 << 10)]
 
-    # TODO
-    def listdir_attr(self, id_or_path: ID_OR_PATH_TYPE, pid: Optional[int] = None, /) -> list[dict]:
-        return list(self._iterdir(id_or_path, pid, 1 << 10))
+    def listdir_attr(self, id_or_path: ID_OR_PATH_TYPE = "", pid: Optional[int] = None, /) -> list[P115Path]:
+        return list(self._iterdir(id_or_path, pid, 1 << 10, as_path=True))
 
     # TODO def makedirs
     # TODO def mkdir
     # TODO def move
-    # TODO def open
+
+    def open(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        mode: str = "r", 
+        buffering: Optional[int] = None, 
+        encoding: Optional[str] = None, 
+        errors: Optional[str] = None, 
+        newline: Optional[str] = None, 
+    ):
+        orig_mode = mode
+        if "b" in mode:
+            mode = mode.replace("b", "", 1)
+            open_text_mode = False
+        else:
+            mode = mode.replace("t", "", 1)
+            open_text_mode = True
+        if mode not in ("r", "rt", "tr", "rb", "br"):
+            raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {orig_mode!r}")
+        url = self.get_url(id_or_path, pid)
+        if buffering is None:
+            if open_text_mode:
+                buffering = DEFAULT_BUFFER_SIZE
+            else:
+                buffering = 0
+        if buffering == 0:
+            if open_text_mode:
+                raise OSError(errno.EINVAL, "can't have unbuffered text I/O")
+            return self.client.open(url)
+        line_buffering = False
+        buffer_size: int
+        if buffering < 0:
+            buffer_size = DEFAULT_BUFFER_SIZE
+        elif buffering == 1:
+            if not open_text_mode:
+                warn("line buffering (buffering=1) isn't supported in binary mode, "
+                     "the default buffer size will be used", RuntimeWarning)
+            buffer_size = DEFAULT_BUFFER_SIZE
+            line_buffering = True
+        else:
+            buffer_size = buffering
+        raw = self.client.open(url)
+        buffer = BufferedReader(raw, buffer_size)
+        if open_text_mode:
+            return TextIOWrapper(
+                buffer, 
+                encoding=encoding, 
+                errors=errors, 
+                newline=newline, 
+                line_buffering=line_buffering, 
+            )
+        else:
+            return buffer
+
+    def read_bytes(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+    ):
+        return self.read_bytes_range(id_or_path, pid)
+
+    def read_bytes_range(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        bytes_range: str = "0-", 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        return self.client.read_bytes_range(self.get_url(id_or_path, pid), bytes_range, headers=headers)
+
+    def read_range(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        return self.client.read_range(self.get_url(id_or_path, pid), start, stop, headers=headers)
+
+    def read_text(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        encoding: Optional[str] = None, 
+        errors: Optional[str] = None, 
+    ):
+        return self.open(id_or_path, pid, encoding=encoding, errors=errors).read()
+
     # TODO def remove
     # TODO def removedirs
     # TODO def rename
     # TODO def renames
     # TODO def replace
-    # TODO def rglob
+
+    def rglob(
+        self, 
+        /, 
+        pattern: str, 
+        dirname: ID_OR_PATH_TYPE = "", 
+        ignore_case: bool = False, 
+        offset_size: int = 100, 
+    ) -> Iterator[CloudDrivePath]:
+        if not pattern:
+            return self.iterdir(dirname, max_depth=-1, offset_size=offset_size)
+        if pattern.startswith("/"):
+            pattern = joinpath("/", "**", pattern.lstrip("/"))
+        else:
+            pattern = joinpath("**", pattern)
+        return self.glob(pattern, dirname, ignore_case=ignore_case, offset_size=offset_size)
+
     # TODO def rmdir
     # TODO def rmtree
 
     def scandir(
         self, 
-        /, 
         id_or_path: ID_OR_PATH_TYPE, 
         pid: Optional[int] = None, 
+        /, 
     ):
         raise UnsupportedOperation(errno.ENOSYS, 
             "`scandir()` is currently not supported, use `iterdir()` instead."
@@ -1888,26 +2233,193 @@ class P115FileSystem:
 
     def stat(
         self, 
-        /, 
         id_or_path: ID_OR_PATH_TYPE, 
         pid: Optional[int] = None, 
+        /, 
     ):
         raise UnsupportedOperation(errno.ENOSYS, 
             "`stat()` is currently not supported, use `attr()` instead."
         )
 
-    # TODO def touch
-    # TODO def upload
+    def touch(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+    ):
+        if not self.exists(id_or_path, pid):
+            return self.upload(id_or_path, pid)
+
+    # def _upload
+    # 如果未指定 file，则创建空文件，如果上层文件夹不是dir，则报错，如果文件夹不存在，makedirs
+    def upload(
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        file: None | str | PathLike | SupportsRead[bytes] | TextIOWrapper = None, 
+        as_task: bool = False, 
+        overwrite_or_ignore: Optional[bool] = None, 
+        _check: bool = True, 
+    ):
+        file: SupportsRead[bytes]
+        if hasattr(local_path_or_file, "read"):
+            file = cast(SupportsRead[bytes], local_path_or_file)
+            if isinstance(file, TextIOWrapper):
+                file = file.buffer
+            if not path:
+                try:
+                    path = os_path.basename(file.name) # type: ignore
+                except AttributeError as e:
+                    raise OSError(errno.EINVAL, "Please specify the upload path") from e
+        else:
+            file = open(local_path_or_file, "rb")
+            if not path:
+                path = os_path.basename(local_path_or_file)
+        if _check:
+            path = self.abspath(path)
+            self.makedirs(dirname(path), exist_ok=True, _check=False)
+        path = cast(str, path)
+        try:
+            attr = self._attr(path)
+        except FileNotFoundError:
+            pass
+        else:
+            if overwrite_or_ignore is None:
+                raise FileExistsError(errno.EEXIST, path)
+            elif attr["attr"]:
+                raise IsADirectoryError(errno.EISDIR, path)
+            elif not overwrite_or_ignore:
+                return
+            self._delete(path)
+        self._upload(path, file)
+
     # TODO def upload_tree
-    # TODO def unlink
-    # TODO def walk
-    # TODO def walk_attr
+
+    #unlink = remove
+
+    def walk(
+        self, 
+        top: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        _top: str = "", 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        if not max_depth:
+            return
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
+        try:
+            if not _top:
+                _top = self.getpath(top, pid)
+            dirs: list[str] = []
+            files: list[str] = []
+            attrs: list[dict] = []
+            for attr in self._iterdir(top, pid, 1 << 10):
+                if attr["is_dir"]:
+                    attrs.append(attr)
+                    dirs.append(attr["name"])
+                else:
+                    files.append(attr["name"])
+            if yield_me and topdown:
+                yield _top, dirs, files
+            for attr in attrs:
+                yield from self.walk(
+                    attr["id"], 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    _top=joinpath(_top, attr["name"]), 
+                )
+            if yield_me and not topdown:
+                yield _top, dirs, files
+        except OSError as e:
+            if callable(onerror):
+                onerror(e)
+            elif onerror:
+                raise
+
+    def walk_attr(
+        self, 
+        top: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        _top: str = "", 
+    ) -> Iterator[tuple[str, list[P115Path], list[P115Path]]]:
+        if not max_depth:
+            return
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
+        try:
+            if not _top:
+                _top = self.getpath(top, pid)
+            dirs: list[str] = []
+            files: list[str] = []
+            for path in self._iterdir(top, pid, 1 << 10, as_path=True):
+                (dirs if path["is_dir"] else files).append(path)
+            if yield_me and topdown:
+                yield _top, dirs, files
+            for path in dirs:
+                yield from self.walk(
+                    path["id"], 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    _top=joinpath(_top, path["name"]), 
+                )
+            if yield_me and not topdown:
+                yield _top, dirs, files
+        except OSError as e:
+            if callable(onerror):
+                onerror(e)
+            elif onerror:
+                raise
+
+    def write_bytes(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        data: bytes | bytearray = b"", 
+    ):
+        return self.upload(id_or_path, pid, BytesIO(data), overwrite_or_ignore=True)
+
+    def write_text(
+        self, 
+        id_or_path: ID_OR_PATH_TYPE = "", 
+        pid: Optional[int] = None, 
+        /, 
+        text: str = "", 
+        encoding: Optional[str] = None, 
+        errors: Optional[str] = None, 
+        newline: Optional[str] = None, 
+    ):
+        bio = BytesIO()
+        if text:
+            tio = TextIOWrapper(bio, encoding=encoding, errors=errors, newline=newline)
+            tio.write(text)
+        return self.upload(id_or_path, pid, bio, overwrite_or_ignore=True)
 
     cd  = chdir
     pwd = getcwd
     ls  = listdir
     ll  = listdir_attr
-    rm  = remove
+    #rm  = remove
 
 
 class P115SharePath(Mapping, PathLike[str]):
@@ -1949,7 +2461,7 @@ class P115ShareFileSystem:
 
     def _attr_id(self, id: int, /) -> dict:
         if id == 0:
-            raise PermissionError(errno.EPERM, "the attributes of the root are not readable")
+            return {"id": 0, "parent_id": 0, "name": "", "is_dir": True}
         if id in self._id_to_attr:
             return self._id_to_attr[id]
         if self._full_loaded:
@@ -1968,7 +2480,7 @@ class P115ShareFileSystem:
     def _attr_path(self, path: str, /) -> dict:
         path = self.abspath(path)
         if path == "/":
-            raise PermissionError(errno.EPERM, "the attributes of the root are not readable")
+            return {"id": 0, "parent_id": 0, "name": "", "is_dir": True}
         if path in self._path_to_id:
             id = self._path_to_id[path]
             return self._id_to_attr[id]
@@ -2048,8 +2560,6 @@ class P115ShareFileSystem:
             return True
         except FileNotFoundError:
             return False
-        except PermissionError:
-            return True
 
     def getcwd(self, /) -> str:
         return self._path
@@ -2071,15 +2581,11 @@ class P115ShareFileSystem:
             return self._attr(id_or_path)["is_dir"]
         except FileNotFoundError:
             return False
-        except PermissionError:
-            return True
 
     def isfile(self, id_or_path: int | str = 0, /) -> bool:
         try:
             return not self._attr(id_or_path)["is_dir"]
         except FileNotFoundError:
-            return False
-        except PermissionError:
             return False
 
     def iterdir(
@@ -2364,13 +2870,18 @@ class P115Offline:
         return self.client.offline_del(payload)
 
 
+class P115Recyclebin:
+    ...
+
+
 # TODO: 对回收站的封装
 # TODO: 能及时处理文件已不存在
+# TODO: 为各个fs接口添加额外的请求参数
 # TODO: 115中多个文件可以在同一目录下同名，如何处理？
 # TODO: 是否要支持 cd2 的改名策略，也就是遇到 **.，则自动忽略后面的所有部分，改名时，改成 新名字 + **. + 原始扩展名
 # TODO: 批量改名工具：如果后缀名一样，则直接改名，如果修改了后缀名，那就尝试用秒传，重新上传，上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
 #       - file 参数支持接受一个 callable：由于上传时，给出 sha1 本身可能就能成功，为了速度，我认为，一开始就不需要打开一个文件
-#       - 增加 readrange: 由于文件可以一开始就 seek 到目标位置，因此一开始就可以指定对应的位置，因此可以添加一个方法，叫 readrange，直接读取一定范围的 http 数据
+#       - 增加 read_range: 由于文件可以一开始就 seek 到目标位置，因此一开始就可以指定对应的位置，因此可以添加一个方法，叫 readrange，直接读取一定范围的 http 数据
 
 # TODO: File 对象要可以获取 url，而且尽量利用 client 上的方法，ShareFile 也要有相关方法（例如转存）
 # TODO: 支持异步io，用 aiohttp

@@ -1591,7 +1591,6 @@ class CloudDriveFileSystem:
         /, 
         local_path_or_file: str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
         path: str | PathLike[str] = "", 
-        as_task: bool = False, 
         overwrite_or_ignore: Optional[bool] = None, 
         _check: bool = True, 
     ):
@@ -1632,7 +1631,6 @@ class CloudDriveFileSystem:
         /, 
         local_path: str | PathLike[str], 
         path: str | PathLike[str] = "", 
-        as_task: bool = False, 
         no_root: bool = False, 
         overwrite_or_ignore: Optional[bool] = None, 
         _check: bool = True, 
@@ -1651,7 +1649,6 @@ class CloudDriveFileSystem:
             self.upload(
                 local_path, 
                 joinpath(path, os_path.basename(local_path)), 
-                as_task=as_task, 
                 overwrite_or_ignore=overwrite_or_ignore, 
                 _check=False, 
             )
@@ -1664,7 +1661,6 @@ class CloudDriveFileSystem:
                     self.upload_tree(
                         entry.path, 
                         joinpath(path, entry.name), 
-                        as_task=as_task, 
                         no_root=True, 
                         overwrite_or_ignore=overwrite_or_ignore, 
                         _check=False, 
@@ -1673,7 +1669,6 @@ class CloudDriveFileSystem:
                     self.upload(
                         entry.path, 
                         joinpath(path, entry.name), 
-                        as_task=as_task, 
                         overwrite_or_ignore=overwrite_or_ignore, 
                         _check=False, 
                     )
