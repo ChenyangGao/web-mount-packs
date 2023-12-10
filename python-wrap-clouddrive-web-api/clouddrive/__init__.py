@@ -9,7 +9,7 @@ This is a web API wrapper works with the running "clouddrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 
 from .client import *
 from .fs import *

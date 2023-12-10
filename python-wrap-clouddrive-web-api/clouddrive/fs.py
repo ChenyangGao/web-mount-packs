@@ -4,16 +4,14 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["CloudDrivePath", "CloudDriveFile", "CloudDriveFileSystem"]
+__all__ = ["CloudDrivePath", "CloudDriveFileReader", "CloudDriveFileSystem"]
 
 import errno
 
 from datetime import datetime
-from fnmatch import translate as wildcard_translate
-from functools import cached_property, partial, update_wrapper
-from http.client import HTTPResponse
-from io import BufferedReader, BytesIO, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
-from os import PathLike, fspath, makedirs, scandir, path as os_path
+from functools import cached_property, update_wrapper
+from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
+from os import fspath, makedirs, scandir, path as os_path, PathLike
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
@@ -23,7 +21,6 @@ from typing import (
 )
 from types import MappingProxyType
 from urllib.parse import quote
-from urllib.request import urlopen, Request
 from uuid import uuid4
 from warnings import warn
 
@@ -33,50 +30,14 @@ from grpc import StatusCode, RpcError # type: ignore
 from .client import CloudDriveClient
 import CloudDrive_pb2 # type: ignore
 
+from .util.file import HTTPFileReader
+from .util.iter import posix_glob_translate_iter
+from .util.property import funcproperty
+from .util.urlopen import urlopen
+
 
 _T_co = TypeVar("_T_co", covariant=True)
 _T_contra = TypeVar("_T_contra", contravariant=True)
-RESUB_REMOVE_WRAP_BRACKET = partial(re_compile("(?s:\\[(.[^]]*)\\])").sub, "\\1")
-
-
-def posix_glob_translate_iter(pattern: str) -> Iterator[tuple[str, str, str]]:
-    def is_pat(part: str) -> bool:
-        it = enumerate(part)
-        try:
-            for _, c in it:
-                if c in ("*", "?"):
-                    return True
-                elif c == "[":
-                    _, c2 = next(it)
-                    if c2 == "]":
-                        continue
-                    i, c3 = next(it)
-                    if c3 == "]":
-                        continue
-                    if part.find("]", i + 1) > -1:
-                        return True
-            return False
-        except StopIteration:
-            return False
-    last_type = None
-    for part in pattern.split("/"):
-        if not part:
-            continue
-        if part == "*":
-            last_type = "star"
-            yield "[^/]*", last_type, ""
-        elif len(part) >=2 and not part.strip("*"):
-            if last_type == "dstar":
-                continue
-            last_type = "dstar"
-            yield "[^/]*(?:/[^/]*)*", last_type, ""
-        elif is_pat(part):
-            last_type = "pat"
-            yield wildcard_translate(part)[4:-3].replace(".*", "[^/]*"), last_type, ""
-        else:
-            last_type = "orig"
-            tidy_part = RESUB_REMOVE_WRAP_BRACKET(part)
-            yield re_escape(tidy_part), last_type, tidy_part
 
 
 class SupportsWrite(Protocol[_T_contra]):
@@ -322,48 +283,17 @@ class CloudDrivePath(Mapping, PathLike[str]):
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
     ):
-        orig_mode = mode
-        if "b" in mode:
-            mode = mode.replace("b", "", 1)
-            open_text_mode = False
-        else:
-            mode = mode.replace("t", "", 1)
-            open_text_mode = True
         if mode not in ("r", "rt", "tr", "rb", "br"):
-            raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {orig_mode!r}")
-        if buffering is None:
-            if open_text_mode:
-                buffering = DEFAULT_BUFFER_SIZE
-            else:
-                buffering = 0
-        if buffering == 0:
-            if open_text_mode:
-                raise OSError(errno.EINVAL, "can't have unbuffered text I/O")
-            return CloudDriveFile(self, mode)
-        line_buffering = False
-        buffer_size: int
-        if buffering < 0:
-            buffer_size = DEFAULT_BUFFER_SIZE
-        elif buffering == 1:
-            if not open_text_mode:
-                warn("line buffering (buffering=1) isn't supported in binary mode, "
-                     "the default buffer size will be used", RuntimeWarning)
-            buffer_size = DEFAULT_BUFFER_SIZE
-            line_buffering = True
-        else:
-            buffer_size = buffering
-        raw = CloudDriveFile(self, mode)
-        buffer = BufferedReader(raw, buffer_size)
-        if open_text_mode:
-            return TextIOWrapper(
-                buffer, 
-                encoding=encoding, 
-                errors=errors, 
-                newline=newline, 
-                line_buffering=line_buffering, 
-            )
-        else:
-            return buffer
+            raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
+        if self.is_dir:
+            raise IsADirectoryError(errno.EISDIR, self.path)
+        return CloudDriveFileReader(self).wrap(
+            text_mode="b" not in mode, 
+            buffering=buffering, 
+            encoding=encoding, 
+            errors=errors, 
+            newline=newline, 
+        )
 
     @cached_property
     def parent(self, /) -> CloudDrivePath:
@@ -393,6 +323,33 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     def read_bytes(self, /):
         return self.open("rb").read()
+
+    def read_bytes_range(self, /, bytes_range="0-", headers=None) -> bytes:
+        if headers:
+            headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
+        else:
+            headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
+        with urlopen(self.url, headers=headers) as resp:
+            return resp.read()
+
+    def read_range(self, /, start=0, stop=None, headers=None) -> bytes:
+        length = None
+        if start < 0:
+            length = urlopen(self.url).length
+            start += length
+        if start < 0:
+            start = 0
+        if stop is None:
+            bytes_range = f"{start}-"
+        else:
+            if stop < 0:
+                if length is None:
+                    length = urlopen(self.url).length
+                stop += length
+            if stop <= 0 or start >= stop:
+                return b""
+            bytes_range = f"{start}-{stop-1}"
+        return self.read_bytes_range(bytes_range, headers=headers)
 
     def read_text(
         self, 
@@ -497,185 +454,17 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.fs.upload(bio, self.path, overwrite_or_ignore=True, _check=False)
 
 
-class CloudDriveFile(RawIOBase):
+class CloudDriveFileReader(HTTPFileReader):
     "Open a file from the clouddrive server."
     path: CloudDrivePath
-    mode: str
-    url: str
-    file: HTTPResponse
-    _seekable: bool
-    length: int
-    position: int
-    closed: bool
 
-    def __init__(self, /, path: CloudDrivePath, mode: str = "r"):
-        if mode != "r":
-            if mode in ("r+", "+r", "w", "w+", "+w", "a", "a+", "+a", "x", "x+", "+x"):
-                raise UnsupportedOperation(errno.ENOSYS, f"`mode` not currently supported: {mode!r}")
-            raise OSError(errno.EINVAL, f"invalid mode: {mode!r}")
-        ns = self.__dict__
-        ns["path"] = path
-        ns["mode"] = mode
-        ns["url"]  = path.url
-        ns["file"] = resp = urlopen(ns["url"])
-        ns["_seekable"] = resp.headers.get("accept-ranges") == "bytes"
-        ns["length"] = ns["size"] = resp.length
-        ns["position"] = 0
-        ns["closed"] = False
-
-    def __del__(self, /):
-        try:
-            self.close()
-        except:
-            pass
-
-    def __enter__(self, /):
-        return self
-
-    def __exit__(self, /, *exc_info):
-        self.close()
-
-    def __iter__(self, /):
-        return self
-
-    def __next__(self, /) -> bytes:
-        line = self.readline()
-        if line:
-            return line
-        else:
-            raise StopIteration
-
-    def __repr__(self, /) -> str:
-        cls = type(self)
-        module = cls.__module__
-        name = cls.__qualname__
-        if module != "__main__":
-            name = module + "." + name
-        return f"{name}(path={self.path!r}, mode={self.mode!r})"
-
-    def __setattr__(self, attr, val, /):
-        raise TypeError("can't set attribute")
-
-    def close(self, /):
-        self.file.close()
-        self.__dict__["closed"] = True
-
-    @property
-    def fileno(self, /):
-        return self.file.fileno()
-
-    def flush(self, /):
-        return self.file.flush()
-
-    def isatty(self, /):
-        return False
+    def __init__(self, /, path: CloudDrivePath):
+        super().__init__(path.url)
+        self.__dict__["path"] = path
 
     @cached_property
     def name(self, /) -> str:
         return self.path["name"]
-
-    def read(self, size: int = -1, /) -> bytes:
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
-        if size == 0 or self.position >= self.length:
-            return b""
-        if self.file.closed:
-            self.reconnect()
-        data = self.file.read(size) or b""
-        self.__dict__["position"] += len(data)
-        return data
-
-    def readable(self, /) -> bool:
-        return True
-
-    def readinto(self, buffer, /) -> int:
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
-        if self.file.closed:
-            self.reconnect()
-        size = self.file.readinto(buffer) or 0
-        self.__dict__["position"] += size
-        return size
-
-    def readline(self, size: Optional[int] = -1, /) -> bytes:
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
-        if size is None:
-            size = -1
-        if size == 0 or self.position >= self.length:
-            return b""
-        if self.file.closed:
-            self.reconnect()
-        data = self.file.readline(size) or b""
-        self.__dict__["position"] += len(data)
-        return data
-
-    def readlines(self, hint: int = -1, /) -> list[bytes]:
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
-        if self.file.closed:
-            self.reconnect()
-        ls = self.file.readlines(hint)
-        self.__dict__["position"] += sum(map(len, ls))
-        return ls
-
-    def reconnect(self, /, start: Optional[int] = None):
-        if start is None:
-            start = self.position
-        elif start < 0:
-            start = self.length + start
-            if start < 0:
-                start = 0
-        self.file.close()
-        self.__dict__.update(
-            file=urlopen(Request(self.url, headers={"Range": f"bytes={start}-"})), 
-            position=start, 
-        )
-
-    def seek(self, pos: int, whence: int = 0, /) -> int:
-        if not self._seekable:
-            raise OSError(errno.EINVAL, "not a seekable stream")
-        if whence == 0:
-            if pos < 0:
-                raise OSError(errno.EINVAL, f"negative seek position: {pos!r}")
-            old_pos = self.position
-            if old_pos == pos:
-                return pos
-            # If only move forward within 1MB, directly read and discard
-            elif old_pos < pos <= old_pos + 1024 * 1024:
-                try:
-                    self.read(pos - old_pos)
-                    return pos
-                except Exception:
-                    pass
-            self.reconnect(pos)
-            return pos
-        elif whence == 1:
-            if pos == 0:
-                return self.position
-            return self.seek(self.position + pos)
-        elif whence == 2:
-            return self.seek(self.length + pos)
-        else:
-            raise OSError(errno.EINVAL, f"whence value unsupported: {whence!r}")
-
-    def seekable(self, /) -> bool:
-        return self._seekable
-
-    def tell(self, /) -> int:
-        return self.position
-
-    def truncate(self, size: Optional[int] = None, /):
-        raise UnsupportedOperation(errno.ENOTSUP, "truncate")
-
-    def writable(self, /) -> bool:
-        return False
-
-    def write(self, b, /) -> int:
-        raise UnsupportedOperation(errno.ENOTSUP, "write")
-
-    def writelines(self, lines, /):
-        raise UnsupportedOperation(errno.ENOTSUP, "writelines")
 
 
 class CloudDriveFileSystem:
@@ -823,6 +612,9 @@ class CloudDriveFileSystem:
         elif isinstance(path, CloudDrivePath):
             return path.path
         return normpath(joinpath(self.path, path))
+
+    def as_path(self, path: str | PathLike[str] = "") -> CloudDrivePath:
+        return CloudDrivePath(self, path)
 
     def attr(
         self, 
