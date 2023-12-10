@@ -22,8 +22,9 @@ from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEF
 from json import dumps, loads
 from os import fsdecode, fspath, fstat, scandir, stat, PathLike
 from os import path as os_path
-from posixpath import dirname, join as joinpath, normpath
+from posixpath import dirname, join as joinpath, normpath, split as pathsplit, splitext
 from re import compile as re_compile
+from shutil import copyfileobj
 from time import time
 from typing import Callable, Final, Iterable, Iterator, Mapping, Optional, Sequence
 from types import MappingProxyType
@@ -50,8 +51,8 @@ from .util.text import cookies_str_to_dict
 ID_OR_PATH_TYPE = int | str | PathLike[str] | Sequence[str]
 CRE_SHARE_LINK = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?")
 APP_VERSION: Final = "99.99.99.99"
-rsa_encoder = P115RSACipher()
-ecdh_encoder = P115ECDHCipher()
+RSA_ENCODER: Final = P115RSACipher()
+ECDH_ENCODER: Final = P115ECDHCipher()
 
 Response.__del__ = Response.close
 
@@ -338,12 +339,12 @@ class P115Client:
         """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
         """
         if isinstance(fids, (int, str)):
-            data = {"fid[0]": fids}
+            payload = {"fid[0]": fids}
         else:
-            data = {f"fid[{fid}]": fid for i, fid in enumerate(fids)}
-            if not data:
+            payload = {f"fid[{fid}]": fid for i, fid in enumerate(fids)}
+            if not payload:
                 return
-        data["pid"] = pid
+        payload["pid"] = pid
         return self.fs_batch_copy(payload, **request_kwargs)
 
     def fs_delete(self, fids, /, **request_kwargs):
@@ -355,7 +356,7 @@ class P115Client:
         else:
             payload = {f"fid[{i}]": fid for i, fid in enumerate(fids)}
             if not payload:
-                return
+                raise ValueError(f"empty fids: {fids!r}")
         return self.fs_batch_delete(payload, **request_kwargs)
 
     def fs_file(self, payload: dict, /, **request_kwargs):
@@ -473,9 +474,12 @@ class P115Client:
     def fs_move(self, fids, pid, /, **request_kwargs):
         """移动文件或文件夹，此接口是对 `fs_batch_move` 的封装
         """
-        payload = {f"fid[{i}]": fid for i, fid in enumerate(fids)}
-        if not payload:
-            return
+        if isinstance(fids, (int, str)):
+            payload = {"fid[0]": fids}
+        else:
+            payload = {f"fid[{i}]": fid for i, fid in enumerate(fids)}
+            if not payload:
+                raise ValueError(f"empty fids: {fids!r}")
         payload["pid"] = pid
         return self.fs_batch_move(payload, **request_kwargs)
 
@@ -607,9 +611,9 @@ class P115Client:
         def parse(content):
             resp = loads(content)
             if resp["state"]:
-                resp["data"] = loads(rsa_encoder.decode(resp["data"]))
+                resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
             return resp
-        data = rsa_encoder.encode(dumps({"user_id": self.user_id, **payload}))
+        data = RSA_ENCODER.encode(dumps({"user_id": self.user_id, **payload}))
         return self.request(api, "POST", data={"data": data}, parse=parse, **request_kwargs)
 
     def share_download_url(self, payload: dict, /, **request_kwargs):
@@ -645,9 +649,9 @@ class P115Client:
         def parse(content):
             resp = loads(content)
             if resp["state"]:
-                resp["data"] = loads(rsa_encoder.decode(resp["data"]))
+                resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
             return resp
-        data = rsa_encoder.encode(dumps(payload))
+        data = RSA_ENCODER.encode(dumps(payload))
         return self.request(api, "POST", data={"data": data}, parse=parse, **request_kwargs)
 
     def download_url(self, pick_code: str, /, **request_kwargs):
@@ -756,7 +760,7 @@ class P115Client:
         t = int(time())
         sig = gen_sig()
         token = gen_token()
-        encoded_token = ecdh_encoder.encode_token(t).decode("ascii")
+        encoded_token = ECDH_ENCODER.encode_token(t).decode("ascii")
         params = {"k_ec": encoded_token}
         data = {
             "appid": 0, 
@@ -773,11 +777,11 @@ class P115Client:
         if sign_key and sign_val:
             data["sign_key"] = sign_key
             data["sign_val"] = sign_val
-        encrypted = ecdh_encoder.encode(urlencode(sorted(data.items())))
+        encrypted = ECDH_ENCODER.encode(urlencode(sorted(data.items())))
         return self.upload_init(
             params=params, 
             data=encrypted, 
-            parse=lambda content: loads(ecdh_encoder.decode(content)), 
+            parse=lambda content: loads(ECDH_ENCODER.decode(content)), 
             headers={"Content-Type": "application/x-www-form-urlencoded"}, 
             **request_kwargs, 
         )
@@ -1445,19 +1449,21 @@ class P115Path(Mapping, PathLike[str]):
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
 
-    def mkdir(self, /):
-        return self.fs.mkdir(self)
+    def mkdir(self, /, exist_ok=False):
+        self.fs.makedirs(self, exist_ok=exist_ok)
+        return self
 
     def move(
         self, 
         /, 
-        dst_path: str | PathLike[str] | Sequence[str], 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
     ) -> P115Path:
-        dst_path = self.fs.getpath(dst_path, self.id)
-        if self.path == dst_path:
+        result = self.fs.move(self, dst_path, pid)
+        if not result:
             return self
-        dst_path = self.fs.move(self, dst_path)
-        return type(self)(self.fs, dst_path, id=self.id)
+        id = result[0]
+        return type(self)(self.fs, self.fs.getpath(id), id=id)
 
     def open(
         self, 
@@ -1534,24 +1540,38 @@ class P115Path(Mapping, PathLike[str]):
     def rename(
         self, 
         /, 
-        dst_path: str | PathLike[str] | Sequence[str], 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
     ) -> P115Path:
-        dst_path = self.fs.getpath(dst_path, self.id)
-        if self.path == dst_path:
+        result = self.fs.rename(self, dst_path, pid)
+        if not result:
             return self
-        self.fs.rename(self, dst_path)
-        return type(self)(self.fs, dst_path, id=self.id)
+        id = result[0]
+        return type(self)(self.fs, self.fs.getpath(id), id=id)
+
+    def renames(
+        self, 
+        /, 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
+    ) -> P115Path:
+        result = self.fs.renames(self, dst_path, pid)
+        if not result:
+            return self
+        id = result[0]
+        return type(self)(self.fs, self.fs.getpath(id), id=id)
 
     def replace(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
     ) -> P115Path:
-        dst_path = self.fs.getpath(dst_path, self.id)
-        if self.path == dst_path:
+        result = self.fs.replace(self, dst_path, pid)
+        if not result:
             return self
-        self.fs.replace(self, dst_path)
-        return type(self)(self.fs, dst_path, id=self.id)
+        id = result[0]
+        return type(self)(self.fs, self.fs.getpath(id), id=id)
 
     def rglob(
         self, 
@@ -1598,14 +1618,24 @@ class P115Path(Mapping, PathLike[str]):
     def suffixes(self, /) -> tuple[str, ...]:
         return tuple("." + part for part in basename(self.path).split(".")[1:])
 
-    def touch(self, /):
-        return self.fs.touch(self)
+    def touch(self, /) -> P115Path:
+        self.fs.touch(self)
+        return self
 
     unlink = remove
 
     @property
     def url(self, /) -> str:
-        return self.fs.get_url(self)
+        ns = self.__dict__
+        try:
+            url_expire_time = ns["url_expire_time"]
+            if time() + 5 * 60 < url_expire_time:
+                return ns["url"]
+        except KeyError:
+            pass
+        url = ns["url"] = self.fs.get_url(self)
+        ns["url_expire_time"] = int(parse_qsl(urlparse(url).query)[0][1])
+        return url
 
     def walk(
         self, 
@@ -1706,6 +1736,10 @@ class P115FileSystem:
         raise TypeError("can't set attribute")
 
     @check_response
+    def _copy(self, id: int, pid: int = 0, /):
+        return self.client.fs_copy(id, pid)
+
+    @check_response
     def _delete(self, id: int, /):
         return self.client.fs_delete(id)
 
@@ -1731,6 +1765,14 @@ class P115FileSystem:
     @check_response
     def _mkdir(self, name: str, pid: int = 0, /):
         return self.client.fs_mkdir({"cname": name, "pid": pid})
+
+    @check_response
+    def _move(self, id: int, pid: int = 0, /):
+        return self.client.fs_move(id, pid)
+
+    @check_response
+    def _rename(self, id: int, name: str, /):
+        return self.client.fs_rename([(id, name)])
 
     @check_response
     def _search(self, payload: dict, /):
@@ -1809,7 +1851,7 @@ class P115FileSystem:
                     pid = attr["id"]
                     break
             else:
-                raise FileNotFoundError(errno.ENOENT, f"no such file {path!r} in the directory {pid!r}")
+                raise FileNotFoundError(errno.ENOENT, f"no such file {path!r} (in {pid!r})")
         if pid == 0:
             return {"id": 0, "parent_id": 0, "name": "", "is_dir": True}
         return attr
@@ -1838,7 +1880,7 @@ class P115FileSystem:
                     pid = attr["id"]
                     break
             else:
-                raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} in the directory {pid!r}")
+                raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} (in {pid!r})")
         if attr is None:
             return self._attr(pid)
         return attr
@@ -1888,8 +1930,14 @@ class P115FileSystem:
             raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
 
     # TODO def copy
+    # 如果source是目录，报错
+    # 如果目标在同一目录且同名，忽略
+    # 如果目标在另一个目录且不同名且不存在，则复制
+    # 如果后缀名发生改变，则上传新的
+    # 如果后缀名不改变，复制后，move
     # TODO def copytree
     # TODO def download
+    # 要实现进度条
     # TODO def download_tree
 
     def exists(self, id_or_path: ID_OR_PATH_TYPE = "", /, pid: Optional[int] = None) -> bool:
@@ -1943,6 +1991,9 @@ class P115FileSystem:
         patht = id_or_path
         dir_ = self.path if pid is None else self.getpath(pid)
         return joinpath(patht, *(p.replace("/", "|") for p in patht if p))
+
+    def getpatht(self, id_or_path: ID_OR_PATH_TYPE = "", /, pid: Optional[int] = None) -> list[str]:
+        return [a["name"] for a in self.get_ancestors(id_or_path, pid)]
 
     def get_ancestors(
         self, 
@@ -2265,7 +2316,31 @@ class P115FileSystem:
             raise FileNotFoundError(errno.ENOENT, f"{path!r} (in {pid!r}): missing superior directory")
         return int(self._mkdir(name, pid)["cid"])
 
-    # TODO def move
+    def move(
+        self, 
+        /, 
+        src_path: ID_OR_PATH_TYPE, 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
+    ) -> Optional[tuple[int, str]]:
+        try:
+            dst_attr = self.attr(dst_path, pid)
+        except FileNotFoundError:
+            return self.rename(src_path, dst_path, pid)
+        src_attr = self.attr(src_path, pid)
+        src_id = src_attr["id"]
+        dst_id = dst_attr["id"]
+        if src_id == dst_id:
+            return
+        if any(a["parent_id"] == src_id for a in self.get_ancestors(dst_id)):
+            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_id!r} -> {dst_id!r}")
+        if dst_attr["is_dir"]:
+            name = src_attr["name"]
+            if self.exists(name, dst_id):
+                raise FileExistsError(errno.EEXIST, f"destination {name!r} (in {dst_id!r}) already exists")
+            self._move(src_id, dst_id)
+            return src_id, name
+        raise FileExistsError(errno.EEXIST, f"destination {dst_id!r} already exists")
 
     def open(
         self, 
@@ -2398,9 +2473,103 @@ class P115FileSystem:
         if del_id != 0:
             self._delete(del_id)
 
-    # TODO def rename
-    # TODO def renames
-    # TODO def replace
+    def rename(
+        self, 
+        /, 
+        src_path: ID_OR_PATH_TYPE, 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
+        replace: bool = False, 
+    ) -> Optional[tuple[int, str]]:
+        src_fullpath = self.getpath(src_path, pid)
+        dst_fullpath = self.getpath(dst_path, pid)
+        if src_fullpath == dst_fullpath:
+            return None
+        if src_fullpath == "/" or src_fullpath == "/":
+            raise OSError(errno.EINVAL, f"invalid argument: {src_fullpath!r} -> {dst_fullpath!r}")
+        if dst_fullpath.startswith(src_fullpath):
+            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_fullpath!r} -> {dst_fullpath!r}")
+        src_dir, src_name = pathsplit(src_fullpath)
+        dst_dir, dst_name = pathsplit(dst_fullpath)
+        src_attr = self.attr(src_path, pid)
+        src_id = src_attr["id"]
+        src_id_str = str(src_id)
+        src_ext = splitext(src_name)[1]
+        dst_ext = splitext(dst_name)[1]
+        def get_result(resp):
+            if resp["data"]:
+                return src_id, resp["data"][src_id_str]
+        try:
+            dst_attr = self.attr(dst_path, pid)
+        except FileNotFoundError:
+            if src_dir == dst_dir and (src_attr["is_dir"] or src_ext == dst_ext):
+                return get_result(self._rename(src_id, dst_name))
+            destdir_attr = self.attr(dst_dir)
+            if not destdir_attr["is_dir"]:
+                raise NotADirectoryError(errno.ENOTDIR, f"parent path {dst_dir!r} is not directory: {src_fullpath!r} -> {dst_fullpath!r}")
+            dst_pid = destdir_attr["id"]
+        else:
+            if replace:
+                if src_attr["is_dir"]:
+                    if dst_attr["is_dir"]:
+                        if self._files(dst_attr["id"], limit=1)["count"]:
+                            raise OSError(errno.ENOTEMPTY, f"source is directory, but destination is non-empty directory: {src_fullpath!r} -> {dst_fullpath!r}")
+                    else:
+                        raise NotADirectoryError(errno.ENOTDIR, f"source is directory, but destination is not a directory: {src_fullpath!r} -> {dst_fullpath!r}")
+                elif dst_attr["is_dir"]:
+                    raise IsADirectoryError(errno.EISDIR, f"source is file, but destination is directory: {src_fullpath!r} -> {dst_fullpath!r}")
+                self._delete(dst_attr["id"])
+            else:
+                raise FileExistsError(errno.EEXIST, f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}")
+            dst_pid = dst_attr["parent_id"]
+        if not (src_attr["is_dir"] or src_ext == dst_ext):
+            name = check_response(self.client.upload_file_sha1_simple)(
+                dst_name, 
+                filesize=src_attr["size"], 
+                file_sha1=src_attr["sha1"], 
+                read_bytes_range=lambda rng: self.read_bytes_range(src_id, rng), 
+                pid=dst_pid, 
+            )["fileinfo"]["filename"]
+            self._delete(src_id)
+            return self.attr(name, dst_pid)["id"], name
+        if src_name == dst_name:
+            self._move(src_id, dst_pid)
+            return src_id, dst_name
+        elif src_dir == dst_dir:
+            return get_result(self._rename(src_id, dst_name))
+        else:
+            self._rename(src_id, str(uuid4()))
+            try:
+                self._move(src_id, dst_pid)
+                try:
+                    return get_result(self._rename(src_id, dst_name))
+                except:
+                    self._move(src_id, src_attr["parent_id"])
+                    raise
+            except:
+                self._rename(src_id, src_name)
+                raise
+
+    def renames(
+        self, 
+        /, 
+        src_path: ID_OR_PATH_TYPE, 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
+    ) -> Optional[tuple[int, str]]:
+        result = self.rename(src_path, dst_path, pid=pid)
+        if result:
+            self.removedirs(self.attr(result[0])["parent_id"])
+            return result
+
+    def replace(
+        self, 
+        /, 
+        src_path: ID_OR_PATH_TYPE, 
+        dst_path: ID_OR_PATH_TYPE, 
+        pid: Optional[int] = None, 
+    ) -> Optional[tuple[int, str]]:
+        return self.rename(src_path, dst_path, pid=pid, replace=True)
 
     def rglob(
         self, 
@@ -3198,4 +3367,5 @@ class P115Recyclebin:
 
 # TODO: File 对象要可以获取 url，而且尽量利用 client 上的方法，ShareFile 也要有相关方法（例如转存）
 # TODO: 支持异步io，用 aiohttp
+# TODO 因为获取 url 是个耗时的操作，因此需要缓存
 

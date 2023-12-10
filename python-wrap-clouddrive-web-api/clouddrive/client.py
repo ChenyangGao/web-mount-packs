@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__all__ = ["CloudDriveClient"]
+__all__ = ["Client"]
 
 from urllib.parse import urlsplit
 from typing import Iterator
@@ -19,7 +19,7 @@ import CloudDrive_pb2 # type: ignore
 import CloudDrive_pb2_grpc # type: ignore
 
 
-class CloudDriveClient:
+class Client:
     "clouddrive client that encapsulates grpc APIs"
     def __init__(
         self, 
@@ -32,8 +32,8 @@ class CloudDriveClient:
         urlp = urlsplit(origin)
         self._origin = f"{urlp.scheme}://{urlp.netloc}"
         self.download_baseurl = f"{urlp.scheme}://{urlp.netloc}/static/{urlp.scheme}/{urlp.netloc}/False/"
-        self.username = username
-        self.password = password
+        self._username = username
+        self._password = password
         self.metadata: list[tuple[str, str]] = []
         if channel is None:
             channel = insecure_channel(urlp.netloc)
@@ -42,16 +42,27 @@ class CloudDriveClient:
             self.login()
 
     def __del__(self, /):
+        self.close()
+
+    def __eq__(self, other, /) -> bool:
+        return type(self) is type(other) and self.origin == other.origin
+
+    def __hash__(self, /) -> int:
+        return hash(self.origin)
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"{name}(origin={self._origin!r}, username={self._username!r}, password='******', channel={self._channel!r})"
+
+    def close(self, /):
         try:
             self._channel.close()
-        except Exception:
+        except:
             pass
-
-    def __eq__(self, other, /):
-        return isinstance(other, CloudDriveClient) and self.origin == other.origin
-
-    def __hash__(self, /):
-        return hash(self.origin)
 
     @property
     def channel(self, /):
@@ -65,8 +76,21 @@ class CloudDriveClient:
         self._stub = CloudDrive_pb2_grpc.CloudDriveFileSrvStub(channel)
 
     @property
-    def origin(self, /):
+    def origin(self, /) -> str:
         return self._origin
+
+    @property
+    def username(self, /) -> str:
+        return self._username
+
+    @property
+    def password(self, /) -> str:
+        return self._password
+
+    @password.setter
+    def password(self, value: str, /):
+        self._password = value
+        self.login()
 
     @property
     def stub(self, /):

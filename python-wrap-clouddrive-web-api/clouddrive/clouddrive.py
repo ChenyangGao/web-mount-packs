@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["CloudDrivePath", "CloudDriveFileReader", "CloudDriveFileSystem"]
+__all__ = ["CloudDriveClient", "CloudDrivePath", "CloudDriveFileReader", "CloudDriveFileSystem"]
 
 import errno
 
@@ -27,7 +27,7 @@ from warnings import warn
 from google.protobuf.json_format import MessageToDict # type: ignore
 from grpc import StatusCode, RpcError # type: ignore
 
-from .client import CloudDriveClient
+from .client import Client
 import CloudDrive_pb2 # type: ignore
 
 from .util.file import HTTPFileReader
@@ -70,6 +70,13 @@ def _grpc_exc_redirect(fn, /):
                 case _:
                     raise OSError(errno.EREMOTE, fargs, e.details()) from e
     return update_wrapper(wrapper, fn)
+
+
+class CloudDriveClient(Client):
+
+    @cached_property
+    def fs(self, /) -> CloudDriveFileSystem:
+        return CloudDriveFileSystem(self)
 
 
 class CloudDrivePath(Mapping, PathLike[str]):
