@@ -96,12 +96,10 @@ class AlistClient:
     def __del__(self, /):
         self.close()
 
-    def __eq__(self, other, /):
-        if not isinstance(other, AlistClient):
-            return False
-        return self.origin == other.origin
+    def __eq__(self, other, /) -> bool:
+        return type(self) is type(other) and self.origin == other.origin
 
-    def __hash__(self, /):
+    def __hash__(self, /) -> int:
         return hash(self.origin)
 
     def __repr__(self, /) -> str:
@@ -128,11 +126,11 @@ class AlistClient:
 
     @property
     def username(self, /):
-        self._username
+        return self._username
 
     @property
     def password(self, /):
-        self._password
+        return self._password
 
     @password.setter
     def password(self, value: str, /):
@@ -1609,11 +1607,12 @@ class AlistPath(Mapping, PathLike[str]):
 
     @funcproperty
     def url(self, /) -> str:
-        try:
-            return self["raw_url"]
-        except KeyError:
-            url = self.__dict__["url"] = self.as_uri()
-            return url
+        url = self["raw_url"]
+        if not url:
+            return self.as_uri()
+        if url.startswith( self.fs.client.origin):
+            self.__dict__["url"] = url
+        return url
 
     def with_name(self, name: str, /) -> AlistPath:
         return self.parent.joinpath(name)
@@ -1651,13 +1650,12 @@ class AlistFileReader(HTTPFileReader):
     def __init__(self, /, path: AlistPath):
         super().__init__(path.url)
         self.__dict__["path"] = path
-        self.__dict__.pop("url", None)
 
     @cached_property
     def name(self, /) -> str:
         return self.path["name"]
 
-    @funcproperty # type: ignore
+    @property # type: ignore
     def url(self) -> str:
         return self.path.url
 
