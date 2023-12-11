@@ -2,7 +2,10 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["get_filesize", "HTTPFileReader", "RequestsFileReader"]
+__all__ = [
+    "SupportsWrite", "SupportsRead", 
+    "bio_skip_bytes", "get_filesize", "HTTPFileReader", "RequestsFileReader"
+]
 
 import errno
 
@@ -11,18 +14,65 @@ from http.client import HTTPResponse
 from io import (
     BufferedReader, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE, 
 )
-from mimetypes import guess_extension
 from os import fstat, stat, PathLike
-from posixpath import basename
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, BinaryIO, Callable, Mapping, Optional, Protocol, TypeVar
 from types import MappingProxyType
-from urllib.parse import unquote, urlparse
 from warnings import warn
 
 from requests import Session
 
 from .property import funcproperty
+from .response import get_filename, get_length, is_chunked, is_range_request
 from .urlopen import urlopen
+
+
+_T_co = TypeVar("_T_co", covariant=True)
+_T_contra = TypeVar("_T_contra", contravariant=True)
+
+
+class SupportsWrite(Protocol[_T_contra]):
+    def write(self, __s: _T_contra) -> object: ...
+
+
+class SupportsRead(Protocol[_T_co]):
+    def read(self, __length: int = ...) -> _T_co: ...
+
+
+def bio_skip_bytes(
+    bio: BinaryIO, 
+    skipsize: int, 
+    chunksize: int = 1 << 16, 
+    callback: Optional[Callable[[int], Any]] = None, 
+) -> BinaryIO:
+    if skipsize <= 0:
+        return bio
+    if chunksize <= 0:
+        chunksize = 1 << 16
+    try:
+        bio.seek(skipsize, 1)
+        if callback:
+            callback(skipsize)
+    except:
+        q, r = divmod(skipsize, chunksize)
+        read = bio.read
+        if q:
+            if hasattr(bio, "readinto"):
+                buf = bytearray(chunksize)
+                readinto = bio.readinto
+                for _ in range(q):
+                    readinto(buf)
+                    if callback:
+                        callback(chunksize)
+            else:
+                for _ in range(q):
+                    read(chunksize)
+                    if callback:
+                        callback(chunksize)
+        if r:
+            read(r)
+            if callback:
+                callback(r)
+    return bio
 
 
 def get_filesize(file, /) -> int:
@@ -58,23 +108,6 @@ def get_filesize(file, /) -> int:
     return total
 
 
-def get_filename(response, default: str = "") -> str:
-    resp_headers = {k.lower(): v for k, v in response.headers.items()}
-    hdr_cd = response.headers.get("content-disposition")
-    if hdr_cd and hdr_cd.startswith("attachment; filename="):
-        return hdr_cd[21:]
-    urlp = urlparse(unquote(response.url))
-    filename = basename(urlp.path) or default
-    if filename:
-        hdr_ct = response.headers.get("content-type")
-        if (idx := hdr_ct.find(";")) > -1:
-            hdr_ct = hdr_ct[:idx]
-        ext = hdr_ct and guess_extension(hdr_ct) or ""
-        if ext and not filename.endswith(ext, 1):
-            filename += ext
-    return filename
-
-
 class HTTPFileReader(RawIOBase):
     url: str
     response: Any
@@ -93,19 +126,18 @@ class HTTPFileReader(RawIOBase):
         headers: Mapping = {}, 
         urlopen: Callable[..., HTTPResponse] = urlopen, 
     ):
-        headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=0-"}
+        headers = {**headers, "Accept-Encoding": "identity"}
         response = urlopen(url, headers=headers)
-        resp_headers = {k.lower(): v for k, v in response.headers.items()}
         self.__dict__.update(
             url = url, 
             response = response, 
-            length = response.length or 0, 
-            chunked = resp_headers.get("transfer-encoding") == "chunked", 
+            length = get_length(response) or 0, 
+            chunked = is_chunked(response), 
             start = 0, 
             closed = False, 
             urlopen = urlopen, 
             headers = MappingProxyType(headers), 
-            _seekable = resp_headers.get("accept-ranges") == "bytes", 
+            _seekable = is_range_request(response), 
         )
 
     def __del__(self, /):
@@ -331,18 +363,18 @@ class RequestsFileReader(HTTPFileReader):
         headers: Mapping = {}, 
         urlopen: Callable = Session().get, 
     ):
-        headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=0-"}
+        headers = {**headers, "Accept-Encoding": "identity"}
         response = urlopen(url, headers=headers, stream=True)
         self.__dict__.update(
             url = url, 
             response = response, 
-            length = int(response.headers.get("Content-Length", 0)), 
-            chunked = response.headers.get("Transfer-Encoding") == "chunked", 
+            length = get_length(response) or 0, 
+            chunked = is_chunked(response), 
             start = 0, 
             closed = False, 
             urlopen = partial(urlopen, stream=True), 
             headers = MappingProxyType(headers), 
-            _seekable = response.headers.get("Accept-Ranges") == "bytes", 
+            _seekable = is_range_request(response), 
         )
 
     def _add_start(self, delta: int, /):
