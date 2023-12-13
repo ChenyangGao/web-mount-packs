@@ -21,13 +21,13 @@ from datetime import datetime
 from functools import cached_property, update_wrapper
 from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation
-from os import fspath, fstat, makedirs, scandir, path as os_path, PathLike
+from os import fsdecode, fspath, fstat, makedirs, scandir, path as os_path, PathLike
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from typing import (
-    cast, Callable, ItemsView, Iterable, Iterator, KeysView, Literal, Mapping, Optional, Protocol, 
-    TypeVar, ValuesView
+    cast, Any, Callable, ItemsView, Iterable, Iterator, Literal, KeysView, Mapping, 
+    Optional, ValuesView, 
 )
 from types import MappingProxyType
 from urllib.parse import quote
@@ -37,24 +37,13 @@ from warnings import filterwarnings, warn
 from aiohttp import ClientSession
 from requests import Session
 
-from .util.file import HTTPFileReader
+from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
 from .util.iter import posix_glob_translate_iter
-from .util.property import funcproperty
+from .util.text import complete_base_url
 from .util.urlopen import urlopen
 
 
 filterwarnings("ignore", category=DeprecationWarning)
-
-_T_co = TypeVar("_T_co", covariant=True)
-_T_contra = TypeVar("_T_contra", contravariant=True)
-
-
-class SupportsWrite(Protocol[_T_contra]):
-    def write(self, __s: _T_contra) -> object: ...
-
-
-class SupportsRead(Protocol[_T_co]):
-    def read(self, __length: int = ...) -> _T_co: ...
 
 
 def _check_response(fn, /):
@@ -86,7 +75,7 @@ class AlistClient:
     - `Alist Web API official documentation <https://alist.nn.ci/guide/api/>` 
     """
     def __init__(self, /, origin: str = "http://localhost:5244", username: str = "", password: str = ""):
-        self._origin = origin.rstrip("/")
+        self._origin = complete_base_url(origin)
         self._username = username
         self._password = password
         self._session = Session()
@@ -1319,7 +1308,7 @@ class AlistPath(Mapping, PathLike[str]):
         return "/"
 
     def as_uri(self, /) -> str:
-        return self.fs.client.origin + "/d" + quote(self.path, safe=":/?&=#")
+        return self.url
 
     @property
     def attr(self, /) -> MappingProxyType:
@@ -1332,14 +1321,15 @@ class AlistPath(Mapping, PathLike[str]):
         dst_password: str="", 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[AlistPath]:
-        dst_path = self.fs.copy(
+        dst = self.fs.copy(
             self.path, 
             dst_path, 
             self.password, dst_password, 
             overwrite_or_ignore=overwrite_or_ignore, 
         )
-        if dst_path:
-            return type(self)(self.fs, dst_path, dst_password)
+        if not dst:
+            return None
+        return type(self)(self.fs, dst, dst_password)
 
     def copytree(
         self, 
@@ -1347,12 +1337,12 @@ class AlistPath(Mapping, PathLike[str]):
         dst_dir: str | PathLike[str], 
         dst_password: str="", 
     ) -> AlistPath:
-        dst_path = self.fs.copytree(
-            src_path, 
+        dst = self.fs.copytree(
+            self.path, 
             dst_dir, 
             dst_password, 
         )
-        return type(self)(self.fs, dst_path, dst_password)
+        return type(self)(self.fs, dst, dst_password)
 
     def download(
         self, 
@@ -1361,7 +1351,7 @@ class AlistPath(Mapping, PathLike[str]):
         no_root: bool = False, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
         refresh: Optional[bool] = None, 
-        download: Optional[Callable[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
     ):
         return self.fs.download_tree(
             self.path, 
@@ -1376,7 +1366,7 @@ class AlistPath(Mapping, PathLike[str]):
     def exists(self, /) -> bool:
         return self.fs.exists(self.path, self.password, _check=False)
 
-    def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
+    def glob(self, /, pattern: str = "*", ignore_case: bool = False) -> Iterator[AlistPath]:
         dirname = self.path if self.is_dir else self.parent.path
         return self.fs.glob(pattern, dirname, self.password, ignore_case=ignore_case, _check=False)
 
@@ -1614,7 +1604,7 @@ class AlistPath(Mapping, PathLike[str]):
         )
         return type(self)(self.fs, dst_path, dst_password)
 
-    def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[AlistPath]:
+    def rglob(self, /, pattern: str = "", ignore_case: bool = False) -> Iterator[AlistPath]:
         dirname = self.path if self.is_dir else self.parent.path
         return self.fs.rglob(pattern, dirname, self.password, ignore_case=ignore_case, _check=False)
 
@@ -1654,14 +1644,13 @@ class AlistPath(Mapping, PathLike[str]):
 
     unlink = remove
 
-    @funcproperty
+    @cached_property
     def url(self, /) -> str:
-        url = self["raw_url"]
-        if not url:
-            return self.as_uri()
-        if url.startswith( self.fs.client.origin):
-            self.__dict__["url"] = url
-        return url
+        return self.fs.get_url(self.path, _check=False)
+
+    @property
+    def raw_url(self, /) -> str:
+        return self["raw_url"]
 
     def with_name(self, name: str, /) -> AlistPath:
         return self.parent.joinpath(name)
@@ -1697,7 +1686,7 @@ class AlistFileReader(HTTPFileReader):
     path: AlistPath
 
     def __init__(self, /, path: AlistPath):
-        super().__init__(path.url)
+        super().__init__(path.raw_url)
         self.__dict__["path"] = path
 
     @cached_property
@@ -2045,8 +2034,11 @@ class AlistFileSystem:
             return path.path
         return normpath(joinpath(self.path, path))
 
-    def as_path(self, path: str | PathLike[str] = "", password: str = "") -> AlistPath:
-        return AlistPath(self, path, password)
+    def as_path(self, path: str | PathLike[str] = "", password: str = "", fetch_attr: bool = False) -> AlistPath:
+        path = AlistPath(self, path, password)
+        if fetch_attr:
+            path()
+        return path
 
     def attr(
         self, 
@@ -2095,7 +2087,7 @@ class AlistFileSystem:
             if overwrite_or_ignore is None:
                 raise SameFileError(src_path)
             return None
-        if dst_path.startswith(src_path):
+        if commonpath((src_path, dst_path)) == dst_path:
             raise PermissionError(errno.EPERM, f"copy a file to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_attr = self.attr(src_path, src_password, _check=False)
         if src_attr["is_dir"]:
@@ -2147,7 +2139,7 @@ class AlistFileSystem:
         dst_dir = cast(str, dst_dir)
         if dirname(src_path) == dst_dir:
             raise SameFileError(src_path)
-        elif src_path == dst_dir or dst_dir.startswith(src_path):
+        elif src_path == dst_dir or commonpath((src_path, dst_dir)) == dst_dir:
             raise PermissionError(errno.EPERM, f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_dir!r}")
         elif not self.attr(dst_dir, dst_password, _check=False)["is_dir"]:
             raise NotADirectoryError(errno.ENOTDIR, f"destination is not directory: {src_path!r} ->> {dst_dir!r}")
@@ -2163,7 +2155,7 @@ class AlistFileSystem:
         local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
         password: str = "", 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
         _check: bool = True, 
     ):
         if _check:
@@ -2178,16 +2170,18 @@ class AlistFileSystem:
                 file = file.buffer
         else:
             local_path = fspath(local_path_or_file)
-            if write_mode:
-                write_mode += "b"
+            mode: str = write_mode
+            if mode:
+                mode += "b"
             elif os_path.lexists(local_path):
                 return
             else:
-                write_mode = "wb"
+                mode = "wb"
             if local_path:
-                file = open(local_path, write_mode)
+                file = open(local_path, mode)
             else:
-                file = open(basename(path), write_mode)
+                file = open(basename(path), mode)
+        file = cast(SupportsWrite[bytes], file)
         url = attr["raw_url"]
         if download:
             download(url, file)
@@ -2199,12 +2193,12 @@ class AlistFileSystem:
         self, 
         /, 
         path: str | PathLike[str] = "", 
-        local_dir: str | PathLike[str] = "", 
+        local_dir: bytes | str | PathLike = "", 
         password: str = "", 
         refresh: Optional[bool] = None, 
         no_root: bool = False, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
         _check: bool = True, 
     ):
         if _check:
@@ -2217,12 +2211,14 @@ class AlistFileSystem:
             isdir = True
         path = cast(str, path)
         refresh = cast(bool, refresh)
+        local_dir = fsdecode(local_dir)
         if local_dir:
             makedirs(local_dir, exist_ok=True)
         if isdir:
             if not no_root:
                 local_dir = os_path.join(local_dir, basename(path))
-                makedirs(local_dir, exist_ok=True)
+                if local_dir:
+                    makedirs(local_dir, exist_ok=True)
             for apath in self.listdir_attr(path, password, refresh=refresh, _check=False):
                 if apath["is_dir"]:
                     self.download_tree(
@@ -2270,10 +2266,21 @@ class AlistFileSystem:
     def getcwd(self, /) -> str:
         return self.path
 
+    def get_url(
+        self, 
+        /, 
+        path: str | PathLike[str] = "", 
+        _check: bool = True, 
+    ) -> str:
+        if _check:
+            path = self.abspath(path)
+        path = cast(str, path)
+        return self.client.origin + "/d" + quote(path, safe=":/?&=#")
+
     def glob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "*", 
         dirname: str = "", 
         password: str = "", 
         ignore_case: bool = False, 
@@ -2597,7 +2604,7 @@ class AlistFileSystem:
         dst_path = cast(str, dst_path)
         if src_path == dst_path or dirname(src_path) == dst_path:
             raise SameFileError(src_path)
-        if dst_path.startswith(src_path):
+        if commonpath((src_path, dst_path)) == dst_path:
             raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_attr = self.attr(src_path, src_password, _check=False)
         try:
@@ -2719,7 +2726,7 @@ class AlistFileSystem:
             return
         if src_path == "/" or dst_path == "/":
             raise OSError(errno.EINVAL, f"invalid argument: {src_path!r} -> {dst_path!r}")
-        if dst_path.startswith(src_path):
+        if commonpath((src_path, dst_path)) == dst_path:
             raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_dir, src_name = split(src_path)
         dst_dir, dst_name = split(dst_path)
@@ -2815,7 +2822,7 @@ class AlistFileSystem:
     def rglob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "", 
         dirname: str = "", 
         password: str = "", 
         ignore_case: bool = False, 
