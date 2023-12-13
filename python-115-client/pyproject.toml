@@ -27,6 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+cachetools = "*"
 ecdsa = "*"
 lz4 = "*"
 oss2 = "*"

@@ -2,9 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["text_to_dict", "dict_to_text", "cookies_str_to_dict", "headers_str_to_dict"]
+__all__ = [
+    "text_to_dict", "dict_to_text", "cookies_str_to_dict", "headers_str_to_dict", 
+    "unicode_unescape", 
+]
 
-
+from codecs import decode
 from re import compile as re_compile, escape as re_escape, Pattern
 from typing import AnyStr
 
@@ -66,4 +69,8 @@ def headers_str_to_dict(
     entry_sep: str | Pattern[str] = re_compile("\n+"), 
 ) -> dict[str, str]:
     return text_to_dict(headers.strip(), kv_sep, entry_sep)
+
+
+def unicode_unescape(s: str, /) -> str:
+    return decode(s, "unicode_escape")
 

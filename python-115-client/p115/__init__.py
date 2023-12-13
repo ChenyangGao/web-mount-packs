@@ -27,7 +27,9 @@ from posixpath import dirname, join as joinpath, normpath, split as pathsplit, s
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from time import time
-from typing import Any, Callable, Final, Iterable, Iterator, Literal, Mapping, Optional, Sequence, TypedDict, Unpack
+from typing import (
+    cast, Any, Callable, Final, Iterable, Iterator, Literal, Mapping, Optional, Sequence, TypedDict, Unpack, 
+)
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlencode, urlparse
 from uuid import uuid4
@@ -46,7 +48,7 @@ from .util.file import get_filesize, RequestsFileReader, SupportsRead, SupportsW
 from .util.hash import file_digest
 from .util.iter import cut_iter, posix_glob_translate_iter
 from .util.property import funcproperty
-from .util.text import cookies_str_to_dict
+from .util.text import cookies_str_to_dict, unicode_unescape
 
 
 ID_OR_PATH_TYPE = int | str | PathLike[str] | Sequence[str]
@@ -1377,12 +1379,11 @@ class P115Path(Mapping, PathLike[str]):
     def copy(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
         dst_path: ID_OR_PATH_TYPE, 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[P115Path]:
-        result = self.fs.copy(src_path, dst_path, pid=pid, overwrite_or_ignore=overwrite_or_ignore)
+        result = self.fs.copy(self, dst_path, pid=pid, overwrite_or_ignore=overwrite_or_ignore)
         if not result:
             return None
         id = result[0]
@@ -1391,11 +1392,10 @@ class P115Path(Mapping, PathLike[str]):
     def copytree(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
         dst_path: ID_OR_PATH_TYPE, 
         pid: Optional[int] = None, 
     ) -> P115Path:
-        id, _ = self.fs.copytree(src_path, dst_path, pid=pid)
+        id, _ = self.fs.copytree(self, dst_path, pid=pid)
         return type(self)(self.fs, self.fs.get_path(id), id=id)
 
     def download(
@@ -1405,7 +1405,7 @@ class P115Path(Mapping, PathLike[str]):
         pid: Optional[int] = None, 
         no_root: bool = False, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
     ):
         return self.fs.download_tree(
             self, 
@@ -1422,7 +1422,7 @@ class P115Path(Mapping, PathLike[str]):
     def glob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "*", 
         ignore_case: bool = False, 
         page_size: int = 100, 
     ) -> Iterator[P115Path]:
@@ -1625,7 +1625,7 @@ class P115Path(Mapping, PathLike[str]):
     def rglob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "", 
         ignore_case: bool = False, 
         page_size: int = 100, 
     ) -> Iterator[P115Path]:
@@ -1992,6 +1992,7 @@ class P115FileSystem:
             if overwrite_or_ignore is None:
                 raise SameFileError(src_fullpath)
             return None
+        # TODO: 需要改
         if dst_fullpath.startswith(src_fullpath):
             raise PermissionError(errno.EPERM, f"copy a file to its subordinate path is not allowed: {src_fullpath!r} -> {dst_fullpath!r}")
         src_attr = self.attr(src_path, pid)
@@ -2048,11 +2049,11 @@ class P115FileSystem:
         self, 
         /, 
         src_path: ID_OR_PATH_TYPE, 
-        dst_path: ID_OR_PATH_TYPE = "", 
+        dst_dir: ID_OR_PATH_TYPE = "", 
         pid: Optional[int] = None, 
     ) -> tuple[int, str]:
         src_attr = self.attr(src_path, pid)
-        dst_attr = self.attr(dst_path, pid)
+        dst_attr = self.attr(dst_dir, pid)
         src_id = src_attr["id"]
         dst_id = dst_attr["id"]
         src_name = src_attr["name"]
@@ -2075,7 +2076,7 @@ class P115FileSystem:
         local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
         pid: Optional[int] = None, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
     ):
         if hasattr(local_path_or_file, "write"):
             file = local_path_or_file
@@ -2083,16 +2084,18 @@ class P115FileSystem:
                 file = file.buffer
         else:
             local_path = fspath(local_path_or_file)
-            if write_mode:
-                write_mode += "b"
+            mode: str = write_mode
+            if mode:
+                mode += "b"
             elif os_path.lexists(local_path):
                 return
             else:
-                write_mode = "wb"
+                mode = "wb"
             if local_path:
-                file = open(local_path, write_mode)
+                file = open(local_path, mode)
             else:
-                file = open(self.attr(id_or_path, pid)["name"], write_mode)
+                file = open(self.attr(id_or_path, pid)["name"], mode)
+        file = cast(SupportsWrite[bytes], file)
         url = self.get_url(id_or_path, pid)
         if download:
             download(url, file, headers=self.client.session.headers)
@@ -2108,7 +2111,7 @@ class P115FileSystem:
         pid: Optional[int] = None, 
         no_root: bool = False, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
     ):
         local_dir = fsdecode(local_dir)
         if local_dir:
@@ -2117,7 +2120,8 @@ class P115FileSystem:
         if attr["is_dir"]:
             if not no_root:
                 local_dir = os_path.join(local_dir, attr["name"])
-                makedirs(local_dir, exist_ok=True)
+                if local_dir:
+                    makedirs(local_dir, exist_ok=True)
             for subattr in self._iterdir(attr["id"]):
                 if subattr["is_dir"]:
                     self.download_tree(
@@ -2217,7 +2221,7 @@ class P115FileSystem:
     def glob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "*", 
         dirname: ID_OR_PATH_TYPE = "", 
         ignore_case: bool = False, 
         page_size: int = 100, 
@@ -2517,7 +2521,8 @@ class P115FileSystem:
             raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
         if i < len(path_t):
             raise FileNotFoundError(errno.ENOENT, f"{path!r} (in {pid!r}): missing superior directory")
-        return int(self._mkdir(name, pid)["cid"])
+        resp = self._mkdir(name, pid)
+        return int(resp["cid"]), unicode_unescape(resp["cname"])
 
     def move(
         self, 
@@ -2660,6 +2665,7 @@ class P115FileSystem:
             return None
         if src_fullpath == "/" or src_fullpath == "/":
             raise OSError(errno.EINVAL, f"invalid argument: {src_fullpath!r} -> {dst_fullpath!r}")
+        # TODO: 需要改
         if dst_fullpath.startswith(src_fullpath):
             raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_fullpath!r} -> {dst_fullpath!r}")
         src_dir, src_name = pathsplit(src_fullpath)
@@ -2747,7 +2753,7 @@ class P115FileSystem:
     def rglob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "", 
         dirname: ID_OR_PATH_TYPE = "", 
         ignore_case: bool = False, 
         page_size: int = 100, 

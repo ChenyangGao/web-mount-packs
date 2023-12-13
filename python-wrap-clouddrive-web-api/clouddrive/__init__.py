@@ -19,13 +19,12 @@ import errno
 from datetime import datetime
 from functools import cached_property, update_wrapper
 from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
-from os import fspath, makedirs, scandir, path as os_path, PathLike
+from os import fsdecode, fspath, makedirs, scandir, path as os_path, PathLike
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from typing import (
-    cast, Callable, ItemsView, Iterator, KeysView, Mapping, Optional, Protocol, Sequence, 
-    TypeVar, ValuesView, 
+    cast, Any, Callable, ItemsView, Iterator, Literal, KeysView, Mapping, Optional, Sequence, ValuesView, 
 )
 from types import MappingProxyType
 from urllib.parse import quote
@@ -38,22 +37,9 @@ from grpc import StatusCode, RpcError # type: ignore
 from .client import Client
 import CloudDrive_pb2 # type: ignore
 
-from .util.file import HTTPFileReader
+from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
 from .util.iter import posix_glob_translate_iter
-from .util.property import funcproperty
 from .util.urlopen import urlopen
-
-
-_T_co = TypeVar("_T_co", covariant=True)
-_T_contra = TypeVar("_T_contra", contravariant=True)
-
-
-class SupportsWrite(Protocol[_T_contra]):
-    def write(self, __s: _T_contra) -> object: ...
-
-
-class SupportsRead(Protocol[_T_co]):
-    def read(self, __length: int = ...) -> _T_co: ...
 
 
 def _grpc_exc_redirect(fn, /):
@@ -197,18 +183,19 @@ class CloudDrivePath(Mapping, PathLike[str]):
         /, 
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = None, 
-    ) -> Optional[AlistPath]:
-        dst_path = self.fs.copy(self.path, dst_path, overwrite_or_ignore=overwrite_or_ignore)
-        if dst_path:
-            return type(self)(self.fs, dst_path)
+    ) -> Optional[CloudDrivePath]:
+        dst = self.fs.copy(self.path, dst_path, overwrite_or_ignore=overwrite_or_ignore)
+        if not dst:
+            return None
+        return type(self)(self.fs, dst)
 
     def copytree(
         self, 
         /, 
         dst_dir: str | PathLike[str], 
-    ) -> AlistPath:
-        dst_path = self.fs.copytree(src_path, dst_dir)
-        return type(self)(self.fs, dst_path)
+    ) -> CloudDrivePath:
+        dst = self.fs.copytree(self.path, dst_dir)
+        return type(self)(self.fs, dst)
 
     def download(
         self, 
@@ -217,7 +204,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         no_root: bool = False, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
         refresh: Optional[bool] = None, 
-        download: Optional[Callable[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
     ):
         return self.fs.download_tree(
             self.path, 
@@ -231,7 +218,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def exists(self, /) -> bool:
         return self.fs.exists(self.path, _check=False)
 
-    def glob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[CloudDrivePath]:
+    def glob(self, /, pattern: str = "*", ignore_case: bool = False) -> Iterator[CloudDrivePath]:
         dirname = self.path if self.is_dir else self.parent.path
         return self.fs.glob(pattern, dirname, ignore_case=ignore_case, _check=False)
 
@@ -431,7 +418,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         self.fs.replace(self.path, dst_path, _check=False)
         return type(self)(self.fs, dst_path)
 
-    def rglob(self, /, pattern: str, ignore_case: bool = False) -> Iterator[CloudDrivePath]:
+    def rglob(self, /, pattern: str = "", ignore_case: bool = False) -> Iterator[CloudDrivePath]:
         dirname = self.path if self.is_dir else self.parent.path
         return self.fs.rglob(pattern, dirname, ignore_case=ignore_case, _check=False)
 
@@ -474,7 +461,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     @cached_property
     def url(self, /) -> str:
-        return self.fs.client.download_baseurl + quote(self.path, safe="?&=")
+        return self.fs.get_url(self.path, _check=False)
 
     def with_name(self, name: str, /) -> CloudDrivePath:
         return self.parent.joinpath(name)
@@ -594,6 +581,7 @@ class CloudDriveFileSystem:
     @_grpc_exc_redirect
     def _iterdir(self, path: str, /, refresh: bool = False):
         it = self.client.GetSubFiles(CloudDrive_pb2.ListSubFileRequest(path=path, forceRefresh=refresh))
+        it = iter(_grpc_exc_redirect(it.__next__), None)
         return (a for m in it for a in m.subFiles)
 
     @_grpc_exc_redirect
@@ -622,6 +610,7 @@ class CloudDriveFileSystem:
             forceRefresh=refresh, 
             fuzzyMatch=fuzzy, 
         ))
+        it = iter(_grpc_exc_redirect(it.__next__), None)
         return (a for m in it for a in m.subFiles)
 
     @_grpc_exc_redirect
@@ -664,8 +653,11 @@ class CloudDriveFileSystem:
             return path.path
         return normpath(joinpath(self.path, path))
 
-    def as_path(self, path: str | PathLike[str] = "") -> CloudDrivePath:
-        return CloudDrivePath(self, path)
+    def as_path(self, path: str | PathLike[str] = "", fetch_attr: bool = False) -> CloudDrivePath:
+        path = CloudDrivePath(self, path)
+        if fetch_attr:
+            path()
+        return path
 
     def attr(
         self, 
@@ -719,9 +711,9 @@ class CloudDriveFileSystem:
         self, 
         /, 
         path: str | PathLike[str], 
-        local_path_or_file: str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
+        local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
         _check: bool = True, 
     ):
         if _check:
@@ -735,16 +727,18 @@ class CloudDriveFileSystem:
                 file = file.buffer
         else:
             local_path = fspath(local_path_or_file)
-            if write_mode:
-                write_mode += "b"
+            mode: str = write_mode
+            if mode:
+                mode += "b"
             elif os_path.lexists(local_path):
                 return
             else:
-                write_mode = "wb"
+                mode = "wb"
             if local_path:
-                file = open(local_path, write_mode)
+                file = open(local_path, mode)
             else:
-                file = open(basename(path), write_mode)
+                file = open(basename(path), mode)
+        file = cast(SupportsWrite[bytes], file)
         url = self.client.download_baseurl + quote(path, safe="?&=")
         if download:
             download(url, file)
@@ -756,11 +750,11 @@ class CloudDriveFileSystem:
         self, 
         /, 
         path: str | PathLike[str] = "", 
-        local_dir: str | PathLike[str] = "", 
+        local_dir: bytes | str | PathLike = "", 
         refresh: Optional[bool] = None, 
         no_root: bool = False, 
         write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[str, SupportsWrite[bytes]], Any] = None, 
+        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
         _check: bool = True, 
     ):
         if _check:
@@ -773,12 +767,14 @@ class CloudDriveFileSystem:
             isdir = True
         path = cast(str, path)
         refresh = cast(bool, refresh)
+        local_dir = fsdecode(local_dir)
         if local_dir:
             makedirs(local_dir, exist_ok=True)
         if isdir:
             if not no_root:
                 local_dir = os_path.join(local_dir, basename(path))
-                makedirs(local_dir, exist_ok=True)
+                if local_dir:
+                    makedirs(local_dir, exist_ok=True)
             for pattr in self._iterdir(path, refresh=refresh):
                 name = pattr.name
                 if pattr.isDirectory:
@@ -826,10 +822,21 @@ class CloudDriveFileSystem:
     def getcwd(self, /) -> str:
         return self.path
 
+    def get_url(
+        self, 
+        /, 
+        path: str | PathLike[str] = "", 
+        _check: bool = True, 
+    ) -> str:
+        if _check:
+            path = self.abspath(path)
+        path = cast(str, path)
+        return self.client.download_baseurl + quote(path, safe="?&=")
+
     def glob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "*", 
         dirname: str = "", 
         ignore_case: bool = False, 
         _check: bool = True, 
@@ -1126,7 +1133,7 @@ class CloudDriveFileSystem:
         dst_path = cast(str, dst_path)
         if src_path == dst_path:
             raise SameFileError(src_path)
-        if dst_path.startswith(src_path):
+        if commonpath((src_path, dst_path)) == dst_path:
             raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_attr = self._attr(src_path)
         try:
@@ -1231,7 +1238,7 @@ class CloudDriveFileSystem:
             return
         if src_path == "/" or dst_path == "/":
             raise OSError(errno.EINVAL, f"invalid argument: {src_path!r} -> {dst_path!r}")
-        if dst_path.startswith(src_path):
+        if commonpath((src_path, dst_path)) == dst_path:
             raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
         src_dir, src_name = split(src_path)
         dst_dir, dst_name = split(dst_path)
@@ -1321,7 +1328,7 @@ class CloudDriveFileSystem:
     def rglob(
         self, 
         /, 
-        pattern: str, 
+        pattern: str = "", 
         dirname: str = "", 
         ignore_case: bool = False, 
         _check: bool = True, 
