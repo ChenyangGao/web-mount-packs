@@ -38,18 +38,21 @@ class SupportsRead(Protocol[_T_co]):
     def read(self, __length: int = ...) -> _T_co: ...
 
 
+BIOReader = TypeVar('BIOReader', BinaryIO, SupportsRead[bytes])
+
+
 def bio_skip_bytes(
-    bio: BinaryIO, 
+    bio: BIOReader, 
     skipsize: int, 
     chunksize: int = 1 << 16, 
     callback: Optional[Callable[[int], Any]] = None, 
-) -> BinaryIO:
+) -> BIOReader:
     if skipsize <= 0:
         return bio
     if chunksize <= 0:
         chunksize = 1 << 16
     try:
-        bio.seek(skipsize, 1)
+        bio.seek(skipsize, 1) # type: ignore
         if callback:
             callback(skipsize)
     except:

@@ -137,7 +137,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         ls = [".", ".."]
         for pathobj in self.fs.listdir_attr(path):
             is_dir = pathobj.is_dir
-            name = pathobj.name
+            name = pathobj["name"]
             if name.startswith("."):
                 continue
             subpath = joinpath(path, name)

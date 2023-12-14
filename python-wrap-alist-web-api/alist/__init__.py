@@ -62,7 +62,7 @@ def _check_response(fn, /):
             elif resp["message"].endswith("not a folder"):
                 raise NotADirectoryError(errno.ENOTDIR, fargs, resp)
             elif message.endswith("file exists"):
-                raise FileExistsError(errno.EEXIS, fargs, resp)
+                raise FileExistsError(errno.EEXIST, fargs, resp)
             elif message.startswith("failed get "):
                 raise PermissionError(errno.EPERM, fargs, resp)
         raise OSError(errno.EREMOTE, fargs, resp)
@@ -1201,6 +1201,7 @@ class AlistPath(Mapping, PathLike[str]):
     fs: AlistFileSystem
     path: str
     password: str
+    attr_last_fetched: Optional[datetime] = None
 
     def __init__(
         self, 
@@ -1214,7 +1215,6 @@ class AlistPath(Mapping, PathLike[str]):
         attr["fs"] = fs
         attr["path"] = fs.abspath(path)
         attr["password"] = password
-        attr["attr_last_fetched"] = None
 
     def __and__(self, path: str | PathLike[str], /) -> AlistPath:
         return type(self)(

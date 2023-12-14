@@ -58,7 +58,7 @@ class P115RSACipher:
 
     def __init__(self, /):
         self.rand_key: bytes = Random.new().read(RSA_KEY_SIZE)
-        self.key: bytes = __class__.gen_key(self.rand_key)
+        self.key: bytes = type(self).gen_key(self.rand_key)
 
     @staticmethod
     def gen_key(rand_key: bytes | bytearray, sk_len: int = 4, /) -> bytes:
@@ -119,7 +119,7 @@ class P115RSACipher:
 class P115ECDHCipher:
 
     def __init__(self):
-        pubkey, secret = __class__.generate_pair()
+        pubkey, secret = type(self).generate_pair()
         self.pubkey: bytes  = pubkey
         self.aes_key: bytes = secret[:16]
         self.aes_iv: bytes  = secret[-16:]

@@ -5,28 +5,32 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["funcproperty", "lazyproperty", "cacheproperty", "final_cacheproperty"]
 
 
+from typing import Any
+
+
 class funcproperty:
 
-    def __init__(self, func):
+    def __init__(self, func, /):
         self.__func__ = func
         self.__name__ = getattr(func, "__name__", None)
         self.__doc__  = getattr(func, "__doc__", None)
 
-    def __repr__(self):
+    def __repr__(self, /):
         return f"{type(self).__qualname__}({self.__func__!r})"
 
-    def __set_name__(self, cls, name):
+    def __set_name__(self, cls, name, /):
         self.__name__ = name
 
-    def __get__(self, instance, cls):
+    def __get__(self, instance, cls, /):
         if instance is None:
             return self
         return self.__func__(instance)
 
 
 class lazyproperty(funcproperty):
+    __value__: Any
 
-    def __get__(self, instance, cls):
+    def __get__(self, instance, cls, /):
         if instance is None:
             return self
         try:
@@ -35,7 +39,7 @@ class lazyproperty(funcproperty):
             val = self.__value__ = self.__func__(instance)
             return val
 
-    def __delete__(self, instance):
+    def __delete__(self, instance, /):
         try:
             del self.__value__
         except AttributeError:
@@ -45,7 +49,7 @@ class lazyproperty(funcproperty):
 # NOTE: you can use `functools.cached_property` instead
 class cacheproperty(funcproperty):
 
-    def __get__(self, instance, cls):
+    def __get__(self, instance, cls, /):
         if instance is None:
             return self
         try:
@@ -62,6 +66,6 @@ class cacheproperty(funcproperty):
 
 class final_cacheproperty(cacheproperty):
 
-    def __set__(self, instance, value):
+    def __set__(self, instance, value, /):
         raise TypeError(f"can't set property: {self.__name__!r}")
 

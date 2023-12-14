@@ -77,6 +77,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
     "clouddrive path information."
     fs: CloudDriveFileSystem
     path: str
+    attr_last_fetched: Optional[datetime] = None
 
     def __init__(
         self, 
@@ -88,7 +89,6 @@ class CloudDrivePath(Mapping, PathLike[str]):
         super().__setattr__("__dict__", attr)
         attr["fs"] = fs
         attr["path"] = fs.abspath(path)
-        attr["attr_last_fetched"] = None
 
     def __and__(self, path: str | PathLike[str], /) -> CloudDrivePath:
         return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
