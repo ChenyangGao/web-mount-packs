@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
     "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin"
@@ -407,8 +407,8 @@ class P115Client:
         payload:
             - cid: int | str = 0 # 文件夹 id
             - limit: int = 32    # 一页大小，意思就是 page_size
-            - offset: int = 0    # 索引的偏移值，索引从 0 开始计算
-            - asc: 0 | 1 = 1 # 是否升序排列
+            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+            - asc: 0 | 1 = 1     # 是否升序排列
             - o: str = "file_name"
                 # 用某字段排序：
                 # - 文件名："file_name"
@@ -423,7 +423,7 @@ class P115Client:
             - code: int | str = <default>
             - count_folders: 0 | 1 = <default>
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default>
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
@@ -434,7 +434,15 @@ class P115Client:
             - star: 0 | 1 = <default>
             - source: str = <default>
             - suffix: str = <default>
-            - type: str = <default>
+            - type: int | str = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
         """
         api = "https://webapi.115.com/files"
         payload = {"cid": 0, "limit": 32, "offset": 0, "asc": 1, "o": "file_name", "show_dir": 1, **payload}
@@ -446,9 +454,9 @@ class P115Client:
         payload:
             - cid: int | str = 0 # 文件夹 id
             - limit: int = 32    # 一页大小，意思就是 page_size
-            - offset: int = 0    # 索引的偏移值，索引从 0 开始计算
-            - asc: 0 | 1 = 1 # 是否升序排列
-            - o: str = "file_name" 
+            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+            - asc: 0 | 1 = 1     # 是否升序排列
+            - o: str = "file_name"
                 # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
@@ -462,7 +470,7 @@ class P115Client:
             - code: int | str = <default>
             - count_folders: 0 | 1 = <default>
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default>
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
@@ -473,12 +481,19 @@ class P115Client:
             - star: 0 | 1 = <default>
             - source: str = <default>
             - suffix: str = <default>
-            - type: str = <default>
+            - type: int | str = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
         """
         api = "https://aps.115.com/natsort/files.php"
         payload = {"cid": 0, "limit": 32, "offset": 0, "asc": 1, "o": "file_name", "show_dir": 1, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
-
 
     def fs_files_edit(self, /, payload: list, **request_kwargs):
         """设置文件或文件夹的备注、标签等（提示：此接口不建议直接使用）
@@ -616,25 +631,45 @@ class P115Client:
         return self.fs_batch_rename(payload, **request_kwargs)
 
     def fs_search(self, payload: dict, /, **request_kwargs):
-        """搜索文件或文件夹（提示：好像最多只能罗列前 10,000 条数据）
+        """搜索文件或文件夹（提示：好像最多只能罗列前 10,000 条数据，也就是 limit + offset <= 10_000）
         GET https://webapi.115.com/files/search
         payload:
             - aid: int | str = 1
-            - cid: int | str = 0
-            - count_folders: int = 1
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - cid: int | str = 0 # 文件夹 id
+            - count_folders: 0 | 1 = <default>
             - date: str = <default> # 筛选日期
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
             - file_label: int | str = <default> # 标签 id
             - format: str = "json" # 输出格式（不用管）
-            - limit: int = 32 # 一页大小
-            - offset int = 0  # 索引偏移，从 0 开始
+            - limit: int = 32 # 一页大小，意思就是 page_size
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+            - offset: int = 0  # 索引偏移，索引从 0 开始计算
             - pick_code: str = <default>
             - search_value: str = <default>
             - show_dir: 0 | 1 = 1
             - source: str = <default>
-            - type: str = <default> # 文件类型
+            - star: 0 | 1 = <default>
+            - suffix: str = <default>
+            - type: int | str = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
         """
         api = "https://webapi.115.com/files/search"
-        payload = {"aid": 1, "cid": 0, "count_folders": 1, "format": "json", "limit": 32, "show_dir": 1, **payload}
+        payload = {"aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, "show_dir": 1, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
     def comment_get(self, /, payload: int | str | dict, **request_kwargs):
@@ -860,7 +895,7 @@ class P115Client:
             - receive_code: str
             - cid: int | str = 0
             - limit: int = 32
-            - offset int = 0
+            - offset: int = 0
             - asc: 0 | 1 = 1 # 是否升序排列
             - o: str = "file_name"
                 # 用某字段排序：
@@ -3140,16 +3175,15 @@ class P115FileSystem:
         id_or_path: ID_OR_PATH_TYPE = "", 
         /, 
         pid: Optional[int] = None, 
-        page_size: int = 32, 
+        page_size: int = 1_000, 
         offset: int = 0, 
         as_path: bool = False, 
         **kwargs, 
     ):
         assert page_size > 0
-        id = self.get_id(id_or_path, pid)
         payload = {
+            "cid": self.get_id(id_or_path, pid), 
             "search_value": search_value, 
-            "cid": id, 
             "limit": page_size, 
             "offset": offset, 
             **kwargs, 
@@ -3161,14 +3195,17 @@ class P115FileSystem:
         else:
             wrap = normalize_info
         search = self._search
-        resp = search(payload)
-        yield from map(wrap, resp["data"])
-        for offset in range(resp["offset"]+resp["page_size"], resp["count"], page_size):
-            payload["offset"] = offset
-            resp = search(payload)["data"]
+        while True:
+            resp = search(payload)
             if resp["offset"] != offset:
                 break
-            yield from map(wrap, search(payload)["data"])
+            data = resp["data"]
+            if not data:
+                return
+            yield from map(wrap, resp["data"])
+            offset = payload["offset"] = offset + resp["page_size"]
+            if offset >= resp["count"]:
+                break
 
     def stat(
         self, 
@@ -3509,7 +3546,7 @@ class P115ShareFileSystem:
         except KeyError:
             raise FileNotFoundError(errno.ENOENT, f"no such path: {path!r}")
 
-    def _listdir(self, id_or_path: int | str = "", page_size: int = 32, /) -> list[dict]:
+    def _listdir(self, id_or_path: int | str = "", page_size: int = 1_000, /) -> list[dict]:
         if isinstance(id_or_path, str):
             if id_or_path == "":
                 id = self._path_to_id[self._path]
