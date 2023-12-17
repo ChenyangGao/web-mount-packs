@@ -112,7 +112,7 @@ def get_filesize(file, /) -> int:
 
 
 class HTTPFileReader(RawIOBase):
-    url: str
+    url: str | Callable[[], str]
     response: Any
     length: int
     chunked: bool
@@ -124,13 +124,13 @@ class HTTPFileReader(RawIOBase):
 
     def __init__(
         self, 
-        url: str, 
+        url: str | Callable[[], str], 
         /, 
         headers: Mapping = {}, 
         urlopen: Callable[..., HTTPResponse] = urlopen, 
     ):
         headers = {**headers, "Accept-Encoding": "identity"}
-        response = urlopen(url, headers=headers)
+        response = urlopen(url if callable(url) else url, headers=headers)
         self.__dict__.update(
             url = url, 
             response = response, 
@@ -269,8 +269,12 @@ class HTTPFileReader(RawIOBase):
             if start < 0:
                 start = 0
         self.response.close()
+        url = self.url
         self.__dict__.update(
-            response=self.urlopen(self.url, headers={**self.headers, "Range": f"bytes={start}-"}), 
+            response=self.urlopen(
+                url() if callable(url) else url, 
+                headers={**self.headers, "Range": f"bytes={start}-"}
+            ), 
             start=start, 
         )
         return start
@@ -361,7 +365,7 @@ class RequestsFileReader(HTTPFileReader):
 
     def __init__(
         self, 
-        url: str, 
+        url: str | Callable[[], str], 
         /, 
         headers: Mapping = {}, 
         urlopen: Callable = Session().get, 

@@ -6,6 +6,7 @@ from .download import *
 from .file import *
 from .hash import *
 from .iter import *
+from .path import *
 from .property import *
 from .response import *
 from .text import *

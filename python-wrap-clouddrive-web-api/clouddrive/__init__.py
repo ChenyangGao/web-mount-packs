@@ -11,7 +11,7 @@ This is a web API wrapper works with the running "clouddrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 9)
 __all__ = ["CloudDriveClient", "CloudDrivePath", "CloudDriveFileReader", "CloudDriveFileSystem"]
 
 import errno
