@@ -371,7 +371,11 @@ class RequestsFileReader(HTTPFileReader):
         urlopen: Callable = Session().get, 
     ):
         headers = {**headers, "Accept-Encoding": "identity"}
-        response = urlopen(url, headers=headers, stream=True)
+        def _urlopen(url, headers=None):
+            resp = urlopen(url, headers=headers, stream=True)
+            resp.raise_for_status()
+            return resp
+        response = _urlopen(url, headers=headers)
         self.__dict__.update(
             url = url, 
             response = response, 
@@ -379,7 +383,7 @@ class RequestsFileReader(HTTPFileReader):
             chunked = is_chunked(response), 
             start = 0, 
             closed = False, 
-            urlopen = partial(urlopen, stream=True), 
+            urlopen = _urlopen, 
             headers = MappingProxyType(headers), 
             _seekable = is_range_request(response), 
         )

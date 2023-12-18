@@ -1,5 +1,17 @@
 # 115 网盘 Web API 的 Python 封装
 
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/python-115)
+![PyPI - Version](https://img.shields.io/pypi/v/python-115)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/python-115)
+![PyPI - Format](https://img.shields.io/pypi/format/python-115)
+![PyPI - Status](https://img.shields.io/pypi/status/python-115)
+
+![GitHub](https://img.shields.io/github/license/ChenyangGao/python-115)
+![GitHub all releases](https://img.shields.io/github/downloads/ChenyangGao/python-115/total)
+![GitHub language count](https://img.shields.io/github/languages/count/ChenyangGao/python-115)
+![GitHub issues](https://img.shields.io/github/issues/ChenyangGao/python-115)
+![Codecov](https://img.shields.io/codecov/c/github/ChenyangGao/python-115)
+
 - [115网盘](https://115.com)
 
 ## 安装

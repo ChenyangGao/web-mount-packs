@@ -16,11 +16,16 @@ from abc import ABC, abstractmethod
 from base64 import b64encode
 from binascii import b2a_hex
 from collections import deque
+from collections.abc import (
+    Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, MutableMapping, 
+    Sequence, ValuesView, 
+)
 from copy import deepcopy
 from datetime import datetime
 from functools import cached_property, update_wrapper
 from hashlib import md5, sha1
 from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
+from itertools import count
 from json import dumps, loads
 from os import fsdecode, fspath, fstat, makedirs, scandir, stat, stat_result, PathLike
 from os import path as os_path
@@ -31,11 +36,11 @@ from stat import S_IFDIR, S_IFREG
 from shutil import copyfileobj, SameFileError
 from time import time
 from typing import (
-    cast, overload, Any, Callable, Final, Generic, Iterable, Iterator, ItemsView, KeysView, Literal, 
-    Mapping, MutableMapping, Optional, Sequence, TypedDict, TypeVar, Unpack, ValuesView, 
+    cast, Any, ClassVar, Final, Generic, IO, Literal, Optional, Never, Self, TypeAlias, 
+    TypedDict, TypeVar, Unpack, 
 )
 from types import MappingProxyType
-from urllib.parse import parse_qsl, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
 from uuid import uuid4
 
 from requests.cookies import create_cookie
@@ -58,9 +63,11 @@ from .util.property import funcproperty
 from .util.text import cookies_str_to_dict, unicode_unescape
 
 
-ID_OR_PATH_TYPE = int | str | PathLike[str] | Sequence[str]
-M = TypeVar("M", dict, MappingProxyType)
-P = TypeVar("P")
+IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str]
+M = TypeVar("M", bound=Mapping)
+P115FSType = TypeVar("P115FSType", bound="P115FileSystemBase")
+P115PathType = TypeVar("P115PathType", bound="P115PathBase")
+
 
 CRE_SHARE_LINK = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?")
 APP_VERSION: Final = "99.99.99.99"
@@ -80,7 +87,7 @@ def check_response(fn, /):
     return update_wrapper(wrapper, fn)
 
 
-def console_qrcode(text):
+def console_qrcode(text: str) -> None:
     qr = qrcode.QRCode(border=1)
     qr.add_data(text)
     qr.print_ascii(tty=True)
@@ -127,40 +134,42 @@ class HeadersKeyword(TypedDict):
 
 
 class P115Client:
+    session: Session
+    user_id: int
+    user_key: str
+    cookie: str
 
     def __init__(self, /, cookie=None):
-        self._session = session = Session()
+        ns = self.__dict__
+        session = ns["session"] = Session()
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
         if not cookie:
             cookie = self.login_with_qrcode()["data"]["cookie"]
-        self.cookie = cookie
+        self.set_cookie(cookie)
         resp = self.upload_info()
         if resp["errno"]:
             raise AuthenticationError(resp)
-        self.user_id: int = resp["user_id"]
-        self.user_key: str = resp["userkey"]
+        ns.update(user_id=resp["user_id"], user_key=resp["userkey"])
 
-    def __del__(self, /):
+    def __del__(self, /) -> None:
         self.close()
 
-    def __eq__(self, other, /):
+    def __eq__(self, other, /) -> bool:
         return type(self) is type(other) and self.user_id == other.user_id
 
-    def __hash__(self, /):
+    def __hash__(self, /) -> int:
         return hash((self.user_id, self.cookie))
 
-    def close(self, /):
-        self._session.close()
+    def __setattr__(self, attr, val, /) -> Never:
+        raise TypeError("can't set attribute")
 
-    @property
-    def cookie(self, /) -> str:
-        return self._cookie
+    def close(self, /) -> None:
+        self.session.close()
 
-    @cookie.setter
-    def cookie(self, cookie, /):
+    def set_cookie(self, cookie, /):
         if isinstance(cookie, str):
             cookie = cookies_str_to_dict(cookie)
-        cookiejar = self._session.cookies
+        cookiejar = self.session.cookies
         cookiejar.clear()
         if isinstance(cookie, dict):
             for key in ("UID", "CID", "SEID"):
@@ -170,13 +179,9 @@ class P115Client:
         else:
             cookiejar.update(cookie)
         cookies = cookiejar.get_dict()
-        self._cookie = "; ".join(f"{key}={cookies[key]}" for key in ("UID", "CID", "SEID"))
+        self.__dict__["cookie"] = "; ".join(f"{key}={cookies[key]}" for key in ("UID", "CID", "SEID"))
 
-    @property
-    def session(self, /):
-        return self._session
-
-    def login_with_qrcode(self, /, **request_kwargs):
+    def login_with_qrcode(self, /, **request_kwargs) -> dict:
         """用二维码登录
         """
         qrcode_token = self.login_qrcode_token(**request_kwargs)["data"]
@@ -203,11 +208,19 @@ class P115Client:
                 raise LoginError(f"qrcode: aborted with {resp!r}")
         return self.login_qrcode_result({"account": qrcode_token["uid"]}, **request_kwargs)
 
-    def request(self, api, /, method="GET", *, parse=False, **request_kwargs):
+    def request(
+        self, 
+        api: str, 
+        /, 
+        method: str = "GET", 
+        *, 
+        parse: bool | Callable = False, 
+        **request_kwargs, 
+    ):
         """
         """
         request_kwargs["stream"] = True
-        resp = self._session.request(method, api, **request_kwargs)
+        resp = self.session.request(method, api, **request_kwargs)
         resp.raise_for_status()
         if callable(parse):
             return parse(resp.content)
@@ -226,7 +239,7 @@ class P115Client:
     ########## Version API ##########
 
     @staticmethod
-    def list_app_version(**request_kwargs):
+    def list_app_version(**request_kwargs) -> dict:
         """获取当前各平台最新版 115 app
         GET https://appversion.115.com/1/web/1.0/api/chrome
         """
@@ -235,14 +248,14 @@ class P115Client:
 
     ########## Account API ##########
 
-    def login_check(self, /, **request_kwargs):
+    def login_check(self, /, **request_kwargs) -> dict:
         """检查当前用户的登录状态（用处不大）
         GET http://passportapi.115.com/app/1.0/web/1.0/check/sso/
         """
         api = "http://passportapi.115.com/app/1.0/web/1.0/check/sso/"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def login_qrcode_status(self, /, payload: dict, **request_kwargs):
+    def login_qrcode_status(self, /, payload: dict, **request_kwargs) -> dict:
         """获取二维码的状态（未扫描、已扫描、已登录、已取消、已过期等），payload 数据取自 `login_qrcode_token` 接口响应
         GET https://qrcodeapi.115.com/get/status/
         payload:
@@ -253,7 +266,7 @@ class P115Client:
         api = "https://qrcodeapi.115.com/get/status/"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def login_qrcode_result(self, /, payload: int | str | dict, **request_kwargs):
+    def login_qrcode_result(self, /, payload: int | str | dict, **request_kwargs) -> dict:
         """获取扫码登录的结果，包含 cookie
         POST https://passportapi.115.com/app/1.0/web/1.0/login/qrcode/
         payload:
@@ -267,42 +280,42 @@ class P115Client:
             payload = {"app": "web", **payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def login_qrcode_token(self, /, **request_kwargs):
+    def login_qrcode_token(self, /, **request_kwargs) -> dict:
         """获取登录二维码，扫码可用
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/token/
         """
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def logout(self, /, **request_kwargs):
+    def logout(self, /, **request_kwargs) -> None:
         """退出登录状态（如无必要，不要使用）
         GET https://passportapi.115.com/app/1.0/web/1.0/logout/logout/
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/logout/"
         self.request(api, **request_kwargs)
 
-    def login_status(self, /, **request_kwargs):
+    def login_status(self, /, **request_kwargs) -> dict:
         """获取登录状态
         GET https://my.115.com/?ct=guide&ac=status
         """
         api = "https://my.115.com/?ct=guide&ac=status"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def user_info(self, /, **request_kwargs):
+    def user_info(self, /, **request_kwargs) -> dict:
         """获取此用户信息
         GET https://my.115.com/?ct=ajax&ac=na
         """
         api = "https://my.115.com/?ct=ajax&ac=nav"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def user_info2(self, /, **request_kwargs):
+    def user_info2(self, /, **request_kwargs) -> dict:
         """获取此用户信息（更全）
         GET https://my.115.com/?ct=ajax&ac=get_user_aq
         """
         api = "https://my.115.com/?ct=ajax&ac=get_user_aq"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def user_setting(self, payload: dict = {}, /, **request_kwargs):
+    def user_setting(self, payload: dict = {}, /, **request_kwargs) -> dict:
         """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
         POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
@@ -311,7 +324,7 @@ class P115Client:
 
     ########## File System API ##########
 
-    def fs_batch_copy(self, /, payload: dict, **request_kwargs):
+    def fs_batch_copy(self, /, payload: dict, **request_kwargs) -> dict:
         """复制文件或文件夹
         POST https://webapi.115.com/files/copy
         payload:
@@ -323,7 +336,7 @@ class P115Client:
         api = "https://webapi.115.com/files/copy"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def fs_batch_delete(self, payload: dict, /, **request_kwargs):
+    def fs_batch_delete(self, payload: dict, /, **request_kwargs) -> dict:
         """删除文件或文件夹
         POST https://webapi.115.com/rb/delete
         payload:
@@ -334,7 +347,7 @@ class P115Client:
         api = "https://webapi.115.com/rb/delete"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def fs_batch_move(self, payload: dict, /, **request_kwargs):
+    def fs_batch_move(self, payload: dict, /, **request_kwargs) -> dict:
         """移动文件或文件夹
         POST https://webapi.115.com/files/move
         payload:
@@ -346,7 +359,7 @@ class P115Client:
         api = "https://webapi.115.com/files/move"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def fs_batch_rename(self, payload: dict, /, **request_kwargs):
+    def fs_batch_rename(self, payload: dict, /, **request_kwargs) -> dict:
         """重命名文件或文件夹
         POST https://webapi.115.com/files/batch_rename
         payload:
@@ -361,7 +374,7 @@ class P115Client:
         /, 
         pid: int, 
         **request_kwargs, 
-    ):
+    ) -> dict:
         """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
         """
         if isinstance(fids, (int, str)):
@@ -378,7 +391,7 @@ class P115Client:
         fids: int | str | Iterable[int | str], 
         /, 
         **request_kwargs, 
-    ):
+    ) -> dict:
         """删除文件或文件夹，此接口是对 `fs_batch_delete` 的封装
         """
         api = "https://webapi.115.com/rb/delete"
@@ -395,7 +408,7 @@ class P115Client:
         payload: int | str | dict, 
         /, 
         **request_kwargs, 
-    ):
+    ) -> dict:
         """获取文件或文件夹的简略信息
         GET https://webapi.115.com/files/file
         payload:
@@ -406,7 +419,7 @@ class P115Client:
             payload = {"file_id": payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def fs_files(self, payload: dict = {}, /, **request_kwargs):
+    def fs_files(self, payload: dict = {}, /, **request_kwargs) -> dict:
         """获取文件夹的中的文件列表和基本信息
         GET https://webapi.115.com/files
         payload:
@@ -453,7 +466,7 @@ class P115Client:
         payload = {"cid": 0, "limit": 32, "offset": 0, "asc": 1, "o": "file_name", "show_dir": 1, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def fs_files2(self, payload: dict = {}, /, **request_kwargs):
+    def fs_files2(self, payload: dict = {}, /, **request_kwargs) -> dict:
         """获取文件夹的中的文件列表和基本信息
         GET https://aps.115.com/natsort/files.php
         payload:
@@ -500,7 +513,7 @@ class P115Client:
         payload = {"cid": 0, "limit": 32, "offset": 0, "asc": 1, "o": "file_name", "show_dir": 1, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def fs_files_edit(self, /, payload: list, **request_kwargs):
+    def fs_files_edit(self, /, payload: list, **request_kwargs) -> dict:
         """设置文件或文件夹的备注、标签等（提示：此接口不建议直接使用）
         POST https://webapi.115.com/files/edit
         payload:
@@ -524,7 +537,12 @@ class P115Client:
             **request_kwargs, 
         )
 
-    def fs_files_hidden(self, payload: int | str | Iterable[int | str] | dict, /, **request_kwargs):
+    def fs_files_hidden(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        **request_kwargs, 
+    ) -> dict:
         """隐藏或者取消隐藏文件或文件夹
         POST https://webapi.115.com/files/hiddenfiles
         payload:
@@ -545,7 +563,7 @@ class P115Client:
             payload["hidden"] = 1
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def fs_hidden_switch(self, payload: dict, **request_kwargs):
+    def fs_hidden_switch(self, payload: dict, **request_kwargs) -> dict:
         """切换隐藏模式
         POST https://115.com/?ct=hiddenfiles&ac=switching
         payload:
@@ -556,7 +574,7 @@ class P115Client:
         api = "https://115.com/?ct=hiddenfiles&ac=switching"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def fs_statistic(self, payload: int | str | dict, /, **request_kwargs):
+    def fs_statistic(self, payload: int | str | dict, /, **request_kwargs) -> dict:
         """获取文件或文件夹的统计信息（提示：但得不到根目录的统计信息，所以 cid 为 0 时无意义）
         GET https://webapi.115.com/category/get
         payload:
@@ -568,7 +586,7 @@ class P115Client:
             payload = {"cid": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def fs_get_repeat(self, payload: int | str | dict, /, **request_kwargs):
+    def fs_get_repeat(self, payload: int | str | dict, /, **request_kwargs) -> dict:
         """文件查重
         GET https://webapi.115.com/files/get_repeat_sha
         payload:
@@ -579,14 +597,14 @@ class P115Client:
             payload = {"file_id": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def fs_index_info(self, /, **request_kwargs):
+    def fs_index_info(self, /, **request_kwargs) -> dict:
         """获取当前已用空间、可用空间、登录设备等信息
         GET https://webapi.115.com/files/index_info
         """
         api = "https://webapi.115.com/files/index_info"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def fs_info(self, payload: int | str | dict, /, **request_kwargs):
+    def fs_info(self, payload: int | str | dict, /, **request_kwargs) -> dict:
         """获取文件或文件夹的基本信息
         GET https://webapi.115.com/files/get_info
         payload:
@@ -597,7 +615,7 @@ class P115Client:
             payload = {"file_id": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def fs_mkdir(self, payload: str | dict, /, **request_kwargs):
+    def fs_mkdir(self, payload: str | dict, /, **request_kwargs) -> dict:
         """新建文件夹
         POST https://webapi.115.com/files/add
         payload:
@@ -617,7 +635,7 @@ class P115Client:
         pid: int, 
         /, 
         **request_kwargs, 
-    ):
+    ) -> dict:
         """移动文件或文件夹，此接口是对 `fs_batch_move` 的封装
         """
         if isinstance(fids, (int, str)):
@@ -629,13 +647,13 @@ class P115Client:
         payload["pid"] = pid
         return self.fs_batch_move(payload, **request_kwargs)
 
-    def fs_rename(self, fid_name_pairs, /, **request_kwargs):
+    def fs_rename(self, fid_name_pairs: Iterable[tuple[int | str, str]], /, **request_kwargs) -> dict:
         """重命名文件或文件夹，此接口是对 `fs_batch_rename` 的封装
         """
         payload = {f"files_new_name[{fid}]": name for fid, name in fid_name_pairs}
         return self.fs_batch_rename(payload, **request_kwargs)
 
-    def fs_search(self, payload: dict, /, **request_kwargs):
+    def fs_search(self, payload: dict, /, **request_kwargs) -> dict:
         """搜索文件或文件夹（提示：好像最多只能罗列前 10,000 条数据，也就是 limit + offset <= 10_000）
         GET https://webapi.115.com/files/search
         payload:
@@ -677,7 +695,7 @@ class P115Client:
         payload = {"aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, "show_dir": 1, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def comment_get(self, /, payload: int | str | dict, **request_kwargs):
+    def comment_get(self, /, payload: int | str | dict, **request_kwargs) -> dict:
         """获取文件或文件夹的备注
         GET https://webapi.115.com/files/desc
         payload:
@@ -699,7 +717,7 @@ class P115Client:
         fids: int | str | Iterable[int | str], 
         file_desc: str = "", 
         **request_kwargs, 
-    ):
+    ) -> dict:
         """为文件或文件夹设置备注，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -714,7 +732,7 @@ class P115Client:
         payload.append(("file_desc", file_desc))
         return self.fs_files_edit(payload, **request_kwargs)
 
-    def label_add(self, *lables: str, **request_kwargs):
+    def label_add(self, *lables: str, **request_kwargs) -> dict:
         """添加标签（可以接受多个）
         POST https://webapi.115.com/label/add_multi
 
@@ -735,7 +753,7 @@ class P115Client:
 
     # TODO: 还需要接口，获取单个标签 id 对应的信息，也就是通过 id 来获取
 
-    def label_del(self, /, payload: int | str | dict, **request_kwargs):
+    def label_del(self, /, payload: int | str | dict, **request_kwargs) -> dict:
         """删除标签
         POST https://webapi.115.com/label/delete
         payload:
@@ -746,7 +764,7 @@ class P115Client:
             payload = {"id": payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def label_edit(self, /, payload: dict, **request_kwargs):
+    def label_edit(self, /, payload: dict, **request_kwargs) -> dict:
         """编辑标签
         POST https://webapi.115.com/label/edit
         payload:
@@ -757,7 +775,7 @@ class P115Client:
         api = "https://webapi.115.com/label/edit"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def label_list(self, /, payload: dict = {}, **request_kwargs):
+    def label_list(self, /, payload: dict = {}, **request_kwargs) -> dict:
         """罗列标签列表（如果要获取做了标签的文件列表，用 `fs_search` 接口）
         GET https://webapi.115.com/label/list
         payload:
@@ -782,7 +800,7 @@ class P115Client:
         fids: int | str | Iterable[int | str], 
         file_label: int | str = "", 
         **request_kwargs, 
-    ):
+    ) -> dict:
         """为文件或文件夹设置标签，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -797,7 +815,7 @@ class P115Client:
         payload.append(("file_label", file_label))
         return self.fs_files_edit(payload, **request_kwargs)
 
-    def label_batch(self, /, payload: dict, **request_kwargs):
+    def label_batch(self, /, payload: dict, **request_kwargs) -> dict:
         """批量设置标签
         POST https://webapi.115.com/files/batch_label
         payload:
@@ -814,7 +832,7 @@ class P115Client:
         api = "https://webapi.115.com/files/batch_label"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def star_set(self, payload: int | str | dict, **request_kwargs):
+    def star_set(self, payload: int | str | dict, **request_kwargs) -> dict:
         """为文件或文件夹设置或取消星标
         POST https://webapi.115.com/files/star
         payload:
@@ -830,7 +848,7 @@ class P115Client:
 
     ########## Share API ##########
 
-    def share_send(self, payload: int | str | dict, /, **request_kwargs):
+    def share_send(self, payload: int | str | dict, /, **request_kwargs) -> dict:
         """创建分享
         POST https://webapi.115.com/share/send
         payload:
@@ -854,7 +872,7 @@ class P115Client:
             payload = {"ignore_warn": 1, "is_asc": 1, "order": "file_name", **payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def share_info(self, payload: str | dict, /, **request_kwargs):
+    def share_info(self, payload: str | dict, /, **request_kwargs) -> dict:
         """获取分享信息
         GET https://webapi.115.com/share/shareinfo
         payload:
@@ -865,7 +883,7 @@ class P115Client:
             payload = {"share_code": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_list(self, payload: dict = {}, /, **request_kwargs):
+    def share_list(self, payload: dict = {}, /, **request_kwargs) -> dict:
         """罗列分享信息列表
         GET https://webapi.115.com/share/slist
         payload:
@@ -877,7 +895,7 @@ class P115Client:
         payload = {"offset": 0, "limit": 32, **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_update(self, payload: dict, /, **request_kwargs):
+    def share_update(self, payload: dict, /, **request_kwargs) -> dict:
         """变更分享的配置（例如改访问密码，取消分享）
         POST https://webapi.115.com/share/updateshare
         payload:
@@ -892,7 +910,7 @@ class P115Client:
         api = "https://webapi.115.com/share/updateshare"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def share_snap(self, payload: dict, /, **request_kwargs):
+    def share_snap(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
         GET https://webapi.115.com/share/snap
         payload:
@@ -915,18 +933,18 @@ class P115Client:
         payload = {"cid": 0, "limit": 32, "offset": 0, "asc": 1, "o": "file_name", **payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_downlist(self, payload: dict, /, **request_kwargs):
+    def share_downlist(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         GET https://proapi.115.com/app/share/downlist
         payload:
             - share_code: str
             - receive_code: str
-            - cid: int | str = 0
+            - cid: int | str
         """
         api = "https://proapi.115.com/app/share/downlist"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_receive(self, payload: dict, /, **request_kwargs):
+    def share_receive(self, payload: dict, /, **request_kwargs) -> dict:
         """接收分享链接的某些文件或文件夹
         POST https://webapi.115.com/share/receive
         payload:
@@ -940,7 +958,7 @@ class P115Client:
         payload = {"cid": 0, **payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def share_download_url_web(self, payload: dict, /, **request_kwargs):
+    def share_download_url_web(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接中某个文件的下载链接（网页版接口，不推荐使用）
         GET https://webapi.115.com/share/downurl
         payload:
@@ -952,7 +970,7 @@ class P115Client:
         api = "https://webapi.115.com/share/downurl"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def share_download_url_app(self, payload: dict, /, **request_kwargs):
+    def share_download_url_app(self, payload: dict, /, **request_kwargs) -> dict:
         """获取分享链接中某个文件的下载链接
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -962,7 +980,7 @@ class P115Client:
             - user_id: int | str = <default> # 有默认值，所以不用传
         """
         api = "https://proapi.115.com/app/share/downurl"
-        def parse(content):
+        def parse(content) -> dict:
             resp = loads(content)
             if resp["state"]:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
@@ -970,7 +988,7 @@ class P115Client:
         data = RSA_ENCODER.encode(dumps(payload))
         return self.request(api, "POST", data={"data": data}, parse=parse, **request_kwargs)
 
-    def share_download_url(self, payload: dict, /, **request_kwargs):
+    def share_download_url(self, payload: dict, /, **request_kwargs) -> str:
         """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -984,7 +1002,7 @@ class P115Client:
 
     ########## Download API ##########
 
-    def download_url_web(self, payload: str | dict, /, **request_kwargs):
+    def download_url_web(self, payload: str | dict, /, **request_kwargs) -> dict:
         """获取文件的下载链接（网页版接口，不推荐使用）
         GET https://webapi.115.com/files/download
         payload:
@@ -995,7 +1013,7 @@ class P115Client:
             payload = {"pickcode": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def download_url_app(self, payload: str | dict, /, **request_kwargs):
+    def download_url_app(self, payload: str | dict, /, **request_kwargs) -> dict:
         """获取文件的下载链接
         POST https://proapi.115.com/app/chrome/downurl
         payload:
@@ -1004,7 +1022,7 @@ class P115Client:
         api = "https://proapi.115.com/app/chrome/downurl"
         if isinstance(payload, str):
             payload = {"pickcode": payload}
-        def parse(content):
+        def parse(content) -> dict:
             resp = loads(content)
             if resp["state"]:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
@@ -1012,7 +1030,7 @@ class P115Client:
         data = RSA_ENCODER.encode(dumps(payload))
         return self.request(api, "POST", data={"data": data}, parse=parse, **request_kwargs)
 
-    def download_url(self, pick_code: str, /, **request_kwargs):
+    def download_url(self, pick_code: str, /, **request_kwargs) -> str:
         """获取文件的下载链接，此接口是对 `download_url_app` 的封装
         """
         resp = check_response(self.download_url_app)({"pickcode": pick_code}, **request_kwargs)
@@ -1020,14 +1038,14 @@ class P115Client:
 
     ########## Upload API ##########
 
-    def upload_info(self, /, **request_kwargs):
+    def upload_info(self, /, **request_kwargs) -> dict:
         """获取和上传有关的各种服务信息
         GET https://proapi.115.com/app/uploadinfo
         """
         api = "https://proapi.115.com/app/uploadinfo"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def upload_url(self, /, **request_kwargs):
+    def upload_url(self, /, **request_kwargs) -> dict:
         """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可
         GET https://uplb.115.com/3.0/getuploadinfo.php
         response:
@@ -1037,7 +1055,7 @@ class P115Client:
         api = "https://uplb.115.com/3.0/getuploadinfo.php"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def upload_sample_init(self, /, payload: dict, **request_kwargs):
+    def upload_sample_init(self, /, payload: dict, **request_kwargs) -> dict:
         """网页端的上传接口，并不能秒传
         POST https://uplb.115.com/3.0/sampleinitupload.php
         payload:
@@ -1050,7 +1068,15 @@ class P115Client:
         payload = {"target": "U_1_0", **payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def upload_file_sample(self, /, file, filename=None, pid=0, filesize=-1, **request_kwargs):
+    def upload_file_sample(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str] = None, 
+        pid: int | str = 0, 
+        filesize: int = -1, 
+        **request_kwargs, 
+    ) -> dict:
         """基于 `upload_sample_init` 的上传接口
         """
         if hasattr(file, "read"):
@@ -1090,24 +1116,34 @@ class P115Client:
         }
         return self.request(api, "POST", data=payload, parse=loads, files={"file": file}, **request_kwargs)
 
-    def upload_init(self, /, **request_kwargs):
+    def upload_init(self, /, **request_kwargs) -> dict:
         """秒传接口，参数的构造较为复杂，所以请不要直接使用
         POST https://uplb.115.com/4.0/initupload.php
         """
         api = "https://uplb.115.com/4.0/initupload.php"
         return self.request(api, "POST", **request_kwargs)
 
-    def upload_sha1(self, /, filename, filesize, file_sha1, target, sign_key="", sign_val="", **request_kwargs):
+    def upload_sha1(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        target: str, 
+        sign_key: str = "", 
+        sign_val: str = "", 
+        **request_kwargs, 
+    ) -> dict:
         """秒传接口，此接口是对 `upload_init` 的封装，但不建议直接使用
         POST https://uplb.115.com/4.0/initupload.php
         """
-        def gen_sig():
+        def gen_sig() -> str:
             sig_sha1 = sha1()
             sig_sha1.update(bytes(userkey, "ascii"))
             sig_sha1.update(b2a_hex(sha1(bytes(f"{userid}{file_sha1}{target}0", "ascii")).digest()))
             sig_sha1.update(b"000000")
             return sig_sha1.hexdigest().upper()
-        def gen_token():
+        def gen_token() -> str:
             token_md5 = md5(MD5_SALT)
             token_md5.update(bytes(f"{file_sha1}{filesize}{sign_key}{sign_val}{userid}{t}", "ascii"))
             token_md5.update(b2a_hex(md5(bytes(userid, "ascii")).digest()))
@@ -1144,23 +1180,39 @@ class P115Client:
             **request_kwargs, 
         )
 
-    def upload_file_sha1_simple(self, /, filename, filesize, file_sha1, read_bytes_range, pid=0):
+    def upload_file_sha1_simple(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        read_bytes_range: Callable[[str], bytes], 
+        pid: int | str = 0, 
+    ) -> dict:
         """秒传接口，此接口是对 `upload_sha1` 的封装，推荐使用
         """
         fileinfo = {"filename": filename, "filesize": filesize, "file_sha1": file_sha1.upper(), "target": f"U_1_{pid}"}
-        resp = self.upload_sha1(**fileinfo)
+        resp = self.upload_sha1(**fileinfo) # type: ignore
         if resp["status"] == 7 and resp["statuscode"] == 701:
             sign_key = resp["sign_key"]
             sign_check = resp["sign_check"]
             data = read_bytes_range(sign_check)
             fileinfo["sign_key"] = sign_key
             fileinfo["sign_val"] = sha1(data).hexdigest().upper()
-            resp = self.upload_sha1(**fileinfo)
+            resp = self.upload_sha1(**fileinfo) # type: ignore
             fileinfo["sign_check"] = sign_check
         resp["fileinfo"] = fileinfo
         return resp
 
-    def upload_file_sha1(self, /, file, filename=None, pid=0, filesize=-1, file_sha1=None):
+    def upload_file_sha1(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str] = None, 
+        pid: int | str = 0, 
+        filesize: int = -1, 
+        file_sha1: Optional[str] = None, 
+    ) -> dict:
         """秒传接口，此接口是对 `upload_sha1` 的封装，推荐使用
         """
         if hasattr(file, "read"):
@@ -1174,6 +1226,7 @@ class P115Client:
             if not file_sha1:
                 filesize, sha1obj = file_digest(file, "sha1")
                 file_sha1 = sha1obj.hexdigest()
+            file_sha1 = cast(str, file_sha1)
             if filesize < 0:
                 filesize = get_filesize(file)
         else:
@@ -1182,10 +1235,11 @@ class P115Client:
             if not file_sha1:
                 filesize, sha1obj = file_digest(open(file, "rb"), "sha1")
                 file_sha1 = sha1obj.hexdigest()
+            file_sha1 = cast(str, file_sha1)
             if filesize < 0:
                 filesize = get_filesize(file)
         fileinfo = {"filename": filename, "filesize": filesize, "file_sha1": file_sha1.upper(), "target": f"U_1_{pid}"}
-        resp = self.upload_sha1(**fileinfo)
+        resp = self.upload_sha1(**fileinfo) # type: ignore
         if resp["status"] == 7 and resp["statuscode"] == 701:
             sign_key = resp["sign_key"]
             sign_check = resp["sign_check"]
@@ -1195,7 +1249,7 @@ class P115Client:
             file.seek(start)
             fileinfo["sign_key"] = sign_key
             fileinfo["sign_val"] = sha1(file.read(end-start+1)).hexdigest().upper()
-            resp = self.upload_sha1(**fileinfo)
+            resp = self.upload_sha1(**fileinfo) # type: ignore
             fileinfo["sign_check"] = sign_check
         resp["fileinfo"] = fileinfo
         return resp
@@ -1205,13 +1259,13 @@ class P115Client:
         self, 
         /, 
         file, 
-        filename=None, 
-        pid=0, 
-        filesize=-1, 
-        file_sha1=None, 
-        progress_callback=None, 
-        multipart_threshold=None, 
-    ):
+        filename: Optional[str] = None, 
+        pid: int | str = 0, 
+        filesize: int = -1, 
+        file_sha1: Optional[str] = None, 
+        progress_callback: Optional[Callable] = None, 
+        multipart_threshold: Optional[int] = None, 
+    ) -> dict:
         """基于 `upload_file_sha1` 的上传接口，是高层封装，推荐使用
         """
         resp = self.upload_file_sha1(file, filename, pid, filesize=filesize, file_sha1=file_sha1)
@@ -1253,12 +1307,12 @@ class P115Client:
     def _oss_upload(
         self, 
         /, 
-        bucket_name, 
-        key, 
+        bucket_name: str, 
+        key: str, 
         file, 
-        callback, 
-        progress_callback=None, 
-    ):
+        callback: dict, 
+        progress_callback: Optional[Callable] = None, 
+    ) -> dict:
         """帮助函数：上传文件到阿里云 OSS，一次上传全部
         """
         uploadinfo = self.upload_url()
@@ -1288,7 +1342,7 @@ class P115Client:
         *, 
         total_size=None, 
         part_size=None, 
-    ):
+    ) -> dict:
         """帮助函数：上传文件到阿里云 OSS，分块上传，支持断点续传
         """
         uploadinfo = self.upload_url()
@@ -1328,7 +1382,7 @@ class P115Client:
 
     ########## Decompress API ##########
 
-    def extract_push(self, /, payload: dict, **request_kwargs):
+    def extract_push(self, /, payload: dict, **request_kwargs) -> dict:
         """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
         POST https://webapi.115.com/files/push_extract
         payload:
@@ -1338,7 +1392,7 @@ class P115Client:
         api = "https://webapi.115.com/files/push_extract"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def extract_push_progress(self, /, payload: dict, **request_kwargs):
+    def extract_push_progress(self, /, payload: dict, **request_kwargs) -> dict:
         """查询解压缩任务的进度
         GET https://webapi.115.com/files/push_extract
         payload:
@@ -1347,7 +1401,7 @@ class P115Client:
         api = "https://webapi.115.com/files/push_extract"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def extract_info(self, /, payload: dict, **request_kwargs):
+    def extract_info(self, /, payload: dict, **request_kwargs) -> dict:
         """获取压缩文件的文件列表，推荐直接用封装函数 `extract_list`
         GET https://webapi.115.com/files/extract_info
         payload:
@@ -1355,14 +1409,24 @@ class P115Client:
             - file_name: str
             - paths: str
             - next_marker: str
-            - page_count: int | str
+            - page_count: int | str # NOTE: 介于 1-999
         """
         api = "https://webapi.115.com/files/extract_info"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def extract_list(self, /, pick_code, path="", next_marker="", page_count=999, **request_kwargs):
-        """获取压缩文件的文件列表，是对 `extract_info` 的封装，推荐使用
+    def extract_list(
+        self, 
+        /, 
+        pick_code: str, 
+        path: str = "", 
+        next_marker: str = "", 
+        page_count: int = 999, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取压缩文件的文件列表，此方法是对 `extract_info` 的封装，推荐使用
         """
+        if not 1 <= page_count <= 999:
+            page_count = 999
         payload = {
             "pick_code": pick_code, 
             "file_name": path.strip("/"), 
@@ -1372,7 +1436,12 @@ class P115Client:
         }
         return self.extract_info(payload, **request_kwargs)
 
-    def extract_add_file(self, /, payload: list[tuple[str, int | str]], **request_kwargs):
+    def extract_add_file(
+        self, 
+        /, 
+        payload: list[tuple[str, int | str]], 
+        **request_kwargs, 
+    ) -> dict:
         """解压缩到某个文件夹，推荐直接用封装函数 `extract_file`
         POST https://webapi.115.com/files/add_extract_file
         payload:
@@ -1393,7 +1462,7 @@ class P115Client:
             **request_kwargs, 
         )
 
-    def extract_download_url_web(self, /, payload: dict, **request_kwargs):
+    def extract_download_url_web(self, /, payload: dict, **request_kwargs) -> dict:
         """获取压缩包中文件的下载链接
         GET https://webapi.115.com/files/extract_down_file
         payload:
@@ -1403,30 +1472,45 @@ class P115Client:
         api = "https://webapi.115.com/files/extract_down_file"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def extract_download_url(self, /, pick_code: str, full_name: str, **request_kwargs):
+    def extract_download_url(
+        self, 
+        /, 
+        pick_code: str, 
+        path: str, 
+        **request_kwargs, 
+    ) -> str:
         """获取压缩包中文件的下载链接，此接口是对 `extract_download_url_web` 的封装
         """
         resp = check_response(self.extract_download_url_web)(
-            {"pick_code": pick_code, "full_name": full_name}, **request_kwargs)
-        return resp["data"]["url"]
+            {"pick_code": pick_code, "full_name": path.strip("/")}, **request_kwargs)
+        return quote(resp["data"]["url"], safe=":/?&=%#")
 
-    def extract_file(self, /, pick_code, paths="", dir_="", to_pid=0, **request_kwargs):
+    # TODO: 如果解压缩单个文件呢
+    def extract_file(
+        self, 
+        /, 
+        pick_code: str, 
+        paths: str | Sequence[str] = "", 
+        dirname: str = "", 
+        to_pid: int | str = 0, 
+        **request_kwargs, 
+    ) -> dict:
         """解压缩到某个文件夹，是对 `extract_add_file` 的封装，推荐使用
         """
-        dir_ = dir_.strip("/")
-        dir2 = f"文件/{dir_}" if dir_ else "文件"
+        dirname = dirname.strip("/")
+        dir2 = f"文件/{dirname}" if dirname else "文件"
         data = [
             ("pick_code", pick_code), 
             ("paths", dir2), 
             ("to_pid", to_pid), 
         ]
         if not paths:
-            resp = self.extract_list(pick_code, dir_)
+            resp = self.extract_list(pick_code, dirname)
             if not resp["state"]:
                 return resp
-            paths = (p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"])
+            paths = [p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"]]
             while (next_marker := resp["data"].get("next_marker")):
-                resp = self.extract_list(pick_code, dir_, next_marker)
+                resp = self.extract_list(pick_code, dirname, next_marker)
                 paths.extend(p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"])
         if isinstance(paths, str):
             data.append(("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/")))
@@ -1434,7 +1518,7 @@ class P115Client:
             data.extend(("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) for path in paths)
         return self.extract_add_file(data, **request_kwargs)
 
-    def extract_progress(self, /, payload: int | str | dict, **request_kwargs):
+    def extract_progress(self, /, payload: int | str | dict, **request_kwargs) -> dict:
         """获取 解压缩到文件夹 任务的进度
         GET https://webapi.115.com/files/add_extract_file
         payload:
@@ -1451,35 +1535,35 @@ class P115Client:
 
     # TODO: 增加一个接口，用于获取一个种子或磁力链接，里面的文件列表，这个文件并未被添加任务
 
-    def offline_quota_package_info(self, /, **request_kwargs):
+    def offline_quota_package_info(self, /, **request_kwargs) -> dict:
         """获取当前离线配额信息
         GET https://115.com/web/lixian/?ct=lixian&ac=get_quota_package_info
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=get_quota_package_info"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def offline_download_path(self, /, **request_kwargs):
+    def offline_download_path(self, /, **request_kwargs) -> dict:
         """获取当前默认的离线下载到的文件夹信息（可能有多个）
         GET https://webapi.115.com/offine/downpath
         """
         api = "https://webapi.115.com/offine/downpath"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def offline_upload_torrent_path(self, /, **request_kwargs):
+    def offline_upload_torrent_path(self, /, **request_kwargs) -> dict:
         """获取当前的种子上传到的文件夹，当你添加种子任务后，这个种子会在此文件夹中保存
         GET https://115.com/?ct=lixian&ac=get_id&torrent=1
         """
         api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def offline_getsign(self, /, **request_kwargs):
+    def offline_getsign(self, /, **request_kwargs) -> dict:
         """增删改查离线下载任务，需要携带签名 sign，具有一定的时效性，但不用每次都获取，失效了再用此接口获取就行了
         GET https://115.com/?ct=offline&ac=space
         """
         api = "https://115.com/?ct=offline&ac=space"
         return self.request(api, parse=loads, **request_kwargs)
 
-    def offline_add_url(self, /, payload: dict, **request_kwargs):
+    def offline_add_url(self, /, payload: dict, **request_kwargs) -> dict:
         """添加一个离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
         payload:
@@ -1493,7 +1577,7 @@ class P115Client:
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_url"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def offline_add_urls(self, /, payload: dict, **request_kwargs):
+    def offline_add_urls(self, /, payload: dict, **request_kwargs) -> dict:
         """添加一组离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
         payload:
@@ -1509,7 +1593,7 @@ class P115Client:
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_urls"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def offline_torrent_info(self, /, payload: dict, **request_kwargs):
+    def offline_torrent_info(self, /, payload: dict, **request_kwargs) -> dict:
         """查看离线任务的信息
         POST https://115.com/web/lixian/?ct=lixian&ac=torrent
         payload:
@@ -1522,7 +1606,7 @@ class P115Client:
         api = "https://115.com/web/lixian/?ct=lixian&ac=torrent"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def offline_add_torrent(self, /, payload: dict, **request_kwargs):
+    def offline_add_torrent(self, /, payload: dict, **request_kwargs) -> dict:
         """添加一个种子作为离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
         payload:
@@ -1536,7 +1620,7 @@ class P115Client:
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_bt"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def offline_del(self, /, payload: dict, **request_kwargs):
+    def offline_del(self, /, payload: dict, **request_kwargs) -> dict:
         """删除一组离线任务（无论是否已经完成）
         POST https://115.com/web/lixian/?ct=lixian&ac=task_del
         payload:
@@ -1550,7 +1634,7 @@ class P115Client:
         api = "https://115.com/web/lixian/?ct=lixian&ac=task_del"
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def offline_list(self, /, payload: dict, **request_kwargs):
+    def offline_list(self, /, payload: dict, **request_kwargs) -> dict:
         """获取当前的离线任务列表
         POST https://115.com/web/lixian/?ct=lixian&ac=task_lists
         payload:
@@ -1586,12 +1670,19 @@ class P115Client:
         """
         return P115ZipFileSystem(self, id)
 
-    def open(self, url, /, **request_kwargs) -> RequestsFileReader:
+    def open(self, url: str, /, **request_kwargs) -> RequestsFileReader:
         """
         """
         return RequestsFileReader(url, urlopen=self.session.get)
 
-    def read_bytes_range(self, url, /, bytes_range="0-", headers=None, **request_kwargs) -> bytes:
+    def read_bytes_range(
+        self, 
+        url: str, 
+        /, 
+        bytes_range: str = "0-", 
+        headers: Optional[Mapping] = None, 
+        **request_kwargs, 
+    ) -> bytes:
         """
         """
         if headers:
@@ -1601,7 +1692,15 @@ class P115Client:
         with self.session.get(url, headers=headers, **request_kwargs) as resp:
             return resp.content
 
-    def read_range(self, url, /, start=0, stop=None, headers=None, **request_kwargs) -> bytes:
+    def read_range(
+        self, 
+        url: str, 
+        /, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: Optional[Mapping] = None, 
+        **request_kwargs, 
+    ) -> bytes:
         """
         """
         length = None
@@ -1623,28 +1722,400 @@ class P115Client:
         return self.read_bytes_range(url, bytes_range, headers=headers, **request_kwargs)
 
 
-class P115PathBase:
-    fs: P115FileSystemBase
+class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
+    fs: P115FSType
     path: str
 
+    def __init__(
+        self, 
+        /, 
+        fs: P115FSType, 
+        path: str | PathLike[str], 
+        **attr, 
+    ):
+        attr.update(fs=fs, path=fs.abspath(path))
+        super().__setattr__("__dict__", attr)
 
-class P115FileSystemBase(Generic[M, P]):
+    def __and__(self, path: str | PathLike[str], /) -> Self:
+        return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
+
+    def __call__(self, /) -> Self:
+        self.__dict__.update(self.fs.attr(self.id))
+        return self
+
+    def __contains__(self, key, /) -> bool:
+        return key in self.__dict__
+
+    def __eq__(self, path, /) -> bool:
+        return type(self) is type(path) and self.fs.client == path.fs.client and self.path == path.path
+
+    def __fspath__(self, /) -> str:
+        return self.path
+
+    def __getitem__(self, key, /):
+        if key not in self.__dict__ and not self.__dict__.get("lastest_update"):
+            self()
+        return self.__dict__[key]
+
+    def __ge__(self, path, /) -> bool:
+        if type(self) is not type(path) or self.fs.client != path.fs.client:
+            return False
+        return commonpath((self.path, path.path)) == path.path
+
+    def __gt__(self, path, /) -> bool:
+        if type(self) is not type(path) or self.fs.client != path.fs.client or self.path == path.path:
+            return False
+        return commonpath((self.path, path.path)) == path.path
+
+    def __hash__(self, /) -> int:
+        return hash((self.fs.client, self.path))
+
+    def __iter__(self, /):
+        return iter(self.__dict__)
+
+    def __len__(self, /) -> int:
+        return len(self.__dict__)
+
+    def __le__(self, path, /) -> bool:
+        if type(self) is not type(path) or self.fs.client != path.fs.client:
+            return False
+        return commonpath((self.path, path.path)) == self.path
+
+    def __lt__(self, path, /) -> bool:
+        if type(self) is not type(path) or self.fs.client != path.fs.client or self.path == path.path:
+            return False
+        return commonpath((self.path, path.path)) == self.path
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"<{name}({', '.join(f'{k}={v!r}' for k, v in self.__dict__.items())})>"
+
+    def __setattr__(self, attr, val, /) -> Never:
+        raise TypeError("can't set attribute")
+
+    def __str__(self, /) -> str:
+        return self.path
+
+    def __truediv__(self, path: str | PathLike[str], /) -> Self:
+        return self.joinpath(path)
+
+    @cached_property
+    def id(self, /):
+        return self.fs.get_id(self.path)
+
+    def keys(self) -> KeysView:
+        return self.__dict__.keys()
+
+    def values(self) -> ValuesView:
+        return self.__dict__.values()
+
+    def items(self) -> ItemsView:
+        return self.__dict__.items()
+
+    @property
+    def anchor(self, /) -> str:
+        return "/"
+
+    def as_uri(self, /) -> str:
+        return self.url
+
+    @property
+    def attr(self, /) -> MappingProxyType:
+        return MappingProxyType(self.__dict__)
+
+    def download(
+        self, 
+        /, 
+        local_dir: bytes | str | PathLike = "", 
+        pid: Optional[int] = None, 
+        no_root: bool = False, 
+        write_mode: Literal["", "x", "w", "a"] = "w", 
+        download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
+    ):
+        return self.fs.download_tree(
+            self, 
+            local_dir, 
+            pid=pid, 
+            no_root=no_root, 
+            write_mode=write_mode, 
+            download=download, 
+        )
+
+    def exists(self, /) -> bool:
+        return self.fs.exists(self)
+
+    def glob(
+        self, 
+        /, 
+        pattern: str = "*", 
+        ignore_case: bool = False, 
+    ) -> Iterator[Self]:
+        return self.fs.glob(
+            pattern, 
+            self if self["is_directory"] else self.parent, 
+            ignore_case=ignore_case, 
+        )
+
+    def is_absolute(self, /) -> bool:
+        return True
+
+    def is_dir(self, /) -> bool:
+        try:
+            return self["is_directory"]
+        except FileNotFoundError:
+            return False
+        except KeyError:
+            return False
+
+    def is_file(self, /) -> bool:
+        try:
+            return not self["is_directory"]
+        except FileNotFoundError:
+            return False
+        except KeyError:
+            return True
+
+    def is_symlink(self, /) -> bool:
+        return False
+
+    def isdir(self, /) -> bool:
+        return self.fs.isdir(self)
+
+    def isfile(self, /) -> bool:
+        return self.fs.isfile(self)
+
+    def inode(self, /) -> int:
+        return self.id
+
+    def iter(
+        self, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[Self], Optional[bool]]] = None, 
+        onerror: Optional[bool] = None, 
+    ) -> Iterator[Self]:
+        return self.fs.iter(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            predicate=predicate, 
+            onerror=onerror, 
+        )
+
+    def join(self, *names: str):
+        if not names:
+            return self
+        return type(self)(self.fs, joinpath(self.path, joins(names)))
+
+    def joinpath(self, *paths: str | PathLike[str]) -> Self:
+        if not paths:
+            return self
+        path = self.path
+        path_new = normpath(joinpath(path, *paths))
+        if path == path_new:
+            return self
+        return type(self)(self.fs, path_new)
+
+    def listdir(self, /) -> list[str]:
+        return self.fs.listdir(self)
+
+    def listdir_attr(self, /) -> list[dict]:
+        return self.fs.listdir_attr(self)
+
+    def listdir_path(self, /) -> list[Self]:
+        return self.fs.listdir_path(self)
+
+    def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
+        pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
+        if ignore_case:
+            pattern = "(?i:%s)" % pattern
+        return re_compile(pattern).fullmatch(self.path) is not None
+
+    @cached_property
+    def name(self, /) -> str:
+        return basename(self.path)
+
+    def open(
+        self, 
+        /, 
+        mode: str = "r", 
+        buffering: Optional[int] = None, 
+        encoding: Optional[str] = None, 
+        errors: Optional[str] = None, 
+        newline: Optional[str] = None, 
+    ) -> IO:
+        return self.fs.open(
+            self, 
+            mode=mode, 
+            buffering=buffering, 
+            encoding=encoding, 
+            errors=errors, 
+            newline=newline, 
+        )
+
+    @cached_property
+    def parent(self, /) -> Self:
+        path = self.path
+        if path == "/":
+            return self
+        return type(self)(self.fs, dirname(path), id=self["parent_id"])
+
+    @cached_property
+    def parents(self, /) -> tuple[Self, ...]:
+        path = self.path
+        if path == "/":
+            return ()
+        parents: list[Self] = []
+        cls, fs = type(self), self.fs
+        parent = dirname(path)
+        while path != parent:
+            parents.append(cls(fs, parent))
+        return tuple(parents)
+
+    @cached_property
+    def parts(self, /) -> tuple[str, ...]:
+        return ("/", *self.path[1:].split("/"))
+
+    def read_bytes(self, /) -> bytes:
+        return self.fs.read_bytes(self)
+
+    def read_bytes_range(
+        self, 
+        /, 
+        bytes_range: str = "0-", 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        return self.fs.read_bytes_range(self, bytes_range, headers=headers)
+
+    def read_range(
+        self, 
+        /, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        return self.fs.read_range(self, start, stop, headers=headers)
+
+    def read_text(
+        self, 
+        /, 
+        encoding: Optional[str] = None, 
+        errors: Optional[str] = None, 
+    ) -> str:
+        return self.fs.read_text(self, encoding=encoding, errors=errors)
+
+    def rglob(
+        self, 
+        /, 
+        pattern: str = "", 
+        ignore_case: bool = False, 
+    ) -> Iterator[Self]:
+        return self.fs.rglob(
+            pattern, 
+            self if self["is_directory"] else self.parent, 
+            ignore_case=ignore_case, 
+        )
+
+    @cached_property
+    def root(self, /) -> Self:
+        return type(self)(self.fs, "/", id=0)
+
+    def samefile(self, path: str | PathLike[str], /) -> bool:
+        if isinstance(path, type(self)):
+            try:
+                return self["id"] == path["id"]
+            except FileNotFoundError:
+                return False
+        path = fspath(path)
+        return path in ("", ".") or path.startswith("/") and self.path == normpath(path)
+
+    def stat(self, /) -> stat_result:
+        return self.fs.stat(self)
+
+    @cached_property
+    def stem(self, /) -> str:
+        return splitext(basename(self.path))[0]
+
+    @cached_property
+    def suffix(self, /) -> str:
+        return splitext(basename(self.path))[1]
+
+    @cached_property
+    def suffixes(self, /) -> tuple[str, ...]:
+        return tuple("." + part for part in basename(self.path).split(".")[1:])
+
+    @property
+    def url(self, /) -> str:
+        return self.fs.get_url(self)
+
+    def walk(
+        self, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        return self.fs.walk(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            _top=self.path, 
+        )
+
+    def walk_path(
+        self, 
+        /, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+    ) -> Iterator[tuple[str, list[Self], list[Self]]]:
+        return self.fs.walk_path(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            _top=self.path, 
+        )
+
+    def with_name(self, name: str, /) -> Self:
+        return self.parent.joinpath(name)
+
+    def with_stem(self, stem: str, /) -> Self:
+        return self.parent.joinpath(stem + self.suffix)
+
+    def with_suffix(self, suffix: str, /) -> Self:
+        return self.parent.joinpath(self.stem + suffix)
+
+
+class P115FileSystemBase(Generic[M, P115PathType]):
     client: P115Client
     cid: int
     path: str
-    path_class: type[P]
+    path_class: type[P115PathType]
 
-    def __iter__(self, /) -> Iterator[P]:
-        return self.iterdir(max_depth=-1)
+    def __iter__(self, /) -> Iterator[P115PathType]:
+        return self.iter(max_depth=-1)
 
-    def __itruediv__(self, id_or_path: ID_OR_PATH_TYPE, /):
+    def __itruediv__(self, id_or_path: IDOrPathType, /):
         self.chdir(id_or_path)
         return self
 
     @abstractmethod
-    def _iterdir(
+    def iterdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> Iterator[M]:
@@ -1653,7 +2124,7 @@ class P115FileSystemBase(Generic[M, P]):
     @abstractmethod
     def attr(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> M:
@@ -1662,7 +2133,7 @@ class P115FileSystemBase(Generic[M, P]):
     @abstractmethod
     def get_url(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
     ) -> str:
@@ -1673,10 +2144,10 @@ class P115FileSystemBase(Generic[M, P]):
 
     def as_path(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> P:
+    ) -> P115PathType:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
             return id_or_path
@@ -1686,7 +2157,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def chdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = 0, 
+        id_or_path: IDOrPathType = 0, 
         /, 
         pid: Optional[int] = None, 
     ) -> int:
@@ -1712,11 +2183,11 @@ class P115FileSystemBase(Generic[M, P]):
 
     def download(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
         pid: Optional[int] = None, 
-        write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
+        write_mode: Literal["", "x", "w", "a"] = "w", 
         download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
     ):
         if hasattr(local_path_or_file, "write"):
@@ -1746,12 +2217,12 @@ class P115FileSystemBase(Generic[M, P]):
 
     def download_tree(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         local_dir: bytes | str | PathLike = "", 
         pid: Optional[int] = None, 
         no_root: bool = False, 
-        write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
+        write_mode: Literal["", "x", "w", "a"] = "w", 
         download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
     ):
         local_dir = fsdecode(local_dir)
@@ -1789,7 +2260,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def exists(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
@@ -1810,7 +2281,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def get_id(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> int:
@@ -1826,7 +2297,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def get_path(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> str:
@@ -1858,7 +2329,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def get_patht(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> list[str]:
@@ -1900,13 +2371,13 @@ class P115FileSystemBase(Generic[M, P]):
         self, 
         /, 
         pattern: str = "*", 
-        dirname: ID_OR_PATH_TYPE = "", 
+        dirname: IDOrPathType = "", 
         ignore_case: bool = False, 
-    ) -> Iterator[P]:
+    ) -> Iterator[P115PathType]:
         if pattern == "*":
-            return self.iterdir(dirname)
+            return self.iter(dirname)
         elif pattern == "**":
-            return self.iterdir(dirname, max_depth=-1)
+            return self.iter(dirname, max_depth=-1)
         path_class = type(self).path_class
         if not pattern:
             try:
@@ -1934,7 +2405,7 @@ class P115FileSystemBase(Generic[M, P]):
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
                 pattern = joinpath(re_escape(dir_), *(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
-                return self.iterdir(
+                return self.iter(
                     dirname, 
                     max_depth=-1, 
                     predicate=lambda p: match(p.path) is not None, 
@@ -1958,21 +2429,21 @@ class P115FileSystemBase(Generic[M, P]):
                     return iter((path_class(self, **attr),))
             elif typ == "dstar" and i + 1 == len(splitted_pats):
                 if dirname_as_id:
-                    return self.iterdir(dir2, dirid, max_depth=-1)
+                    return self.iter(dir2, dirid, max_depth=-1)
                 else:
-                    return self.iterdir(dir_, max_depth=-1)
+                    return self.iter(dir_, max_depth=-1)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
                 pattern = joinpath(re_escape(dir_), *(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 if dirname_as_id:
-                    return self.iterdir(
+                    return self.iter(
                         dir2, 
                         dirid, 
                         max_depth=-1, 
                         predicate=lambda p: match(p.path) is not None, 
                     )
                 else:
-                    return self.iterdir(
+                    return self.iter(
                         dir_, 
                         max_depth=-1, 
                         predicate=lambda p: match(p.path) is not None, 
@@ -1990,13 +2461,13 @@ class P115FileSystemBase(Generic[M, P]):
                     yield from glob_step_match(subpath, j)
             elif typ == "star":
                 if at_end:
-                    yield from path.iterdir()
+                    yield from path.iter()
                 else:
-                    for subpath in path.iterdir():
+                    for subpath in path.iter():
                         if subpath["is_directory"]:
                             yield from glob_step_match(subpath, j)
             else:
-                for subpath in path.iterdir():
+                for subpath in path.iter():
                     try:
                         cref = cref_cache[i]
                     except KeyError:
@@ -2017,7 +2488,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def isdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
@@ -2030,7 +2501,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def isfile(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
@@ -2041,17 +2512,17 @@ class P115FileSystemBase(Generic[M, P]):
         except FileNotFoundError:
             return False
 
-    def iterdir(
+    def iter(
         self, 
-        top: ID_OR_PATH_TYPE = "", 
+        top: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
         topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[P], Optional[bool]]] = None, 
+        predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
-    ) -> Iterator[P]:
+    ) -> Iterator[P115PathType]:
         if not max_depth:
             return
         if min_depth > 0:
@@ -2061,7 +2532,7 @@ class P115FileSystemBase(Generic[M, P]):
         path_class = type(self).path_class
         try:
             for path in self.listdir_path(top, pid):
-                path = cast(P, path)
+                path = cast(P115PathType, path)
                 yield_me = min_depth <= 0
                 if yield_me and predicate:
                     pred = predicate(path)
@@ -2071,7 +2542,7 @@ class P115FileSystemBase(Generic[M, P]):
                 if yield_me and topdown:
                     yield path
                 if path["is_directory"]:
-                    yield from self.iterdir(
+                    yield from self.iter(
                         path.path, 
                         topdown=topdown, 
                         min_depth=min_depth, 
@@ -2089,32 +2560,32 @@ class P115FileSystemBase(Generic[M, P]):
 
     def listdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> list[str]:
-        return [attr["name"] for attr in self._iterdir(id_or_path, pid)]
+        return [attr["name"] for attr in self.iterdir(id_or_path, pid)]
 
     def listdir_attr(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> list[M]:
-        return list(self._iterdir(id_or_path, pid))
+        return list(self.iterdir(id_or_path, pid))
 
     def listdir_path(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> list[P]:
+    ) -> list[P115PathType]:
         path_class = type(self).path_class
-        return [path_class(self, **attr) for attr in self._iterdir(id_or_path, pid)]
+        return [path_class(self, **attr) for attr in self.iterdir(id_or_path, pid)]
 
     def open(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         mode: str = "r", 
         buffering: Optional[int] = None, 
@@ -2122,7 +2593,7 @@ class P115FileSystemBase(Generic[M, P]):
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
         pid: Optional[int] = None, 
-    ):
+    ) -> IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
         url = self.get_url(id_or_path, pid)
@@ -2136,7 +2607,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def read_bytes(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ):
@@ -2144,7 +2615,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def read_bytes_range(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         bytes_range: str = "0-", 
         headers: Optional[Mapping] = None, 
@@ -2154,7 +2625,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def read_range(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         start: int = 0, 
         stop: Optional[int] = None, 
@@ -2165,7 +2636,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def read_text(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
@@ -2177,11 +2648,11 @@ class P115FileSystemBase(Generic[M, P]):
         self, 
         /, 
         pattern: str = "", 
-        dirname: ID_OR_PATH_TYPE = "", 
+        dirname: IDOrPathType = "", 
         ignore_case: bool = False, 
-    ) -> Iterator[P]:
+    ) -> Iterator[P115PathType]:
         if not pattern:
-            return self.iterdir(dirname, max_depth=-1)
+            return self.iter(dirname, max_depth=-1)
         if pattern.startswith("/"):
             pattern = joinpath("/", "**", pattern.lstrip("/"))
         else:
@@ -2190,15 +2661,25 @@ class P115FileSystemBase(Generic[M, P]):
 
     def scandir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
-    ) -> Iterator[P]:
+    ) -> Iterator[P115PathType]:
         return iter(self.listdir_path(id_or_path, pid))
+
+    def stat(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> stat_result:
+        raise UnsupportedOperation(errno.ENOSYS, 
+            "`stat()` is currently not supported, use `attr()` instead."
+        )
 
     def walk(
         self, 
-        top: ID_OR_PATH_TYPE = "", 
+        top: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
         topdown: bool = True, 
@@ -2219,7 +2700,7 @@ class P115FileSystemBase(Generic[M, P]):
                 _top = self.get_path(top, pid)
             dirs: list[str] = []
             files: list[str] = []
-            attrs: list[Mapping] = []
+            attrs: list[M] = []
             for attr in self.listdir_attr(top, pid):
                 if attr["is_directory"]:
                     attrs.append(attr)
@@ -2247,7 +2728,7 @@ class P115FileSystemBase(Generic[M, P]):
 
     def walk_path(
         self, 
-        top: ID_OR_PATH_TYPE = "", 
+        top: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
         topdown: bool = True, 
@@ -2255,7 +2736,7 @@ class P115FileSystemBase(Generic[M, P]):
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         _top: str = "", 
-    ) -> Iterator[tuple[str, list[P], list[P]]]:
+    ) -> Iterator[tuple[str, list[P115PathType], list[P115PathType]]]:
         if not max_depth:
             return
         if min_depth > 0:
@@ -2266,8 +2747,8 @@ class P115FileSystemBase(Generic[M, P]):
         try:
             if not _top:
                 _top = self.get_path(top, pid)
-            dirs: list[P] = []
-            files: list[P] = []
+            dirs: list[P115PathType] = []
+            files: list[P115PathType] = []
             for path in self.listdir_path(top, pid):
                 (dirs if path["is_directory"] else files).append(path)
             if yield_me and topdown:
@@ -2295,115 +2776,13 @@ class P115FileSystemBase(Generic[M, P]):
     ll  = listdir_path
 
 
-class P115Path(Mapping, PathLike[str]):
+class P115Path(P115PathBase):
     fs: P115FileSystem
-    path: str
-
-    def __init__(
-        self, 
-        /, 
-        fs: P115FileSystem, 
-        path: str | PathLike[str], 
-        **attr, 
-    ):
-        super().__setattr__("__dict__", attr)
-        attr.update(fs=fs, path=fs.abspath(path))
-
-    def __and__(self, path: str | PathLike[str], /) -> P115Path:
-        return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
-
-    def __call__(self, /):
-        self.__dict__.update(self.fs.attr(self.id))
-        return self
-
-    def __contains__(self, key, /) -> bool:
-        return key in self.__dict__
-
-    def __eq__(self, path, /) -> bool:
-        return type(self) is type(path) and self.fs.client == path.fs.client and self.path == path.path
-
-    def __fspath__(self, /) -> str:
-        return self.path
-
-    def __getitem__(self, key, /):
-        if key not in self.__dict__ and not self.__dict__.get("lastest_update"):
-            self()
-        return self.__dict__[key]
-
-    def __ge__(self, path, /):
-        if type(self) is not type(path) or self.fs.client != path.fs.client:
-            return False
-        return commonpath((self.path, path.path)) == path.path
-
-    def __gt__(self, path, /):
-        if type(self) is not type(path) or self.fs.client != path.fs.client or self.path == path.path:
-            return False
-        return commonpath((self.path, path.path)) == path.path
-
-    def __hash__(self, /):
-        return hash((self.fs.client, self.path))
-
-    def __iter__(self, /):
-        return iter(self.__dict__)
-
-    def __len__(self, /) -> int:
-        return len(self.__dict__)
-
-    def __le__(self, path, /):
-        if type(self) is not type(path) or self.fs.client != path.fs.client:
-            return False
-        return commonpath((self.path, path.path)) == self.path
-
-    def __lt__(self, path, /):
-        if type(self) is not type(path) or self.fs.client != path.fs.client or self.path == path.path:
-            return False
-        return commonpath((self.path, path.path)) == self.path
-
-    def __repr__(self, /) -> str:
-        cls = type(self)
-        module = cls.__module__
-        name = cls.__qualname__
-        if module != "__main__":
-            name = module + "." + name
-        return f"<{name}({', '.join(f'{k}={v!r}' for k, v in self.__dict__.items())})>"
-
-    def __setattr__(self, attr, val, /):
-        raise TypeError("can't set attribute")
-
-    def __str__(self, /) -> str:
-        return self.path
-
-    def __truediv__(self, path: str | PathLike[str], /) -> P115Path:
-        return self.joinpath(path)
-
-    @cached_property
-    def id(self, /):
-        return self.fs.get_id(self.path)
-
-    def keys(self) -> KeysView:
-        return self.__dict__.keys()
-
-    def values(self) -> ValuesView:
-        return self.__dict__.values()
-
-    def items(self) -> ItemsView:
-        return self.__dict__.items()
-
-    @property
-    def anchor(self, /) -> str:
-        return "/"
-
-    def as_uri(self, /) -> str:
-        return self.url
-
-    @property
-    def attr(self, /) -> MappingProxyType:
-        return MappingProxyType(self.__dict__)
 
     def copy(
         self, 
         /, 
-        dst_path: ID_OR_PATH_TYPE, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[P115Path]:
@@ -2416,122 +2795,11 @@ class P115Path(Mapping, PathLike[str]):
     def copytree(
         self, 
         /, 
-        dst_path: ID_OR_PATH_TYPE, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
-    ) -> P115Path:
+    ) -> Self:
         id, _ = self.fs.copytree(self, dst_path, pid=pid)
         return type(self)(self.fs, self.fs.get_path(id), id=id)
-
-    def download(
-        self, 
-        /, 
-        local_dir: bytes | str | PathLike = "", 
-        pid: Optional[int] = None, 
-        no_root: bool = False, 
-        write_mode: Literal[""] | Literal["x"] | Literal["w"] | Literal["a"] = "w", 
-        download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
-    ):
-        return self.fs.download_tree(
-            self, 
-            local_dir, 
-            pid=pid, 
-            no_root=no_root, 
-            write_mode=write_mode, 
-            download=download, 
-        )
-
-    def exists(self, /) -> bool:
-        return self.fs.exists(self)
-
-    def glob(
-        self, 
-        /, 
-        pattern: str = "*", 
-        ignore_case: bool = False, 
-    ) -> Iterator[P115Path]:
-        return self.fs.glob(
-            pattern, 
-            self if self["is_directory"] else self.parent, 
-            ignore_case=ignore_case, 
-        )
-
-    def is_absolute(self, /) -> bool:
-        return True
-
-    def is_dir(self, /) -> bool:
-        try:
-            return self["is_directory"]
-        except FileNotFoundError:
-            return False
-        except KeyError:
-            return False
-
-    def is_file(self, /) -> bool:
-        try:
-            return not self["is_directory"]
-        except FileNotFoundError:
-            return False
-        except KeyError:
-            return True
-
-    def is_symlink(self, /) -> bool:
-        return False
-
-    def isdir(self, /) -> bool:
-        return self.fs.isdir(self)
-
-    def isfile(self, /) -> bool:
-        return self.fs.isfile(self)
-
-    def inode(self, /) -> int:
-        return self["id"]
-
-    def iterdir(
-        self, 
-        /, 
-        topdown: bool = True, 
-        min_depth: int = 0, 
-        max_depth: int = 1, 
-        predicate: Optional[Callable[[P115Path], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
-    ) -> Iterator[P115Path]:
-        return self.fs.iterdir(
-            self, 
-            topdown=topdown, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            predicate=predicate, 
-            onerror=onerror, 
-        )
-
-    def join(self, *names: str):
-        if not names:
-            return self
-        return type(self)(self.fs, joinpath(self.path, joins(names)))
-
-    def joinpath(self, *paths: str | PathLike[str]) -> P115Path:
-        if not paths:
-            return self
-        path = self.path
-        path_new = normpath(joinpath(path, *paths))
-        if path == path_new:
-            return self
-        return type(self)(self.fs, path_new)
-
-    def listdir(self, /) -> list[str]:
-        return self.fs.listdir(self)
-
-    def listdir_attr(self, /) -> list[dict]:
-        return self.fs.listdir_attr(self)
-
-    def listdir_path(self, /) -> list[P115Path]:
-        return self.fs.listdir_path(self)
-
-    def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
-        pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
-        if ignore_case:
-            pattern = "(?i:%s)" % pattern
-        return re_compile(pattern).fullmatch(self.path) is not None
 
     def mkdir(self, /, exist_ok=True):
         self.fs.makedirs(self, exist_ok=exist_ok)
@@ -2540,87 +2808,14 @@ class P115Path(Mapping, PathLike[str]):
     def move(
         self, 
         /, 
-        dst_path: ID_OR_PATH_TYPE, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
-    ) -> P115Path:
+    ) -> Self:
         result = self.fs.move(self, dst_path, pid)
         if not result:
             return self
         id = result[0]
         return type(self)(self.fs, self.fs.get_path(id), id=id)
-
-    @cached_property
-    def name(self, /) -> str:
-        return basename(self.path)
-
-    def open(
-        self, 
-        /, 
-        mode: str = "r", 
-        buffering: Optional[int] = None, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
-    ):
-        return self.fs.open(
-            self, 
-            mode=mode, 
-            buffering=buffering, 
-            encoding=encoding, 
-            errors=errors, 
-            newline=newline, 
-        )
-
-    @cached_property
-    def parent(self, /) -> P115Path:
-        path = self.path
-        if path == "/":
-            return self
-        return type(self)(self.fs, dirname(path), id=self["parent_id"])
-
-    @cached_property
-    def parents(self, /) -> tuple[P115Path, ...]:
-        path = self.path
-        if path == "/":
-            return ()
-        parents: list[P115Path] = []
-        cls, fs = type(self), self.fs
-        parent = dirname(path)
-        while path != parent:
-            parents.append(cls(fs, parent))
-        return tuple(parents)
-
-    @cached_property
-    def parts(self, /) -> tuple[str, ...]:
-        return ("/", *self.path[1:].split("/"))
-
-    def read_bytes(self, /) -> bytes:
-        return self.fs.read_bytes(self)
-
-    def read_bytes_range(
-        self, 
-        /, 
-        bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None, 
-    ) -> bytes:
-        return self.fs.read_bytes_range(self, bytes_range, headers=headers)
-
-    def read_range(
-        self, 
-        /, 
-        start: int = 0, 
-        stop: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
-    ) -> bytes:
-        return self.fs.read_range(self, start, stop, headers=headers)
-
-    def read_text(
-        self, 
-        /, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-    ) -> str:
-        return self.fs.read_text(self, encoding=encoding, errors=errors)
 
     def remove(self, /, recursive: bool = False):
         return self.fs.remove(self, recursive=recursive)
@@ -2628,9 +2823,9 @@ class P115Path(Mapping, PathLike[str]):
     def rename(
         self, 
         /, 
-        dst_path: ID_OR_PATH_TYPE, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
-    ) -> P115Path:
+    ) -> Self:
         result = self.fs.rename(self, dst_path, pid)
         if not result:
             return self
@@ -2640,9 +2835,9 @@ class P115Path(Mapping, PathLike[str]):
     def renames(
         self, 
         /, 
-        dst_path: ID_OR_PATH_TYPE, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
-    ) -> P115Path:
+    ) -> Self:
         result = self.fs.renames(self, dst_path, pid)
         if not result:
             return self
@@ -2652,59 +2847,19 @@ class P115Path(Mapping, PathLike[str]):
     def replace(
         self, 
         /, 
-        dst_path: ID_OR_PATH_TYPE, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
-    ) -> P115Path:
+    ) -> Self:
         result = self.fs.replace(self, dst_path, pid)
         if not result:
             return self
         id = result[0]
         return type(self)(self.fs, self.fs.get_path(id), id=id)
 
-    def rglob(
-        self, 
-        /, 
-        pattern: str = "", 
-        ignore_case: bool = False, 
-    ) -> Iterator[P115Path]:
-        return self.fs.rglob(
-            pattern, 
-            self if self["is_directory"] else self.parent, 
-            ignore_case=ignore_case, 
-        )
-
     def rmdir(self, /):
         return self.fs.rmdir(self)
 
-    @cached_property
-    def root(self, /) -> P115Path:
-        return type(self)(self.fs, "/", id=0)
-
-    def samefile(self, path: str | PathLike[str], /) -> bool:
-        if isinstance(path, P115Path):
-            try:
-                return self["id"] == path["id"]
-            except FileNotFoundError:
-                return False
-        path = fspath(path)
-        return path in ("", ".") or path.startswith("/") and self.path == normpath(path)
-
-    def stat(self, /) -> stat_result:
-        return self.fs.stat(self)
-
-    @cached_property
-    def stem(self, /) -> str:
-        return splitext(basename(self.path))[0]
-
-    @cached_property
-    def suffix(self, /) -> str:
-        return splitext(basename(self.path))[1]
-
-    @cached_property
-    def suffixes(self, /) -> tuple[str, ...]:
-        return tuple("." + part for part in basename(self.path).split(".")[1:])
-
-    def touch(self, /) -> P115Path:
+    def touch(self, /) -> Self:
         self.fs.touch(self)
         return self
 
@@ -2722,49 +2877,6 @@ class P115Path(Mapping, PathLike[str]):
         url = ns["url"] = self.fs.get_url(self)
         ns["url_expire_time"] = int(parse_qsl(urlparse(url).query)[0][1])
         return url
-
-    def walk(
-        self, 
-        /, 
-        topdown: bool = True, 
-        min_depth: int = 0, 
-        max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
-    ) -> Iterator[tuple[str, list[str], list[str]]]:
-        return self.fs.walk(
-            self, 
-            topdown=topdown, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            onerror=onerror, 
-            _top=self.path, 
-        )
-
-    def walk_path(
-        self, 
-        /, 
-        topdown: bool = True, 
-        min_depth: int = 0, 
-        max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
-    ) -> Iterator[tuple[str, list[P115Path], list[P115Path]]]:
-        return self.fs.walk_path(
-            self, 
-            topdown=topdown, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            onerror=onerror, 
-            _top=self.path, 
-        )
-
-    def with_name(self, name: str, /) -> P115Path:
-        return self.parent.joinpath(name)
-
-    def with_stem(self, stem: str, /) -> P115Path:
-        return self.parent.joinpath(stem + self.suffix)
-
-    def with_suffix(self, suffix: str, /) -> P115Path:
-        return self.parent.joinpath(self.stem + suffix)
 
     def write_bytes(self, data: bytes | bytearray = b"", /):
         return self.fs.write_bytes(self, data=data)
@@ -2819,7 +2931,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             name = module + "." + name
         return f"<{name}(client={self.client!r}, cid={self.cid!r}, path={self.path!r}) at {hex(id(self))}>"
 
-    def __setattr__(self, attr, val, /):
+    def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
 
     @check_response
@@ -2878,15 +2990,15 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             file, name, pid, filesize=0)["data"]["cid"])
         return self._attr(id)
 
-    def _iterdir(
+    def iterdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> Iterator[dict]:
         attr = self.attr(id_or_path, pid)
         if not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
+            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
         id = attr["id"]
         etime = attr["etime"].timestamp()
         if etime > self.id_to_etime.get(id, 0.0):
@@ -2983,7 +3095,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def attr(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> dict:
@@ -2999,8 +3111,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def copy(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
-        dst_path: ID_OR_PATH_TYPE, 
+        src_path: IDOrPathType, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[tuple[int, str]]:
@@ -3089,8 +3201,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def copytree(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
-        dst_dir: ID_OR_PATH_TYPE = "", 
+        src_path: IDOrPathType, 
+        dst_dir: IDOrPathType = "", 
         pid: Optional[int] = None, 
     ) -> tuple[int, str]:
         src_attr = self.attr(src_path, pid)
@@ -3124,7 +3236,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def get_ancestors(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> list[dict]:
@@ -3135,7 +3247,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def get_url(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
     ) -> str:
@@ -3146,7 +3258,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def is_empty(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
@@ -3245,8 +3357,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def move(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
-        dst_path: ID_OR_PATH_TYPE, 
+        src_path: IDOrPathType, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Optional[dict]:
         try:
@@ -3270,7 +3382,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def remove(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
         recursive: bool = False, 
@@ -3287,7 +3399,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def removedirs(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
     ):
@@ -3308,8 +3420,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def rename(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
-        dst_path: ID_OR_PATH_TYPE, 
+        src_path: IDOrPathType, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
         replace: bool = False, 
     ) -> Optional[dict]:
@@ -3387,8 +3499,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def renames(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
-        dst_path: ID_OR_PATH_TYPE, 
+        src_path: IDOrPathType, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Optional[dict]:
         result = self.rename(src_path, dst_path, pid=pid)
@@ -3400,8 +3512,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def replace(
         self, 
         /, 
-        src_path: ID_OR_PATH_TYPE, 
-        dst_path: ID_OR_PATH_TYPE, 
+        src_path: IDOrPathType, 
+        dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Optional[dict]:
         return self.rename(src_path, dst_path, pid=pid, replace=True)
@@ -3410,7 +3522,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def rmdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
     ):
@@ -3427,7 +3539,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def rmtree(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
     ):
@@ -3436,7 +3548,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def search(
         self, 
         search_value: str, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
         page_size: int = 1_000, 
@@ -3475,7 +3587,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def stat(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> stat_result:
@@ -3497,7 +3609,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def touch(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> dict:
@@ -3512,7 +3624,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         self, 
         /, 
         file: bytes | str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
-        path: ID_OR_PATH_TYPE = "", 
+        path: IDOrPathType = "", 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> dict:
@@ -3563,7 +3675,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         self, 
         /, 
         local_path: str | PathLike[str] = ".", 
-        path: ID_OR_PATH_TYPE = "", 
+        path: IDOrPathType = "", 
         pid: Optional[int] = None, 
         no_root: bool = False, 
         overwrite_or_ignore: Optional[bool] = None, 
@@ -3612,7 +3724,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def write_bytes(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         data: bytes | bytearray | BytesIO = b"", 
         pid: Optional[int] = None, 
@@ -3625,7 +3737,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def write_text(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         text: str = "", 
         pid: Optional[int] = None, 
@@ -3642,14 +3754,9 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
 class P115SharePath(P115PathBase):
     fs: P115ShareFileSystem
-    path: str
 
 
-# TODO 比照 P115FileSystem ，有所有方法，除了增删改
 class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
-    client: P115Client
-    cid: int
-    path: str
     share_link: str
     share_code: str
     receive_code: str
@@ -3686,8 +3793,11 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             name = module + "." + name
         return f"<{name}(client={self.client!r}, share_link={self.share_link!r}, cid={self.cid!r}, path={self.path!r}) at {hex(id(self))}>"
 
-    def __setattr__(self, attr, val, /):
+    def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
+
+    def set_receive_code(self, code: str, /):
+        self.__dict__["receive_code"] = code
 
     @check_response
     def _files(
@@ -3703,6 +3813,14 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             "cid": id, 
             "offset": offset, 
             "limit": limit, 
+        })
+
+    @check_response
+    def _list(self, /, id: int = 0) -> dict:
+        return self.client.share_downlist({
+            "share_code": self.share_code, 
+            "receive_code": self.receive_code, 
+            "cid": id, 
         })
 
     @cached_property
@@ -3737,12 +3855,12 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         dq = deque((0,))
         while dq:
             pid = dq.popleft()
-            for attr in self._iterdir(pid):
+            for attr in self.iterdir(pid):
                 if attr["id"] == id:
                     return attr
                 if attr["is_directory"]:
                     dq.append(attr["id"])
-        self._full_loaded = True
+        self.__dict__["full_loaded"] = True
         raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
 
     def _attr_path(
@@ -3770,7 +3888,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             if not attr["is_directory"]:
                 raise NotADirectoryError(
                     errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
-            for attr in self._iterdir(pid):
+            for attr in self.iterdir(pid):
                 if attr["name"] == name:
                     pid = cast(int, attr["id"])
                     break
@@ -3780,7 +3898,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
 
     def attr(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> MappingProxyType:
@@ -3793,7 +3911,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
 
     def get_url(
         self, 
-        id_or_path: ID_OR_PATH_TYPE, 
+        id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
     ) -> str:
@@ -3806,15 +3924,15 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             "file_id": attr["id"], 
         })
 
-    def _iterdir(
+    def iterdir(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> Iterator[MappingProxyType]:
         attr = self.attr(id_or_path, pid)
         if not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
+            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
         id = attr["id"]
         try:
             return iter(self.pid_to_attrs[id])
@@ -3822,21 +3940,24 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             dirname = attr["path"]
             def iterdir():
                 page_size = 1 << 10
-                files = self._files
-                data = files(id, page_size)["data"]
+                get_files = self._files
+                path_to_id = self.path_to_id
+                data = get_files(id, page_size)["data"]
                 for attr in map(normalize_info, data["list"]):
-                    attr["path"] = joinpath(dirname, escape(attr["name"]))
+                    path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                    path_to_id[path] = attr["id"]
                     yield MappingProxyType(attr)
                 for offset in range(page_size, data["count"], page_size):
-                    data = files(id, page_size, offset)["data"]
+                    data = get_files(id, page_size, offset)["data"]
                     for attr in map(normalize_info, data["list"]):
-                        attr["path"] = joinpath(dirname, escape(attr["name"]))
+                        path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                        path_to_id[path] = attr["id"]
                         yield MappingProxyType(attr)
             t = self.pid_to_attrs[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in t)
             return iter(t)
 
-    def receive(self, ids: int | str | Iterable[int | str], cid=0):
+    def receive(self, ids: int | str | Iterable[int | str], /, cid: int = 0):
         if isinstance(ids, (int, str)):
             file_id = str(ids)
         else:
@@ -3853,7 +3974,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
 
     def stat(
         self, 
-        id_or_path: ID_OR_PATH_TYPE = "", 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
     ) -> stat_result:
@@ -3879,14 +4000,190 @@ class P115ZipPath(P115PathBase):
     path: str
 
 
-# TODO: 也有id，自定义 0开始递增
+# TODO: 参考zipfile的接口设计
+# TODO: 检查一下是不是压缩包以及解压进度
+# TODO: 要么只用 pickcode，而不是 file_id?
 class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
+    file_id: int
+    pick_code: str
+    path_to_id: MutableMapping[str, int]
+    id_to_attr: MutableMapping[int, MappingProxyType]
+    pid_to_attrs: MutableMapping[int, tuple[MappingProxyType]]
+    full_loaded: bool
+    path_class = P115ZipPath
 
-    def __init__(self, client: P115Client, /, id: int):
+    def __init__(self, client: P115Client, /, file_id: int):
+        pick_code = client.fs.attr(file_id)["pick_code"]
+        self.__dict__.update(
+            client=client, 
+            cid=0, 
+            path="/", 
+            pick_code=pick_code, 
+            file_id=file_id, 
+            path_to_id={"/": 0}, 
+            id_to_attr={}, 
+            pid_to_attrs={}, 
+            full_loaded=False, 
+            _nextid=count(1).__next__, 
+        )
+
+    def __setattr__(self, attr, val, /) -> Never:
+        raise TypeError("can't set attribute")
+
+    @check_response
+    def _files(
+        self, 
+        /, 
+        path: str = "", 
+        next_marker: str = "", 
+    ) -> dict:
+        return self.client.extract_list(
+            path=path, 
+            pick_code=self.pick_code, 
+        )
+
+    @cached_property
+    def create_time(self, /):
+        return self.client.fs.attr(self.file_id)["ptime"]
+
+    def _attr(self, id: int = 0, /) -> MappingProxyType:
+        try:
+            return self.id_to_attr[id]
+        except KeyError:
+            pass
+        if self.full_loaded:
+            raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
+        if id == 0:
+            attr = self.id_to_attr[0] = MappingProxyType({
+                "id": 0, 
+                "parent_id": 0, 
+                "file_category": 0, 
+                "is_directory": True, 
+                "name": "", 
+                "path": "/", 
+                "size": 0, 
+                "time": self.create_time, 
+                "timestamp": int(self.create_time.timestamp()), 
+            })
+            return attr
+        dq = deque((0,))
+        while dq:
+            pid = dq.popleft()
+            for attr in self.iterdir(pid):
+                if attr["id"] == id:
+                    return attr
+                if attr["is_directory"]:
+                    dq.append(attr["id"])
+        self.__dict__["full_loaded"] = True
+        raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
+
+    def _attr_path(
+        self, 
+        path: str | PathLike[str] | Sequence[str], 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> MappingProxyType:
+        if isinstance(path, PathLike):
+            path = fspath(path)
+        if pid is None:
+            pid = self.cid
+        if not path or path == ".":
+            return self._attr(pid)
+        patht = self.get_patht(path, pid)
+        fullpath = joins(patht)
+        path_to_id = self.path_to_id
+        if fullpath in path_to_id:
+            id = path_to_id[fullpath]
+            return self._attr(id)
+        if self.full_loaded:
+            raise FileNotFoundError(errno.ENOENT, f"no such file {path!r} (in {pid!r})")
+        attr = self._attr(pid)
+        for name in patht[len(self.get_patht(pid)):]:
+            if not attr["is_directory"]:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
+            for attr in self.iterdir(pid):
+                if attr["name"] == name:
+                    pid = cast(int, attr["id"])
+                    break
+            else:
+                raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} (in {pid!r})")
+        return attr
+
+    def attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> MappingProxyType:
+        if isinstance(id_or_path, P115ZipPath):
+            return self._attr(id_or_path["id"])
+        elif isinstance(id_or_path, int):
+            return self._attr(id_or_path)
+        else:
+            return self._attr_path(id_or_path, pid)
+
+    def get_url(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> str:
+        attr = self.attr(id_or_path, pid)
+        if attr["is_directory"]:
+            raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
+        return self.client.extract_download_url(self.pick_code, attr["path"])
+
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> Iterator[MappingProxyType]:
+        def normalize_info(info):
+            timestamp = info.get("time") or 0
+            return {
+                "name": info["file_name"], 
+                "is_directory": info["file_category"] == 0, 
+                "file_category": info["file_category"], 
+                "size": info["size"], 
+                "time": datetime.fromtimestamp(timestamp), 
+                "timestamp": timestamp, 
+            }
+        attr = self.attr(id_or_path, pid)
+        if not attr["is_directory"]:
+            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+        id = attr["id"]
+        try:
+            return iter(self.pid_to_attrs[id])
+        except KeyError:
+            nextid = self.__dict__["_nextid"]
+            dirname = attr["path"]
+            def iterdir():
+                get_files = self._files
+                path_to_id = self.path_to_id
+                data = get_files(dirname)["data"]
+                for attr in map(normalize_info, data["list"]):
+                    path = joinpath(dirname, escape(attr["name"]))
+                    attr.update(id=nextid(), parent_id=id, path=path)
+                    path_to_id[path] = attr["id"]
+                    yield MappingProxyType(attr)
+                next_marker = data["next_marker"]
+                while next_marker:
+                    data = get_files(dirname, next_marker)["data"]
+                    for attr in map(normalize_info, data["list"]):
+                        path = joinpath(dirname, escape(attr["name"]))
+                        attr.update(id=nextid(), parent_id=id, path=path)
+                        path_to_id[path] = attr["id"]
+                        yield MappingProxyType(attr)
+                    next_marker = data["next_marker"]
+            t = self.pid_to_attrs[id] = tuple(iterdir())
+            self.id_to_attr.update((attr["id"], attr) for attr in t)
+            return iter(t)
+
+    def extract(self):
         ...
-        # pick_code
-        # path
-        # 参考zipfile，可以直接获取所有信息
+    # TODO: 其它解压方法，以及针对解压事件的 event.join()，以及进度查询
 
 
 # TODO 清除已完成
