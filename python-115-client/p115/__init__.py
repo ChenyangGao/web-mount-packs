@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
     "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin"
@@ -20,6 +20,7 @@ from collections.abc import (
     Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, MutableMapping, 
     Sequence, ValuesView, 
 )
+from concurrent.futures import Future
 from copy import deepcopy
 from datetime import datetime
 from functools import cached_property, update_wrapper
@@ -34,7 +35,8 @@ from re import compile as re_compile, escape as re_escape
 from sys import maxsize
 from stat import S_IFDIR, S_IFREG
 from shutil import copyfileobj, SameFileError
-from time import time
+from threading import Condition, Thread
+from time import sleep, time
 from typing import (
     cast, Any, ClassVar, Final, Generic, IO, Literal, Optional, Never, Self, TypeAlias, 
     TypedDict, TypeVar, Unpack, 
@@ -93,7 +95,11 @@ def console_qrcode(text: str) -> None:
     qr.print_ascii(tty=True)
 
 
-def normalize_info(info, keep_raw=False, **extra_data):
+def normalize_info(
+    info: Mapping, 
+    keep_raw: bool = False, 
+    **extra_data, 
+) -> dict:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -849,7 +855,7 @@ class P115Client:
     ########## Share API ##########
 
     def share_send(self, payload: int | str | dict, /, **request_kwargs) -> dict:
-        """创建分享
+        """创建（自己的）分享
         POST https://webapi.115.com/share/send
         payload:
             - file_ids: int | str # 文件列表，有多个用逗号","隔开
@@ -873,7 +879,7 @@ class P115Client:
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
     def share_info(self, payload: str | dict, /, **request_kwargs) -> dict:
-        """获取分享信息
+        """获取（自己的）分享信息
         GET https://webapi.115.com/share/shareinfo
         payload:
             - share_code: str
@@ -884,7 +890,7 @@ class P115Client:
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
     def share_list(self, payload: dict = {}, /, **request_kwargs) -> dict:
-        """罗列分享信息列表
+        """罗列（自己的）分享信息列表
         GET https://webapi.115.com/share/slist
         payload:
             - limit: int = 32
@@ -896,7 +902,7 @@ class P115Client:
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
     def share_update(self, payload: dict, /, **request_kwargs) -> dict:
-        """变更分享的配置（例如改访问密码，取消分享）
+        """变更（自己的）分享的配置（例如改访问密码，取消分享）
         POST https://webapi.115.com/share/updateshare
         payload:
             - share_code: str
@@ -998,7 +1004,13 @@ class P115Client:
             - user_id: int | str = <default> # 有默认值，所以不用传
         """
         resp = check_response(self.share_download_url_app)(payload, **request_kwargs)
-        return resp["data"]["url"]["url"]
+        data = resp["data"]
+        if not data:
+            raise FileNotFoundError(errno.ENOENT, f"no such id: {payload['file_id']!r}")
+        url = data["url"]
+        if not url:
+            raise IsADirectoryError(errno.EISDIR, f"this id refers to a directory: {payload['file_id']!r}")
+        return url["url"]
 
     ########## Download API ##########
 
@@ -1382,7 +1394,7 @@ class P115Client:
 
     ########## Decompress API ##########
 
-    def extract_push(self, /, payload: dict, **request_kwargs) -> dict:
+    def extract_push(self, /, payload: str | dict, **request_kwargs) -> dict:
         """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
         POST https://webapi.115.com/files/push_extract
         payload:
@@ -1390,15 +1402,19 @@ class P115Client:
             - secret: str = "" # 解压密码
         """
         api = "https://webapi.115.com/files/push_extract"
+        if isinstance(payload, str):
+            payload = {"pick_code": payload}
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
-    def extract_push_progress(self, /, payload: dict, **request_kwargs) -> dict:
+    def extract_push_progress(self, /, payload: str | dict, **request_kwargs) -> dict:
         """查询解压缩任务的进度
         GET https://webapi.115.com/files/push_extract
         payload:
             - pick_code: str
         """
         api = "https://webapi.115.com/files/push_extract"
+        if isinstance(payload, str):
+            payload = {"pick_code": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
     def extract_info(self, /, payload: dict, **request_kwargs) -> dict:
@@ -1462,30 +1478,17 @@ class P115Client:
             **request_kwargs, 
         )
 
-    def extract_download_url_web(self, /, payload: dict, **request_kwargs) -> dict:
-        """获取压缩包中文件的下载链接
-        GET https://webapi.115.com/files/extract_down_file
+    def extract_progress(self, /, payload: int | str | dict, **request_kwargs) -> dict:
+        """获取 解压缩到文件夹 任务的进度
+        GET https://webapi.115.com/files/add_extract_file
         payload:
-            - pick_code: str
-            - full_name: str
+            - extract_id: str
         """
-        api = "https://webapi.115.com/files/extract_down_file"
+        api = "https://webapi.115.com/files/add_extract_file"
+        if isinstance(payload, (int, str)):
+            payload = {"extract_id": payload}
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    def extract_download_url(
-        self, 
-        /, 
-        pick_code: str, 
-        path: str, 
-        **request_kwargs, 
-    ) -> str:
-        """获取压缩包中文件的下载链接，此接口是对 `extract_download_url_web` 的封装
-        """
-        resp = check_response(self.extract_download_url_web)(
-            {"pick_code": pick_code, "full_name": path.strip("/")}, **request_kwargs)
-        return quote(resp["data"]["url"], safe=":/?&=%#")
-
-    # TODO: 如果解压缩单个文件呢
     def extract_file(
         self, 
         /, 
@@ -1518,18 +1521,28 @@ class P115Client:
             data.extend(("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) for path in paths)
         return self.extract_add_file(data, **request_kwargs)
 
-    def extract_progress(self, /, payload: int | str | dict, **request_kwargs) -> dict:
-        """获取 解压缩到文件夹 任务的进度
-        GET https://webapi.115.com/files/add_extract_file
+    def extract_download_url_web(self, /, payload: dict, **request_kwargs) -> dict:
+        """获取压缩包中文件的下载链接
+        GET https://webapi.115.com/files/extract_down_file
         payload:
-            - extract_id: str
+            - pick_code: str
+            - full_name: str
         """
-        api = "https://webapi.115.com/files/add_extract_file"
-        if isinstance(payload, (int, str)):
-            payload = {"extract_id": payload}
+        api = "https://webapi.115.com/files/extract_down_file"
         return self.request(api, params=payload, parse=loads, **request_kwargs)
 
-    # TODO: 增加一个接口，下载压缩包中的文件
+    def extract_download_url(
+        self, 
+        /, 
+        pick_code: str, 
+        path: str, 
+        **request_kwargs, 
+    ) -> str:
+        """获取压缩包中文件的下载链接，此接口是对 `extract_download_url_web` 的封装
+        """
+        resp = check_response(self.extract_download_url_web)(
+            {"pick_code": pick_code, "full_name": path.strip("/")}, **request_kwargs)
+        return quote(resp["data"]["url"], safe=":/?&=%#")
 
     ########## Offline Download API ##########
 
@@ -1665,12 +1678,12 @@ class P115Client:
         """
         return P115ShareFileSystem(self, share_link)
 
-    def get_zip_fs(self, id: int, /) -> P115ZipFileSystem:
+    def get_zip_fs(self, id_or_pickcode: int | str, /) -> P115ZipFileSystem:
         """
         """
-        return P115ZipFileSystem(self, id)
+        return P115ZipFileSystem(self, id_or_pickcode)
 
-    def open(self, url: str, /, **request_kwargs) -> RequestsFileReader:
+    def open(self, url: str | Callable[[], str], /, **request_kwargs) -> RequestsFileReader:
         """
         """
         return RequestsFileReader(url, urlopen=self.session.get)
@@ -1690,6 +1703,9 @@ class P115Client:
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         with self.session.get(url, headers=headers, **request_kwargs) as resp:
+            if resp.status_code == 416:
+                return b""
+            resp.raise_for_status()
             return resp.content
 
     def read_range(
@@ -1720,6 +1736,30 @@ class P115Client:
                 return b""
             bytes_range = f"{start}-{stop-1}"
         return self.read_bytes_range(url, bytes_range, headers=headers, **request_kwargs)
+
+    def read_size(
+        self, 
+        url: str, 
+        /, 
+        size: int = 0, 
+        offset: int = 0, 
+        headers: Optional[Mapping] = None, 
+        **request_kwargs, 
+    ) -> bytes:
+        if size <= 0:
+            return b""
+        return self.read_range(url, offset, offset+size, headers=headers, **request_kwargs)
+
+    def push_extract(self, /, id_or_pickcode: int | str, secret: str = "") -> Optional[PushExtractProgress]:
+        if isinstance(id_or_pickcode, int):
+            pick_code = self.fs.attr(id_or_pickcode)["pick_code"]
+        else:
+            pick_code = id_or_pickcode
+        resp = check_response(self.extract_push)({"pick_code": pick_code, "secret": secret})
+        unzip_status = resp["data"]["unzip_status"]
+        if unzip_status == 4:
+            return None
+        return PushExtractProgress(self, pick_code)
 
 
 class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
@@ -1804,7 +1844,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.joinpath(path)
 
     @cached_property
-    def id(self, /):
+    def id(self, /) -> int:
         return self.fs.get_id(self.path)
 
     def keys(self) -> KeysView:
@@ -1847,6 +1887,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     def exists(self, /) -> bool:
         return self.fs.exists(self)
+
+    def get_url(self, /) -> str:
+        return self.fs.get_url(self)
 
     def glob(
         self, 
@@ -2003,6 +2046,17 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> bytes:
         return self.fs.read_range(self, start, stop, headers=headers)
 
+    def read_size(
+        self, 
+        /, 
+        size: int = 0, 
+        offset: int = 0, 
+        headers: Optional[Mapping] = None, 
+    ) -> bytes:
+        if size <= 0:
+            return b""
+        return self.fs.read_size(self, size, offset, headers=headers)
+
     def read_text(
         self, 
         /, 
@@ -2053,7 +2107,16 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     @property
     def url(self, /) -> str:
-        return self.fs.get_url(self)
+        ns = self.__dict__
+        try:
+            url_expire_time = ns["url_expire_time"]
+            if time() + 5 * 60 < url_expire_time:
+                return ns["url"]
+        except KeyError:
+            pass
+        url = ns["url"] = self.fs.get_url(self)
+        ns["url_expire_time"] = int(parse_qsl(urlparse(url).query)[0][1])
+        return url
 
     def walk(
         self, 
@@ -2596,8 +2659,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     ) -> IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        url = self.get_url(id_or_path, pid)
-        return self.client.open(url).wrap(
+        return self.client.open(self.as_path(id_or_path, pid).as_uri).wrap(
             text_mode="b" not in mode, 
             buffering=buffering, 
             encoding=encoding, 
@@ -2633,6 +2695,19 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         pid: Optional[int] = None, 
     ) -> bytes:
         return self.client.read_range(self.get_url(id_or_path, pid), start, stop, headers=headers)
+
+    def read_size(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        size: int = 0, 
+        offset: int = 0, 
+        headers: Optional[Mapping] = None, 
+        pid: Optional[int] = None, 
+    ) -> bytes:
+        if size <= 0:
+            return b""
+        return self.client.read_range(self.get_url(id_or_path, pid), size, offset, headers=headers)
 
     def read_text(
         self, 
@@ -2865,19 +2940,6 @@ class P115Path(P115PathBase):
 
     unlink = remove
 
-    @property
-    def url(self, /) -> str:
-        ns = self.__dict__
-        try:
-            url_expire_time = ns["url_expire_time"]
-            if time() + 5 * 60 < url_expire_time:
-                return ns["url"]
-        except KeyError:
-            pass
-        url = ns["url"] = self.fs.get_url(self)
-        ns["url_expire_time"] = int(parse_qsl(urlparse(url).query)[0][1])
-        return url
-
     def write_bytes(self, data: bytes | bytearray = b"", /):
         return self.fs.write_bytes(self, data=data)
 
@@ -2897,11 +2959,6 @@ class P115Path(P115PathBase):
             newline=newline, 
         )
 
-# TODO 增加几种文件系统：普通（增删改查）、压缩包（查，解压(extract)）、分享文件夹（查，转存(transfer)）
-# TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
-# TODO 实现清空已完成，清空所有失败任务，清空所有未完成，具体参考app（抓包）
-# TODO 以后会支持传入作为缓存的 MutableMapping
-# TODO 如果以后有缓存的话，getcwd 会获取最新的名字
 
 class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     path_to_id: MutableMapping[str, int]
@@ -3253,7 +3310,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     ) -> str:
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
-            raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
+            raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
         return self.client.download_url(attr["pick_code"])
 
     def is_empty(
@@ -3408,12 +3465,12 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
         del_id = 0
         id = attr["id"]
-        while id != 0:
+        while id:
             files = self._files(id, limit=1)
             if files["count"] > 1:
                 break
             del_id = id
-            id = files["path"][-1]["pid"]
+            id = int(files["path"][-1]["pid"])
         if del_id != 0:
             self._delete(del_id)
 
@@ -3824,7 +3881,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         })
 
     @cached_property
-    def create_time(self, /):
+    def create_time(self, /) -> datetime:
         return datetime.fromtimestamp(int(self.shareinfo["create_time"]))
 
     @property
@@ -3915,13 +3972,21 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         /, 
         pid: Optional[int] = None, 
     ) -> str:
-        attr = self.attr(id_or_path, pid)
-        if attr["is_directory"]:
-            raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
+        if isinstance(id_or_path, (int, P115ZipPath)):
+            id = id_or_path if isinstance(id_or_path, int) else id_or_path.id
+            if id in self.id_to_attr:
+                attr = self.id_to_attr[id]
+                if attr["is_directory"]:
+                    raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
+        else:
+            attr = self.attr(id_or_path, pid)
+            if attr["is_directory"]:
+                raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
+            id = attr["id"]
         return self.client.share_download_url({
             "share_code": self.share_code, 
             "receive_code": self.receive_code, 
-            "file_id": attr["id"], 
+            "file_id": id, 
         })
 
     def iterdir(
@@ -3930,10 +3995,22 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         /, 
         pid: Optional[int] = None, 
     ) -> Iterator[MappingProxyType]:
-        attr = self.attr(id_or_path, pid)
-        if not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
-        id = attr["id"]
+        if isinstance(id_or_path, (int, P115ZipPath)):
+            id = id_or_path if isinstance(id_or_path, int) else id_or_path.id
+            if id in self.id_to_attr:
+                attr = self.id_to_attr[id]
+                if not attr["is_directory"]:
+                    raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+            else:
+                try:
+                    self.get_url(id)
+                except IsADirectoryError:
+                    pass
+        else:
+            attr = self.attr(id_or_path, pid)
+            if not attr["is_directory"]:
+                raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+            id = attr["id"]
         try:
             return iter(self.pid_to_attrs[id])
         except KeyError:
@@ -3958,16 +4035,16 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             return iter(t)
 
     def receive(self, ids: int | str | Iterable[int | str], /, cid: int = 0):
-        if isinstance(ids, (int, str)):
-            file_id = str(ids)
-        else:
-            file_id = ",".join(map(str, ids))
-            if not file_id:
-                raise ValueError("no id (to file) to transfer")
+        if isinstance(ids, int):
+            ids = str(ids)
+        elif isinstance(ids, Iterable):
+            ids = ",".join(map(str, ids))
+        if not ids:
+            raise ValueError("no id (to file) to receive")
         payload = {
             "share_code": self.share_code, 
             "receive_code": self.receive_code, 
-            "file_id": file_id, 
+            "file_id": ids, 
             "cid": cid, 
         }
         return check_response(self.client.share_receive)(payload)
@@ -4000,11 +4077,91 @@ class P115ZipPath(P115PathBase):
     path: str
 
 
-# TODO: 参考zipfile的接口设计
-# TODO: 检查一下是不是压缩包以及解压进度
-# TODO: 要么只用 pickcode，而不是 file_id?
+class PushExtractProgress(Future):
+    _condition: Condition
+    _state: str
+
+    def __init__(self, client: P115Client, pick_code: str, /):
+        super().__init__()
+        self.progress = 0
+        self.set_running_or_notify_cancel()
+        self._run_check(client, pick_code)
+
+    def stop(self, /):
+        with self._condition:
+            if self._state in ["RUNNING", "PENDING"]:
+                self._state = "CANCELLED"
+                self.set_exception(OSError(errno.ECANCELED, "canceled"))
+
+    def _run_check(self, client, pick_code: str, /):
+        check = check_response(client.extract_push_progress)
+        payload = {"pick_code": pick_code}
+        def update_progress():
+            while self.running():
+                try:
+                    data = check(payload)["data"]
+                    extract_status = data["extract_status"]
+                    progress = extract_status["progress"]
+                    if progress == 100:
+                        self.set_result(data)
+                        return
+                    match extract_status["unzip_status"]:
+                        case 1 | 2 | 4:
+                            self.progress = progress
+                        case 0:
+                            raise OSError(errno.EIO, f"bad file format: {data!r}")
+                        case 6:
+                            raise OSError(errno.EINVAL, f"wrong password/secret: {data!r}")
+                        case _:
+                            raise OSError(errno.EIO, f"undefined error: {data!r}")
+                except BaseException as e:
+                    self.set_exception(e)
+                    return
+                sleep(1)
+        Thread(target=update_progress).start()
+
+
+class ExtractProgress(Future):
+    _condition: Condition
+    _state: str
+
+    def __init__(self, client: P115Client, extract_id: int | str, /):
+        super().__init__()
+        self.progress = 0
+        self.set_running_or_notify_cancel()
+        self._run_check(client, extract_id)
+
+    def stop(self, /):
+        with self._condition:
+            if self._state in ["RUNNING", "PENDING"]:
+                self._state = "CANCELLED"
+                self.set_exception(OSError(errno.ECANCELED, "canceled"))
+
+    def _run_check(self, client, extract_id: int | str, /):
+        check = check_response(client.extract_progress)
+        payload = {"extract_id": extract_id}
+        def update_progress():
+            while self.running():
+                try:
+                    data = check(payload)["data"]
+                    if not data:
+                        raise OSError(errno.EINVAL, f"no such extract_id: {extract_id}")
+                    progress = data["percent"]
+                    self.progress = progress
+                    if progress == 100:
+                        self.set_result(data)
+                        return
+                except BaseException as e:
+                    self.set_exception(e)
+                    return
+                sleep(1)
+        Thread(target=update_progress).start()
+
+
+# TODO: 参考zipfile的接口设计 namelist filelist
+# TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
 class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
-    file_id: int
+    file_id: Optional[int]
     pick_code: str
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, MappingProxyType]
@@ -4012,8 +4169,21 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
     full_loaded: bool
     path_class = P115ZipPath
 
-    def __init__(self, client: P115Client, /, file_id: int):
-        pick_code = client.fs.attr(file_id)["pick_code"]
+    def __init__(
+        self, 
+        client: P115Client, 
+        /, 
+        id_or_pickcode: int | str, 
+    ):
+        file_id: Optional[int]
+        if isinstance(id_or_pickcode, int):
+            file_id = id_or_pickcode
+            pick_code = client.fs.attr(file_id)["pick_code"]
+        else:
+            file_id = None
+            pick_code = id_or_pickcode
+        if check_response(client.extract_push_progress)(pick_code)["data"]["extract_status"]["unzip_status"] != 4:
+            raise OSError(errno.EIO, "file was not decompressed")
         self.__dict__.update(
             client=client, 
             cid=0, 
@@ -4026,6 +4196,8 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             full_loaded=False, 
             _nextid=count(1).__next__, 
         )
+        if file_id is None:
+            self.__dict__["create_time"] = datetime.fromtimestamp(0)
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
@@ -4043,7 +4215,9 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         )
 
     @cached_property
-    def create_time(self, /):
+    def create_time(self, /) -> datetime:
+        if self.file_id is None:
+            return datetime.fromtimestamp(0)
         return self.client.fs.attr(self.file_id)["ptime"]
 
     def _attr(self, id: int = 0, /) -> MappingProxyType:
@@ -4123,6 +4297,16 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         else:
             return self._attr_path(id_or_path, pid)
 
+    def extract(
+        self, 
+        /, 
+        paths: str | Sequence[str] = "", 
+        dirname: str = "", 
+        to_pid: int | str = 0, 
+    ) -> ExtractProgress:
+        resp = check_response(self.client.extract_file)(self.pick_code, paths, dirname, to_pid)
+        return ExtractProgress(self.client, resp["data"]["extract_id"])
+
     def get_url(
         self, 
         id_or_path: IDOrPathType, 
@@ -4131,7 +4315,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
     ) -> str:
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
-            raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
+            raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
         return self.client.extract_download_url(self.pick_code, attr["path"])
 
     def iterdir(
@@ -4180,10 +4364,6 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             t = self.pid_to_attrs[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in t)
             return iter(t)
-
-    def extract(self):
-        ...
-    # TODO: 其它解压方法，以及针对解压事件的 event.join()，以及进度查询
 
 
 # TODO 清除已完成
@@ -4291,7 +4471,6 @@ class P115Recyclebin:
     ...
 
 
-
 # TODO: 对回收站的封装
 # TODO: 能及时处理文件已不存在
 # TODO: 为各个fs接口添加额外的请求参数
@@ -4305,3 +4484,7 @@ class P115Recyclebin:
 # TODO: 支持异步io，用 aiohttp
 # TODO 因为获取 url 是个耗时的操作，因此需要缓存
 
+# TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
+# TODO 实现清空已完成，清空所有失败任务，清空所有未完成，具体参考app（抓包）
+# TODO 以后会支持传入作为缓存的 MutableMapping
+# TODO 如果以后有缓存的话，getcwd 会获取最新的名字

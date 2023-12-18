@@ -6,12 +6,6 @@
 ![PyPI - Format](https://img.shields.io/pypi/format/python-115)
 ![PyPI - Status](https://img.shields.io/pypi/status/python-115)
 
-![GitHub](https://img.shields.io/github/license/ChenyangGao/python-115)
-![GitHub all releases](https://img.shields.io/github/downloads/ChenyangGao/python-115/total)
-![GitHub language count](https://img.shields.io/github/languages/count/ChenyangGao/python-115)
-![GitHub issues](https://img.shields.io/github/issues/ChenyangGao/python-115)
-![Codecov](https://img.shields.io/codecov/c/github/ChenyangGao/python-115)
-
 - [115网盘](https://115.com)
 
 ## 安装

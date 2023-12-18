@@ -130,7 +130,7 @@ class HTTPFileReader(RawIOBase):
         urlopen: Callable[..., HTTPResponse] = urlopen, 
     ):
         headers = {**headers, "Accept-Encoding": "identity"}
-        response = urlopen(url if callable(url) else url, headers=headers)
+        response = urlopen(url() if callable(url) else url, headers=headers)
         self.__dict__.update(
             url = url, 
             response = response, 
@@ -215,7 +215,10 @@ class HTTPFileReader(RawIOBase):
             return b""
         if self.file.closed:
             self.reconnect()
-        data = self.file.read(size)
+        if size is None or size < 0:
+            data = self.file.read()
+        else:
+            data = self.file.read(size)
         if data:
             self._add_start(len(data))
         return data
@@ -226,6 +229,8 @@ class HTTPFileReader(RawIOBase):
     def readinto(self, buffer, /) -> int:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if not self.chunked and self.tell() >= self.length:
+            return 0
         if self.file.closed:
             self.reconnect()
         size = self.file.readinto(buffer)
@@ -238,11 +243,12 @@ class HTTPFileReader(RawIOBase):
             raise ValueError("I/O operation on closed file.")
         if size == 0 or not self.chunked and self.tell() >= self.length:
             return b""
-        elif size is None:
-            size = -1
         if self.file.closed:
             self.reconnect()
-        data = self.file.readline(size)
+        if size is None or size < 0:
+            data = self.file.readline()
+        else:
+            data = self.file.readline(size)
         if data:
             self._add_start(len(data))
         return data
@@ -250,6 +256,8 @@ class HTTPFileReader(RawIOBase):
     def readlines(self, hint: int = -1, /) -> list[bytes]:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if not self.chunked and self.tell() >= self.length:
+            return []
         if self.file.closed:
             self.reconnect()
         ls = self.file.readlines(hint)
@@ -268,6 +276,9 @@ class HTTPFileReader(RawIOBase):
             start = self.length + start
             if start < 0:
                 start = 0
+        if start >= self.length:
+            self.__dict__.update(start=start)
+            return start
         self.response.close()
         url = self.url
         self.__dict__.update(
@@ -375,7 +386,7 @@ class RequestsFileReader(HTTPFileReader):
             resp = urlopen(url, headers=headers, stream=True)
             resp.raise_for_status()
             return resp
-        response = _urlopen(url, headers=headers)
+        response = _urlopen(url() if callable(url) else url, headers=headers)
         self.__dict__.update(
             url = url, 
             response = response, 
@@ -396,5 +407,8 @@ class RequestsFileReader(HTTPFileReader):
         return self.response.raw
 
     def tell(self, /) -> int:
-        return self.start + self.file.tell()
+        start = self.start
+        if start >= self.length:
+            return start
+        return start + self.file.tell()
 
