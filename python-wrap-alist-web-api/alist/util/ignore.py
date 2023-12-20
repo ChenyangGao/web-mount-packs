@@ -70,7 +70,6 @@ def parse(
     ignore_case: bool = False, 
     check_mimetype: bool = False, 
 ) -> Optional[Callable[[str], bool]]:
-    check_pass = lambda s: s in ("*", "*/") or "**" in s and not s.strip("*/")
     shows: list[str] = []
     show_all: bool = False
     ignores: list[str] = []
@@ -86,7 +85,7 @@ def parse(
                 continue
             pattern = pattern[1:]
             if pattern:
-                if check_pass(pattern):
+                if pattern == "*":
                     ignore_all = True
                 else:
                     ignores.append(pattern)
@@ -104,14 +103,14 @@ def parse(
                 continue
             pattern = pattern[1:]
             if pattern:
-                if check_pass(pattern):
+                if pattern == "*":
                     show_all = True
                 else:
                     shows.append(pattern)
         else:
             if ignore_all:
                 continue
-            if check_pass(pattern):
+            if pattern == "*":
                 ignore_all = True
             else:
                 ignores.append(pattern)

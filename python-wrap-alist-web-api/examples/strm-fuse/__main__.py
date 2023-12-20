@@ -2,6 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 4)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -16,6 +17,31 @@ if __name__ == "__main__":
 
 访问源代码：
     - https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-alist-web-api/examples/strm-fuse
+
+下面的选项 --ignore、--ignore-file、--strm、--strm-file 支持相同的配置语法。
+    0. --strm、--strm-file 优先级高于 --ignore、--ignore-file，但前两者只针对文件（不针对目录），后两者都针对
+    1. 从配置文件或字符串中，提取模式，执行模式匹配
+    2. 模式匹配语法如下：
+        1. 如果模式以反斜杠 \\ 开头，则跳过开头的 \\ 后，剩余的部分视为使用 gitignore 语法，对路径执行匹配（开头为 ! 时也不具有结果取反意义）
+            - gitignore：https://git-scm.com/docs/gitignore#_pattern_format
+        2. 如果模式以 ! 开头，则跳过开头的 ! 后，执行模式匹配，匹配成功是为失败，匹配失败是为成功，也就是结果取反
+        3. 以 ! 开头的模式，优先级高于不以此开头的
+        4. 如果模式以 =、^、$、:、;、,、<、>、|、~、-、% 之一开头，视为匹配文件名对应的 mimetype，否则使用 gitignore 语法，对路径执行匹配
+            - https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types
+
+            0.     跳过下面的开头字符，剩余的部分称为模式字符串
+            1. =   模式字符串等于被匹配字符串
+            2. ^   模式字符串匹配被匹配字符串的开头
+            3. $   模式字符串匹配被匹配字符串的结尾
+            4. :   被匹配字符串里有等于此模式字符串的部分
+            5. ;   对被匹配字符串按空白符号(空格、\\r、\\n、\\t、\\v、\\f 等)拆分，有一个部分等于此模式字符串
+            6. ,   对被匹配字符串按逗号 , 拆分，有一个部分等于此字符串
+            7. <   被匹配字符串里有一个单词（非标点符号、空白符号等组成的字符串）以此模式字符串开头
+            8. >   被匹配字符串里有一个单词（非标点符号、空白符号等组成的字符串）以此模式字符串结尾
+            9. |   被匹配字符串里有一个单词（非标点符号、空白符号等组成的字符串）等于此模式字符串
+            10. ~  模式字符串是为正则表达式，被匹配字符串的一部分匹配此正则表达式
+            11. -  模式字符串是为正则表达式，被匹配字符串的整体匹配此正则表达式
+            12. %  模式字符串是为通配符表达式，被匹配字符串的整体匹配此通配符表达式
 """, formatter_class=RawTextHelpFormatter)
     parser.add_argument("mount_point", nargs="?", help="挂载路径")
     parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
@@ -29,20 +55,16 @@ if __name__ == "__main__":
 """)
     parser.add_argument("--ignore", help="""\
 接受配置，忽略其中罗列的文件和文件夹。
-如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。
-语法参考 gitignore：https://git-scm.com/docs/gitignore#_pattern_format""")
+如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
     parser.add_argument("--ignore-file", help="""\
 接受一个配置文件路径，忽略其中罗列的文件和文件夹。
-一行写一个配置，支持 # 开头作为注释。
-语法参考 gitignore：https://git-scm.com/docs/gitignore#_pattern_format""")
+一行写一个配置，支持 # 开头作为注释。""")
     parser.add_argument("--strm", help="""\
 接受配置，把罗列的文件显示为带 .strm 后缀的文件，打开后是链接。
-优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。
-语法参考 gitignore：https://git-scm.com/docs/gitignore#_pattern_format""")
+优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
     parser.add_argument("--strm-file", help="""\
 接受一个配置文件路径，把罗列的文件显示为带 .strm 后缀的文件，打开后是链接。
-优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。
-语法参考 gitignore：https://git-scm.com/docs/gitignore#_pattern_format""")
+优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     parser.add_argument("-d", "--debug", action="store_true", help="调试模式，输出更多信息")
     parser.add_argument("-l", "--log-level", default=999, help="指定日志级别，可以是数字或名称，不传此参数则不输出日志")
@@ -52,7 +74,7 @@ if __name__ == "__main__":
     #parser.add_argument("-i", "--iosize", type=int, help="每次读取的字节数")
     args = parser.parse_args()
     if args.version:
-        print(__import__("pkgutil").get_data("help", "VERSION").decode("utf-8"))
+        print(*__version__, sep=".")
         raise SystemExit
     if not args.mount_point:
         parser.parse_args(["-h"])
@@ -85,21 +107,10 @@ try:
     # pip install fusepy
     from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 except ImportError:
-    from os import remove
-    from pkgutil import get_data
     from subprocess import run
     from sys import executable
-    from tempfile import NamedTemporaryFile
-    f = NamedTemporaryFile(suffix=".txt", mode="wb", buffering=0, delete=False)
-    try:
-        data = get_data("help", "requirements.txt")
-        if not data:
-            raise RuntimeError("can't find 'help/requirements.txt'")
-        with f:
-            f.write(data)
-        run([executable, "-m", "pip", "install", "-U", "-r", f.name], check=True)
-    finally:
-        remove(f.name)
+    run([executable, "-m", "pip", "install", "-U", "python-alist", "cachetools", "fusepy", "python-dateutil"], check=True)
+
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
     from cachetools import cached, LRUCache, TTLCache
