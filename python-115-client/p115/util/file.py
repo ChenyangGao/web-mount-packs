@@ -9,20 +9,21 @@ __all__ = [
 
 import errno
 
+from collections.abc import Callable, Mapping
 from functools import cached_property, partial
 from http.client import HTTPResponse
 from io import (
     BufferedReader, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE, 
 )
 from os import fstat, stat, PathLike
-from typing import Any, BinaryIO, Callable, Mapping, Optional, Protocol, TypeVar
+from typing import Any, BinaryIO, IO, Optional, Protocol, Self, TypeVar
 from types import MappingProxyType
 from warnings import warn
 
 from requests import Session
 
 from .property import funcproperty
-from .response import get_filename, get_length, is_chunked, is_range_request
+from .response import get_filename, get_range, get_total_length, is_chunked, is_range_request
 from .urlopen import urlopen
 
 
@@ -127,16 +128,23 @@ class HTTPFileReader(RawIOBase):
         url: str | Callable[[], str], 
         /, 
         headers: Mapping = {}, 
+        start: int = 0, 
         urlopen: Callable[..., HTTPResponse] = urlopen, 
     ):
         headers = {**headers, "Accept-Encoding": "identity"}
+        if start >= 0:
+            headers["Range"] = f"bytes={start}-"
+        else:
+            headers["Range"] = f"bytes={start}"
         response = urlopen(url() if callable(url) else url, headers=headers)
+        rng = get_range(response)
+        start = rng[0] if rng else 0
         self.__dict__.update(
             url = url, 
             response = response, 
-            length = get_length(response) or 0, 
+            length = get_total_length(response) or 0, 
             chunked = is_chunked(response), 
-            start = 0, 
+            start = start, 
             closed = False, 
             urlopen = urlopen, 
             headers = MappingProxyType(headers), 
@@ -187,7 +195,7 @@ class HTTPFileReader(RawIOBase):
         self.__dict__["closed"] = True
 
     @funcproperty
-    def file(self, /):
+    def file(self, /) -> BinaryIO:
         return self.response
 
     @funcproperty
@@ -336,7 +344,7 @@ class HTTPFileReader(RawIOBase):
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
-    ):
+    ) -> Self | IO:
         if buffering is None:
             if text_mode:
                 buffering = DEFAULT_BUFFER_SIZE
@@ -379,31 +387,20 @@ class RequestsFileReader(HTTPFileReader):
         url: str | Callable[[], str], 
         /, 
         headers: Mapping = {}, 
+        start: int = 0, 
         urlopen: Callable = Session().get, 
     ):
-        headers = {**headers, "Accept-Encoding": "identity"}
-        def _urlopen(url, headers=None):
+        def urlopen_wrapper(url: str, headers: Mapping = headers):
             resp = urlopen(url, headers=headers, stream=True)
             resp.raise_for_status()
             return resp
-        response = _urlopen(url() if callable(url) else url, headers=headers)
-        self.__dict__.update(
-            url = url, 
-            response = response, 
-            length = get_length(response) or 0, 
-            chunked = is_chunked(response), 
-            start = 0, 
-            closed = False, 
-            urlopen = _urlopen, 
-            headers = MappingProxyType(headers), 
-            _seekable = is_range_request(response), 
-        )
+        super().__init__(url, headers=headers, start=start, urlopen=urlopen_wrapper)
 
     def _add_start(self, delta: int, /):
         pass
 
     @funcproperty
-    def file(self, /):
+    def file(self, /) -> BinaryIO:
         return self.response.raw
 
     def tell(self, /) -> int:

@@ -29,7 +29,7 @@ from typing import (
     cast, Any, Callable, ItemsView, Iterable, Iterator, Literal, KeysView, Mapping, 
     Optional, ValuesView, 
 )
-from types import MappingProxyType
+from types import MappingProxyType,  MethodType
 from urllib.parse import quote
 from uuid import uuid4
 from warnings import filterwarnings, warn
@@ -38,12 +38,25 @@ from aiohttp import ClientSession
 from requests import Session
 
 from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
-from .util.iter import posix_glob_translate_iter
-from .util.text import complete_base_url
+from .util.text import complete_base_url, posix_glob_translate_iter
 from .util.urlopen import urlopen
 
 
 filterwarnings("ignore", category=DeprecationWarning)
+
+
+class method:
+
+    def __init__(self, /, func):
+        self.__func__ = func
+
+    def __get__(self, instance, type=None, /):
+        if instance is None:
+            return self
+        return MethodType(self.__func__, instance)
+
+    def __set__(self, instance, value, /):
+        raise TypeError("can't set value")
 
 
 def _check_response(fn, /):
@@ -1367,13 +1380,13 @@ class AlistPath(Mapping, PathLike[str]):
         return self.fs.exists(self.path, self.password, _check=False)
 
     def glob(self, /, pattern: str = "*", ignore_case: bool = False) -> Iterator[AlistPath]:
-        dirname = self.path if self.is_dir else self.parent.path
+        dirname = self.path if self.is_dir() else self.parent.path
         return self.fs.glob(pattern, dirname, self.password, ignore_case=ignore_case, _check=False)
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, self.password, _check=False)
 
-    @property
+    @method
     def is_dir(self, /):
         try:
             return self["is_dir"]
@@ -1383,7 +1396,6 @@ class AlistPath(Mapping, PathLike[str]):
     def isfile(self, /) -> bool:
         return self.fs.isfile(self.path, self.password, _check=False)
 
-    @property
     def is_file(self, /) -> bool:
         try:
             return not self["is_dir"]
@@ -1454,7 +1466,7 @@ class AlistPath(Mapping, PathLike[str]):
         )
 
     def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
-        pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
+        pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -1480,6 +1492,10 @@ class AlistPath(Mapping, PathLike[str]):
         )
         return type(self)(self.fs, dst_path, dst_password)
 
+    @cached_property
+    def name(self, /) -> str:
+        return basename(self.path)
+
     def open(
         self, 
         /, 
@@ -1488,12 +1504,13 @@ class AlistPath(Mapping, PathLike[str]):
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
+        start: int = 0, 
     ):
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        if self.is_dir:
+        if self.is_dir():
             raise IsADirectoryError(errno.EISDIR, self.path)
-        return AlistFileReader(self).wrap(
+        return AlistFileReader(self, start=start).wrap(
             text_mode="b" not in mode, 
             buffering=buffering, 
             encoding=encoding, 
@@ -1527,21 +1544,11 @@ class AlistPath(Mapping, PathLike[str]):
     def parts(self, /) -> tuple[str, ...]:
         return ("/", *self.path[1:].split("/"))
 
-    def read_bytes(self, /):
-        return self.open("rb").read()
-
-    def read_bytes_range(self, /, bytes_range="0-", headers=None) -> bytes:
-        if headers:
-            headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
-        else:
-            headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
-        with urlopen(self.url, headers=headers) as resp:
-            return resp.read()
-
-    def read_range(self, /, start=0, stop=None, headers=None) -> bytes:
+    def read_bytes(self, /, start: int = 0, stop: Optional[int] = None) -> bytes:
         length = None
         if start < 0:
-            length = urlopen(self.url).length
+            with urlopen(self.url) as resp:
+                length = cast(int, resp.length)
             start += length
         if start < 0:
             start = 0
@@ -1550,20 +1557,31 @@ class AlistPath(Mapping, PathLike[str]):
         else:
             if stop < 0:
                 if length is None:
-                    length = urlopen(self.url).length
+                    with urlopen(self.url) as resp:
+                        length = cast(int, resp.length)
                 stop += length
             if stop <= 0 or start >= stop:
                 return b""
             bytes_range = f"{start}-{stop-1}"
-        return self.read_bytes_range(bytes_range, headers=headers)
+        return self.read_bytes_range(bytes_range)
+
+    def read_bytes_range(self, /, bytes_range: str = "0-") -> bytes:
+        with urlopen(self.url, headers={"Range": f"bytes={bytes_range}"}) as resp:
+            return resp.read()
+
+    def read_block(self, /, size: int = 0, offset: int = 0) -> bytes:
+        if size <= 0:
+            return b""
+        return self.read_bytes(offset, offset + size)
 
     def read_text(
         self, 
         /, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
-    ):
-        return self.open(encoding=encoding, errors=errors).read()
+        newline: Optional[str] = None, 
+    ) -> str:
+        return self.open(encoding=encoding, errors=errors, newline=newline).read()
 
     def remove(self, /, recursive: bool = False):
         return self.fs.remove(self.path, self.password, recursive=recursive, _check=False)
@@ -1605,7 +1623,7 @@ class AlistPath(Mapping, PathLike[str]):
         return type(self)(self.fs, dst_path, dst_password)
 
     def rglob(self, /, pattern: str = "", ignore_case: bool = False) -> Iterator[AlistPath]:
-        dirname = self.path if self.is_dir else self.parent.path
+        dirname = self.path if self.is_dir() else self.parent.path
         return self.fs.rglob(pattern, dirname, self.password, ignore_case=ignore_case, _check=False)
 
     def rmdir(self, /):
@@ -1685,13 +1703,13 @@ class AlistFileReader(HTTPFileReader):
     "Open a file from the alist server."
     path: AlistPath
 
-    def __init__(self, /, path: AlistPath):
-        super().__init__(path.raw_url)
+    def __init__(self, /, path: AlistPath, start: int = 0):
+        super().__init__(path.raw_url, start=start)
         self.__dict__["path"] = path
 
     @cached_property
     def name(self, /) -> str:
-        return self.path["name"]
+        return self.path.name
 
     @property # type: ignore
     def url(self) -> str:
@@ -2306,7 +2324,7 @@ class AlistFileSystem:
         i = 0
         if ignore_case:
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
+                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iterdir(
                     dirname, 
@@ -2328,7 +2346,7 @@ class AlistFileSystem:
             elif typ == "dstar" and i + 1 == len(splitted_pats):
                 return self.iterdir(dirname, password, max_depth=-1, _check=False)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
+                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 return self.iterdir(
                     dirname, 
@@ -2347,14 +2365,14 @@ class AlistFileSystem:
                 if at_end:
                     if subpath.exists():
                         yield subpath
-                elif subpath.is_dir:
+                elif subpath.is_dir():
                     yield from glob_step_match(subpath, j)
             elif typ == "star":
                 if at_end:
                     yield from path.listdir_attr()
                 else:
                     for subpath in path.listdir_attr():
-                        if subpath.is_dir:
+                        if subpath.is_dir():
                             yield from glob_step_match(subpath, j)
             else:
                 for subpath in path.listdir_attr():
@@ -2367,10 +2385,10 @@ class AlistFileSystem:
                     if cref(subpath.name):
                         if at_end:
                             yield subpath
-                        elif subpath.is_dir:
+                        elif subpath.is_dir():
                             yield from glob_step_match(subpath, j)
         path = AlistPath(self, dirname, password)
-        if not path.is_dir:
+        if not path.is_dir():
             return iter(())
         return glob_step_match(path, i)
 
@@ -2632,6 +2650,7 @@ class AlistFileSystem:
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
+        start: int = 0, 
         password: str = "", 
         _check: bool = True, 
     ):
@@ -2644,6 +2663,7 @@ class AlistFileSystem:
             encoding=encoding, 
             errors=errors, 
             newline=newline, 
+            start=start, 
         )
 
     def remove(

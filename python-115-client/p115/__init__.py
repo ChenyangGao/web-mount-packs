@@ -29,7 +29,7 @@ from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEF
 from itertools import count
 from json import dumps, loads
 from os import fsdecode, fspath, fstat, makedirs, scandir, stat, stat_result, PathLike
-from os import path as os_path
+from os import path as ospath
 from posixpath import join as joinpath, splitext
 from re import compile as re_compile, escape as re_escape
 from sys import maxsize
@@ -57,12 +57,12 @@ import qrcode # type: ignore
 
 from .exception import AuthenticationError, BadRequest, LoginError
 from .util.cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
-from .util.file import get_filesize, RequestsFileReader, SupportsRead, SupportsWrite
+from .util.file import get_filesize, HTTPFileReader, RequestsFileReader, SupportsRead, SupportsWrite
 from .util.hash import file_digest
-from .util.iter import cut_iter, posix_glob_translate_iter
+from .util.iter import cut_iter
 from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits
 from .util.property import funcproperty
-from .util.text import cookies_str_to_dict, unicode_unescape
+from .util.text import cookies_str_to_dict, posix_glob_translate_iter
 
 
 IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str]
@@ -1096,7 +1096,7 @@ class P115Client:
                 file = file.buffer
             if not filename:
                 try:
-                    filename = os_path.basename(fsdecode(file.name))
+                    filename = ospath.basename(fsdecode(file.name))
                 except Exception:
                     filename = str(uuid4())
             if filesize < 0:
@@ -1105,7 +1105,7 @@ class P115Client:
                     file.seek(0)
         else:
             if not filename:
-                filename = os_path.basename(fsdecode(file))
+                filename = ospath.basename(fsdecode(file))
             if filesize < 0:
                 filesize = get_filesize(file)
             file = open(file, "rb", buffering=0)
@@ -1232,7 +1232,7 @@ class P115Client:
                 file = file.buffer
             if not filename:
                 try:
-                    filename = os_path.basename(fsdecode(file.name))
+                    filename = ospath.basename(fsdecode(file.name))
                 except Exception:
                     filename = str(uuid4())
             if not file_sha1:
@@ -1243,7 +1243,7 @@ class P115Client:
                 filesize = get_filesize(file)
         else:
             if not filename:
-                filename = os_path.basename(fsdecode(file))
+                filename = ospath.basename(fsdecode(file))
             if not file_sha1:
                 filesize, sha1obj = file_digest(open(file, "rb"), "sha1")
                 file_sha1 = sha1obj.hexdigest()
@@ -1683,32 +1683,18 @@ class P115Client:
         """
         return P115ZipFileSystem(self, id_or_pickcode)
 
-    def open(self, url: str | Callable[[], str], /, **request_kwargs) -> RequestsFileReader:
-        """
-        """
-        return RequestsFileReader(url, urlopen=self.session.get)
-
-    def read_bytes_range(
+    def open(
         self, 
-        url: str, 
+        url: str | Callable[[], str], 
+        start: int = 0, 
         /, 
-        bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None, 
         **request_kwargs, 
-    ) -> bytes:
+    ) -> RequestsFileReader:
         """
         """
-        if headers:
-            headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
-        else:
-            headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
-        with self.session.get(url, headers=headers, **request_kwargs) as resp:
-            if resp.status_code == 416:
-                return b""
-            resp.raise_for_status()
-            return resp.content
+        return RequestsFileReader(url, start=start, urlopen=self.session.get)
 
-    def read_range(
+    def read_bytes(
         self, 
         url: str, 
         /, 
@@ -1737,7 +1723,27 @@ class P115Client:
             bytes_range = f"{start}-{stop-1}"
         return self.read_bytes_range(url, bytes_range, headers=headers, **request_kwargs)
 
-    def read_size(
+    def read_bytes_range(
+        self, 
+        url: str, 
+        /, 
+        bytes_range: str = "0-", 
+        headers: Optional[Mapping] = None, 
+        **request_kwargs, 
+    ) -> bytes:
+        """
+        """
+        if headers:
+            headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
+        else:
+            headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
+        with self.session.get(url, headers=headers, **request_kwargs) as resp:
+            if resp.status_code == 416:
+                return b""
+            resp.raise_for_status()
+            return resp.content
+
+    def read_block(
         self, 
         url: str, 
         /, 
@@ -1746,11 +1752,20 @@ class P115Client:
         headers: Optional[Mapping] = None, 
         **request_kwargs, 
     ) -> bytes:
+        """
+        """
         if size <= 0:
             return b""
-        return self.read_range(url, offset, offset+size, headers=headers, **request_kwargs)
+        return self.read_bytes(url, offset, offset+size, headers=headers, **request_kwargs)
 
-    def push_extract(self, /, id_or_pickcode: int | str, secret: str = "") -> Optional[PushExtractProgress]:
+    def push_extract(
+        self, 
+        /, 
+        id_or_pickcode: int | str, 
+        secret: str = "", 
+    ) -> Optional[PushExtractProgress]:
+        """
+        """
         if isinstance(id_or_pickcode, int):
             pick_code = self.fs.attr(id_or_pickcode)["pick_code"]
         else:
@@ -1976,7 +1991,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.fs.listdir_path(self)
 
     def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
-        pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
+        pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -1993,7 +2008,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
-    ) -> IO:
+    ) -> HTTPFileReader | IO:
         return self.fs.open(
             self, 
             mode=mode, 
@@ -2026,44 +2041,35 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def parts(self, /) -> tuple[str, ...]:
         return ("/", *self.path[1:].split("/"))
 
-    def read_bytes(self, /) -> bytes:
-        return self.fs.read_bytes(self)
-
-    def read_bytes_range(
-        self, 
-        /, 
-        bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None, 
-    ) -> bytes:
-        return self.fs.read_bytes_range(self, bytes_range, headers=headers)
-
-    def read_range(
+    def read_bytes(
         self, 
         /, 
         start: int = 0, 
         stop: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
     ) -> bytes:
-        return self.fs.read_range(self, start, stop, headers=headers)
+        return self.fs.read_bytes(self, start, stop)
 
-    def read_size(
+    def read_bytes_range(self, /, bytes_range: str = "0-") -> bytes:
+        return self.fs.read_bytes_range(self, bytes_range)
+
+    def read_block(
         self, 
         /, 
         size: int = 0, 
         offset: int = 0, 
-        headers: Optional[Mapping] = None, 
     ) -> bytes:
         if size <= 0:
             return b""
-        return self.fs.read_size(self, size, offset, headers=headers)
+        return self.fs.read_block(self, size, offset)
 
     def read_text(
         self, 
         /, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
+        newline: Optional[str] = None, 
     ) -> str:
-        return self.fs.read_text(self, encoding=encoding, errors=errors)
+        return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
 
     def rglob(
         self, 
@@ -2262,7 +2268,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             mode: str = write_mode
             if mode:
                 mode += "b"
-            elif os_path.lexists(local_path):
+            elif ospath.lexists(local_path):
                 return
             else:
                 mode = "wb"
@@ -2294,14 +2300,14 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             if not no_root:
-                local_dir = os_path.join(local_dir, attr["name"])
+                local_dir = ospath.join(local_dir, attr["name"])
                 if local_dir:
                     makedirs(local_dir, exist_ok=True)
             for subattr in self.listdir_attr(attr["id"]):
                 if subattr["is_directory"]:
                     self.download_tree(
                         subattr["id"], 
-                        os_path.join(local_dir, subattr["name"]), 
+                        ospath.join(local_dir, subattr["name"]), 
                         no_root=True, 
                         write_mode=write_mode, 
                         download=download, 
@@ -2309,14 +2315,14 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                 else:
                     self.download(
                         subattr["id"], 
-                        os_path.join(local_dir, subattr["name"]), 
+                        ospath.join(local_dir, subattr["name"]), 
                         write_mode=write_mode, 
                         download=download, 
                     )
         else:
             self.download(
                 attr["id"], 
-                os_path.join(local_dir, attr["name"]), 
+                ospath.join(local_dir, attr["name"]), 
                 write_mode=write_mode, 
                 download=download, 
             )
@@ -2466,7 +2472,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         dir2 = ""
         if ignore_case:
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dir_), *(t[0] for t in splitted_pats))
+                pattern = joinpath(re_escape(dir_), "".join(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iter(
                     dirname, 
@@ -2496,7 +2502,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                 else:
                     return self.iter(dir_, max_depth=-1)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dir_), *(t[0] for t in splitted_pats[i:]))
+                pattern = joinpath(re_escape(dir_), "".join(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 if dirname_as_id:
                     return self.iter(
@@ -2656,7 +2662,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
         pid: Optional[int] = None, 
-    ) -> IO:
+    ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
         return self.client.open(self.as_path(id_or_path, pid).as_uri).wrap(
@@ -2671,43 +2677,32 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
         pid: Optional[int] = None, 
-    ):
-        return self.read_bytes_range(id_or_path, pid=pid)
+    ) -> bytes:
+        return self.client.read_bytes(self.get_url(id_or_path, pid), start, stop)
 
     def read_bytes_range(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None, 
         pid: Optional[int] = None, 
     ) -> bytes:
-        return self.client.read_bytes_range(self.get_url(id_or_path, pid), bytes_range, headers=headers)
+        return self.client.read_bytes_range(self.get_url(id_or_path, pid), bytes_range)
 
-    def read_range(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        start: int = 0, 
-        stop: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
-        pid: Optional[int] = None, 
-    ) -> bytes:
-        return self.client.read_range(self.get_url(id_or_path, pid), start, stop, headers=headers)
-
-    def read_size(
+    def read_block(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         size: int = 0, 
         offset: int = 0, 
-        headers: Optional[Mapping] = None, 
         pid: Optional[int] = None, 
     ) -> bytes:
         if size <= 0:
             return b""
-        return self.client.read_range(self.get_url(id_or_path, pid), size, offset, headers=headers)
+        return self.client.read_block(self.get_url(id_or_path, pid), size, offset)
 
     def read_text(
         self, 
@@ -2715,9 +2710,10 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
+        newline: Optional[str] = None, 
         pid: Optional[int] = None, 
     ):
-        return self.open(id_or_path, encoding=encoding, errors=errors, pid=pid).read()
+        return self.open(id_or_path, encoding=encoding, errors=errors, newline=newline, pid=pid).read()
 
     def rglob(
         self, 
@@ -3042,10 +3038,78 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 pass
             else:
                 self.client.upload_file(file, name, pid)
-                return self._attr_path(name, pid)
-        id = int(check_response(self.client.upload_file_sample)(
-            file, name, pid, filesize=0)["data"]["cid"])
+                return self._attr_path([name], pid)
+        resp = check_response(self.client.upload_file_sample)(file, name, pid, filesize=0)
+        id = int(resp["data"]["file_id"])
         return self._attr(id)
+
+    def _clear_cache(self, attr: dict, /):
+        pid_to_attrs = self.pid_to_attrs
+        id = attr["id"]
+        pid = attr["parent_id"]
+        if id:
+            try:
+                pid_to_attrs[pid].pop(id, None)
+            except:
+                pass
+        if attr["is_directory"]:
+            startswith = str.startswith
+            pop = self.path_to_id.pop
+            dq = deque((id,))
+            get, put = dq.popleft, dq.append
+            while dq:
+                cache = pid_to_attrs.pop(get(), None)
+                if cache:
+                    for subid, subattr in cache.items():
+                        pop(subattr["path"], None)
+                        if subattr["is_directory"]:
+                            put(subid)
+            dirname = attr["path"]
+            pop(dirname, None)
+            dirname += "/"
+            for k in tuple(k for k in self.path_to_id if startswith(k, dirname)):
+                pop(k, None)
+
+    def _update_cache_path(self, attr: dict, new_attr: dict, /):
+        pid_to_attrs = self.pid_to_attrs
+        id = attr["id"]
+        opid = attr["parent_id"]
+        npid = new_attr["parent_id"]
+        if id and opid != npid:
+            try:
+                pid_to_attrs[opid].pop(id, None)
+            except:
+                pass
+            try:
+                pid_to_attrs[npid][id] = new_attr
+            except:
+                pass
+        if attr["is_directory"]:
+            startswith = str.startswith
+            path_to_id = self.path_to_id
+            pop = path_to_id.pop
+            old_path = attr["path"]
+            new_path = new_attr["path"]
+            pop(old_path, None)
+            path_to_id[new_path] = id
+            old_path += "/"
+            new_path += "/"
+            len_old_path = len(old_path)
+            dq = deque((id,))
+            get, put = dq.popleft, dq.append
+            while dq:
+                cache = pid_to_attrs.pop(get(), None)
+                if cache:
+                    for subid, subattr in cache.items():
+                        subpath = subattr["path"]
+                        if startswith(subpath, old_path):
+                            new_subpath = subattr["path"] = new_path + subpath[len_old_path:]
+                            pop(subpath, None)
+                            path_to_id[new_subpath] = subid
+                        if subattr["is_directory"]:
+                            put(subid)
+            for k in tuple(k for k in self.path_to_id if startswith(k, old_path)):
+                pop(k, None)
 
     def iterdir(
         self, 
@@ -3133,9 +3197,12 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         path_to_id = self.path_to_id
         if fullpath in path_to_id:
             id = path_to_id[fullpath]
-            attr = self._attr(id)
-            if attr["path"] == fullpath:
-                return attr
+            try:
+                attr = self._attr(id)
+                if attr["path"] == fullpath:
+                    return attr
+            except FileNotFoundError:
+                pass
             path_to_id.pop(fullpath, None)
         attr = self._attr(pid)
         for name in patht[len(self.get_patht(pid)):]:
@@ -3172,7 +3239,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
-    ) -> Optional[tuple[int, str]]:
+    ) -> Optional[dict]:
         src_patht = self.get_patht(src_path, pid)
         dst_patht = self.get_patht(dst_path, pid)
         src_fullpath = joins(src_patht)
@@ -3238,22 +3305,22 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 read_bytes_range=lambda rng: self.read_bytes_range(src_id, rng), 
                 pid=dst_pid, 
             )["fileinfo"]["filename"]
-            dst_id = self.attr(dst_name, dst_pid)["id"]
+            return self.attr([dst_name], dst_pid)
         elif src_name == dst_name:
             self._copy(src_id, dst_pid)
-            dst_id = self.attr(src_name, dst_pid)["id"]
+            return self.attr([src_name], dst_pid)
         else:
             tempdir_id = int(self._mkdir(str(uuid4()))["cid"])
             try:
                 self._copy(src_id, tempdir_id)
-                dst_id = self.attr(src_name, tempdir_id)["id"]
+                dst_id = self.attr([src_name], tempdir_id)["id"]
                 resp = self._rename(dst_id, dst_name)
                 if resp["data"]:
                     dst_name = resp["data"][str(dst_id)]
                 self._move(dst_id, dst_pid)
             finally:
                 self._delete(tempdir_id)
-        return dst_id, dst_name
+            return self.attr(dst_id)
 
     def copytree(
         self, 
@@ -3261,7 +3328,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         src_path: IDOrPathType, 
         dst_dir: IDOrPathType = "", 
         pid: Optional[int] = None, 
-    ) -> tuple[int, str]:
+    ) -> dict:
         src_attr = self.attr(src_path, pid)
         dst_attr = self.attr(dst_dir, pid)
         src_id = src_attr["id"]
@@ -3276,11 +3343,10 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             )
         elif not dst_attr["is_directory"]:
             raise NotADirectoryError(errno.ENOTDIR, f"destination is not directory: {src_id!r} -> {dst_id!r}")
-        elif self.exists(src_name, dst_id):
+        elif self.exists([src_name], dst_id):
             raise FileExistsError(errno.EEXIST, f"destination already exists: {src_id!r} -> {dst_id!r}")
         self._copy(src_id, dst_id)
-        dst_attr = self.attr(src_name, dst_id)
-        return dst_attr["id"], src_name
+        return self.attr([src_name], dst_id)
 
     def _dir_get_ancestors(self, id: int, /) -> list[dict]:
         ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
@@ -3337,7 +3403,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         /, 
         pid: Optional[int] = None, 
         exist_ok: bool = False, 
-    ) -> tuple[int, str]:
+    ) -> dict:
         if isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
         else:
@@ -3345,42 +3411,39 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             parents = 0
         if pid is None:
             pid = self.cid
+        get_attr = self.attr
         if not patht:
             if parents:
                 ancestors = self.get_ancestors(pid)
                 idx = min(parents-1, len(ancestors))
-                attr = ancestors[-idx]
-                return attr["id"], attr["name"]
-            else:
-                return pid, self.attr(pid)["name"]
+                pid = cast(int, ancestors[-idx]["id"])
+            return get_attr(pid)
         elif patht == [""]:
-            return 0, ""
+            return get_attr(0)
         exists = False
-        get_attr = self._attr_path
         for name in patht:
             try:
-                attr = get_attr(name, pid)
+                attr = get_attr([name], pid)
             except FileNotFoundError:
                 exists = False
                 resp = self._mkdir(name, pid)
                 pid = int(resp["cid"])
-                name = unicode_unescape(resp["cname"])
+                attr = get_attr(pid)
             else:
                 exists = True
                 if not attr["is_directory"]:
                     raise NotADirectoryError(errno.ENOTDIR, f"{path!r} (in {pid!r}): there is a superior non-directory")
                 pid = attr["id"]
-                name = attr["name"]
         if not exist_ok and exists:
             raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
-        return cast(int, pid), name
+        return attr
 
     def mkdir(
         self, 
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: Optional[int] = None, 
-    ) -> tuple[int, str]:
+    ) -> dict:
         if isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
         else:
@@ -3397,7 +3460,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         get_attr = self._attr_path
         for i, name in enumerate(patht, 1):
             try:
-                attr = get_attr(name, pid)
+                attr = get_attr([name], pid)
             except FileNotFoundError:
                 break
             else:
@@ -3409,7 +3472,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         if i < len(patht):
             raise FileNotFoundError(errno.ENOENT, f"{path!r} (in {pid!r}) missing superior directory")
         resp = self._mkdir(name, pid)
-        return int(resp["cid"]), unicode_unescape(resp["cname"])
+        return self.attr(int(resp["cid"]))
 
     def move(
         self, 
@@ -3431,10 +3494,12 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_id!r} -> {dst_id!r}")
         if dst_attr["is_directory"]:
             name = src_attr["name"]
-            if self.exists(name, dst_id):
+            if self.exists([name], dst_id):
                 raise FileExistsError(errno.EEXIST, f"destination {name!r} (in {dst_id!r}) already exists")
             self._move(src_id, dst_id)
-            return self._attr(src_id)
+            new_attr = self.attr(src_id)
+            self._update_cache_path(src_attr, new_attr)
+            return new_attr
         raise FileExistsError(errno.EEXIST, f"destination {dst_id!r} already exists")
 
     def remove(
@@ -3443,36 +3508,56 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         /, 
         pid: Optional[int] = None, 
         recursive: bool = False, 
-    ):
+    ) -> dict:
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
+        clear_cache = self._clear_cache
         if attr["is_directory"]:
             if not recursive:
                 raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
             if id == 0:
-                for subattr in self.listdir_attr(id):
-                    self._delete(subattr["id"])
+                for subattr in self.listdir_attr(0):
+                    cid = subattr["id"]
+                    self._delete(cid)
+                    clear_cache(subattr)
+                return attr
         self._delete(id)
+        clear_cache(attr)
+        return attr
 
     def removedirs(
         self, 
         id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
-    ):
-        attr = self.attr(id_or_path, pid)
+    ) -> Optional[dict]:
+        try:
+            attr = self.attr(id_or_path, pid)
+        except FileNotFoundError:
+            return None
         if not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
-        del_id = 0
-        id = attr["id"]
-        while id:
-            files = self._files(id, limit=1)
+            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+        delid = 0
+        pid = attr["id"]
+        pattr = attr
+        get_files = self._files
+        while pid:
+            files = get_files(pid, limit=1)
             if files["count"] > 1:
                 break
-            del_id = id
-            id = int(files["path"][-1]["pid"])
-        if del_id != 0:
-            self._delete(del_id)
+            delid = pid
+            pid = int(files["path"][-1]["pid"])
+            pattr = {
+                "id": delid, 
+                "parent_id": pid, 
+                "is_directory": True, 
+                "path": "/" + joins([p["name"] for p in files["path"][1:]]), 
+            }
+        if delid == 0:
+            return None
+        self._delete(delid)
+        self._clear_cache(pattr)
+        return attr
 
     def rename(
         self, 
@@ -3501,7 +3586,10 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         dst_ext = splitext(dst_name)[1]
         def get_result(resp):
             if resp["data"]:
-                return self._attr(src_id)
+                new_attr = self._attr(src_id)
+                self._update_cache_path(src_attr, new_attr)
+                return new_attr
+            return None
         try:
             dst_attr = self.attr(dst_path, pid)
         except FileNotFoundError:
@@ -3534,10 +3622,14 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 pid=dst_pid, 
             )["fileinfo"]["filename"]
             self._delete(src_id)
-            return self.attr(name, dst_pid)
+            new_attr = self._attr_path([name], dst_pid)
+            self._update_cache_path(src_attr, new_attr)
+            return new_attr
         if src_name == dst_name:
             self._move(src_id, dst_pid)
-            return self._attr(src_id)
+            new_attr = self._attr(src_id)
+            self._update_cache_path(src_attr, new_attr)
+            return new_attr
         elif src_dirt == dst_dirt:
             return get_result(self._rename(src_id, dst_name))
         else:
@@ -3562,7 +3654,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     ) -> Optional[dict]:
         result = self.rename(src_path, dst_path, pid=pid)
         if result:
-            self.removedirs(self.attr(result[0])["parent_id"])
+            self.removedirs(result["parent_id"])
             return result
         return None
 
@@ -3582,7 +3674,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
-    ):
+    ) -> dict:
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
         if id == 0:
@@ -3592,14 +3684,15 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         elif self._files(id, limit=1)["count"]:
             raise OSError(errno.ENOTEMPTY, f"directory is not empty: {id_or_path!r} (in {pid!r})")
         self._delete(id)
-        return id
+        self._clear_cache(attr) 
+        return attr
 
     def rmtree(
         self, 
         id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
-    ):
+    ) -> dict:
         return self.remove(id_or_path, pid, recursive=True)
 
     def search(
@@ -3612,7 +3705,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         offset: int = 0, 
         as_path: bool = False, 
         **kwargs, 
-    ):
+    ) -> Iterator[P115Path]:
         assert page_size > 0
         payload = {
             "cid": self.get_id(id_or_path, pid), 
@@ -3686,36 +3779,36 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> dict:
         fio: SupportsRead[bytes]
-        dir_: str | Sequence[str] = ""
+        dirname: str | Sequence[str] = ""
         name: str = ""
         if not path or isinstance(path, int):
             pass
         elif isinstance(path, (str, PathLike)):
-            dir_, name = os_path.split(path)
+            dirname, name = ospath.split(path)
         else:
-            name, *dir_ = (p for p in path if p)
+            *dirname, name = (p for p in path if p)
         if hasattr(file, "read"):
             fio = cast(SupportsRead[bytes], file)
             if isinstance(fio, TextIOWrapper):
                 fio = fio.buffer
             if not name:
                 try:
-                    name = os_path.basename(file.name) # type: ignore
+                    name = ospath.basename(file.name) # type: ignore
                 except:
                     pass
         else:
             file = fsdecode(file)
             fio = open(file, "rb")
             if not name:
-                name = os_path.basename(file)
+                name = ospath.basename(file)
         if not name:
             raise ValueError(f"can't determine the upload path: {path!r} (in {pid!r})")
         if pid is None:
             pid = self.cid
-        if dir_:
-            pid = self.makedirs(dir_, pid=pid, exist_ok=True)[0]
+        if dirname:
+            pid = cast(int, self.makedirs(dirname, pid=pid, exist_ok=True)["id"])
         try:
-            attr = self.attr(name, pid)
+            attr = self._attr_path([name], pid)
         except FileNotFoundError:
             pass
         else:
@@ -3724,7 +3817,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             elif attr["is_directory"]:
                 raise IsADirectoryError(errno.EISDIR, f"{path!r} (in {pid!r}) is a directory")
             elif not overwrite_or_ignore:
-                return attr["id"]
+                return attr
             self._delete(attr["id"])
         return self._upload(fio, name, pid)
 
@@ -3736,29 +3829,30 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         pid: Optional[int] = None, 
         no_root: bool = False, 
         overwrite_or_ignore: Optional[bool] = None, 
-    ):
+    ) -> dict:
         try:
             attr = self.attr(path, pid)
         except FileNotFoundError:
             if isinstance(path, int):
                 raise ValueError(f"no such id: {path!r}")
-            pid = self.makedirs(path, pid, exist_ok=True)[0]
+            attr = self.makedirs(path, pid, exist_ok=True)
         else:
             if not attr["is_directory"]:
-                raise NotADirectoryError(errno.ENOTDIR, f"{path!r} (in {pid!r}) is not a directory")
-            pid = attr["id"]
+                raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+        pid = attr["id"]
         try:
             it = scandir(local_path or ".")
         except NotADirectoryError:
             return self.upload(
                 local_path, 
-                path, 
+                [ospath.basename(local_path)], 
                 pid=pid, 
                 overwrite_or_ignore=overwrite_or_ignore, 
             )
         else:
             if not no_root:
-                pid = self.makedirs(os_path.basename(local_path), pid, exist_ok=True)[0]
+                attr = self.makedirs(ospath.basename(local_path), pid, exist_ok=True)
+                pid = attr["parent_id"]
             for entry in it:
                 if entry.is_dir():
                     self.upload_tree(
@@ -3775,7 +3869,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                         pid=pid, 
                         overwrite_or_ignore=overwrite_or_ignore, 
                     )
-            return pid
+            return attr
 
     unlink = remove
 

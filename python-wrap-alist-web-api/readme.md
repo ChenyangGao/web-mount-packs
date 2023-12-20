@@ -1,5 +1,11 @@
 # Alist web API 的 Python 封装
 
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/python-alist)
+![PyPI - Version](https://img.shields.io/pypi/v/python-alist)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/python-alist)
+![PyPI - Format](https://img.shields.io/pypi/format/python-alist)
+![PyPI - Status](https://img.shields.io/pypi/status/python-alist)
+
 - [Alist Web API 官方文档](https://alist.nn.ci/guide/api/)
 
 ## 安装
@@ -10,9 +16,7 @@
 pip install -U python-alist
 ```
 
-## 使用实例
-
-实例只提供最简单的使用例子，也没有覆盖所有方法，具体建议自己看源代码阅读理解 😂。
+## 入门介绍
 
 ### 1. 就像在文件系统中操作
 

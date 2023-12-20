@@ -1,5 +1,11 @@
 # clouddrive web API 的 Python 封装
 
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/clouddrive)
+![PyPI - Version](https://img.shields.io/pypi/v/clouddrive)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/clouddrive)
+![PyPI - Format](https://img.shields.io/pypi/format/clouddrive)
+![PyPI - Status](https://img.shields.io/pypi/status/clouddrive)
+
 ## 安装
 
 通过 [pypi](https://pypi.org/project/clouddrive/)
@@ -8,9 +14,7 @@
 pip install -U clouddrive
 ```
 
-## 使用实例
-
-实例只提供最简单的使用例子，也没有覆盖所有方法，具体建议自己看源代码阅读理解 😂。
+## 入门介绍
 
 ### 1. 就像在文件系统中操作
 

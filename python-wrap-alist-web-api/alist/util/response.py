@@ -2,7 +2,10 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["get_filename", "get_length", "get_range", "get_header", "is_chunked", "is_range_request"]
+__all__ = [
+    "get_header", "get_filename", "get_content_length", "get_length", "get_total_length", "get_range", 
+    "is_chunked", "is_range_request", 
+]
 
 from mimetypes import guess_extension, guess_type
 from posixpath import basename
@@ -14,9 +17,13 @@ from urllib.parse import urlsplit, unquote
 CRE_CONTENT_RANGE = re_compile(r"bytes\s+(?:\*|(?P<begin>[0-9]+)-(?P<end>[0-9]+))/(?:(?P<size>[0-9]+)|\*)")
 
 
-def get_filename(response, /, default: str = "") -> str:
+def get_header(response, /, name: str) -> Optional[str]:
     get = response.headers.get
-    hdr_cd = get("Content-Disposition") or get("content-disposition")
+    return get(name.title()) or get(name.lower())
+
+
+def get_filename(response, /, default: str = "") -> str:
+    hdr_cd = get_header(response, "Content-Disposition")
     if hdr_cd and hdr_cd.startswith("attachment; filename="):
         return hdr_cd[21:]
     urlp = urlsplit(unquote(response.url))
@@ -24,8 +31,8 @@ def get_filename(response, /, default: str = "") -> str:
     if filename:
         if guess_type(filename)[0]:
             return filename
-        hdr_ct = get("Content-Type") or get("content-type")
-        if (idx := hdr_ct.find(";")) > -1:
+        hdr_ct = get_header(response, "Content-Type")
+        if hdr_ct and (idx := hdr_ct.find(";")) > -1:
             hdr_ct = hdr_ct[:idx]
         ext = hdr_ct and guess_extension(hdr_ct) or ""
         if ext and not filename.endswith(ext, 1):
@@ -33,20 +40,31 @@ def get_filename(response, /, default: str = "") -> str:
     return filename
 
 
+def get_content_length(response, /) -> Optional[int]:
+    length = get_header(response, "Content-Length")
+    if length:
+        return int(length)
+    return None
+
+
 def get_length(response, /) -> Optional[int]:
-    get = response.headers.get
-    hdr_cl = get("Content-Length") or get("content-length")
-    if hdr_cl:
-        return int(hdr_cl)
+    if (length := get_content_length(response)) is not None:
+        return length
     rng = get_range(response)
     if rng:
         return rng[1] - rng[0] + 1
     return None
 
 
+def get_total_length(response, /) -> Optional[int]:
+    rng = get_range(response)
+    if rng:
+        return rng[-1]
+    return get_content_length(response)
+
+
 def get_range(response, /) -> Optional[tuple[int, int, int]]:
-    get = response.headers.get
-    hdr_cr = get("Content-Range") or get("content-range")
+    hdr_cr = get_header(response, "Content-Range")
     if not hdr_cr:
         return None
     match = CRE_CONTENT_RANGE.fullmatch(hdr_cr)
@@ -69,19 +87,10 @@ def get_range(response, /) -> Optional[tuple[int, int, int]]:
     return None
 
 
-def get_header(response, /, name) -> Optional[str]:
-    get = response.headers.get
-    return get(name.title()) or get(name.lower())
-
-
 def is_chunked(response, /) -> bool:
-    get = response.headers.get
-    hdr_te = get("Transfer-Encoding") or get("transfer-encoding")
-    return hdr_te == "chunked"
+    return get_header(response, "Transfer-Encoding") == "chunked"
 
 
 def is_range_request(response, /) -> bool:
-    get = response.headers.get
-    hdr_te = get("Accept-Ranges") or get("accept-ranges")
-    return hdr_te == "bytes"
+    return get_header(response, "Accept-Ranges") == "bytes"
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
-PROJDIR=`dirname "$0"`
-PROJNAME=`basename ${PROJDIR}`
-CURDIR=`pwd`
-VERSION=`head -1 ${PROJDIR}/VERSION || echo latest`
+HELPDIR=$(dirname "$0")
+PROJDIR=$(dirname ${HELPDIR})
+PROJNAME=$(basename ${PROJDIR})
+CURDIR=$(pwd)
+VERSION=$(head -1 ${HELPDIR}/VERSION || echo latest)
 
 function createpack() {
     local file=$1/clouddrive-${PROJNAME}_${VERSION}.pyz

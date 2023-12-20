@@ -38,7 +38,7 @@ from .client import Client
 import CloudDrive_pb2 # type: ignore
 
 from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
-from .util.iter import posix_glob_translate_iter
+from .util.text import posix_glob_translate_iter
 from .util.urlopen import urlopen
 
 
@@ -219,13 +219,12 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.fs.exists(self.path, _check=False)
 
     def glob(self, /, pattern: str = "*", ignore_case: bool = False) -> Iterator[CloudDrivePath]:
-        dirname = self.path if self.is_dir else self.parent.path
+        dirname = self.path if self.is_dir() else self.parent.path
         return self.fs.glob(pattern, dirname, ignore_case=ignore_case, _check=False)
 
     def isdir(self, /) -> bool:
         return self.fs.isdir(self.path, _check=False)
 
-    @property
     def is_dir(self, /):
         try:
             return self["isDirectory"]
@@ -237,7 +236,6 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def isfile(self, /) -> bool:
         return self.fs.isfile(self.path, _check=False)
 
-    @property
     def is_file(self, /) -> bool:
         try:
             return not self["isDirectory"]
@@ -299,7 +297,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         )
 
     def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
-        pattern = joinpath("/", *(t[0] for t in posix_glob_translate_iter(path_pattern)))
+        pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -312,6 +310,10 @@ class CloudDrivePath(Mapping, PathLike[str]):
         dst_path = self.fs.move(self.path, dst_path, _check=False)
         return type(self)(self.fs, dst_path)
 
+    @cached_property
+    def name(self, /) -> str:
+        return basename(self.path)
+
     def open(
         self, 
         /, 
@@ -323,7 +325,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
     ):
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        if self.is_dir:
+        if self.is_dir():
             raise IsADirectoryError(errno.EISDIR, self.path)
         return CloudDriveFileReader(self).wrap(
             text_mode="b" not in mode, 
@@ -359,18 +361,32 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def parts(self, /) -> tuple[str, ...]:
         return ("/", *self.path[1:].split("/"))
 
-    def read_bytes(self, /):
-        return self.open("rb").read()
-
-    def read_bytes_range(self, /, bytes_range="0-", headers=None) -> bytes:
-        if headers:
-            headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
+    def read_bytes(self, /, start: int = 0, stop: Optional[int] = None) -> bytes:
+        length = None
+        if start < 0:
+            with urlopen(self.url) as resp:
+                length = cast(int, resp.length)
+            start += length
+        if start < 0:
+            start = 0
+        if stop is None:
+            bytes_range = f"{start}-"
         else:
-            headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
-        with urlopen(self.url, headers=headers) as resp:
+            if stop < 0:
+                if length is None:
+                    with urlopen(self.url) as resp:
+                        length = cast(int, resp.length)
+                stop += length
+            if stop <= 0 or start >= stop:
+                return b""
+            bytes_range = f"{start}-{stop-1}"
+        return self.read_bytes_range(bytes_range)
+
+    def read_bytes_range(self, /, bytes_range: str = "0-") -> bytes:
+        with urlopen(self.url, headers={"Range": f"bytes={bytes_range}"}) as resp:
             return resp.read()
 
-    def read_range(self, /, start=0, stop=None, headers=None) -> bytes:
+    def read_range(self, /, start=0, stop=None) -> bytes:
         length = None
         if start < 0:
             length = urlopen(self.url).length
@@ -387,15 +403,21 @@ class CloudDrivePath(Mapping, PathLike[str]):
             if stop <= 0 or start >= stop:
                 return b""
             bytes_range = f"{start}-{stop-1}"
-        return self.read_bytes_range(bytes_range, headers=headers)
+        return self.read_bytes_range(bytes_range)
+
+    def read_block(self, /, size: int = 0, offset: int = 0) -> bytes:
+        if size <= 0:
+            return b""
+        return self.read_bytes(offset, offset + size)
 
     def read_text(
         self, 
         /, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
-    ):
-        return self.open(encoding=encoding, errors=errors).read()
+        newline: Optional[str] = None, 
+    ) -> str:
+        return self.open(encoding=encoding, errors=errors, newline=newline).read()
 
     def remove(self, /, recursive: bool = False):
         self.fs.remove(self.path, recursive=recursive, _check=False)
@@ -419,7 +441,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return type(self)(self.fs, dst_path)
 
     def rglob(self, /, pattern: str = "", ignore_case: bool = False) -> Iterator[CloudDrivePath]:
-        dirname = self.path if self.is_dir else self.parent.path
+        dirname = self.path if self.is_dir() else self.parent.path
         return self.fs.rglob(pattern, dirname, ignore_case=ignore_case, _check=False)
 
     def rmdir(self, /):
@@ -502,7 +524,7 @@ class CloudDriveFileReader(HTTPFileReader):
 
     @cached_property
     def name(self, /) -> str:
-        return self.path["name"]
+        return self.path.name
 
 
 class CloudDriveFileSystem:
@@ -861,7 +883,7 @@ class CloudDriveFileSystem:
         i = 0
         if ignore_case:
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats))
+                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iterdir(
                     dirname, 
@@ -882,7 +904,7 @@ class CloudDriveFileSystem:
             elif typ == "dstar" and i + 1 == len(splitted_pats):
                 return self.iterdir(dirname, max_depth=-1, _check=False)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), *(t[0] for t in splitted_pats[i:]))
+                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 return self.iterdir(
                     dirname, 
@@ -900,14 +922,14 @@ class CloudDriveFileSystem:
                 if at_end:
                     if subpath.exists():
                         yield subpath
-                elif subpath.is_dir:
+                elif subpath.is_dir():
                     yield from glob_step_match(subpath, j)
             elif typ == "star":
                 if at_end:
                     yield from path.listdir_attr()
                 else:
                     for subpath in path.listdir_attr():
-                        if subpath.is_dir:
+                        if subpath.is_dir():
                             yield from glob_step_match(subpath, j)
             else:
                 for subpath in path.listdir_attr():
@@ -920,10 +942,10 @@ class CloudDriveFileSystem:
                     if cref(subpath.name):
                         if at_end:
                             yield subpath
-                        elif subpath.is_dir:
+                        elif subpath.is_dir():
                             yield from glob_step_match(subpath, j)
         path = CloudDrivePath(self, dirname)
-        if not path.is_dir:
+        if not path.is_dir():
             return iter(())
         return glob_step_match(path, i)
 
