@@ -68,8 +68,12 @@ def check_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-def normalize_name():
-    ...
+# TODO: 先提供这个函数，必要时使用
+def normalize_name(
+    s: str, 
+    transtab = {c: chr(c + 65248) for c in b'*?:/\\<>|"'}
+) -> str:
+    return s.translate(transtab).rstrip(" \r\n\v\t\f.")
 
 
 class CloudDriveClient(Client):
@@ -512,7 +516,6 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def remove(self, /, recursive: bool = False):
         self.fs.remove(self, recursive=recursive)
 
-    # TODO: 要获取最终的名字，因为 cd2 对改名有自己的额外处理
     def rename(
         self, 
         /, 
@@ -799,7 +802,7 @@ class CloudDriveFileSystem:
     @check_response
     def _rename(self, pair: tuple[str, str], /, *pairs: tuple[str, str]):
         if pairs:
-            return self.client.RenameFiles(CloudDrive_pb2.RenameFilesRequest(
+            x= self.client.RenameFiles(CloudDrive_pb2.RenameFilesRequest(
                 renameFiles=[
                     CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name)
                     for path, name in (pair, *pairs)
@@ -807,7 +810,9 @@ class CloudDriveFileSystem:
             ))
         else:
             path, name = pair
-            return self.client.RenameFile(CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name))
+            x= self.client.RenameFile(CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name))
+        print(x)
+        print(x)
 
     @check_response
     def _upload(self, path: str, file=None, /):
@@ -1527,7 +1532,6 @@ class CloudDriveFileSystem:
                 return
         self._delete(path)
 
-    # TODO: 需要进一步研究一下，如果最后是 storage 且空，也删除
     def removedirs(
         self, 
         /, 
@@ -1695,11 +1699,17 @@ class CloudDriveFileSystem:
             raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         elif dirname(path) == "/":
             raise PermissionError(errno.EPERM, f"remove a cloud/storage by `rmdir` is not allowed: {path!r}")
-        elif not self._attr(path).isDirectory:
+        attr = self._attr(path)
+        if not attr.isDirectory:
             raise NotADirectoryError(errno.ENOTDIR, path)
         elif not self.is_empty(path, _check=False):
             raise OSError(errno.ENOTEMPTY, f"directory is not empty: {path!r}")
-        self._delete(path)
+        if path == "/":
+            return
+        elif dirname(path) == "/":
+            self._delete_cloud(attr.name, attr.CloudAPI.userName)
+        else:
+            self._delete(path)
 
     def rmtree(
         self, 
