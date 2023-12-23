@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clouddrive"
-version = "0.0.9.5.2"
+version = "0.0.9.5.3"
 description = "Python wrapper for CloudDrive."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -30,6 +30,8 @@ python = "^3.10"
 grpcio = "*"
 grpcio-tools = "*"
 protobuf = "*"
+requests = "*"
+python-dateutil = "*"
 
 [tool.poetry.dev-dependencies]
 

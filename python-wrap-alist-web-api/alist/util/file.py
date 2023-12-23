@@ -121,24 +121,34 @@ class HTTPFileReader(RawIOBase):
     closed: bool
     urlopen: Callable
     headers: Mapping
+    seek_threshold: int
     _seekable: bool
 
     def __init__(
         self, 
-        url: str | Callable[[], str], 
         /, 
-        headers: Mapping = {}, 
+        url: str | Callable[[], str], 
+        headers: Optional[Mapping] = None, 
         start: int = 0, 
+        # NOTE: If the offset of the forward seek is not higher than this value, 
+        #       it will be directly read and discarded, default to 1 MB
+        seek_threshold: int = 1 << 20, 
         urlopen: Callable[..., HTTPResponse] = urlopen, 
     ):
-        headers = {**headers, "Accept-Encoding": "identity"}
-        if start >= 0:
-            headers["Range"] = f"bytes={start}-"
+        if headers:
+            headers = {**headers, "Accept-Encoding": "identity"}
         else:
+            headers = {"Accept-Encoding": "identity"}
+        if start > 0:
+            headers["Range"] = f"bytes={start}-"
+        elif start < 0:
             headers["Range"] = f"bytes={start}"
         response = urlopen(url() if callable(url) else url, headers=headers)
-        rng = get_range(response)
-        start = rng[0] if rng else 0
+        if start:
+            rng = get_range(response)
+            if not rng:
+                raise OSError(errno.ESPIPE, "non-seekable")
+            start = rng[0]
         self.__dict__.update(
             url = url, 
             response = response, 
@@ -148,6 +158,7 @@ class HTTPFileReader(RawIOBase):
             closed = False, 
             urlopen = urlopen, 
             headers = MappingProxyType(headers), 
+            seek_threshold = max(seek_threshold, 0), 
             _seekable = is_range_request(response), 
         )
 
@@ -295,10 +306,13 @@ class HTTPFileReader(RawIOBase):
                 headers={**self.headers, "Range": f"bytes={start}-"}
             ), 
             start=start, 
+            closed=False, 
         )
         return start
 
     def seek(self, pos: int, whence: int = 0, /) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
         if not self._seekable:
             raise OSError(errno.EINVAL, "not a seekable stream")
         if whence == 0:
@@ -307,7 +321,10 @@ class HTTPFileReader(RawIOBase):
             old_pos = self.tell()
             if old_pos == pos:
                 return pos
-            self.reconnect(pos)
+            if pos > old_pos and pos - old_pos <= self.seek_threshold:
+                bio_skip_bytes(self, pos - old_pos)
+            else:
+                self.reconnect(pos)
             return pos
         elif whence == 1:
             if pos == 0:
@@ -384,17 +401,24 @@ class RequestsFileReader(HTTPFileReader):
 
     def __init__(
         self, 
-        url: str | Callable[[], str], 
         /, 
-        headers: Mapping = {}, 
+        url: str | Callable[[], str], 
+        headers: Optional[Mapping] = None, 
         start: int = 0, 
+        seek_threshold: int = 1 << 20, 
         urlopen: Callable = Session().get, 
     ):
-        def urlopen_wrapper(url: str, headers: Mapping = headers):
+        def urlopen_wrapper(url: str, headers: Optional[Mapping] = headers):
             resp = urlopen(url, headers=headers, stream=True)
             resp.raise_for_status()
             return resp
-        super().__init__(url, headers=headers, start=start, urlopen=urlopen_wrapper)
+        super().__init__(
+            url, 
+            headers=headers, 
+            start=start, 
+            seek_threshold=seek_threshold, 
+            urlopen=urlopen_wrapper, 
+        )
 
     def _add_start(self, delta: int, /):
         pass

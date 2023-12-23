@@ -23,7 +23,7 @@ from collections.abc import (
 from concurrent.futures import Future
 from copy import deepcopy
 from datetime import datetime
-from functools import cached_property, update_wrapper
+from functools import cached_property, partial, update_wrapper
 from hashlib import md5, sha1
 from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
 from itertools import count
@@ -32,9 +32,8 @@ from os import fsdecode, fspath, fstat, makedirs, scandir, stat, stat_result, Pa
 from os import path as ospath
 from posixpath import join as joinpath, splitext
 from re import compile as re_compile, escape as re_escape
-from sys import maxsize
-from stat import S_IFDIR, S_IFREG
 from shutil import copyfileobj, SameFileError
+from stat import S_IFDIR, S_IFREG
 from threading import Condition, Thread
 from time import sleep, time
 from typing import (
@@ -55,13 +54,14 @@ import oss2 # type: ignore
 # NOTE: OR use `pyqrcode` instead
 import qrcode # type: ignore
 
-from .exception import AuthenticationError, BadRequest, LoginError
+from .exception import AuthenticationError, LoginError
 from .util.cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
 from .util.file import get_filesize, HTTPFileReader, RequestsFileReader, SupportsRead, SupportsWrite
 from .util.hash import file_digest
 from .util.iter import cut_iter
 from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits
 from .util.property import funcproperty
+from .util.response import get_content_length
 from .util.text import cookies_str_to_dict, posix_glob_translate_iter
 
 
@@ -329,6 +329,13 @@ class P115Client:
         return self.request(api, "POST", data=payload, parse=loads, **request_kwargs)
 
     ########## File System API ##########
+
+    def fs_space_summury(self, /, **request_kwargs) -> dict:
+        """获取数据报告
+        POST https://webapi.115.com/user/space_summury
+        """
+        api = "https://webapi.115.com/user/space_summury"
+        return self.request(api, "POST", parse=loads, **request_kwargs)
 
     def fs_batch_copy(self, /, payload: dict, **request_kwargs) -> dict:
         """复制文件或文件夹
@@ -1685,19 +1692,30 @@ class P115Client:
 
     def open(
         self, 
-        url: str | Callable[[], str], 
-        start: int = 0, 
         /, 
+        url: str | Callable[[], str], 
+        headers: Optional[Mapping] = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
         **request_kwargs, 
     ) -> RequestsFileReader:
         """
         """
-        return RequestsFileReader(url, start=start, urlopen=self.session.get)
+        urlopen = self.session.get
+        if request_kwargs:
+            urlopen = partial(urlopen, **request_kwargs)
+        return RequestsFileReader(
+            url, 
+            headers=headers, 
+            start=start, 
+            seek_threshold=seek_threshold, 
+            urlopen=urlopen, 
+        )
 
     def read_bytes(
         self, 
-        url: str, 
         /, 
+        url: str, 
         start: int = 0, 
         stop: Optional[int] = None, 
         headers: Optional[Mapping] = None, 
@@ -1707,7 +1725,11 @@ class P115Client:
         """
         length = None
         if start < 0:
-            length = int(self.session.head(url).headers["Content-Length"])
+            with self.session.get(url, stream=True, headers={"Accept-Encoding": "identity"}) as resp:
+                resp.raise_for_status()
+                length = get_content_length(resp)
+            if length is None:
+                raise OSError(errno.ESPIPE, "can't determine content length")
             start += length
         if start < 0:
             start = 0
@@ -1716,7 +1738,11 @@ class P115Client:
         else:
             if stop < 0:
                 if length is None:
-                    length = int(self.session.head(url).headers["Content-Length"])
+                    with self.session.get(url, stream=True, headers={"Accept-Encoding": "identity"}) as resp:
+                        resp.raise_for_status()
+                        length = get_content_length(resp)
+                if length is None:
+                    raise OSError(errno.ESPIPE, "can't determine content length")
                 stop += length
             if stop <= 0 or start >= stop:
                 return b""
@@ -1725,8 +1751,8 @@ class P115Client:
 
     def read_bytes_range(
         self, 
-        url: str, 
         /, 
+        url: str, 
         bytes_range: str = "0-", 
         headers: Optional[Mapping] = None, 
         **request_kwargs, 
@@ -1737,6 +1763,7 @@ class P115Client:
             headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
+        request_kwargs["stream"] = False
         with self.session.get(url, headers=headers, **request_kwargs) as resp:
             if resp.status_code == 416:
                 return b""
@@ -1745,8 +1772,8 @@ class P115Client:
 
     def read_block(
         self, 
-        url: str, 
         /, 
+        url: str, 
         size: int = 0, 
         offset: int = 0, 
         headers: Optional[Mapping] = None, 
@@ -1862,13 +1889,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def id(self, /) -> int:
         return self.fs.get_id(self.path)
 
-    def keys(self) -> KeysView:
+    def keys(self, /) -> KeysView:
         return self.__dict__.keys()
 
-    def values(self) -> ValuesView:
+    def values(self, /) -> ValuesView:
         return self.__dict__.values()
 
-    def items(self) -> ItemsView:
+    def items(self, /) -> ItemsView:
         return self.__dict__.items()
 
     @property
@@ -1914,7 +1941,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> Iterator[Self]:
         return self.fs.glob(
             pattern, 
-            self if self["is_directory"] else self.parent, 
+            self if self.is_dir() else self.parent, 
             ignore_case=ignore_case, 
         )
 
@@ -1967,7 +1994,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             onerror=onerror, 
         )
 
-    def join(self, *names: str):
+    def join(self, *names: str) -> Self:
         if not names:
             return self
         return type(self)(self.fs, joinpath(self.path, joins(names)))
@@ -1990,7 +2017,12 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def listdir_path(self, /) -> list[Self]:
         return self.fs.listdir_path(self)
 
-    def match(self, /, path_pattern: str, ignore_case: bool = False) -> bool:
+    def match(
+        self, 
+        /, 
+        path_pattern: str, 
+        ignore_case: bool = False, 
+    ) -> bool:
         pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
@@ -2008,6 +2040,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
+        headers: Optional[Mapping] = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
     ) -> HTTPFileReader | IO:
         return self.fs.open(
             self, 
@@ -2016,6 +2051,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             encoding=encoding, 
             errors=errors, 
             newline=newline, 
+            headers=headers, 
+            start=start, 
+            seek_threshold=seek_threshold, 
         )
 
     @cached_property
@@ -2079,7 +2117,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> Iterator[Self]:
         return self.fs.rglob(
             pattern, 
-            self if self["is_directory"] else self.parent, 
+            self if self.is_dir() else self.parent, 
             ignore_case=ignore_case, 
         )
 
@@ -2088,13 +2126,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return type(self)(self.fs, "/", id=0)
 
     def samefile(self, path: str | PathLike[str], /) -> bool:
-        if isinstance(path, type(self)):
-            try:
-                return self["id"] == path["id"]
-            except FileNotFoundError:
-                return False
-        path = fspath(path)
-        return path in ("", ".") or path.startswith("/") and self.path == normpath(path)
+        if type(self) is type(path):
+            return self == path
+        return path in ("", ".") or self.path == self.fs.abspath(path)
 
     def stat(self, /) -> stat_result:
         return self.fs.stat(self)
@@ -2174,21 +2208,21 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     path: str
     path_class: type[P115PathType]
 
+    def __contains__(self, id_or_path: IDOrPathType, /) -> bool:
+        return self.exists(id_or_path)
+
+    def __getitem__(self, id_or_path: IDOrPathType, /) -> P115PathType:
+        return self.as_path(id_or_path)
+
     def __iter__(self, /) -> Iterator[P115PathType]:
         return self.iter(max_depth=-1)
 
-    def __itruediv__(self, id_or_path: IDOrPathType, /):
+    def __itruediv__(self, id_or_path: IDOrPathType, /) -> Self:
         self.chdir(id_or_path)
         return self
 
-    @abstractmethod
-    def iterdir(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        pid: Optional[int] = None, 
-    ) -> Iterator[M]:
-        ...
+    def __len__(self, /) -> int:
+        return len(tuple(self.iterdir()))
 
     @abstractmethod
     def attr(
@@ -2208,6 +2242,15 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     ) -> str:
         ...
 
+    @abstractmethod
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> Iterator[M]:
+        ...
+
     def abspath(self, path: str | PathLike[str] = "", /) -> str:
         return self.get_path(path, self.cid)
 
@@ -2216,12 +2259,18 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
+        fetch_attr: bool = False, 
     ) -> P115PathType:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
-            return id_or_path
+            path = id_or_path
+            if fetch_attr:
+                path()
+            return path
         elif isinstance(id_or_path, int):
             return path_class(self, **self.attr(id_or_path))
+        if fetch_attr:
+            return path_class(self, **self.attr(id_or_path, pid))
         return path_class(self, self.get_path(id_or_path, pid))
 
     def chdir(
@@ -2250,6 +2299,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             raise NotADirectoryError(
                 errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
 
+    # TODO: 增加功能，返回一个 Future 对象，可以获取下载进度，可随时取消
     def download(
         self, 
         id_or_path: IDOrPathType, 
@@ -2284,6 +2334,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             with self.client.open(url) as fsrc:
                 copyfileobj(fsrc, file)
 
+    # TODO: 增加功能，返回一个 Future 对象，可以获取已完成和未完成的列表，每个任务的进度，可随时取消
     def download_tree(
         self, 
         id_or_path: IDOrPathType, 
@@ -2661,11 +2712,23 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
+        headers: Optional[Mapping] = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
         pid: Optional[int] = None, 
     ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        return self.client.open(self.as_path(id_or_path, pid).as_uri).wrap(
+        if isinstance(id_or_path, type(self).path_class):
+            path = id_or_path
+        else:
+            path = self.as_path(id_or_path, pid)
+        return self.client.open(
+            path.as_uri, 
+            headers=headers, 
+            start=start, 
+            seek_threshold=seek_threshold, 
+        ).wrap(
             text_mode="b" not in mode, 
             buffering=buffering, 
             encoding=encoding, 
@@ -2856,24 +2919,23 @@ class P115Path(P115PathBase):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
-    ) -> Optional[P115Path]:
-        result = self.fs.copy(self, dst_path, pid=pid, overwrite_or_ignore=overwrite_or_ignore)
-        if not result:
+    ) -> Optional[Self]:
+        attr = self.fs.copy(self, dst_path, pid=pid, overwrite_or_ignore=overwrite_or_ignore)
+        if attr is None:
             return None
-        id = result[0]
-        return type(self)(self.fs, self.fs.get_path(id), id=id)
+        return type(self)(self.fs, **attr)
 
     def copytree(
         self, 
         /, 
-        dst_path: IDOrPathType, 
+        dst_dir: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Self:
-        id, _ = self.fs.copytree(self, dst_path, pid=pid)
-        return type(self)(self.fs, self.fs.get_path(id), id=id)
+        attr = self.fs.copytree(self, dst_dir, pid=pid)
+        return type(self)(self.fs, **attr)
 
-    def mkdir(self, /, exist_ok=True):
-        self.fs.makedirs(self, exist_ok=exist_ok)
+    def mkdir(self, /, exist_ok: bool = True) -> Self:
+        self.__dict__.update(self.fs.makedirs(self, exist_ok=exist_ok))
         return self
 
     def move(
@@ -2882,13 +2944,12 @@ class P115Path(P115PathBase):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Self:
-        result = self.fs.move(self, dst_path, pid)
-        if not result:
+        attr = self.fs.move(self, dst_path, pid)
+        if attr is None:
             return self
-        id = result[0]
-        return type(self)(self.fs, self.fs.get_path(id), id=id)
+        return type(self)(self.fs, **attr)
 
-    def remove(self, /, recursive: bool = False):
+    def remove(self, /, recursive: bool = True) -> dict:
         return self.fs.remove(self, recursive=recursive)
 
     def rename(
@@ -2897,11 +2958,10 @@ class P115Path(P115PathBase):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Self:
-        result = self.fs.rename(self, dst_path, pid)
-        if not result:
+        attr = self.fs.rename(self, dst_path, pid)
+        if attr is None:
             return self
-        id = result[0]
-        return type(self)(self.fs, self.fs.get_path(id), id=id)
+        return type(self)(self.fs, **attr)
 
     def renames(
         self, 
@@ -2909,11 +2969,10 @@ class P115Path(P115PathBase):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Self:
-        result = self.fs.renames(self, dst_path, pid)
-        if not result:
+        attr = self.fs.renames(self, dst_path, pid)
+        if attr is None:
             return self
-        id = result[0]
-        return type(self)(self.fs, self.fs.get_path(id), id=id)
+        return type(self)(self.fs, **attr)
 
     def replace(
         self, 
@@ -2921,39 +2980,44 @@ class P115Path(P115PathBase):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
     ) -> Self:
-        result = self.fs.replace(self, dst_path, pid)
-        if not result:
+        attr = self.fs.replace(self, dst_path, pid)
+        if attr is None:
             return self
-        id = result[0]
-        return type(self)(self.fs, self.fs.get_path(id), id=id)
+        return type(self)(self.fs, **attr)
 
-    def rmdir(self, /):
+    def rmdir(self, /) -> dict:
         return self.fs.rmdir(self)
 
     def touch(self, /) -> Self:
-        self.fs.touch(self)
+        self.__dict__.update(self.fs.touch(self))
         return self
 
     unlink = remove
 
-    def write_bytes(self, data: bytes | bytearray = b"", /):
-        return self.fs.write_bytes(self, data=data)
+    def write_bytes(
+        self, 
+        /, 
+        data: bytes | bytearray | memoryview | SupportsRead[bytes] = b"", 
+    ) -> Self:
+        self.__dict__.update(self.fs.write_bytes(self, data))
+        return self
 
     def write_text(
         self, 
-        text: str = "", 
         /, 
+        text: str = "", 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
-    ):
-        return self.fs.write_text(
+    ) -> Self:
+        self.__dict__.update(self.fs.write_text(
             self, 
-            text=text, 
+            text, 
             encoding=encoding, 
             errors=errors, 
             newline=newline, 
-        )
+        ))
+        return self
 
 
 class P115FileSystem(P115FileSystemBase[dict, P115Path]):
@@ -2976,6 +3040,12 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             pid_to_attrs = {}, 
         )
 
+    def __delitem__(self, id_or_path: IDOrPathType, /):
+        self.rmtree(id_or_path)
+
+    def __len__(self, /) -> int:
+        return self.get_directory_capacity(self.cid)
+
     def __repr__(self, /) -> str:
         cls = type(self)
         module = cls.__module__
@@ -2986,6 +3056,24 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
+
+    def __setitem__(
+        self, 
+        id_or_path: IDOrPathType, 
+        file: None | str | bytes | bytearray | memoryview | PathLike = None, 
+        /, 
+    ):
+        if file is None:
+            return self.touch(id_or_path)
+        elif isinstance(file, PathLike):
+            if ospath.isdir(file):
+                return self.upload_tree(file, id_or_path, no_root=True, overwrite_or_ignore=True)
+            else:
+                 return self.upload(file, id_or_path, overwrite_or_ignore=True)
+        elif isinstance(file, str):
+            return self.write_text(id_or_path, file)
+        else:
+            return self.write_bytes(id_or_path, file)
 
     @check_response
     def _copy(self, id: int, pid: int = 0, /) -> dict:
@@ -3029,6 +3117,10 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     @check_response
     def _search(self, payload: dict, /) -> dict:
         return self.client.fs_search(payload)
+
+    @check_response
+    def space_summury(self, /) -> dict:
+        return self.client.fs_space_summury()
 
     def _upload(self, file, name, pid: int = 0) -> dict:
         if not hasattr(file, "getbuffer") or len(file.getbuffer()) > 0:
@@ -3368,6 +3460,14 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         ls.append({"name": attr["name"], "id": attr["id"], "parent_id": attr["parent_id"], "is_directory": attr["is_directory"]})
         return ls
 
+    def get_directory_capacity(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> int:
+        return self._files(self.get_id(id_or_path, pid), limit=1)["count"]
+
     def get_url(
         self, 
         id_or_path: IDOrPathType, 
@@ -3394,7 +3494,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             except FileNotFoundError:
                 return True
         if attr["is_directory"]:
-            return self._files(attr["id"], limit=1)["count"] > 0
+            return self.get_directory_capacity(attr["id"]) > 0
         return attr["size"] == 0
 
     def makedirs(
@@ -3502,6 +3602,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             return new_attr
         raise FileExistsError(errno.EEXIST, f"destination {dst_id!r} already exists")
 
+    # TODO: 由于 115 网盘不支持删除里面有超过 5 万个文件等文件夹，因此需要增加参数，支持在失败后，拆分任务，返回一个 Future 对象，可以获取已完成和未完成，并且可以随时取消
     def remove(
         self, 
         id_or_path: IDOrPathType, 
@@ -3603,7 +3704,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             if replace:
                 if src_attr["is_directory"]:
                     if dst_attr["is_directory"]:
-                        if self._files(dst_attr["id"], limit=1)["count"]:
+                        if self.get_directory_capacity(dst_attr["id"]):
                             raise OSError(errno.ENOTEMPTY, f"source is directory, but destination is non-empty directory: {src_fullpath!r} -> {dst_fullpath!r}")
                     else:
                         raise NotADirectoryError(errno.ENOTDIR, f"source is directory, but destination is not a directory: {src_fullpath!r} -> {dst_fullpath!r}")
@@ -3770,6 +3871,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 raise ValueError(f"no such id: {id_or_path!r}")
             return self.upload(BytesIO(), id_or_path, pid=pid)
 
+    # TODO: 增加功能，返回一个 Future 对象，可以获取上传进度，可随时取消
     def upload(
         self, 
         /, 
@@ -3788,9 +3890,10 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         else:
             *dirname, name = (p for p in path if p)
         if hasattr(file, "read"):
-            fio = cast(SupportsRead[bytes], file)
-            if isinstance(fio, TextIOWrapper):
-                fio = fio.buffer
+            if isinstance(file, TextIOWrapper):
+                fio = file.buffer
+            else:
+                fio = cast(SupportsRead[bytes], file)
             if not name:
                 try:
                     name = ospath.basename(file.name) # type: ignore
@@ -3821,6 +3924,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             self._delete(attr["id"])
         return self._upload(fio, name, pid)
 
+    # TODO: 为了提升速度，之后会支持多线程上传，以及直接上传不做检查
+    # TODO: 增加功能，可以多线程上传或异步上传，返回 Future 对象，可以获取每个上传任务的进度，并且可以随时取消
     def upload_tree(
         self, 
         /, 
@@ -3877,13 +3982,11 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        data: bytes | bytearray | BytesIO = b"", 
+        data: bytes | bytearray | memoryview | SupportsRead[bytes] = b"", 
         pid: Optional[int] = None, 
     ) -> dict:
-        if not isinstance(data, BytesIO):
+        if isinstance(data, (bytes, bytearray, memoryview)):
             data = BytesIO(data)
-        else:
-            data.seek(0)
         return self.upload(data, id_or_path, pid=pid, overwrite_or_ignore=True)
 
     def write_text(
@@ -3898,8 +4001,12 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     ) -> dict:
         bio = BytesIO()
         if text:
+            if encoding is None:
+                encoding = "utf-8"
             tio = TextIOWrapper(bio, encoding=encoding, errors=errors, newline=newline)
             tio.write(text)
+            tio.flush()
+            bio.seek(0)
         return self.write_bytes(id_or_path, bio, pid=pid)
 
 

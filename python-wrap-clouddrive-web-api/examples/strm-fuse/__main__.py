@@ -65,6 +65,7 @@ if __name__ == "__main__":
     parser.add_argument("--strm-file", help="""\
 接受一个配置文件路径，把罗列的文件显示为带 .strm 后缀的文件，打开后是链接。
 优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
+    parser.add_argument("-m", "--max-read-threads", type=int, default=1, help="单个文件的最大读取线程数，如果小于 0 就是无限，默认值 1")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     parser.add_argument("-d", "--debug", action="store_true", help="调试模式，输出更多信息")
     parser.add_argument("-l", "--log-level", default=999, help="指定日志级别，可以是数字或名称，不传此参数则不输出日志")
@@ -87,19 +88,21 @@ if __name__ == "__main__":
 
 import logging
 
-from errno import ENOENT
+from errno import ENOENT, EIO
 from itertools import count
 from mimetypes import guess_type
 from posixpath import basename, join as joinpath
 from sys import maxsize
 from stat import S_IFDIR, S_IFREG
-from time import time
-from typing import cast, BinaryIO, Callable, MutableMapping, Optional
+# from time import time
+from typing import cast, Callable, MutableMapping, Optional
+from weakref import WeakValueDictionary
 
 try:
     # pip install clouddrive
     from clouddrive import CloudDriveFileSystem
     from clouddrive.util.ignore import read_str, read_file, parse
+    from clouddrive.util.file import HTTPFileReader
     # pip install types-cachetools
     from cachetools import cached, LRUCache, TTLCache
     # pip install types-python-dateutil
@@ -142,6 +145,7 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
         cache: int | MutableMapping = 0, 
         predicate: Optional[Callable] = None, 
         strm_predicate: Optional[Callable] = None, 
+        max_read_threads: int = 1, 
     ):
         self.fs = CloudDriveFileSystem.login(origin, username, password)
         if isinstance(cache, int):
@@ -155,8 +159,11 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
         self.cache: MutableMapping = cache
         self.predicate = predicate
         self.strm_predicate = strm_predicate
-        self.next_fh: Callable[[], int] = count(1).__next__
-        self.fh_to_file: dict[int, BinaryIO] = {}
+        self.max_read_threads = max_read_threads
+        self._next_fh: Callable[[], int] = count(1).__next__
+        self._fh_to_file: MutableMapping[int, HTTPFileReader] = TTLCache(maxsize, ttl=60)
+        self._path_to_file: WeakValueDictionary[tuple[int, str], HTTPFileReader] = WeakValueDictionary()
+        self._file_to_release: MutableMapping[HTTPFileReader, None] = TTLCache(maxsize, ttl=1)
 
     def __del__(self, /):
         fh_to_file = self.fh_to_file
@@ -190,7 +197,7 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
             result["_url"] = url
         return result
 
-    def getattr(self, path: str, fh: int) -> dict:
+    def getattr(self, path: str, fh: int = 0, /) -> dict:
         if basename(path).startswith("."):
             raise FuseOSError(ENOENT)
         try:
@@ -210,34 +217,61 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
         else:
             return self._cache(pathobj, fullpath, as_strm=as_strm)
 
-    def open(self, path: str, flags: int) -> int:
+    def _open(self, path: str, start: int = 0, /) -> HTTPFileReader:
+        file_size = self.getattr(path)["st_size"]
         try:
-            if self.cache[path]["_as_strm"]:
+            file = cast(HTTPFileReader, self.fs.as_path(path).open("rb", start=start))
+        except:
+            logging.exception(f"can't open file: {path!r}")
+            raise
+        if file.length != file_size:
+            message = f"{path!r} incorrect file size: {file.length} != {file_size}"
+            logging.error(message)
+            raise OSError(EIO, message)
+        return file
+
+    def open(self, path: str, flags: int, /) -> int:
+        try:
+            if self.getattr(path)["_as_strm"]:
                 return 0
         except:
             logging.exception(f"can open file: {path!r}")
             return 0
-        fh = self.next_fh()
-        self.fh_to_file[fh] = self.fs.as_path(path).open("rb")
+        threads = self.max_read_threads
+        fh = self._next_fh()
+        if threads <= 0:
+            file = self._open(path)
+        else:
+            try:
+                file = self._path_to_file[(fh % threads, path)]
+            except KeyError:
+                file = self._path_to_file[(fh % threads, path)] = self._open(path)
+        self._fh_to_file[fh] = file
         return fh
 
-    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
+    def read(self, path: str, size: int, offset: int, fh: int = 0, /) -> bytes:
         if fh == 0:
-            attr = self.cache[path]
+            attr = self.getattr(path)
             if attr["_as_strm"]:
                 return attr["_url"][offset:offset+size]
-        file = self.fh_to_file[fh]
-        file.seek(offset)
-        return file.read(size)
+        try:
+            file = self._fh_to_file[fh] = self._fh_to_file[fh]
+            file.seek(offset)
+            return file.read(size)
+        except (KeyError, OSError):
+            file = self._fh_to_file[fh] = self._open(path, offset)
+            if self.max_read_threads > 0:
+                self._path_to_file[(fh % self.max_read_threads, path)] = file
+            return file.read(size)
 
     @cached(TTLCache(64, ttl=10), key=lambda self, path, fh: path)
-    def readdir(self, path: str, fh: int) -> list[str]:
+    def readdir(self, path: str, fh: int = 0) -> list[str]:
         predicate = self.predicate
         strm_predicate = self.strm_predicate
         ls = [".", ".."]
         add = ls.append
         do_cache = self._cache
-        for pathobj in self.fs.listdir_attr(path):
+        for pathobj in self.fs.listdir_path(path):
             is_dir = pathobj.is_dir()
             name = pathobj.name
             if name.startswith("."):
@@ -254,9 +288,12 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
             add(name)
         return ls
 
-    def release(self, path: str, fh: int):
+    def release(self, path: str, fh: int = 0, /):
         if fh:
-            self.fh_to_file.pop(fh).close()
+            if self.max_read_threads > 0:
+                self._file_to_release[self._fh_to_file.pop(fh)] = None
+            else:
+                self._fh_to_file.pop(fh).close()
 
 
 if __name__ == "__main__":
@@ -309,6 +346,7 @@ if __name__ == "__main__":
             cache=args.cache, 
             predicate=predicate, 
             strm_predicate=strm_predicate, 
+            max_read_threads=args.max_read_threads, 
         ),
         args.mount_point, 
         ro=True, 
