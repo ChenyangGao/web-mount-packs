@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.3.2"
+version = "0.0.3.2.2"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,6 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
+aiohttp = "*"
 cachetools = "*"
 ecdsa = "*"
 lz4 = "*"

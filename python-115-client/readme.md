@@ -614,10 +614,10 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 
 #### 1. 获取当前目录下所有 .mkv 文件的 url
 
-**第 1 种方法，使用** <kbd>iterdir</kbd>，返回 <kbd>P115Path</kbd> 对象的迭代器
+**第 1 种方法，使用** <kbd>iter</kbd>，返回 <kbd>P115Path</kbd> 对象的迭代器
 
 ```python
->>> for path in fs.iterdir(max_depth=-1):
+>>> for path in fs.iter(max_depth=-1):
 >>>     if path.name.endswith(".mkv"):
 >>>         # 获取下载链接（要么是直链，不然就是 alist 的下载链接）
 >>>         print(path.url)

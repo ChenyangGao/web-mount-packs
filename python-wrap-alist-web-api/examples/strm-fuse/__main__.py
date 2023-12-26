@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -66,6 +66,7 @@ if __name__ == "__main__":
 接受一个配置文件路径，把罗列的文件显示为带 .strm 后缀的文件，打开后是链接。
 优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
     parser.add_argument("-m", "--max-read-threads", type=int, default=1, help="单个文件的最大读取线程数，如果小于 0 就是无限，默认值 1")
+    parser.add_argument("-z", "--zipfile-as-dir", action="store_true", help="为 .zip 文件生成一个同名 + .d 后缀的（虚拟）文件夹")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     parser.add_argument("-d", "--debug", action="store_true", help="调试模式，输出更多信息")
     parser.add_argument("-l", "--log-level", default=999, help="指定日志级别，可以是数字或名称，不传此参数则不输出日志")
@@ -88,15 +89,17 @@ if __name__ == "__main__":
 
 import logging
 
+from datetime import datetime
 from errno import ENOENT, EIO
 from itertools import count
 from mimetypes import guess_type
-from posixpath import basename, join as joinpath
+from posixpath import basename, dirname, join as joinpath
 from sys import maxsize
 from stat import S_IFDIR, S_IFREG
 from time import time
 from typing import cast, Callable, MutableMapping, Optional
-from weakref import WeakValueDictionary
+from weakref import WeakKeyDictionary, WeakValueDictionary
+from zipfile import ZipFile, Path as ZipPath, BadZipFile
 
 try:
     # pip install python-alist
@@ -146,6 +149,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         predicate: Optional[Callable] = None, 
         strm_predicate: Optional[Callable] = None, 
         max_read_threads: int = 1, 
+        zipfile_as_dir: bool = False, 
     ):
         self.fs = AlistFileSystem.login(origin, username, password)
         if isinstance(cache, int):
@@ -160,20 +164,29 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         self.predicate = predicate
         self.strm_predicate = strm_predicate
         self.max_read_threads = max_read_threads
+        self.zipfile_as_dir = zipfile_as_dir
         self._next_fh: Callable[[], int] = count(1).__next__
         self._fh_to_file: MutableMapping[int, HTTPFileReader] = TTLCache(maxsize, ttl=60)
+        self._fh_to_zdir: MutableMapping[int, ZipPath] = {}
         self._path_to_file: WeakValueDictionary[tuple[int, str], HTTPFileReader] = WeakValueDictionary()
+        self._path_to_zfile: WeakValueDictionary[str, ZipFile] = WeakValueDictionary()
+        self._file_to_cache = WeakKeyDictionary()
         self._file_to_release: MutableMapping[HTTPFileReader, None] = TTLCache(maxsize, ttl=1)
 
     def __del__(self, /):
-        fh_to_file = self._fh_to_file
-        popitem = fh_to_file.popitem
-        while fh_to_file:
-            try:
-                fh, file = popitem()
-                file.close()
-            except BaseException as e:
-                logging.exception(f"can't close file: {file!r}")
+        for cache in self._fh_to_file:
+            popitem = cache.popitem
+            while cache:
+                try:
+                    _, file = popitem()
+                    file.close()
+                except BaseException as e:
+                    logging.exception(f"can't close file: {file!r}")
+        self._fh_to_zdir.clear()
+        self._path_to_file.clear()
+        self._path_to_zfile.clear()
+        self._file_to_cache.clear()
+        self._file_to_release.clear()
 
     def _cache(self, pathobj, path: str, /, as_strm: bool = False) -> dict:
         is_dir = pathobj.is_dir()
@@ -185,7 +198,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         result = self.cache[path] = dict(
             st_uid=0, 
             st_gid=0, 
-            st_mode=(S_IFDIR if is_dir else S_IFREG) | 0o444, 
+            st_mode=(S_IFDIR if is_dir else S_IFREG) | 0o555, 
             st_nlink=1, 
             st_size=size, 
             st_ctime=parse_as_ts(pathobj.get("created")), 
@@ -230,53 +243,141 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             raise OSError(EIO, message)
         return file
 
-    def open(self, path: str, flags: int, /) -> int:
+    # TODO: 需要优化，增强协同效率，不要加锁
+    def _open_zip(self, path: str, /) -> ZipFile:
         try:
-            if self.getattr(path)["_as_strm"]:
+            return self._path_to_zfile[path]
+        except KeyError:
+            zfile = self._path_to_zfile[path] = ZipFile(self.fs.open(path, "rb"))
+            for zinfo in zfile.filelist:
+                dt = datetime(*zinfo.date_time).timestamp()
+                self.cache[path + ".d/" + zinfo.filename.rstrip("/")] = dict(
+                    st_uid=0, 
+                    st_gid=0, 
+                    st_mode=(S_IFDIR if zinfo.is_dir() else S_IFREG) | 0o555, 
+                    st_nlink=1, 
+                    st_size=zinfo.file_size, 
+                    st_ctime=dt, 
+                    st_mtime=dt, 
+                    st_atime=time(), 
+                    _is_zip=True, 
+                    _zip_path=path, 
+                )
+            return zfile
+
+    def open(self, path: str, flags: int, fh: int = 0, /) -> int:
+        try:
+            attr = self.getattr(path)
+            if attr.get("_as_strm", False):
                 return 0
         except:
             logging.exception(f"can open file: {path!r}")
             return 0
-        threads = self.max_read_threads
-        fh = self._next_fh()
-        if threads <= 0:
-            file = self._open(path)
-        else:
+        if not fh:
+            fh = self._next_fh()
+        if attr.get("_is_zip", False):
+            zip_path = attr["_zip_path"]
             try:
-                file = self._path_to_file[(fh % threads, path)]
+                file = self._path_to_file[(0, path)]
             except KeyError:
-                file = self._path_to_file[(fh % threads, path)] = self._open(path)
+                zfile = self._open_zip(zip_path)
+                fp = zfile.fp
+                if fp is None or fp.closed:
+                    zfile.close()
+                    self._path_to_zfile.pop(zip_path, None)
+                    zfile = self._open_zip(zip_path)
+                try:
+                    file = self._path_to_file[(0, path)] = zfile.open(path.removeprefix(zip_path + ".d/"))
+                except BadZipFile:
+                    zfile.fp and zfile.fp.close()
+                    zfile.close()
+                    self._path_to_zfile.pop(zip_path, None)
+                    zfile = self._open_zip(zip_path)
+                    file = self._path_to_file[(0, path)] = zfile.open(path.removeprefix(zip_path + ".d/"))
+                self._file_to_cache[file] = file.read(2048)
+        else:
+            threads = self.max_read_threads
+            if threads <= 0:
+                file = self._open(path)
+                self._file_to_cache[file] = file.read(2048)
+            else:
+                try:
+                    file = self._path_to_file[(fh % threads, path)]
+                except KeyError:
+                    file = self._path_to_file[(fh % threads, path)] = self._open(path)
+                    self._file_to_cache[file] = file.read(2048)
         self._fh_to_file[fh] = file
+        return fh
+
+    def opendir(self, path: str, /) -> int:
+        if not self.zipfile_as_dir:
+            return 0
+        attr = self.getattr(path)
+        if not attr.get("_is_zip", False):
+            return 0
+        zip_path = attr["_zip_path"]
+        zfile = self._open_zip(zip_path)
+        fh = self._next_fh()
+        if path == zip_path + ".d":
+            self._fh_to_zdir[fh] = ZipPath(zfile)
+        else:
+            self._fh_to_zdir[fh] = ZipPath(zfile).joinpath(path.removeprefix(zip_path + ".d/"))
         return fh
 
     def read(self, path: str, size: int, offset: int, fh: int = 0, /) -> bytes:
         if fh == 0:
             attr = self.getattr(path)
-            if attr["_as_strm"]:
+            if attr.get("_as_strm", False):
                 return attr["_url"][offset:offset+size]
         try:
             file = self._fh_to_file[fh] = self._fh_to_file[fh]
-            file.seek(offset)
-            return file.read(size)
         except (KeyError, OSError):
-            file = self._fh_to_file[fh] = self._open(path, offset)
-            if self.max_read_threads > 0:
-                self._path_to_file[(fh % self.max_read_threads, path)] = file
-            return file.read(size)
+            file = self.open(path, fh=fh)
+        if 0 <= offset < 2048:
+            if offset + size <= 2048:
+                return self._file_to_cache[file][offset:offset+size]
+            else:
+                file.seek(2048)
+                return self._file_to_cache[file][offset:] + file.read(offset+size-2048)
+        file.seek(offset)
+        return file.read(size)
 
     @cached(TTLCache(64, ttl=10), key=lambda self, path, fh, /: path)
     def readdir(self, path: str, fh: int = 0, /) -> list[str]:
+        ls = [".", ".."]
+        if fh:
+            try:
+                zdir = self._fh_to_zdir[fh]
+            except KeyError:
+                pass
+            else:
+                ls.extend(p.name for p in zdir.iterdir())
+            return ls
         predicate = self.predicate
         strm_predicate = self.strm_predicate
-        ls = [".", ".."]
         add = ls.append
         do_cache = self._cache
-        for pathobj in self.fs.scandir(path):
+        for pathobj in self.fs.listdir_path(path):
             is_dir = pathobj.is_dir()
             name = pathobj.name
             if name.startswith("."):
                 continue
             subpath = joinpath(path, name)
+            if self.zipfile_as_dir and not is_dir and name.endswith(".zip"):
+                add(name + ".d")
+                self.cache[subpath + ".d"] = dict(
+                    st_uid=0, 
+                    st_gid=0, 
+                    st_mode=S_IFDIR | 0o555, 
+                    st_nlink=1, 
+                    st_size=0, 
+                    st_ctime=parse_as_ts(pathobj.get("created")), 
+                    st_mtime=parse_as_ts(pathobj.get("modified")), 
+                    st_atime=time(), 
+                    _is_zip=True, 
+                    _zip_path=subpath, 
+                )
+                self._path_to_zfile[subpath + ".d"] = object
             as_strm = False
             if not is_dir and strm_predicate and strm_predicate(name):
                 name += ".strm"
@@ -293,7 +394,11 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             if self.max_read_threads > 0:
                 self._file_to_release[self._fh_to_file.pop(fh)] = None
             else:
-                self._fh_to_file.pop(fh).close()
+                self._fh_to_file.pop(fh)
+
+    def releasedir(self, path: str, fh: int = 0, /):
+        if fh:
+            self._fh_to_zdir.pop(fh, None)
 
 
 if __name__ == "__main__":
@@ -347,6 +452,7 @@ if __name__ == "__main__":
             predicate=predicate, 
             strm_predicate=strm_predicate, 
             max_read_threads=args.max_read_threads, 
+            zipfile_as_dir=args.zipfile_as_dir, 
         ),
         args.mount_point, 
         ro=True, 

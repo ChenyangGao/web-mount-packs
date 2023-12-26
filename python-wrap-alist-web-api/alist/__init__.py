@@ -149,7 +149,7 @@ class AlistClient:
         api: str, 
         /, 
         method: str = "POST", 
-        parse: Callable | bool = True, 
+        parse: bool | Callable = False, 
         **request_kwargs, 
     ):
         if not api.startswith("/"):
@@ -160,12 +160,14 @@ class AlistClient:
         resp.raise_for_status()
         if callable(parse):
             with resp:
-                return parse(resp)
+                return parse(resp.content)
         elif parse:
             with resp:
                 content_type = resp.headers.get("Content-Type", "")
-                if content_type.startswith("application/json"):
+                if content_type == "application/json":
                     return resp.json()
+                elif content_type.startswith("application/json;"):
+                    return loads(resp.text)
                 elif content_type.startswith("text/"):
                     return resp.text
                 return resp.content
@@ -176,7 +178,7 @@ class AlistClient:
         api: str, 
         /, 
         method: str = "POST", 
-        parse: Callable | bool = True, 
+        parse: bool | Callable = False, 
         **request_kwargs, 
     ):
         if not api.startswith("/"):
@@ -187,7 +189,7 @@ class AlistClient:
         if callable(parse):
             async def request():
                 async with req as resp:
-                    ret = parse(resp)
+                    ret = parse(await resp.read())
                     if isawaitable(ret):
                         ret = await ret
                     return ret
@@ -196,8 +198,10 @@ class AlistClient:
             async def request():
                 async with req as resp:
                     content_type = resp.headers.get("Content-Type", "")
-                    if content_type.startswith("application/json"):
+                    if content_type == "application/json":
                         return await resp.json()
+                    elif content_type.startswith("application/json;"):
+                        return loads(await resp.text())
                     elif content_type.startswith("text/"):
                         return await resp.text()
                     return await resp.read()
@@ -209,12 +213,12 @@ class AlistClient:
         api: str, 
         /, 
         method: str = "POST", 
-        parse: Callable | bool = True, 
+        parse: bool | Callable = False, 
         async_: bool = False, 
         **request_kwargs, 
     ):
         return (self._async_request if async_ else self._request)(
-            api, method, parse, **request_kwargs)
+            api, method, parse=parse, **request_kwargs)
 
     def login(
         self, 

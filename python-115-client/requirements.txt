@@ -1,3 +1,4 @@
+aiohttp
 cachetools
 ecdsa
 lz4
