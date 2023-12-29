@@ -45,13 +45,13 @@ fs = client.fs
 
 ### 2. 操作网盘使用 Python 式的文件系统方法
 
-文件系统对象的方法，设计和行为参考了 <kbd>os</kbd>、<kbd>posixpath</kbd>、<kbd>pathlib.Path</kbd> 和 <kbd>shutil</kbd> 等模块
+文件系统对象的方法，设计和行为参考了 <kbd>[os](https://docs.python.org/3/library/os.html)</kbd>、<kbd>[posixpath](https://docs.python.org/3/library/os.path.html)</kbd>、<kbd>[pathlib.Path](https://docs.python.org/3/library/pathlib.html)</kbd> 和 <kbd>[shutil](https://docs.python.org/3/library/shutil.html)</kbd> 等模块。
 
 <kbd>p115.P115FileSystem</kbd> 实现了在自己的网盘上，读写的文件系统方法
 
 <kbd>p115.P115Path</kbd> 实现了二次封装，从路径的角度来进行操作。
 
-**使用** <kbd>getcwd</kbd> **方法，获取当前工作目录的路径**
+**使用** <kbd>getcwd</kbd> **方法，获取当前工作目录的路径，参考** <kbd>os.getcwd</kbd>
 
 ```python
 >>> fs.getcwd()
@@ -276,6 +276,7 @@ fs = client.fs
 **使用** <kbd>stat</kbd> **方法，获取文件或文件夹的部分，参考** <kbd>os.stat</kbd>
 
 ```python
+>>> fs.stat("Love.Death.and.Robots.S01E01.Sonnies.Edge.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv")
 os.stat_result(st_mode=33279, st_ino=2576931481393823441, st_dev=2576931481024724685, st_nlink=1, st_uid=306576686, st_gid=1, st_size=924544482, st_atime=1688662230.0, st_mtime=1677210171.0, st_ctime=1677210171.0)
 ```
 
@@ -371,10 +372,10 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
  [])
 ```
 
-**使用** <kbd>walk</kbd> **方法，可以遍历一个目录时，获取** <kbd>p115.P115Path</kbd> 对象
+**使用** <kbd>walk_path</kbd> **方法，可以遍历一个目录时，获取** <kbd>p115.P115Path</kbd> 对象
 
 ```python
->>> next(fs.walk_attr())
+>>> next(fs.walk_path())
 ('/',
  [<p115.P115Path(name='云下载', is_directory=True, size=None, id=2593093001609739968, parent_id=0, sha1=None, etime=datetime.datetime(2023, 12, 16, 21, 58, 22), utime=datetime.datetime(2023, 12, 19, 11, 29, 29), ptime=datetime.datetime(2023, 3, 18, 18, 52, 54), open_time=datetime.datetime(2023, 12, 19, 11, 29, 29), time=datetime.datetime(2023, 12, 16, 21, 58, 22), pick_code='fe1kl2mz1if2fl3wmx', star=False, lastest_update=datetime.datetime(2023, 12, 19, 12, 43, 23, 433377), fs=<p115.P115FileSystem(client=<p115.P115Client object at 0x104e86050>, cid=0, path='/') at 0x106825810>, path='/云下载')>,
   <p115.P115Path(name='000阅读·乱七八糟', is_directory=True, size=None, id=2592968610464922758, parent_id=0, sha1=None, etime=datetime.datetime(2023, 12, 14, 14, 54, 20), utime=datetime.datetime(2023, 12, 14, 15, 38, 18), ptime=datetime.datetime(2023, 3, 18, 14, 45, 45), open_time=datetime.datetime(2023, 12, 14, 13, 17, 9), time=datetime.datetime(2023, 12, 14, 14, 54, 20), pick_code='fccgz8vtu9xt08rmt6', star=False, lastest_update=datetime.datetime(2023, 12, 19, 12, 43, 23, 433377), fs=<p115.P115FileSystem(client=<p115.P115Client object at 0x104e86050>, cid=0, path='/') at 0x106825810>, path='/000阅读·乱七八糟')>,
@@ -529,7 +530,7 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
  'path': '/file.py'}
 ```
 
-**使用** <kbd>remove</kbd> **方法可以在删除文件夹时，也删除其中的文件和文件夹，参考** <kbd>os.remove</kbd>
+**使用** <kbd>remove</kbd> **方法可以删除文件，参考** <kbd>os.remove</kbd>
 
 ```python
 >>> fs.remove("test.txt")
@@ -569,7 +570,7 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
  'path': '/file.py'}
 ```
 
-**使用** <kbd>rename</kbd> **方法可以对文件夹进行改名或移动，参考** <kbd>os.rename</kbd>
+**使用** <kbd>rename</kbd> **方法可以对文件或文件夹进行改名或移动，参考** <kbd>os.rename</kbd>
 
 ```python
 >>> fs.touch("anyfile.mp3")
@@ -604,11 +605,11 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
  'path': '/xyz.mp4'}
 ```
 
-**使用** <kbd>renames</kbd> **方法可以对文件夹进行改名或移动，并且在移动后如果原来所在目录为空，则会删除那个目录，参考** <kbd>os.renames</kbd>
+**使用** <kbd>renames</kbd> **方法可以对文件或文件夹进行改名或移动，并且在移动后如果原来所在目录为空，则会删除那个目录，参考** <kbd>os.renames</kbd>
 
-**使用** <kbd>replace</kbd> **方法可以对文件夹进行改名或移动，并且如果原始路径上是文件，目标路径上也存在一个文件，则会先把目标路径上的文件删除，参考** <kbd>os.replace</kbd>
+**使用** <kbd>replace</kbd> **方法可以对文件或文件夹进行改名或移动，并且如果原始路径上是文件，目标路径上也存在一个文件，则会先把目标路径上的文件删除，参考** <kbd>os.replace</kbd>
 
-**使用** <kbd>move</kbd> **方法可以对文件夹进行改名或移动，目标路径存在且是一个目录，则把文件移动到其中（但是目录中有同名的文件或文件夹，还是会报错），参考** <kbd>shutil.move</kbd>
+**使用** <kbd>move</kbd> **方法可以对文件或文件夹进行改名或移动，目标路径存在且是一个目录，则把文件移动到其中（但是目录中有同名的文件或文件夹，还是会报错），参考** <kbd>shutil.move</kbd>
 
 ### 3. 遍历文件系统和查找文件
 
@@ -617,27 +618,23 @@ b'\x1aE\xdf\xa3\xa3B\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04B\xf3\x81'
 **第 1 种方法，使用** <kbd>iter</kbd>，返回 <kbd>P115Path</kbd> 对象的迭代器
 
 ```python
->>> for path in fs.iter(max_depth=-1):
->>>     if path.name.endswith(".mkv"):
->>>         # 获取下载链接（要么是直链，不然就是 alist 的下载链接）
->>>         print(path.url)
-http://localhost:5244/d/115/%E4%BA%91%E4%B8%8B%E8%BD%BD/A.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies%5BTGx%5D/A.Million.Miles.Away.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264-AceMovies.mkv
-http://localhost:5244/d/115/%E4%BA%91%E4%B8%8B%E8%BD%BD/About.My.Father.2023.720p.AMZN.WEBRip.800MB.x264-GalaxyRG%5BTGx%5D/About.My.Father.2023.720p.AMZN.WEBRip.800MB.x264-GalaxyRG.mkv
-...
+for path in fs.iter(max_depth=-1):
+    if path.name.endswith(".mkv"):
+        print(path.url)
 ```
 
 **第 2 种方法，使用** <kbd>glob</kbd>，参考 <kbd>pathlib.Path.glob</kbd> 和 <kbd>glob.iglob</kbd>，使用通配符查找
 
 ```python
->>> for path in fs.glob("**/*.mkv"):
->>>     print(path.url)
+for path in fs.glob("**/*.mkv"):
+    print(path.url)
 ```
 
-**第 2 种方法，使用** <kbd>rglob</kbd>，参考 <kbd>pathlib.Path.rglob</kbd>
+**第 3 种方法，使用** <kbd>rglob</kbd>，参考 <kbd>pathlib.Path.rglob</kbd>
 
 ```python
->>> for path in fs.rglob("*.mkv"):
->>>     print(path.url)
+for path in fs.rglob("*.mkv"):
+    print(path.url)
 ```
 
 ### 4. 针对分享链接的文件系统操作

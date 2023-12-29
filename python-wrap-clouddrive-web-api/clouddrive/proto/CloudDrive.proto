@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-// v0.5.8
-
 package clouddrive;
+
+// 0.6.0 beta
 
 option csharp_namespace = "CloudDriveSrv.Protos";
 
@@ -19,7 +19,7 @@ service CloudDriveFileSrv {
   rpc Login(UserLoginRequest) returns (FileOperationResult) {}
   // register a new count
   rpc Register(UserRegisterRequest) returns (FileOperationResult) {}
-    // asks cloudfs server to send reset account email with reset link
+  // asks cloudfs server to send reset account email with reset link
   rpc SendResetAccountEmail(SendResetAccountEmailRequest)
       returns (google.protobuf.Empty) {}
   // reset account's data, set new password, with received reset code from email
@@ -62,8 +62,6 @@ service CloudDriveFileSrv {
   // list all offline files of a cloud with pagination
   rpc ListAllOfflineFiles(OfflineFileListAllRequest)
       returns (OfflineFileListAllResult) {}
-  // add a shared link to a folder, with shared_link_url, shared_password
-  rpc AddSharedLink(AddSharedLinkRequest) returns (google.protobuf.Empty) {}
   // get folder properties, applies only with folders with hasDetailProperties
   // is true
   rpc GetFileDetailProperties(FileRequest) returns (FileDetailProperties) {}
@@ -136,8 +134,8 @@ service CloudDriveFileSrv {
   rpc ResumeUploadFiles(MultpleUploadFileKeyRequest)
       returns (google.protobuf.Empty) {}
   // check if current user can add more cloud apis
-  rpc CanAddMoreCloudApis(google.protobuf.Empty)
-      returns (FileOperationResult) {}
+  rpc CanAddMoreCloudApis(google.protobuf.Empty) returns (FileOperationResult) {
+  }
   // add 115 cloud with editthiscookie
   rpc APILogin115Editthiscookie(Login115EditthiscookieRequest)
       returns (APILoginResult) {}
@@ -158,7 +156,7 @@ service CloudDriveFileSrv {
       returns (APILoginResult) {}
   // add OneDrive with OAuth result
   rpc APILoginOneDriveOAuth(LoginOneDriveOAuthRequest)
-    returns (APILoginResult) {}
+      returns (APILoginResult) {}
   // add Google Drive with OAuth result
   rpc ApiLoginGoogleDriveOAuth(LoginGoogleDriveOAuthRequest)
       returns (APILoginResult) {}
@@ -238,7 +236,8 @@ service CloudDriveFileSrv {
   // get promotions
   rpc GetPromotions(google.protobuf.Empty) returns (GetPromotionsResult) {}
   // update promotion result after purchased
-  rpc UpdatePromotionResult(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  rpc UpdatePromotionResult(google.protobuf.Empty)
+      returns (google.protobuf.Empty) {}
   // get cloudfs plans
   rpc GetCloudDrivePlans(google.protobuf.Empty)
       returns (GetCloudDrivePlansResult) {}
@@ -247,26 +246,49 @@ service CloudDriveFileSrv {
   // bind account to a cloud account id
   rpc BindCloudAccount(BindCloudAccountRequest)
       returns (google.protobuf.Empty) {}
-  //transfer balance to another user
-  rpc TransferBalance(TransferBalanceRequest)
-      returns (google.protobuf.Empty) {}
-  //change email
-  rpc ChangeEmail(ChangeUserNameEmailRequest)
-      returns (google.protobuf.Empty) {}
+  // transfer balance to another user
+  rpc TransferBalance(TransferBalanceRequest) returns (google.protobuf.Empty) {}
+  // change email
+  rpc ChangeEmail(ChangeUserNameEmailRequest) returns (google.protobuf.Empty) {}
   // chech balance log
-  rpc GetBalanceLog(google.protobuf.Empty)
-      returns (BalanceLogResult) {}
+  rpc GetBalanceLog(google.protobuf.Empty) returns (BalanceLogResult) {}
   // check activation code for a plan
-  rpc CheckActivationCode(StringValue)
-      returns (CheckActivationCodeResult) {}
+  rpc CheckActivationCode(StringValue) returns (CheckActivationCodeResult) {}
   // Activate plan using an activation code
-  rpc ActivatePlan(StringValue)
-    returns (JoinPlanResult) {}
+  rpc ActivatePlan(StringValue) returns (JoinPlanResult) {}
   // check counpon code for a plan
-  rpc CheckCouponCode(CheckCouponCodeRequest)
-      returns (CouponCodeResult) {}
-  rpc GetReferralCode(google.protobuf.Empty)
-      returns (StringValue) {}
+  rpc CheckCouponCode(CheckCouponCodeRequest) returns (CouponCodeResult) {}
+  // get referral code of current user
+  rpc GetReferralCode(google.protobuf.Empty) returns (StringValue) {}
+  // // list all backups
+  rpc BackupGetAll(google.protobuf.Empty) returns (BackupList) {}
+  // add a backup
+  rpc BackupAdd(Backup)
+      returns (google.protobuf.Empty) {}
+  // remove a backup by it's source path
+  rpc BackupRemove(StringValue)
+      returns (google.protobuf.Empty) {}
+  // update a backup
+  rpc BackupUpdate(Backup)
+      returns (google.protobuf.Empty) {}
+  // add destinations to a backup
+  rpc BackupAddDestination(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  // remove destinations from a backup
+  rpc BackupRemoveDestination(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  // enable/disable a backup
+  rpc BackupSetEnabled(BackupSetEnabledRequest)
+      returns (google.protobuf.Empty) {}
+  // enable/disable a backup's FileSystemWatch
+  rpc BackupSetFileSystemWatchEnabled(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  rpc BackupUpdateStrategies(BackupModifyRequest)
+      returns (google.protobuf.Empty) {}
+  rpc BackupRestartWalkingThrough(StringValue)
+      returns (google.protobuf.Empty) {}
+  rpc CanAddMoreBackups(google.protobuf.Empty)
+      returns (FileOperationResult) {}
 }
 message GetTokenRequest {
   string userName = 1;
@@ -370,6 +392,7 @@ message CloudDriveFile {
   bool isCloudFile = 34;
   bool isSearchResult = 35;
   bool isForbidden = 36;
+  bool isLocal = 37;
 
   bool canMount = 60;
   bool canUnmount = 61;
@@ -381,6 +404,13 @@ message CloudDriveFile {
   bool canAddShareLink = 67;
   optional uint64 dirCacheTimeToLiveSecs = 68;
   bool canDeletePermanently = 69;
+  enum HashType {
+    Unknown = 0;
+    Md5 = 1;
+    Sha1 = 2;
+    PikPakSha1 = 3;
+  }
+  map<uint32, string> fileHashes = 70;
 }
 
 message SpaceInfo {
@@ -392,7 +422,8 @@ message CloudAPI {
   string name = 1;
   string userName = 2;
   string nickName = 3;
-  bool isLocked = 4; //isLocked means the cloudAPI is set to can't open files, due to user's membership issue
+  bool isLocked = 4; // isLocked means the cloudAPI is set to can't open files,
+                     // due to user's membership issue
 }
 message CloudMembership {
   string identity = 1;
@@ -594,9 +625,7 @@ message GetCloudAPIConfigRequest {
   string cloudName = 1;
   string userName = 2;
 }
-message CloudAPIList {
-  repeated CloudAPI apis = 1;
-}
+message CloudAPIList { repeated CloudAPI apis = 1; }
 message CloudAPIConfig {
   uint32 maxDownloadThreads = 1;
   uint64 minReadLengthKB = 2;
@@ -627,6 +656,10 @@ message QRCodeScanMessage {
   string message = 2;
 }
 message StringList { repeated string values = 1; }
+enum UpdateChannel {
+  Release = 0;
+  Beta = 1;
+}
 message SystemSettings {
   // 0 means never expire, will live forever
   optional uint64 dirCacheTimeToLiveSecs = 1;
@@ -640,6 +673,7 @@ message SystemSettings {
   optional uint64 uploadDelaySecs = 7;
   optional StringList processBlackList = 8;
   optional StringList uploadIgnoredExtensions = 9;
+  optional UpdateChannel updateChannel = 10;
 }
 message SetDirCacheTimeRequest {
   string path = 1;
@@ -686,9 +720,9 @@ message CloudDrivePlan {
   optional double originalPrice = 9;
 }
 message GetCloudDrivePlansResult { repeated CloudDrivePlan plans = 1; }
-message JoinPlanRequest { 
+message JoinPlanRequest {
   string planId = 1;
-  optional string couponCode = 2; 
+  optional string couponCode = 2;
 }
 message PaymentInfo {
   string user_id = 1;
@@ -781,9 +815,7 @@ message BalanceLog {
   string operation_id = 6;
   google.protobuf.Timestamp operation_time = 7;
 }
-message BalanceLogResult {
-  repeated BalanceLog logs = 1;
-}
+message BalanceLogResult { repeated BalanceLog logs = 1; }
 message CheckFinalPriceRequest {
   string planId = 1;
   string couponCode = 2;
@@ -810,4 +842,74 @@ message CouponCodeResult {
   string couponDescription = 2;
   bool isPercentage = 3;
   double couponDiscountAmount = 4;
+}
+message FileBackupRule {
+  oneof rule {
+    string extensions = 1;
+    string fileNames = 2;
+    string regex = 3;
+    uint64 minSize = 4;
+  }
+  bool isEnabled = 100;
+  bool isBlackList = 101;
+}
+enum FileReplaceRule {
+  Skip = 0;
+  Overwrite = 1;
+  KeepHistoryVersion = 2;
+}
+enum FileDeleteRule {
+  Delete = 0;
+  Recycle = 1;
+  Keep = 2;
+  MoveToVersionHistory = 3;
+}
+message BackupDestination {
+  string destinationPath = 1;
+  bool isEnabled = 2;
+  optional google.protobuf.Timestamp lastFinishTime = 3;
+}
+message Backup {
+  string sourcePath = 1;
+  repeated BackupDestination destinations = 2;
+  repeated FileBackupRule fileBackupRules = 3;
+  FileReplaceRule fileReplaceRule = 4;
+  FileDeleteRule fileDeleteRule = 5;
+  bool isEnabled = 6;
+  bool fileSystemWatchEnabled = 7;
+  int64 walkingThroughIntervalSecs = 8; // 0 means never auto walking through
+  bool forceWalkingThroughOnStart = 9;
+}
+message BackupStatus {
+  enum Status {
+    Idle = 0;
+    WalkingThrough = 1;
+    Error = 2;
+    Disabled = 3;
+  }
+  enum FileWatchStatus {
+    WatcherIdle = 0;
+    Watching = 1;
+    WatcherError = 2;
+    WatcherDisabled = 3;
+  }
+  Backup backup = 1;
+  Status status = 2;
+  string statusMessage = 3;
+  FileWatchStatus watcherStatus = 4;
+  string watcherStatusMessage = 5;
+}
+message BackupList { repeated BackupStatus backups = 1; }
+message BackupModifyRequest {
+  string sourcePath = 1;
+  repeated BackupDestination destinations = 2;
+  repeated FileBackupRule fileBackupRules = 3;
+  optional FileReplaceRule fileReplaceRule = 4;
+  optional FileDeleteRule fileDeleteRule = 5;
+  optional bool fileSystemWatchEnabled = 6;
+  optional int64 walkingThroughIntervalSecs = 7;
+}
+message BackupSetEnabledRequest {
+  string sourcePath = 1;
+  bool isEnabled = 2;
 }

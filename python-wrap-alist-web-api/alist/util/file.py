@@ -112,7 +112,7 @@ def get_filesize(file, /) -> int:
     return total
 
 
-class HTTPFileReader(RawIOBase):
+class HTTPFileReader(RawIOBase, BinaryIO):
     url: str | Callable[[], str]
     response: Any
     length: int

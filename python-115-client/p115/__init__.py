@@ -23,6 +23,7 @@ from collections.abc import (
 )
 from concurrent.futures import Future
 from copy import deepcopy
+from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import cached_property, partial, update_wrapper
 from hashlib import md5, sha1
@@ -349,9 +350,10 @@ class P115Client:
                         return loads(await resp.read())
             return fetch()
         else:
-            with Session().get(api, **request_kwargs) as resp:
-                resp.raise_for_status()
-                return resp.json()
+            with Session() as session:
+                with session.get(api, **request_kwargs) as resp:
+                    resp.raise_for_status()
+                    return resp.json()
 
     ########## Account API ##########
 
@@ -415,6 +417,31 @@ class P115Client:
         """
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
         return self.request(api, async_=async_, **request_kwargs)
+
+    @staticmethod
+    def login_qrcode(
+        uid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ):
+        """下载登录二维码图片（PNG）
+        GET https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode
+        :params uid: 二维码的 uid
+        :return: `requests.Response` 或 `aiohttp.ClientResponse`
+        """
+        api = "https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode"
+        request_kwargs["params"] = {"uid": uid}
+        if async_:
+            @asynccontextmanager
+            async def fetch():
+                async with ClientSession(raise_for_status=True) as session:
+                    yield await session.get(api, **request_kwargs)
+            return fetch()
+        else:
+            with Session() as session:
+                resp = session.get(api, **request_kwargs)
+                resp.raise_for_status()
+                return resp
 
     def logout(
         self, 
@@ -3646,8 +3673,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             return self.write_bytes(id_or_path, file)
 
     @classmethod
-    def login(cls, /, cookie=None) -> Self:
-        return cls(P115Client(cookie))
+    def login(cls, /, cookie=None, app: str = "web") -> Self:
+        return cls(P115Client(cookie, login_app=app))
 
     @check_response
     def _copy(self, id: int, pid: int = 0, /) -> dict:
@@ -4630,8 +4657,8 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         raise TypeError("can't set attribute")
 
     @classmethod
-    def login(cls, /, share_link: str, cookie=None) -> Self:
-        return cls(P115Client(cookie), share_link)
+    def login(cls, /, share_link: str, cookie=None, app: str = "web") -> Self:
+        return cls(P115Client(cookie, login_app=app), share_link)
 
     def set_receive_code(self, code: str, /):
         self.__dict__["receive_code"] = code
@@ -4984,8 +5011,8 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         raise TypeError("can't set attribute")
 
     @classmethod
-    def login(cls, /, id_or_pickcode: int | str, cookie=None) -> Self:
-        return cls(P115Client(cookie), id_or_pickcode)
+    def login(cls, /, id_or_pickcode: int | str, cookie=None, app: str = "web") -> Self:
+        return cls(P115Client(cookie, login_app=app), id_or_pickcode)
 
     @check_response
     def _files(

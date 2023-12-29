@@ -24,6 +24,7 @@ from datetime import datetime
 from functools import cached_property, partial, update_wrapper
 from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation
+from json import loads
 from os import fsdecode, fspath, fstat, makedirs, scandir, stat_result, path as ospath, PathLike
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
 from re import compile as re_compile, escape as re_escape
@@ -114,10 +115,10 @@ class AlistClient:
         self.close()
 
     def __eq__(self, other, /) -> bool:
-        return type(self) is type(other) and self.origin == other.origin
+        return type(self) is type(other) and self.origin == other.origin and self.username == other.username
 
     def __hash__(self, /) -> int:
-        return hash(self.origin)
+        return hash((self.origin, self.username))
 
     def __repr__(self, /) -> str:
         cls = type(self)
@@ -213,7 +214,7 @@ class AlistClient:
         api: str, 
         /, 
         method: str = "POST", 
-        parse: bool | Callable = False, 
+        parse: bool | Callable = True, 
         async_: bool = False, 
         **request_kwargs, 
     ):

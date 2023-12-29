@@ -25,7 +25,7 @@ def get_header(response, /, name: str) -> Optional[str]:
 def get_filename(response, /, default: str = "") -> str:
     hdr_cd = get_header(response, "Content-Disposition")
     if hdr_cd and hdr_cd.startswith("attachment; filename="):
-        return hdr_cd[21:]
+        return unquote(hdr_cd.rstrip()[22:-1])
     urlp = urlsplit(unquote(response.url))
     filename = basename(urlp.path) or default
     if filename:

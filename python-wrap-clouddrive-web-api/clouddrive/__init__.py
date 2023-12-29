@@ -68,14 +68,6 @@ def check_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-# TODO: 先提供这个函数，必要时使用
-def normalize_name(
-    s: str, 
-    transtab = {c: chr(c + 65248) for c in b'*?:/\\<>|"'}
-) -> str:
-    return s.translate(transtab).rstrip(" \r\n\v\t\f.")
-
-
 class CloudDriveClient(Client):
 
     @cached_property
@@ -802,7 +794,7 @@ class CloudDriveFileSystem:
     @check_response
     def _rename(self, pair: tuple[str, str], /, *pairs: tuple[str, str]):
         if pairs:
-            x= self.client.RenameFiles(CloudDrive_pb2.RenameFilesRequest(
+            return self.client.RenameFiles(CloudDrive_pb2.RenameFilesRequest(
                 renameFiles=[
                     CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name)
                     for path, name in (pair, *pairs)
@@ -810,9 +802,7 @@ class CloudDriveFileSystem:
             ))
         else:
             path, name = pair
-            x= self.client.RenameFile(CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name))
-        print(x)
-        print(x)
+            return self.client.RenameFile(CloudDrive_pb2.RenameFileRequest(theFilePath=path, newName=name))
 
     @check_response
     def _upload(self, path: str, file=None, /):
@@ -1703,7 +1693,7 @@ class CloudDriveFileSystem:
         if not attr.isDirectory:
             raise NotADirectoryError(errno.ENOTDIR, path)
         elif not self.is_empty(path, _check=False):
-            raise OSError(errno.ENOTEMPTY, f"directory is not empty: {path!r}")
+            raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
         if path == "/":
             return
         elif dirname(path) == "/":

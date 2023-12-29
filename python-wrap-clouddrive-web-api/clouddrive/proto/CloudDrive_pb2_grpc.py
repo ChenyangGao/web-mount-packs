@@ -130,11 +130,6 @@ class CloudDriveFileSrvStub(object):
                 request_serializer=CloudDrive__pb2.OfflineFileListAllRequest.SerializeToString,
                 response_deserializer=CloudDrive__pb2.OfflineFileListAllResult.FromString,
                 )
-        self.AddSharedLink = channel.unary_unary(
-                '/clouddrive.CloudDriveFileSrv/AddSharedLink',
-                request_serializer=CloudDrive__pb2.AddSharedLinkRequest.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
-                )
         self.GetFileDetailProperties = channel.unary_unary(
                 '/clouddrive.CloudDriveFileSrv/GetFileDetailProperties',
                 request_serializer=CloudDrive__pb2.FileRequest.SerializeToString,
@@ -535,6 +530,61 @@ class CloudDriveFileSrvStub(object):
                 request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
                 response_deserializer=CloudDrive__pb2.StringValue.FromString,
                 )
+        self.BackupGetAll = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupGetAll',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=CloudDrive__pb2.BackupList.FromString,
+                )
+        self.BackupAdd = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupAdd',
+                request_serializer=CloudDrive__pb2.Backup.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupRemove = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupRemove',
+                request_serializer=CloudDrive__pb2.StringValue.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupUpdate = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupUpdate',
+                request_serializer=CloudDrive__pb2.Backup.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupAddDestination = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupAddDestination',
+                request_serializer=CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupRemoveDestination = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupRemoveDestination',
+                request_serializer=CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupSetEnabled = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupSetEnabled',
+                request_serializer=CloudDrive__pb2.BackupSetEnabledRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupSetFileSystemWatchEnabled = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupSetFileSystemWatchEnabled',
+                request_serializer=CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupUpdateStrategies = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupUpdateStrategies',
+                request_serializer=CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.BackupRestartWalkingThrough = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/BackupRestartWalkingThrough',
+                request_serializer=CloudDrive__pb2.StringValue.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                )
+        self.CanAddMoreBackups = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/CanAddMoreBackups',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=CloudDrive__pb2.FileOperationResult.FromString,
+                )
 
 
 class CloudDriveFileSrvServicer(object):
@@ -699,13 +749,6 @@ class CloudDriveFileSrvServicer(object):
 
     def ListAllOfflineFiles(self, request, context):
         """list all offline files of a cloud with pagination
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def AddSharedLink(self, request, context):
-        """add a shared link to a folder, with shared_link_url, shared_password
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1269,6 +1312,81 @@ class CloudDriveFileSrvServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def GetReferralCode(self, request, context):
+        """get referral code of current user
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupGetAll(self, request, context):
+        """// list all backups
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupAdd(self, request, context):
+        """add a backup
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupRemove(self, request, context):
+        """remove a backup by it's source path
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupUpdate(self, request, context):
+        """update a backup
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupAddDestination(self, request, context):
+        """add destinations to a backup
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupRemoveDestination(self, request, context):
+        """remove destinations from a backup
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupSetEnabled(self, request, context):
+        """enable/disable a backup
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupSetFileSystemWatchEnabled(self, request, context):
+        """enable/disable a backup's FileSystemWatch
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupUpdateStrategies(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def BackupRestartWalkingThrough(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CanAddMoreBackups(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1391,11 +1509,6 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
                     servicer.ListAllOfflineFiles,
                     request_deserializer=CloudDrive__pb2.OfflineFileListAllRequest.FromString,
                     response_serializer=CloudDrive__pb2.OfflineFileListAllResult.SerializeToString,
-            ),
-            'AddSharedLink': grpc.unary_unary_rpc_method_handler(
-                    servicer.AddSharedLink,
-                    request_deserializer=CloudDrive__pb2.AddSharedLinkRequest.FromString,
-                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'GetFileDetailProperties': grpc.unary_unary_rpc_method_handler(
                     servicer.GetFileDetailProperties,
@@ -1797,6 +1910,61 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
                     request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                     response_serializer=CloudDrive__pb2.StringValue.SerializeToString,
             ),
+            'BackupGetAll': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupGetAll,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=CloudDrive__pb2.BackupList.SerializeToString,
+            ),
+            'BackupAdd': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupAdd,
+                    request_deserializer=CloudDrive__pb2.Backup.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupRemove': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupRemove,
+                    request_deserializer=CloudDrive__pb2.StringValue.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupUpdate': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupUpdate,
+                    request_deserializer=CloudDrive__pb2.Backup.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupAddDestination': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupAddDestination,
+                    request_deserializer=CloudDrive__pb2.BackupModifyRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupRemoveDestination': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupRemoveDestination,
+                    request_deserializer=CloudDrive__pb2.BackupModifyRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupSetEnabled': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupSetEnabled,
+                    request_deserializer=CloudDrive__pb2.BackupSetEnabledRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupSetFileSystemWatchEnabled': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupSetFileSystemWatchEnabled,
+                    request_deserializer=CloudDrive__pb2.BackupModifyRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupUpdateStrategies': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupUpdateStrategies,
+                    request_deserializer=CloudDrive__pb2.BackupModifyRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'BackupRestartWalkingThrough': grpc.unary_unary_rpc_method_handler(
+                    servicer.BackupRestartWalkingThrough,
+                    request_deserializer=CloudDrive__pb2.StringValue.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'CanAddMoreBackups': grpc.unary_unary_rpc_method_handler(
+                    servicer.CanAddMoreBackups,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=CloudDrive__pb2.FileOperationResult.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'clouddrive.CloudDriveFileSrv', rpc_method_handlers)
@@ -2195,23 +2363,6 @@ class CloudDriveFileSrv(object):
         return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/ListAllOfflineFiles',
             CloudDrive__pb2.OfflineFileListAllRequest.SerializeToString,
             CloudDrive__pb2.OfflineFileListAllResult.FromString,
-            options, channel_credentials,
-            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
-
-    @staticmethod
-    def AddSharedLink(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/AddSharedLink',
-            CloudDrive__pb2.AddSharedLinkRequest.SerializeToString,
-            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -3572,5 +3723,192 @@ class CloudDriveFileSrv(object):
         return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/GetReferralCode',
             google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             CloudDrive__pb2.StringValue.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupGetAll(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupGetAll',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            CloudDrive__pb2.BackupList.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupAdd(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupAdd',
+            CloudDrive__pb2.Backup.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupRemove(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupRemove',
+            CloudDrive__pb2.StringValue.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupUpdate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupUpdate',
+            CloudDrive__pb2.Backup.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupAddDestination(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupAddDestination',
+            CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupRemoveDestination(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupRemoveDestination',
+            CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupSetEnabled(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupSetEnabled',
+            CloudDrive__pb2.BackupSetEnabledRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupSetFileSystemWatchEnabled(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupSetFileSystemWatchEnabled',
+            CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupUpdateStrategies(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupUpdateStrategies',
+            CloudDrive__pb2.BackupModifyRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def BackupRestartWalkingThrough(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/BackupRestartWalkingThrough',
+            CloudDrive__pb2.StringValue.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def CanAddMoreBackups(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/CanAddMoreBackups',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            CloudDrive__pb2.FileOperationResult.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

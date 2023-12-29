@@ -97,7 +97,7 @@ from posixpath import basename, dirname, join as joinpath
 from sys import maxsize
 from stat import S_IFDIR, S_IFREG
 from time import time
-from typing import cast, Callable, MutableMapping, Optional
+from typing import cast, Callable, IO, MutableMapping, Optional
 from weakref import WeakKeyDictionary, WeakValueDictionary
 from zipfile import ZipFile, Path as ZipPath, BadZipFile
 
@@ -119,6 +119,7 @@ except ImportError:
 
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
+    from alist.util.file import HTTPFileReader
     from cachetools import cached, LRUCache, TTLCache
     from dateutil.parser import parse as parse_datetime
     from fuse import FUSE, FuseOSError, Operations, LoggingMixIn # type: ignore
@@ -166,12 +167,12 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         self.max_read_threads = max_read_threads
         self.zipfile_as_dir = zipfile_as_dir
         self._next_fh: Callable[[], int] = count(1).__next__
-        self._fh_to_file: MutableMapping[int, HTTPFileReader] = TTLCache(maxsize, ttl=60)
+        self._fh_to_file: MutableMapping[int, IO[bytes]] = TTLCache(maxsize, ttl=60)
         self._fh_to_zdir: MutableMapping[int, ZipPath] = {}
-        self._path_to_file: WeakValueDictionary[tuple[int, str], HTTPFileReader] = WeakValueDictionary()
+        self._path_to_file: WeakValueDictionary[tuple[int, str], IO[bytes]] = WeakValueDictionary()
         self._path_to_zfile: WeakValueDictionary[str, ZipFile] = WeakValueDictionary()
-        self._file_to_cache = WeakKeyDictionary()
-        self._file_to_release: MutableMapping[HTTPFileReader, None] = TTLCache(maxsize, ttl=1)
+        self._file_to_cache: WeakKeyDictionary[IO[bytes], bytes] = WeakKeyDictionary()
+        self._file_to_release: MutableMapping[IO[bytes], None] = TTLCache(maxsize, ttl=1)
 
     def __del__(self, /):
         for cache in self._fh_to_file:
@@ -210,7 +211,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             result["_url"] = url
         return result
 
-    def getattr(self, path: str, fh: int = 0, /) -> dict:
+    def getattr(self, path: str, /, fh: int = 0) -> dict:
         if basename(path).startswith("."):
             raise FuseOSError(ENOENT)
         try:
@@ -265,7 +266,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
                 )
             return zfile
 
-    def open(self, path: str, flags: int, fh: int = 0, /) -> int:
+    def open(self, path: str, flags: int=0, /, fh: int = 0) -> int:
         try:
             attr = self.getattr(path)
             if attr.get("_as_strm", False):
@@ -324,7 +325,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             self._fh_to_zdir[fh] = ZipPath(zfile).joinpath(path.removeprefix(zip_path + ".d/"))
         return fh
 
-    def read(self, path: str, size: int, offset: int, fh: int = 0, /) -> bytes:
+    def read(self, path: str, size: int, offset: int, /, fh: int = 0) -> bytes:
         if fh == 0:
             attr = self.getattr(path)
             if attr.get("_as_strm", False):
@@ -332,7 +333,8 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         try:
             file = self._fh_to_file[fh] = self._fh_to_file[fh]
         except (KeyError, OSError):
-            file = self.open(path, fh=fh)
+            self.open(path, fh=fh)
+            file = self._fh_to_file[fh]
         if 0 <= offset < 2048:
             if offset + size <= 2048:
                 return self._file_to_cache[file][offset:offset+size]
@@ -343,7 +345,7 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         return file.read(size)
 
     @cached(TTLCache(64, ttl=10), key=lambda self, path, fh, /: path)
-    def readdir(self, path: str, fh: int = 0, /) -> list[str]:
+    def readdir(self, path: str, /, fh: int = 0) -> list[str]:
         ls = [".", ".."]
         if fh:
             try:
@@ -377,7 +379,6 @@ class AlistFuseOperations(LoggingMixIn, Operations):
                     _is_zip=True, 
                     _zip_path=subpath, 
                 )
-                self._path_to_zfile[subpath + ".d"] = object
             as_strm = False
             if not is_dir and strm_predicate and strm_predicate(name):
                 name += ".strm"
@@ -389,14 +390,14 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             add(name)
         return ls
 
-    def release(self, path: str, fh: int = 0, /):
+    def release(self, path: str, /, fh: int = 0):
         if fh:
             if self.max_read_threads > 0:
                 self._file_to_release[self._fh_to_file.pop(fh)] = None
             else:
                 self._fh_to_file.pop(fh)
 
-    def releasedir(self, path: str, fh: int = 0, /):
+    def releasedir(self, path: str, /, fh: int = 0):
         if fh:
             self._fh_to_zdir.pop(fh, None)
 
