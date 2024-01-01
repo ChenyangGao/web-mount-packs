@@ -1,3 +1,4 @@
 ddddocr
+lxml
 qrcode
 requests

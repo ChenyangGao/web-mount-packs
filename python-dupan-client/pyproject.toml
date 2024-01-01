@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dupan"
-version = "0.0.0.5"
+version = "0.0.0.7"
 description = "Python wrapper for `baidu webdisk <https://pan.baidu.com>`."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,9 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+
 ddddocr = "*"
+lxml = "*"
 qrcode = "*"
 requests = "*"
 

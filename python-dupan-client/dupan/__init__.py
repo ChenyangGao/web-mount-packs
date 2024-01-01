@@ -8,23 +8,32 @@ __all__ = ["Error", "DuPanClient", "DuPanShareList"]
 import errno
 
 # from base64 import b64encode
-from collections.abc import Callable, Mapping
-from functools import cached_property
+from collections.abc import deque, Callable, Mapping
+from functools import cached_property, partial
+from itertools import count
 from json import dumps, loads
 from platform import system
 from re import compile as re_compile, escape as re_escape, Pattern
 from subprocess import run
 from threading import Thread
 from typing import cast, Any, AnyStr, Final, Optional, TypedDict
-from urllib.parse import parse_qsl, urlsplit, unquote
+from urllib.parse import parse_qsl, urlencode, urlparse, unquote
 from uuid import uuid4
 
 from ddddocr import DdddOcr # type: ignore
+from lxml.html import fromstring, tostring, HtmlElement
 from qrcode import QRCode # type: ignore
-from requests import Session, get
+from requests import get, Session
 from requests.cookies import create_cookie
 
+from .util.text import cookies_str_to_dict, text_within
 
+
+# 百度网盘 openapi 的应用，直接使用 AList 的
+# https://alist.nn.ci/guide/drivers/baidu.html
+CLIENT_ID = "iYCeC9g08h5vuP9UqvPHKKSVrKFXGa1v"
+CLIENT_SECRET = "jXiFMOPVPCWlO2M5CwWQzffpNPaGTRBG"
+# 百度网盘 errno 对应的信息
 ERRNO_TO_MESSAGE: Final[dict[int, str]] = {
     0: "成功", 
     -1: "由于您分享了违反相关法律法规的文件，分享功能已被禁用，之前分享出去的文件不受影响。", 
@@ -65,6 +74,21 @@ ERRNO_TO_MESSAGE: Final[dict[int, str]] = {
     9500: '你的帐号存在安全风险，已进入保护模式，请修改密码后使用，<a href="/disk/appeal" target="_blank">查看详情</a>', 
     90003: "暂无文件夹管理权限", 
 }
+SHARE_ERRORTYPE_TO_MESSAGE: Final[dict[int, str]] = {
+    0: "啊哦，你来晚了，分享的文件已经被删除了，下次要早点哟。", 
+    1: "啊哦，你来晚了，分享的文件已经被取消了，下次要早点哟。", 
+    2: "此链接分享内容暂时不可访问", 
+    3: "此链接分享内容可能因为涉及侵权、色情、反动、低俗等信息，无法访问！", 
+    5: "啊哦！链接错误没找到文件，请打开正确的分享链接!", 
+    10: "啊哦，来晚了，该分享文件已过期", 
+    11: "由于访问次数过多，该分享链接已失效", 
+    12: "因该分享含有自动备份文件夹，暂无法查看", 
+    15: "系统升级，链接暂时无法查看，升级完成后恢复正常。", 
+    17: "该链接访问范围受限，请使用正常的访问方式", 
+    123: "该链接已超过访问人数上限，可联系分享者重新分享", 
+    124: "您访问的链接已被冻结，可联系分享者进行激活", 
+    -1: "分享的文件不存在。", 
+}
 
 
 class VCodeResult(TypedDict, total=True):
@@ -72,15 +96,35 @@ class VCodeResult(TypedDict, total=True):
     vcode_str: str
 
 
-def recognize_vcode(_ocr=DdddOcr(beta=True), /) -> VCodeResult:
+def decaptcha(
+    ocr: Callable[[bytes], str] = DdddOcr(beta=True, show_ad=False).classification, 
+    /, 
+    min_confirm: int = 2, 
+) -> VCodeResult:
     "识别百度网盘的验证码"
-    url = "https://pan.baidu.com/api/getcaptcha?prod=shareverify&web=1&DuPanClienttype=0&bdstoken="
+    url = "https://pan.baidu.com/api/getcaptcha?prod=shareverify&web=1&clienttype=0"
+    with get(url) as resp:
+        resp.raise_for_status()
+        data = resp.json()
+    vcode_img: str = data["vcode_img"]
+    vcode_str: str = data["vcode_str"]
+    counter: dict[str, int] = {}
     while True:
-        resp = get(url).json()
-        for i in range(10):
-            res = _ocr.classification(get(resp["vcode_img"]).content)
-            if len(res) == 4 and res.isalnum():
-                return {"vcode": res, "vcode_str": resp["vcode_str"]}
+        try:
+            with get(vcode_img, timeout=5) as resp:
+                resp.raise_for_status()
+                content = resp.content
+        except:
+            continue
+        res = ocr(content)
+        if len(res) != 4 or not res.isalnum():
+            continue
+        if min_confirm <= 1:
+            return {"vcode": res, "vcode_str": vcode_str}
+        m = counter.get(res, 0) + 1
+        if m >= min_confirm:
+            return {"vcode": res, "vcode_str": vcode_str}
+        counter[res] = m
 
 
 try:
@@ -110,56 +154,6 @@ def console_qrcode(text: str) -> None:
     qr = QRCode(border=1)
     qr.add_data(text)
     qr.print_ascii(tty=True)
-
-
-def text_to_dict(
-    s: AnyStr, 
-    /, 
-    kv_sep: AnyStr | Pattern[AnyStr], 
-    entry_sep: AnyStr | Pattern[AnyStr], 
-) -> dict[AnyStr, AnyStr]:
-    if isinstance(kv_sep, (str, bytes, bytearray)):
-        search_kv_sep = re_compile(re_escape(kv_sep)).search
-    else:
-        search_kv_sep = kv_sep.search
-    if isinstance(entry_sep, (str, bytes, bytearray)):
-        search_entry_sep = re_compile(re_escape(entry_sep)).search
-    else:
-        search_entry_sep = entry_sep.search
-    d: dict[AnyStr, AnyStr] = {}
-    start = 0
-    length = len(s)
-    while start < length:
-        match = search_kv_sep(s, start)
-        if match is None:
-            break
-        l, r = match.span()
-        key = s[start:l]
-        match = search_entry_sep(s, r)
-        if match is None:
-            d[key] = s[r:]
-            break
-        l, start = match.span()
-        d[key] = s[r:l]
-    return d
-
-
-def headers_str_to_dict(
-    cookies: str, 
-    /, 
-    kv_sep: str | Pattern[str] = ": ", 
-    entry_sep: str | Pattern[str] = "\n", 
-) -> dict[str, str]:
-    return text_to_dict(cookies.strip(), kv_sep, entry_sep)
-
-
-def cookies_str_to_dict(
-    cookies: str, 
-    /, 
-    kv_sep: str | Pattern[str] = re_compile(r"\s*=\s*"), 
-    entry_sep: str | Pattern[str] = re_compile(r"\s*;\s*"), 
-) -> dict[str, str]:
-    return text_to_dict(cookies.strip(), kv_sep, entry_sep)
 
 
 class Error(OSError):
@@ -196,7 +190,7 @@ class DuPanClient:
         resp = self.get_qrcode(gid)
         sign = resp["sign"]
         if scan_in_console:
-            url = url = f"https://wappass.baidu.com/wp/?qrlogin&error=0&sign={sign}&cmd=login&lp=pc&tpl=netdisk&adapter=3&qrloginfrom=pc"
+            url = f"https://wappass.baidu.com/wp/?qrlogin&error=0&sign={sign}&cmd=login&lp=pc&tpl=netdisk&adapter=3&qrloginfrom=pc"
             console_qrcode(url)
         else:
             imgurl = "https://" + resp["imgurl"]
@@ -275,7 +269,7 @@ class DuPanClient:
 
     @staticmethod
     def list_app_version():
-        url = "https://pan.baidu.com/disk/cmsdata?DuPanClienttype=0&web=1&do=DuPanClient"
+        url = "https://pan.baidu.com/disk/cmsdata?clienttype=0&web=1&do=client"
         return get(url).json()
 
     def get_qrcode(self, /, gid):
@@ -326,14 +320,14 @@ class DuPanClient:
             page: int = 1
             order: str = "time"
             desc: 0 | 1 = 1
-            DuPanClienttype: int = 0
+            clienttype: int = 0
             web: int = 1
         """
         api = "https://pan.baidu.com/api/list"
         if isinstance(payload, str):
-            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "DuPanClienttype": 0, "web": 1, "dir": payload}
+            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, "dir": payload}
         else:
-            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "DuPanClienttype": 0, "web": 1, **payload}
+            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, **payload}
         return self.request(api, params=payload)
 
     def makedir(
@@ -345,7 +339,7 @@ class DuPanClient:
         params = {
             "a": "commit", 
             "bdstoken": self.bdstoken, 
-            "DuPanClienttype": 0, 
+            "clienttype": 0, 
             "web": 1, 
         }
         if isinstance(payload, str):
@@ -368,7 +362,7 @@ class DuPanClient:
             "onnest": "fail", 
             "bdstoken": self.bdstoken, 
             "newVerify": 1, 
-            "DuPanClienttype": 0, 
+            "clienttype": 0, 
             "web": 1, 
             **params, 
         }
@@ -416,7 +410,7 @@ class DuPanClient:
     ) -> dict:
         api = "https://pan.baidu.com/share/taskquery"
         if isinstance(payload, (int, str)):
-            payload = {"DuPanClienttype": 0, "web": 1, "taskid": payload}
+            payload = {"clienttype": 0, "web": 1, "taskid": payload}
         return self.request(api, params=payload)
 
     def transfer(
@@ -432,7 +426,7 @@ class DuPanClient:
             "async": 1, 
             "bdstoken": self.bdstoken, 
             "web": 1, 
-            "DuPanClienttype": 0, 
+            "clienttype": 0, 
             **params, 
         }
         if isinstance(data, (int, str)):
@@ -443,50 +437,149 @@ class DuPanClient:
             data["fsidlist"] = "[%s]" % ",".join(map(str, data["fsidlist"]))
         return self.request(api, "POST", params=params, data=data, headers={"Referer": url})
 
+    def oauth_authorize(
+        self, 
+        /, 
+        client_id: str = CLIENT_ID, 
+        scope: str = "basic,netdisk", 
+    ) -> str:
+        def check(etree):
+            error_msg = etree.find_class("error-msg-list")
+            if error_msg:
+                raise OSError(tostring(error_msg[0], encoding="utf-8").decode("utf-8").strip())
+        api = "https://openapi.baidu.com/oauth/2.0/authorize"
+        params = {
+            "response_type": "code", 
+            "client_id": client_id, 
+            "redirect_uri": "oob", 
+            "scope": scope, 
+            "display": "popup", 
+        }
+        resp = self.request(api, params=params)
+        etree: HtmlElement = fromstring(resp)
+        check(etree)
+        try:
+            return etree.get_element_by_id("Verifier").value
+        except KeyError:
+            pass
+        payload = []
+        grant_permissions = []
+        el: HtmlElement
+        for el in fromstring(resp).cssselect('form[name="scopes"] input'):
+            name, value = el.name, el.value
+            if name == "grant_permissions_arr":
+                grant_permissions.append(value)
+                payload.append(("grant_permissions_arr[]", value))
+            elif name == "grant_permissions":
+                payload.append(("grant_permissions", ",".join(grant_permissions)))
+            else:
+                payload.append((name, value))
+        resp = self.request(
+            api, 
+            "POST", 
+            params=params, 
+            data=urlencode(payload), 
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        etree = fromstring(resp)
+        return etree.get_element_by_id("Verifier").value
+
+    def oauth_token(
+        self, 
+        /, 
+        client_id: str = CLIENT_ID, 
+        client_secret: str = CLIENT_SECRET, 
+        scope: str = "basic,netdisk", 
+    ) -> dict:
+        api = "https://openapi.baidu.com/oauth/2.0/token"
+        params = {
+            "grant_type": "authorization_code", 
+            "code": self.oauth_authorize(client_id, scope), 
+            "client_id": client_id, 
+            "client_secret": client_secret, 
+            "redirect_uri": "oob", 
+        }
+        return self.request(api, params=params)
+
 
 class DuPanShareList:
 
-    def __init__(self, url):
+    def __init__(self, url: str, password: str = ""):
         if url.startswith(("http://", "https://")):
-            shorturl, password = self._extract_from_url(url)
+            shorturl, _password = self._extract_from_url(url)
+            if not password:
+                password = _password
+            # NOTE: Or use the following format, return 404 when the link is cancelled or disabled
+            #   url = f"https://pan.baidu.com/share/init?surl={shorturl}"
+            if shorturl:
+                url = f"https://pan.baidu.com/s/1{shorturl}"
         else:
             shorturl = url
-            password = ""
-        url = self.url = f"https://pan.baidu.com/share/init?surl={shorturl}"
+            url = f"https://pan.baidu.com/s/1{shorturl}"
+        self.url = url
         self.shorturl = shorturl
         self.password = password
         session = self.session = Session()
         session.headers["Referer"] = url
 
+    def __iter__(self, /):
+        dq = deque("/")
+        get, put = dq.popleft, dq.append
+        while dq:
+            for file in self.iterdir(get()):
+                yield file
+                if file["isdir"]:
+                    put(file["path"])
+
     @staticmethod
     def _extract_from_url(url: str, /) -> tuple[str, str]:
-        urlp = urlsplit(url)
+        urlp = urlparse(url)
+        if urlp.scheme and urlp.scheme not in ("http", "https"):
+            raise ValueError(f"url 协议只接受 'http' 和 'https'，收到 {urlp.scheme!r}，")
+        if urlp.netloc and urlp.netloc != "pan.baidu.com":
+            raise ValueError(f"url 的域名必须是 'pan.baidu.com'，收到 {urlp.netloc!r}")
         path = urlp.path
         query = dict(parse_qsl(urlp.query))
-        if path == "/share/init":
+        if path == "/share/link":
+            shorturl = ""
+        elif path == "/share/init":
             shorturl = query["surl"]
         elif path.startswith("/s/1"):
             shorturl = path.removeprefix("/s/1")
+        elif "/" not in path:
+            shorturl = path
         else:
-            raise ValueError("invalid share url")
-        pwd = query.get("pwd", "")
-        return shorturl, pwd
+            raise ValueError(f"invalid share url: {url!r}")
+        return shorturl, query.get("pwd", "")
 
     @staticmethod
-    def _extract_index_data(
-        content: bytes, 
-        _search=re_compile(br"locals\.mset\((.*?)\);").search, 
-        /, 
-    ) -> dict:
-        match = _search(content)
-        if match is None:
+    def _extract_indexdata(content: bytes, /) -> dict:
+        match = text_within(content, b"locals.mset(", b");")
+        if not match:
             raise OSError("没有提取到页面相关数据，可能是页面加载失败、被服务器限制访问、链接失效、分享被取消等原因")
-        return loads(match[1])
+        return loads(match)
+
+    @staticmethod
+    def _extract_yundata(
+        content: bytes, 
+        /, 
+        _sub=partial(re_compile(r"\w+(?=:)").sub, r'"\g<0>"'), 
+    ) -> Optional[dict]:
+        "从分享链接的主页中提取分享者相关的信息"
+        try:
+            return eval(_sub(text_within(content, b"window.yunData=", b";").decode("utf-8")))
+        except:
+            return None
 
     @cached_property
     def root(self, /):
         self.listdir_index()
         return self.__dict__["root"]
+
+    @cached_property
+    def randsk(self, /) -> str:
+        self.listdir_index()
+        return unquote(self.session.cookies.get("BDCLND", ""))
 
     @cached_property
     def share_id(self, /):
@@ -498,54 +591,99 @@ class DuPanShareList:
         self.listdir_index()
         return self.__dict__["share_uk"]
 
-    def verify(self, /) -> str:
+    @cached_property
+    def yundata(self, /):
+        self.listdir_index()
+        return self.__dict__["yundata"]
+
+    def verify(self, /, use_vcode: bool = False):
         api = "https://pan.baidu.com/share/verify"
-        params: dict[str, int | str] = {"surl": self.shorturl, "web": 1, "DuPanClienttype": 0}
+        params: dict[str, int | str] = {"surl": self.shorturl, "web": 1, "clienttype": 0}
         data = {"pwd": self.password}
-        session = self.session
+        if use_vcode:
+            data.update(cast(dict[str, str], decaptcha()))
+        post = self.session.post
         while True:
-            with session.post(api, params=params, data=data) as resp:
+            with post(api, params=params, data=data) as resp:
                 resp.raise_for_status()
                 json = resp.json()
                 errno = json["errno"]
                 if not errno:
                     break
                 if errno == -62:
-                    data.update(cast(dict[str, str], recognize_vcode()))
+                    data.update(cast(dict[str, str], decaptcha()))
                 else:
                     raise OSError(json)
-        randsk = json["randsk"]
-        session.cookies.set("BDCLND", randsk, domain=".baidu.com")
-        self.__dict__["randsk"] = unquote(randsk)
-        return randsk
 
-    def listdir_index(self, /) -> dict:
+    def iterdir(self, /, dir="/"):
+        if dir in ("", "/"):
+            yield from self.listdir_index()
+            return
+        if not hasattr(self, "share_uk"):
+            self.listdir_index()
+        if not dir.startswith("/"):
+            dir = self.root + "/" + dir
+        api = "https://pan.baidu.com/share/list"
+        params = {
+            "uk": self.share_uk, 
+            "shareid": self.share_id, 
+            "order": "other", 
+            "desc": 1, 
+            "showempty": 0, 
+            "clienttype": 0, 
+            "web": 1, 
+            "page": 1, 
+            "num": 100, 
+            "dir": dir, 
+        }
+        get = self.session.get
+        while True:
+            ls = Error.check(get(api, params=params).json())["list"]
+            yield from ls
+            if len(ls) < 100:
+                return
+            params["page"] += 1
+
+    def listdir_index(self, /, try_times: int = 5) -> dict:
         url = self.url
         password = self.password
         session = self.session
-        while True:
+        if try_times <= 0:
+            it = count()
+        else:
+            it = range(try_times)
+        for _ in it:
             with session.get(url) as resp:
                 resp.raise_for_status()
                 content = resp.content
-                data = self._extract_index_data(content)
+                data = self._extract_indexdata(content)
                 if b'"verify-form"' in content:
                     if not password:
                         raise OSError("需要密码")
-                    self.verify()
+                    self.verify(b'"change-code"' in content)
                 else:
-                    file_list = data["file_list"]
-                    if file_list is None:
-                        raise OSError("没有找到下载文件，可能是链接失效、分享被取消等原因")
+                    if data["errno"]:
+                        data["errno_reason"] = ERRNO_TO_MESSAGE.get(data["errno"])
+                        data["errortype_reason"] = SHARE_ERRORTYPE_TO_MESSAGE.get(data.get("errortype", -1))
+                        raise OSError(data)
+                    file_list = data.get("file_list")
+                    if not file_list:
+                        raise OSError("无下载文件，可能是链接失效、分享被取消、删除了所有分享文件等原因")
+                    self.yundata = self._extract_yundata(content)
                     if file_list:
-                        root = file_list[0]["path"].rsplit("/", 1)[0]
+                        root = root2 = file_list[0]["path"].rsplit("/", 1)[0]
+                        if len(file_list) > 1:
+                            root2 = file_list[1]["path"].rsplit("/", 1)[0]
                     else:
-                        root = "/"
+                        root = root2 = "/"
                     self.__dict__.update(
                         root = root, 
+                        root2 = root2, 
                         share_uk = data["share_uk"], 
                         share_id = data["shareid"], 
                     )
                     return file_list
+        raise RuntimeError("too many attempts")
 
     def listdir(self, dir="/", page=1, num=0):
         if dir in ("", "/"):
@@ -561,7 +699,7 @@ class DuPanShareList:
             "order": "other", 
             "desc": 1, 
             "showempty": 0, 
-            "DuPanClienttype": 0, 
+            "clienttype": 0, 
             "web": 1, 
             "page": 1, 
             "num": 100, 
@@ -584,4 +722,5 @@ class DuPanShareList:
 
 
 # TODO: 上传下载使用百度网盘的openapi，直接使用 alist 已经授权的 token
+# TODO: 百度网盘转存时，需要保持相对路径
 
