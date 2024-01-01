@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "clouddrive"
-version = "0.0.9.8.1"
-description = "Python wrapper for CloudDrive."
+name = "python-alipan"
+version = "0.0.0"
+description = "Python wrapper for `alipan <https://www.alipan.com>`."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-clouddrive-web-api"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-clouddrive-web-api"
-keywords = ["nas", "clouddrive"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-alipan-client"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-alipan-client"
+keywords = ["nas", "alipan", "阿里云盘"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",
@@ -27,30 +27,13 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-
-grpcio = "*"
-grpclib = "*"
-protobuf = "*"
 requests = "*"
-python-dateutil = "*"
-yarl = "*"
 
 [tool.poetry.dev-dependencies]
-python = "^3.10"
-
-grpcio = "*"
-grpclib = "*"
-protobuf = "*"
-requests = "*"
-python-dateutil = "*"
-yarl = "*"
-
-grpcio-tools = "*"
-"grpclib[protobuf]" = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "clouddrive"
+include = "alipan"

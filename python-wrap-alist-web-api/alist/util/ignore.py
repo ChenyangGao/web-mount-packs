@@ -31,37 +31,37 @@ def translate(pattern: str, /) -> str:
         return s + "/?$"
 
 
-def make_mimetype_predicate(pattern: str, /) -> Optional[Callable]:
+def extended_pattern_translate(pattern: str, /) -> str:
     if len(pattern) <= 1:
-        return None
+        return ""
     first, rest = pattern[0], pattern[1:]
     match first:
         case "=":
-            return rest.__eq__
+            return f"^{re_escape(rest)}$"
         case "^":
-            return methodcaller("startswith", rest)
+            return f"^{re_escape(rest)}"
         case "$":
-            return methodcaller("endswith", rest)
+            return f"{re_escape(rest)}$"
         case ":":
-            return methodcaller("__contains__", rest)
+            return re_escape(rest)
         case ";":
-            return lambda s, needle=rest: needle in s.split()
+            return f"(?:^|(?<=\s)){re_escape(rest)}(?:$|(?=\s))"
         case ",":
-            return lambda s, needle=rest: needle in s.split(",")
+            return f"(?:^|(?<=,)){re_escape(rest)}(?:$|(?=,))"
         case "<":
-            return re_compile(r"\b"+re_escape(rest)).search
+            return f"\\b{re_escape(rest)}"
         case ">":
-            return re_compile(re_escape(rest)+r"\b").search
+            return f"{re_escape(rest)}\\b"
         case "|":
-            return re_compile(r"\b"+re_escape(rest)+r"\b").search
+            return f"\\b{re_escape(rest)}\\b"
         case "~":
-            return re_compile(rest).search
+            return rest
         case "-":
-            return re_compile(rest).fullmatch
+            return f"^{rest}$"
         case "%":
-            return re_compile(wildcard_translate(rest)).fullmatch
+            return f"^{wildcard_translate(rest)}"
         case _:
-            return pattern.__eq__
+            return f"^{re_escape(pattern)}$"
 
 
 def parse(
@@ -75,8 +75,8 @@ def parse(
     ignores: list[str] = []
     ignore_all: bool = False
     if check_mimetype:
-        mimetype_shows: list[Callable] = []
-        mimetype_ignores: list[Callable] = []
+        mimetype_shows: list[str] = []
+        mimetype_ignores: list[str] = []
     for pattern in patterns:
         if not pattern:
             continue
@@ -92,12 +92,12 @@ def parse(
         elif check_mimetype and pattern.removeprefix("!").startswith(
             ("=", "^", "$", ":", ";", ",", "<", ">", "|", "~", "-", "%")
         ):
-            predicate = make_mimetype_predicate(pattern.removeprefix("!"))
-            if predicate:
+            pat = extended_pattern_translate(pattern.removeprefix("!"))
+            if pat:
                 if pattern.startswith("!"):
-                    mimetype_shows.append(predicate)
+                    mimetype_shows.append(pat)
                 else:
-                    mimetype_ignores.append(predicate)
+                    mimetype_ignores.append(pat)
         elif pattern.startswith("!"):
             if show_all:
                 continue
@@ -116,29 +116,41 @@ def parse(
                 ignores.append(pattern)
     if show_all:
         return None
-    preds: list[Callable] = []
-    if check_mimetype and (mimetype_shows or mimetype_ignores):
-        def predicate(path: str, /):
-            if path.endswith("/"):
-                return False
-            mime = guess_type(path)[0] or "application/octet-stream"
-            return not any(p(mime) for p in mimetype_shows) and any(p(mime) for p in mimetype_ignores)
-        preds.append(predicate)
     flags = IGNORECASE if ignore_case else 0
+    preds: list[Callable] = []
+    ignore_preds: list[Callable] = []
+    if check_mimetype:
+        if mimetype_shows:
+            show_mime_search = re_compile("|".join(mimetype_shows), flags).search
+            def predicate(path: str, /) -> bool:
+                if path.endswith("/"):
+                    return True
+                mime = guess_type(path)[0] or "application/octet-stream"
+                return show_mime_search(mime) is None
+            preds.append(predicate)
+        if mimetype_ignores:
+            ignore_mime_search = re_compile("|".join(mimetype_ignores), flags).search
+            def predicate(path: str, /) -> bool:
+                if path.endswith("/"):
+                    return False
+                mime = guess_type(path)[0] or "application/octet-stream"
+                return ignore_mime_search(mime) is not None
+            ignore_preds.append(predicate)
     if shows:
         show = re_compile("|".join(map(translate, shows)), flags).search
         preds.append(lambda path, /: show(path) is None)
     if ignore_all:
-        preds.append(lambda _: True)
+        ignore_preds.append(lambda _: True)
     elif ignores:
         ignore = re_compile("|".join(map(translate, ignores)), flags).search
-        preds.append(lambda path, /: ignore(path) is not None)
+        ignore_preds.append(lambda path, /: ignore(path) is not None)
+    if ignore_preds:
+        preds.append(lambda path: any(p(path) for p in ignore_preds))
     if not preds:
         return None
     elif len(preds) == 1:
         return preds[0]
-    else:
-        return lambda path: all(p(path) for p in preds)
+    return lambda path: all(p(path) for p in preds)
 
 
 def read_file(file: bytes | str | PathLike | TextIO, /) -> list[str]:

@@ -205,7 +205,7 @@ class P115Client:
             cookie = cookies_str_to_dict(cookie)
         cookiejar = self.session.cookies
         cookiejar.clear()
-        if isinstance(cookie, dict):
+        if isinstance(cookie, Mapping):
             for key in ("UID", "CID", "SEID"):
                 cookiejar.set_cookie(
                     create_cookie(key, cookie[key], domain=".115.com", rest={'HttpOnly': True})
@@ -263,14 +263,14 @@ class P115Client:
 
     def _request(
         self, 
-        api: str, 
         /, 
+        url: str, 
         method: str = "GET", 
         parse: bool | Callable[[bytes], Any] = False, 
         **request_kwargs, 
     ):
         request_kwargs["stream"] = True
-        resp = self.session.request(method, api, **request_kwargs)
+        resp = self.session.request(method, url, **request_kwargs)
         resp.raise_for_status()
         if callable(parse):
             with resp:
@@ -289,14 +289,14 @@ class P115Client:
 
     def _async_request(
         self, 
-        api: str, 
         /, 
+        url: str, 
         method: str = "GET", 
         parse: bool | Callable[[bytes], Any] = False, 
         **request_kwargs, 
     ):
         request_kwargs.pop("stream", None)
-        req = self.async_session.request(method, api, **request_kwargs)
+        req = self.async_session.request(method, url, **request_kwargs)
         if callable(parse):
             async def request():
                 async with req as resp:
@@ -321,15 +321,15 @@ class P115Client:
 
     def request(
         self, 
-        api: str, 
         /, 
+        url: str, 
         method: str = "GET", 
         parse: bool | Callable[[bytes], Any] = loads, 
         async_: bool = False, 
         **request_kwargs, 
     ):
         return (self._async_request if async_ else self._request)(
-            api, method, parse=parse, **request_kwargs)
+            url, method, parse=parse, **request_kwargs)
 
     ########## Version API ##########
 
