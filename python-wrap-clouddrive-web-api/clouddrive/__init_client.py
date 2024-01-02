@@ -266,7 +266,7 @@ class Client:
             pass
 
     def set_password(self, value: str, /):
-        ns.__dict__["password"] = value
+        self.__dict__["password"] = value
         self.login()
 
     def login(

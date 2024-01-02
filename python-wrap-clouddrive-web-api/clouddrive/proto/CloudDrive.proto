@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package clouddrive;
 
-// 0.6.0 beta
+// 0.6.0
 
 option csharp_namespace = "CloudDriveSrv.Protos";
 
@@ -305,6 +305,7 @@ message MultiFileRequest { repeated string path = 1; }
 message FileOperationResult {
   bool success = 1;
   string errorMessage = 2;
+  repeated string resultFilePaths = 3;
 }
 message StringResult { string result = 1; }
 message UnmountArchiveResult { string result = 1; }

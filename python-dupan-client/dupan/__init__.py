@@ -8,7 +8,8 @@ __all__ = ["Error", "DuPanClient", "DuPanShareList"]
 import errno
 
 # from base64 import b64encode
-from collections.abc import deque, Callable, Mapping
+from collections import deque
+from collections.abc import Callable, Iterator, Mapping
 from functools import cached_property, partial
 from itertools import count
 from json import dumps, loads
@@ -522,7 +523,7 @@ class DuPanShareList:
         session = self.session = Session()
         session.headers["Referer"] = url
 
-    def __iter__(self, /):
+    def __iter__(self, /) -> Iterator[dict]:
         dq = deque("/")
         get, put = dq.popleft, dq.append
         while dq:
@@ -573,27 +574,32 @@ class DuPanShareList:
 
     @cached_property
     def root(self, /):
-        self.listdir_index()
+        self.list_index()
         return self.__dict__["root"]
 
     @cached_property
+    def root2(self, /):
+        self.list_index()
+        return self.__dict__["root2"]
+
+    @cached_property
     def randsk(self, /) -> str:
-        self.listdir_index()
+        self.list_index()
         return unquote(self.session.cookies.get("BDCLND", ""))
 
     @cached_property
     def share_id(self, /):
-        self.listdir_index()
+        self.list_index()
         return self.__dict__["share_id"]
 
     @cached_property
     def share_uk(self, /):
-        self.listdir_index()
+        self.list_index()
         return self.__dict__["share_uk"]
 
     @cached_property
     def yundata(self, /):
-        self.listdir_index()
+        self.list_index()
         return self.__dict__["yundata"]
 
     def verify(self, /, use_vcode: bool = False):
@@ -615,14 +621,21 @@ class DuPanShareList:
                 else:
                     raise OSError(json)
 
-    def iterdir(self, /, dir="/"):
+    def iterdir(self, /, dir="/") -> Iterator[dict]:
         if dir in ("", "/"):
-            yield from self.listdir_index()
+            yield from self.list_index()
             return
         if not hasattr(self, "share_uk"):
-            self.listdir_index()
+            self.list_index()
         if not dir.startswith("/"):
             dir = self.root + "/" + dir
+            start_inx = len(dir) + 1
+        elif dir == self.root or dir.startswith(self.root + "/"):
+            start_inx = len(self.root) + 1
+        elif dir == self.root2 or dir.startswith(self.root2 + "/"):
+            start_inx = len(self.root2) + 1
+        else:
+            raise FileNotFoundError(errno.ENOENT, dir)
         api = "https://pan.baidu.com/share/list"
         params = {
             "uk": self.share_uk, 
@@ -639,19 +652,21 @@ class DuPanShareList:
         get = self.session.get
         while True:
             ls = Error.check(get(api, params=params).json())["list"]
+            for file in ls:
+                file["relpath"] = file["path"][start_inx:]
             yield from ls
             if len(ls) < 100:
                 return
             params["page"] += 1
 
-    def listdir_index(self, /, try_times: int = 5) -> dict:
+    def list_index(self, /, try_times: int = 5) -> list[dict]:
         url = self.url
         password = self.password
         session = self.session
         if try_times <= 0:
-            it = count()
+            it: Iterator[int] = count()
         else:
-            it = range(try_times)
+            it = iter(range(try_times))
         for _ in it:
             with session.get(url) as resp:
                 resp.raise_for_status()
@@ -671,6 +686,8 @@ class DuPanShareList:
                         raise OSError("无下载文件，可能是链接失效、分享被取消、删除了所有分享文件等原因")
                     self.yundata = self._extract_yundata(content)
                     if file_list:
+                        for file in file_list:
+                            file["relpath"] = file["server_filename"]
                         root = root2 = file_list[0]["path"].rsplit("/", 1)[0]
                         if len(file_list) > 1:
                             root2 = file_list[1]["path"].rsplit("/", 1)[0]
@@ -685,13 +702,28 @@ class DuPanShareList:
                     return file_list
         raise RuntimeError("too many attempts")
 
-    def listdir(self, dir="/", page=1, num=0):
+    def listdir(self, /, dir="/", page=1, num=0) -> list[str]:
+        return [a["server_filename"] for a in self.listdir_attr(dir, page, num)]
+
+    def listdir_attr(self, /, dir="/", page=1, num=0) -> list[dict]:
         if dir in ("", "/"):
-            data = self.listdir_index()
+            data = self.list_index()
+            if num <= 0:
+                return data
+            if page < 1:
+                page = 1
+            return data[(page-1)*num:page*num]
         if not hasattr(self, "share_uk"):
-            self.listdir_index()
+            self.list_index()
         if not dir.startswith("/"):
             dir = self.root + "/" + dir
+            start_inx = len(dir) + 1
+        elif dir == self.root or dir.startswith(self.root + "/"):
+            start_inx = len(self.root) + 1
+        elif dir == self.root2 or dir.startswith(self.root2 + "/"):
+            start_inx = len(self.root2) + 1
+        else:
+            raise FileNotFoundError(errno.ENOENT, dir)
         api = "https://pan.baidu.com/share/list"
         params = {
             "uk": self.share_uk, 
@@ -712,14 +744,18 @@ class DuPanShareList:
                 ls = Error.check(session.get(api, params=params).json())["list"]
                 ls_all.extend(ls)
                 if len(ls) < 100:
+                    for file in ls_all:
+                        file["relpath"] = file["path"][start_inx:]
                     return ls_all
                 params["page"] += 1
         if page > 0:
             params["page"] = page
         if num < 100:
             params["num"] = 100
-        return Error.check(session.get(api, params=params).json())["list"]
-
+        ls = Error.check(session.get(api, params=params).json())["list"]
+        for file in ls:
+            file["relpath"] = file["path"][start_inx:]
+        return ls
 
 # TODO: 上传下载使用百度网盘的openapi，直接使用 alist 已经授权的 token
 # TODO: 百度网盘转存时，需要保持相对路径

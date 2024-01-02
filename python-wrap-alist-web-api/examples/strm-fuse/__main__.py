@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5, 1)
+__version__ = (0, 0, 5, 2)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -83,8 +83,8 @@ if __name__ == "__main__":
 
     from sys import version_info
 
-    if version_info < (3, 11):
-        print("python 版本过低，请升级到至少 3.11")
+    if version_info < (3, 10):
+        print("python 版本过低，请升级到至少 3.10")
         raise SystemExit(1)
 
 import logging
@@ -123,6 +123,8 @@ except ImportError:
     from cachetools import cached, LRUCache, TTLCache
     from dateutil.parser import parse as parse_datetime
     from fuse import FUSE, FuseOSError, Operations, LoggingMixIn # type: ignore
+
+import __fuse_monkey_patch
 
 
 def parse_as_ts(s: Optional[str] = None) -> float:
@@ -175,14 +177,14 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         self._file_to_release: MutableMapping[IO[bytes], None] = TTLCache(maxsize, ttl=1)
 
     def __del__(self, /):
-        for cache in self._fh_to_file:
-            popitem = cache.popitem
-            while cache:
-                try:
-                    _, file = popitem()
-                    file.close()
-                except BaseException as e:
-                    logging.exception(f"can't close file: {file!r}")
+        cache = self._fh_to_file
+        popitem = cache.popitem
+        while cache:
+            try:
+                _, file = popitem()
+                file.close()
+            except BaseException as e:
+                logging.exception(f"can't close file: {file!r}")
         self._fh_to_zdir.clear()
         self._path_to_file.clear()
         self._path_to_zfile.clear()
@@ -406,13 +408,9 @@ if __name__ == "__main__":
     log_level = args.log_level
     if isinstance(log_level, str):
         try:
-            log_level = getattr(logging, log_level.upper(), None)
-            if log_level:
-                log_level = int(log_level)
-            else:
-                log_level = 999
-        except:
-            log_level = 999
+            log_level = int(log_level)
+        except ValueError:
+            log_level = getattr(logging, log_level.upper(), 999)
     log_level = cast(int, log_level)
     logging.basicConfig(level=log_level)
 

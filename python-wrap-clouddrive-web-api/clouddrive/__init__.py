@@ -821,8 +821,10 @@ class CloudDriveFileSystem:
                         closeFile=False, 
                     ))
                     offset += len(data)
-        finally:
+            return client.CloseFile(CloudDrive_pb2.CloseFileRequest(fileHandle=fh))
+        except:
             client.CloseFile(CloudDrive_pb2.CloseFileRequest(fileHandle=fh))
+            raise
 
     def abspath(self, path: str | PathLike[str] = "", /) -> str:
         if path == "/":
@@ -1551,6 +1553,11 @@ class CloudDriveFileSystem:
         replace: bool = False, 
         _check: bool = True, 
     ) -> str:
+        def _update_dst_path(resp):
+            nonlocal dst_path
+            d = MessageToDict(resp)
+            if "resultFilePaths" in d:
+                dst_path = d["resultFilePaths"][0]
         if isinstance(src_path, CloudDrivePath):
             src_path = src_path.path
         elif _check:
@@ -1574,7 +1581,7 @@ class CloudDriveFileSystem:
             dst_attr = self._attr(dst_path)
         except FileNotFoundError:
             if src_dir == dst_dir:
-                self._rename((src_path, dst_name))
+                _update_dst_path(self._rename((src_path, dst_name)))
                 return dst_path
             if not self._attr(dst_dir).isDirectory:
                 raise NotADirectoryError(errno.ENOTDIR, f"{dst_dir!r} is not a directory: {src_path!r} -> {dst_path!r}")
@@ -1606,7 +1613,7 @@ class CloudDriveFileSystem:
                 warn("cross clouds/storages movement will retain the original file: {src_path!r} |-> {dst_path!r}")
             self._move([src_path], dst_dir)
         elif src_dir == dst_dir:
-            self._rename((src_path, dst_name))
+            _update_dst_path(self._rename((src_path, dst_name)))
         else:
             if commonpath((src_dir, dst_dir)) == "/":
                 raise PermissionError(errno.EPERM, f"cross clouds/storages movement does not allow renaming: [{src_dir!r}]{src_path!r} -> [{src_dir!r}]{dst_path!r}")
@@ -1615,7 +1622,7 @@ class CloudDriveFileSystem:
             try:
                 self._move([joinpath(src_dir, tempname)], dst_dir)
                 try:
-                    self._rename((joinpath(dst_dir, tempname), dst_name))
+                    _update_dst_path(self._rename((joinpath(dst_dir, tempname), dst_name)))
                 except:
                     self._move([joinpath(dst_dir, tempname)], src_dir)
                     raise
@@ -1796,7 +1803,10 @@ class CloudDriveFileSystem:
                 raise PermissionError(errno.EPERM, f"can't create file in the root directory directly: {path!r}")
             if not self._attr(dir_).isDirectory:
                 raise NotADirectoryError(errno.ENOTDIR, f"parent path {dir_!r} is not a directory: {path!r}")
-        self._upload(path)
+        resp = self._upload(path)
+        d = MessageToDict(resp)
+        if "resultFilePaths" in d:
+            path = cast(str, d["resultFilePaths"][0])
         return path
 
     def upload(
@@ -1839,7 +1849,10 @@ class CloudDriveFileSystem:
             elif not overwrite_or_ignore:
                 return path
             self._delete(path)
-        self._upload(path, file)
+        resp = self._upload(path, file)
+        d = MessageToDict(resp)
+        if "resultFilePaths" in d:
+            path = cast(str, d["resultFilePaths"][0])
         return path
 
     def upload_tree(

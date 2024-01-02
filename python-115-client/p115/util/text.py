@@ -5,7 +5,7 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "text_to_dict", "dict_to_text", "cookies_str_to_dict", "headers_str_to_dict", 
     "unicode_unescape", "extract_origin", "complete_base_url", 
-    "posix_glob_translate_iter", 
+    "posix_glob_translate_iter", "text_within", 
 ]
 
 
@@ -176,4 +176,52 @@ def posix_glob_translate_iter(pattern: str, /) -> Iterator[tuple[str, str, str]]
                 pattern = "/" + pattern
             last_type = "orig"
         yield pattern, last_type, orig_part
+
+
+def text_within(
+    text: AnyStr, 
+    begin: None | AnyStr | Pattern[AnyStr] = None, 
+    end: None | AnyStr | Pattern[AnyStr] = None, 
+    with_begin: bool = False, 
+    with_end: bool = False, 
+    greedy: bool = False, 
+) -> AnyStr:
+    empty = text[:0]
+    if not begin:
+        start = start0 = 0
+    elif isinstance(begin, Pattern):
+        match = begin.search(text)
+        if match is None:
+            return empty
+        start0 = match.end()
+        start = match.start() if with_begin else match.end()
+    else:
+        start = text.find(begin)
+        if start == -1:
+            return empty
+        start0 = start + len(begin)
+        if not with_begin:
+            start = start0
+    if not end:
+        return text[start:]
+    elif isinstance(end, Pattern):
+        if greedy:
+            match = None
+            for match in end.finditer(text, start0):
+                pass
+        else:
+            match = end.search(text, start0)
+        if match is None:
+            return empty
+        stop = match.end() if with_end else match.start()
+    else:
+        if greedy:
+            stop = text.rfind(end, start0)
+        else:
+            stop = text.find(end, start0)
+        if stop == -1:
+            return empty
+        if with_end:
+            stop += len(end)
+    return text[start:stop]
 

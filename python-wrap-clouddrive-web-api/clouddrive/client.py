@@ -97,7 +97,7 @@ class Client:
             pass
 
     def set_password(self, value: str, /):
-        ns.__dict__["password"] = value
+        self.__dict__["password"] = value
         self.login()
 
     def login(
@@ -171,6 +171,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message UserLoginRequest {
           string userName = 1;
@@ -194,6 +195,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message UserRegisterRequest {
           string userName = 1;
@@ -576,6 +578,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).CreateFolder(arg, metadata=self.metadata)
@@ -594,6 +597,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message RenameFileRequest {
           string theFilePath = 1;
@@ -616,6 +620,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message RenameFileRequest {
           string theFilePath = 1;
@@ -639,6 +644,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message MoveFileRequest {
           repeated string theFilePaths = 1;
@@ -661,6 +667,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message FileRequest { string path = 1; }
         """
@@ -680,6 +687,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message FileRequest { string path = 1; }
         """
@@ -699,6 +707,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message MultiFileRequest { repeated string path = 1; }
         """
@@ -718,6 +727,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message MultiFileRequest { repeated string path = 1; }
         """
@@ -743,6 +753,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).AddOfflineFiles(arg, metadata=self.metadata)
@@ -948,6 +959,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message UserLogoutRequest { bool logoutFromCloudFS = 1; }
         """
@@ -968,6 +980,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).CanAddMoreMountPoints(Empty(), metadata=self.metadata)
@@ -1388,6 +1401,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).CanAddMoreCloudApis(Empty(), metadata=self.metadata)
@@ -1714,6 +1728,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         message RemoveCloudAPIRequest {
           string cloudName = 1;
@@ -2145,6 +2160,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).ChangePassword(arg, metadata=self.metadata)
@@ -2183,6 +2199,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).CloseFile(arg, metadata=self.metadata)
@@ -2896,6 +2913,7 @@ class Client:
         message FileOperationResult {
           bool success = 1;
           string errorMessage = 2;
+          repeated string resultFilePaths = 3;
         }
         """
         return (self.async_stub if async_ else self.stub).CanAddMoreBackups(Empty(), metadata=self.metadata)
