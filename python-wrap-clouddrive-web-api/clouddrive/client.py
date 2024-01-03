@@ -4,13 +4,11 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["Client"]
 
-from asyncio import run
-from inspect import isawaitable
-from typing import Any, Iterator, Never
+from typing import Any, Iterator, Never, Optional
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
-from grpc import insecure_channel # type: ignore
-from grpclib.client import Channel # type: ignore
+from grpc import insecure_channel, Channel # type: ignore
+from grpclib.client import Channel as AsyncChannel # type: ignore
 from yarl import URL
 
 import pathlib, sys
@@ -28,8 +26,8 @@ class Client:
     origin: str
     username: str
     password: str
-    channel: Any
-    async_channel: Any
+    channel: Channel
+    async_channel: AsyncChannel
     stub: CloudDrive_pb2_grpc.CloudDriveFileSrvStub
     async_stub: CloudDrive_grpc.CloudDriveFileSrvStub
     download_baseurl: str
@@ -41,15 +39,15 @@ class Client:
         origin: str = "http://localhost:19798", 
         username: str = "", 
         password: str = "", 
-        channel = None, 
-        async_channel = None, 
+        channel: Optional[Channel] = None, 
+        async_channel: Optional[AsyncChannel] = None, 
     ):
         origin = origin.rstrip("/")
         urlp = URL(origin)
         if channel is None:
             channel = insecure_channel(urlp.authority)
         if async_channel is None:
-            async_channel = Channel(urlp.host, urlp.port)
+            async_channel = AsyncChannel(urlp.host, urlp.port)
         self.__dict__.update(
             origin = origin, 
             download_baseurl = f"{origin}/static/http/{urlp.authority}/False/", 
@@ -87,13 +85,8 @@ class Client:
     def close(self, /):
         try:
             self.channel.close()
-        except:
-            pass
-        try:
-            clo = self.async_channel.close()
-            if isawaitable(clo):
-                run(clo)
-        except:
+            self.async_channel.close()
+        except AttributeError:
             pass
 
     def set_password(self, value: str, /):
