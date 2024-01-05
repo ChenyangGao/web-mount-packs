@@ -1461,24 +1461,10 @@ class AlistPath(Mapping, PathLike[str]):
             dst_path, 
             dst_password=dst_password, 
             overwrite_or_ignore=overwrite_or_ignore, 
+            recursive=True, 
         )
         if not dst:
             return None
-        return type(self)(self.fs, dst, dst_password)
-
-    def copytree(
-        self, 
-        /, 
-        dst_dir: str | PathLike[str], 
-        dst_password: Optional[str] = None, 
-    ) -> AlistPath:
-        if dst_password is None:
-            dst_password = self.password
-        dst = self.fs.copytree(
-            self, 
-            dst_dir, 
-            dst_password=dst_password, 
-        )
         return type(self)(self.fs, dst, dst_password)
 
     def download(
@@ -2226,8 +2212,8 @@ class AlistFileSystem:
     def fs_remove(
         self, 
         /, 
+        src_dir: str | PathLike[str], 
         names: list[str], 
-        src_dir: str | PathLike[str] = "", 
         _check: bool = True, 
     ) -> dict:
         if not names:
@@ -2384,6 +2370,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite_or_ignore: Optional[bool] = None, 
+        recursive: bool = False, 
         _check: bool = True, 
     ) -> Optional[str]:
         if isinstance(src_path, AlistPath):
@@ -2400,35 +2387,64 @@ class AlistFileSystem:
             dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
         dst_path = cast(str, dst_path)
+        if _check:
+            src_attr = self.attr(src_path, src_password, _check=False)
+            if src_attr["is_dir"]:
+                if recursive:
+                    return self.copytree(
+                        src_path, 
+                        dst_path, 
+                        src_password, 
+                        dst_password, 
+                        overwrite_or_ignore=overwrite_or_ignore, 
+                        _check=False, 
+                    )
+                if overwrite_or_ignore == False:
+                    return None
+                raise IsADirectoryError(
+                    errno.EISDIR, f"source path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}")
         if src_path == dst_path:
             if overwrite_or_ignore is None:
                 raise SameFileError(src_path)
             return None
-        if commonpath((src_path, dst_path)) == dst_path:
-            raise PermissionError(errno.EPERM, f"copy a file to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
-        src_attr = self.attr(src_path, src_password, _check=False)
-        if src_attr["is_dir"]:
-            raise IsADirectoryError(errno.EISDIR, f"source path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}")
+        elif commonpath((src_path, dst_path)) == dst_path:
+            if overwrite_or_ignore == False:
+                return None
+            raise PermissionError(
+                errno.EPERM, 
+                f"copy a file as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        elif commonpath((src_path, dst_path)) == src_path:
+            if overwrite_or_ignore == False:
+                return None
+            raise PermissionError(
+                errno.EPERM, 
+                f"copy a file as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        src_dir, src_name = split(src_path)
+        dst_dir, dst_name = split(dst_path)
         try:
             dst_attr = self.attr(dst_path, dst_password, _check=False)
         except FileNotFoundError:
             pass
         else:
             if dst_attr["is_dir"]:
+                if overwrite_or_ignore == False:
+                    return None
                 raise IsADirectoryError(errno.EISDIR, f"destination path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}")
             elif overwrite_or_ignore is None:
                 raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists: {src_path!r} -> {dst_path!r}")
             elif not overwrite_or_ignore:
                 return None
-            self.fs_remove([basename(dst_path)], dirname(dst_path), _check=False)
-        src_dir, src_name = split(src_path)
-        dst_dir, dst_name = split(dst_path)
+            self.fs_remove(dst_dir, [dst_name], _check=False)
         if src_name == dst_name:
             self.fs_copy(src_dir, dst_dir, [src_name], _check=False)
         else:
             src_storage = self.storage_of(src_dir, src_password, _check=False)
             dst_storage = self.storage_of(dst_dir, dst_password, _check=False)
             if src_storage != dst_storage:
+                if overwrite_or_ignore == False:
+                    return None
                 raise PermissionError(errno.EPERM, f"cross storages replication does not allow renaming: [{src_storage!r}]{src_path!r} -> [{dst_storage!r}]{dst_path!r}")
             tempdirname = str(uuid4())
             tempdir = joinpath(dst_dir, tempdirname)
@@ -2438,39 +2454,94 @@ class AlistFileSystem:
                 self.fs_rename(joinpath(tempdir, src_name), dst_name, _check=False)
                 self.fs_move(tempdir, dst_dir, [dst_name], _check=False)
             finally:
-                self.fs_remove([tempdirname], dst_dir, _check=False)
+                self.fs_remove(dst_dir, [tempdirname], _check=False)
         return dst_path
 
     def copytree(
         self, 
         /, 
         src_path: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        dst_path: str | PathLike[str], 
+        src_password: str = "", 
         dst_password: str = "", 
+        overwrite_or_ignore: Optional[bool] = None, 
         _check: bool = True, 
-    ) -> str:
+    ) -> Optional[str]:
         if isinstance(src_path, AlistPath):
+            if not src_password:
+                src_password = src_path.password
             src_path = src_path.path
         elif _check:
             src_path = self.abspath(src_path)
-        if isinstance(dst_dir, AlistPath):
+        if isinstance(dst_path, AlistPath):
             if not dst_password:
-                dst_password = dst_dir.password
-            dst_dir = dst_dir.path
+                dst_password = dst_path.password
+            dst_path = dst_path.path
         elif _check:
-            dst_dir = self.abspath(dst_dir)
+            dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
-        dst_dir = cast(str, dst_dir)
-        if dirname(src_path) == dst_dir:
-            raise SameFileError(src_path)
-        elif src_path == dst_dir or commonpath((src_path, dst_dir)) == dst_dir:
-            raise PermissionError(errno.EPERM, f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_dir!r}")
-        elif not self.attr(dst_dir, dst_password, _check=False)["is_dir"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"destination is not directory: {src_path!r} ->> {dst_dir!r}")
-        elif self.exists(joinpath(dst_dir, basename(src_path))):
-            raise FileExistsError(errno.EEXIST, f"destination already exists: {src_path!r} ->> {dst_dir!r}")
-        self.fs_copy(dirname(src_path), dst_dir, [basename(src_path)], _check=False)
-        return dst_dir
+        dst_path = cast(str, dst_path)
+        if _check:
+            src_attr = self.attr(src_path, src_password, _check=False)
+            if not src_attr["is_dir"]:
+                return self.copy(
+                    src_path, 
+                    dst_path, 
+                    src_password, 
+                    dst_password, 
+                    overwrite_or_ignore=overwrite_or_ignore, 
+                    _check=False, 
+                )
+        if src_path == dst_path:
+            if overwrite_or_ignore is None:
+                raise SameFileError(src_path)
+            return None
+        elif commonpath((src_path, dst_path)) == dst_path:
+            if overwrite_or_ignore == False:
+                return None
+            raise PermissionError(errno.EPERM, f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_path!r}")
+        src_dir, src_name = split(src_path)
+        dst_dir, dst_name = split(dst_path)
+        try:
+            dst_attr = self.attr(dst_path, dst_password, _check=False)
+        except FileNotFoundError:
+            if src_name == dst_name:
+                self.fs_copy(src_dir, dst_dir, [src_name], _check=False)
+                return dst_path
+            self.makedirs(dst_path, dst_password, exist_ok=True, _check=False)
+        else:
+            if not dst_attr["is_dir"]:
+                if overwrite_or_ignore == False:
+                    return None
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"destination is not directory: {src_path!r} ->> {dst_path!r}", 
+                )
+            elif overwrite_or_ignore is None:
+                raise FileExistsError(
+                    errno.EEXIST, 
+                    f"destination already exists: {src_path!r} ->> {dst_path!r}", 
+                )
+        for attr in self.listdir_attr(src_path):
+            if attr["is_dir"]:
+                self.copytree(
+                    joinpath(src_path, attr["name"]), 
+                    joinpath(dst_path, attr["name"]), 
+                    src_password=src_password, 
+                    dst_password=dst_password, 
+                    overwrite_or_ignore=overwrite_or_ignore, 
+                    _check=False, 
+                )
+            else:
+                self.copy(
+                    joinpath(src_path, attr["name"]), 
+                    joinpath(dst_path, attr["name"]), 
+                    src_password=src_password, 
+                    dst_password=dst_password, 
+                    overwrite_or_ignore=overwrite_or_ignore, 
+                    _check=False, 
+                )
+        return dst_path
 
     def download(
         self, 
@@ -3169,7 +3240,7 @@ class AlistFileSystem:
                 try:
                     storages = self.list_storage()
                 except PermissionError:
-                    self.fs_remove(self.listdir("/", password, refresh=True), "/", _check=False)
+                    self.fs_remove("/", self.listdir("/", password, refresh=True), _check=False)
                 else:
                     for storage in storages:
                         self.fs_remove_storage(storage["id"])
@@ -3192,7 +3263,7 @@ class AlistFileSystem:
                     if commonpath((storage["mount_path"], path)) == path:
                         self.fs_remove_storage(storage["id"])
                         return
-        self.fs_remove([basename(path)], dirname(path), _check=False)
+        self.fs_remove(dirname(path), [basename(path)], _check=False)
 
     def removedirs(
         self, 
@@ -3236,7 +3307,7 @@ class AlistFileSystem:
                     del_dir = parent_dir
                 parent_dir = dirname(parent_dir)
             if del_dir:
-                self.fs_remove([basename(del_dir)], parent_dir, _check=False)
+                self.fs_remove(parent_dir, [basename(del_dir)], _check=False)
         except OSError as e:
             pass
 
@@ -3300,7 +3371,7 @@ class AlistFileSystem:
                         raise NotADirectoryError(errno.ENOTDIR, f"{dst_path!r} is not a directory: {src_path!r} -> {dst_path!r}")
                 elif dst_attr["is_dir"]:
                     raise IsADirectoryError(errno.EISDIR, f"{dst_path!r} is a directory: {src_path!r} -> {dst_path!r}")
-                self.fs_remove([dst_name], dst_dir, _check=False)
+                self.fs_remove(dst_dir, [dst_name], _check=False)
             else:
                 raise FileExistsError(errno.EEXIST, f"{dst_path!r} already exists: {src_path!r} -> {dst_path!r}")
         src_storage = self.storage_of(src_dir, src_password, _check=False)
@@ -3409,7 +3480,7 @@ class AlistFileSystem:
             raise NotADirectoryError(errno.ENOTDIR, path)
         elif not self.is_empty(path, password, _check=False):
             raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
-        self.fs_remove([basename(path)], dirname(path), _check=False)
+        self.fs_remove(dirname(path), [basename(path)], _check=False)
 
     def rmtree(
         self, 
@@ -3430,7 +3501,6 @@ class AlistFileSystem:
     ) -> Iterator[AlistPath]:
         return iter(self.listdir_path(path, password, refresh=refresh, _check=_check))
 
-    # TODO: 需要进一步实现，更准确的 st_mode
     def stat(
         self, 
         /, 
@@ -3442,16 +3512,16 @@ class AlistFileSystem:
         is_dir = attr.get("is_dir", False)
         lastest_update = attr["lastest_update"]
         return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o777, 
-            0, 
-            0, 
-            1, 
-            0, 
-            0, 
-            0 if is_dir else attr["size"], 
-            lastest_update.timestamp(), 
-            parse_datetime(attr["modified"]).timestamp(), 
-            parse_datetime(attr["created"]).timestamp(), 
+            (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
+            0, # ino
+            0, # dev
+            1, # nlink
+            0, # uid
+            0, # gid
+            attr.get("size", 0), # size
+            lastest_update.timestamp(), # atime
+            parse_datetime(attr["modified"]).timestamp(), # mtime
+            parse_datetime(attr["created"]).timestamp(), # ctime
         ))
 
     def storage_of(
@@ -3561,7 +3631,7 @@ class AlistFileSystem:
                 raise IsADirectoryError(errno.EISDIR, path)
             elif not overwrite_or_ignore:
                 return path
-            self.fs_remove([basename(path)], dirname(path), _check=False)
+            self.fs_remove(dirname(path), [basename(path)], _check=False)
         size: int
         if hasattr(file, "getbuffer"):
             size = len(file.getbuffer()) # type: ignore
@@ -3802,13 +3872,14 @@ class AlistFileSystem:
         return self.write_bytes(path, bio, password=password, as_task=as_task, _check=_check)
 
     cd  = chdir
+    cp  = copy
     pwd = getcwd
     ls  = listdir
     ll  = listdir_path
+    mv  = move
     rm  = remove
 
 # TODO: 自动根据文档 https://alist.nn.ci/guide/api 生成 AlistClient 类
 # TODO: 所有类和函数都要有文档
 # TODO: 所有类和函数都要有单元测试
-# TODO: 支持异步IO
 # TODO: 上传下载都支持进度条，下载支持多线程（返回 Future）

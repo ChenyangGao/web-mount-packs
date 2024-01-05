@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
-    "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin"
+    "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin", "P115Sharing", 
 ]
 
 import errno
@@ -754,7 +754,7 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """设置文件或文件夹的备注、标签等（提示：此接口不建议直接使用）
+        """设置文件或文件夹（备注、标签等）
         POST https://webapi.115.com/files/edit
         payload:
             # 如果是单个文件或文件夹
@@ -765,9 +765,35 @@ class P115Client:
             - ...
             # 其它配置信息
             - file_desc: str = <default> # 可以用 html
-            - file_label: int | str = <default> # 标签 id，如果有多个，用逗号","隔开
+            - file_label: int | str = <default> # 标签 id，如果有多个，用逗号 "," 隔开
+            - fid_cover: int | str = <default> # 封面图片的文件 id，如果有多个，用逗号 "," 隔开，如果要删除，值设为 0 即可
         """
         api = "https://webapi.115.com/files/edit"
+        if (headers := request_kwargs.get("headers")):
+            headers = request_kwargs["headers"] = dict(headers)
+        else:
+            headers = request_kwargs["headers"] = {}
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        return self.request(
+            api, 
+            "POST", 
+            data=urlencode(payload), 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def fs_files_batch_edit(
+        self, 
+        payload: list | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """批量设置文件或文件夹（显示时长等）
+        payload:
+            - show_play_long[{fid}]: 0 | 1 = 1 # 设置或取消显示时长
+        """
+        api = "https://webapi.115.com/files/batch_edit"
         if (headers := request_kwargs.get("headers")):
             headers = request_kwargs["headers"] = dict(headers)
         else:
@@ -1064,6 +1090,89 @@ class P115Client:
             **request_kwargs, 
         )
 
+    def fs_export_dir(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """导出目录树
+        POST https://webapi.115.com/files/export_dir
+        payload:
+            file_ids: int | str   # 有多个时，用逗号 "," 隔开
+            target: str = "U_1_0" # 导出目录树到这个目录
+            layer_limit: int = <default> # 层级深度，自然数
+        """
+        api = "https://webapi.115.com/files/export_dir"
+        if isinstance(payload, (int, str)):
+            payload = {"file_ids": payload, "target": "U_1_0"}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def fs_export_dir_status(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取导出目录树的完成情况
+        GET https://webapi.115.com/files/export_dir
+        payload:
+            export_id: int | str
+        """
+        api = "https://webapi.115.com/files/export_dir"
+        if isinstance(payload, (int, str)):
+            payload = {"export_id": payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    def fs_export_dir_future(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> ExportDirStatus:
+        """执行导出目录树，新开启一个线程，用于检查完成状态
+        payload:
+            file_ids: int | str   # 有多个时，用逗号 "," 隔开
+            target: str = "U_1_0" # 导出目录树到这个目录
+            layer_limit: int = <default> # 层级深度，自然数
+        """
+        resp = check_response(self.fs_export_dir(payload, async_=async_, **request_kwargs))
+        return ExportDirStatus(self, resp["data"]["export_id"])
+
+    def fs_shortcut(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """把一个目录设置或取消为快捷入口
+        POST https://webapi.115.com/category/shortcut
+        payload:
+            file_id: int | str # 有多个时，用逗号 "," 隔开
+            op: "add" | "delete" = "add"
+        """
+        api = "https://webapi.115.com/category/shortcut"
+        if isinstance(payload, (int, str)):
+            payload = {"file_id": payload}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def fs_shortcut_list(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """罗列所有的快捷入口
+        GET https://webapi.115.com/category/shortcut
+        """
+        api = "https://webapi.115.com/category/shortcut"
+        return self.request(api, async_=async_, **request_kwargs)
+
     # TODO: 还需要接口，获取单个标签 id 对应的信息，也就是通过 id 来获取
 
     def label_del(
@@ -1119,7 +1228,7 @@ class P115Client:
                 # - 创建时间: "create_time"
                 # - 更新时间: "update_time"
             - order: "asc" | "desc" = <default> # 排序顺序："asc"(升序), "desc"(降序)
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/label/list"
         payload = {"offset": 0, "limit": 11500, **payload}
@@ -1136,7 +1245,7 @@ class P115Client:
         """为文件或文件夹设置标签，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
-        :param file_label: 标签 id，如果有多个，用逗号","隔开
+        :param file_label: 标签 id，如果有多个，用逗号 "," 隔开
         """
         if isinstance(fids, (int, str)):
             payload = [("fid", fids)]
@@ -1163,8 +1272,8 @@ class P115Client:
                 # - 移除: "remove"
                 # - 重设: "reset"
                 # - 替换: "replace"
-            - file_ids: int | str # 文件或文件夹 id，如果有多个，用逗号","隔开
-            - file_label: int | str = <default> # 标签 id，如果有多个，用逗号","隔开
+            - file_ids: int | str # 文件或文件夹 id，如果有多个，用逗号 "," 隔开
+            - file_label: int | str = <default> # 标签 id，如果有多个，用逗号 "," 隔开
             - file_label[{file_label}]: int | str = <default> # action 为 replace 时使用此参数，file_label[{原标签id}]: {目标标签id}，例如 file_label[123]: 456，就是把 id 是 123 的标签替换为 id 是 456 的标签
         """
         api = "https://webapi.115.com/files/batch_label"
@@ -1180,7 +1289,7 @@ class P115Client:
         """为文件或文件夹设置或取消星标
         POST https://webapi.115.com/files/star
         payload:
-            - file_id: int | str # 文件或文件夹 id，如果有多个，用逗号","隔开
+            - file_id: int | str # 文件或文件夹 id，如果有多个，用逗号 "," 隔开
             - star: 0 | 1 = 1
         """
         api = "https://webapi.115.com/files/star"
@@ -1202,7 +1311,7 @@ class P115Client:
         """创建（自己的）分享
         POST https://webapi.115.com/share/send
         payload:
-            - file_ids: int | str # 文件列表，有多个用逗号","隔开
+            - file_ids: int | str # 文件列表，有多个用逗号 "," 隔开
             - is_asc: 0 | 1 = 1 # 是否升序排列
             - order: str = "file_name"
                 # 用某字段排序：
@@ -1213,7 +1322,7 @@ class P115Client:
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
             - ignore_warn: 0 | 1 = 1 # 忽略信息提示，传 1 就行了
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/send"
         if isinstance(payload, (int, str)):
@@ -1251,7 +1360,7 @@ class P115Client:
         payload:
             - limit: int = 32
             - offset: int = 0
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/slist"
         payload = {"offset": 0, "limit": 32, **payload}
@@ -1336,9 +1445,9 @@ class P115Client:
         payload:
             - share_code: str
             - receive_code: str
-            - file_id: int | str             # 有多个时，用逗号,分隔
+            - file_id: int | str             # 有多个时，用逗号 "," 分隔
             - cid: int | str = 0             # 这是你网盘的文件夹 cid
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/receive"
         payload = {"cid": 0, **payload}
@@ -1357,7 +1466,7 @@ class P115Client:
             - file_id: int | str
             - receive_code: str
             - share_code: str
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/downurl"
         return self.request(api, params=payload, async_=async_, **request_kwargs)
@@ -1375,7 +1484,7 @@ class P115Client:
             - file_id: int | str
             - receive_code: str
             - share_code: str
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         api = "https://proapi.115.com/app/share/downurl"
         def parse(content: bytes) -> dict:
@@ -1400,7 +1509,7 @@ class P115Client:
             - file_id: int | str
             - receive_code: str
             - share_code: str
-            - user_id: int | str = <default> # 有默认值，所以不用传
+            - user_id: int | str = <default>
         """
         resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
         def get_url(resp: dict) -> str:
@@ -2077,8 +2186,9 @@ class P115Client:
     ) -> Optional[PushExtractProgress]:
         """执行在线解压，如果早就已经完成，返回 None，否则新开启一个线程，用于检查进度
         """
-        resp = self.extract_push({"pick_code": pick_code, "secret": secret}, **request_kwargs)
-        check_response(resp)
+        resp = check_response(self.extract_push(
+            {"pick_code": pick_code, "secret": secret}, **request_kwargs
+        ))
         if resp["data"]["unzip_status"] == 4:
             return None
         return PushExtractProgress(self, pick_code)
@@ -2094,13 +2204,26 @@ class P115Client:
     ) -> ExtractProgress:
         """执行在线解压到目录，新开启一个线程，用于检查进度
         """
-        resp = self.extract_file(pick_code, paths, dirname, to_pid)
-        check_response(resp)
+        resp = check_response(self.extract_file(
+            pick_code, paths, dirname, to_pid, **request_kwargs
+        ))
         return ExtractProgress(self, resp["data"]["extract_id"])
 
     ########## Offline Download API ##########
 
     # TODO: 增加一个接口，用于获取一个种子或磁力链接，里面的文件列表，这个文件并未被添加任务
+
+    def offline_info(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取关于离线的限制的信息
+        GET https://115.com/?ct=offline&ac=space
+        """
+        api = "https://115.com/?ct=offline&ac=space"
+        return self.request(api, async_=async_, **request_kwargs)
 
     def offline_quota_package_info(
         self, 
@@ -2109,9 +2232,9 @@ class P115Client:
         **request_kwargs, 
     ) -> dict:
         """获取当前离线配额信息
-        GET https://115.com/web/lixian/?ct=lixian&ac=get_quota_package_info
+        GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
         """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=get_quota_package_info"
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
         return self.request(api, async_=async_, **request_kwargs)
 
     def offline_download_path(
@@ -2138,21 +2261,9 @@ class P115Client:
         api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
         return self.request(api, async_=async_, **request_kwargs)
 
-    def offline_getsign(
-        self, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """增删改查离线下载任务，需要携带签名 sign，具有一定的时效性，但不用每次都获取，失效了再用此接口获取就行了
-        GET https://115.com/?ct=offline&ac=space
-        """
-        api = "https://115.com/?ct=offline&ac=space"
-        return self.request(api, async_=async_, **request_kwargs)
-
     def offline_add_url(
         self, 
-        payload: dict, 
+        payload: str | dict, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
@@ -2160,19 +2271,18 @@ class P115Client:
         """添加一个离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
         payload:
-            - uid: int | str
-            - sign: str
-            - time: int
-            - savepath: str, 
-            - wp_path_id: int | str 
             - url: str
+            - savepath: str = <default>
+            - wp_path_id: int | str = <default>
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_url"
+        if isinstance(payload, str):
+            payload = {"url": payload}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_add_urls(
         self, 
-        payload: dict, 
+        payload: Iterable[str] | dict, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
@@ -2180,35 +2290,17 @@ class P115Client:
         """添加一组离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
         payload:
-            - uid: int | str
-            - sign: str
-            - time: int
-            - savepath: str, 
-            - wp_path_id: int | str 
             - url[0]: str
             - url[1]: str
             - ...
+            - savepath: str = <default>
+            - wp_path_id: int | str = <default>
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_urls"
-        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
-
-    def offline_torrent_info(
-        self, 
-        payload: dict, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """查看离线任务的信息
-        POST https://115.com/web/lixian/?ct=lixian&ac=torrent
-        payload:
-            - uid: int | str
-            - sign: str
-            - time: int
-            - sha1: str
-            - pickcode: str = <default>
-        """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=torrent"
+        if not isinstance(payload, dict):
+            payload = {f"url[{i}]": url for i, url in enumerate(payload)}
+            if not payload:
+                raise ValueError("no `url` specified")
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_add_torrent(
@@ -2221,55 +2313,158 @@ class P115Client:
         """添加一个种子作为离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
         payload:
-            - uid: int | str
-            - sign: str
-            - time: int
-            - savepath: str
             - info_hash: str
             - wanted: str
+            - savepath: str = <default>
+            - wp_path_id: int | str = <default>
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_bt"
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
-    def offline_del(
+    def offline_torrent_info(
         self, 
-        payload: dict, 
+        payload: str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """查看种子的文件列表等信息
+        POST https://lixian.115.com/lixian/?ct=lixian&ac=torrent
+        payload:
+            - sha1: str
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=torrent"
+        if isinstance(payload, str):
+            payload = {"sha1": payload}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def offline_remove(
+        self, 
+        payload: str | dict, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
         """删除一组离线任务（无论是否已经完成）
-        POST https://115.com/web/lixian/?ct=lixian&ac=task_del
+        POST https://lixian.115.com/lixian/?ct=lixian&ac=task_del
         payload:
-            - uid: int | str
-            - sign: str
-            - time: int
             - hash[0]: str
             - hash[1]: str
             - ...
         """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=task_del"
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_del"
+        if isinstance(payload, str):
+            payload = {"hash[0]": payload}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_list(
         self, 
-        payload: dict, 
+        payload: int | dict = 1, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
         """获取当前的离线任务列表
-        POST https://115.com/web/lixian/?ct=lixian&ac=task_lists
+        POST https://lixian.115.com/lixian/?ct=lixian&ac=task_lists
         payload:
             - page: int | str
-            - uid: int | str
-            - sign: str
-            - time: int
         """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=task_lists"
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_lists"
+        if isinstance(payload, int):
+            payload = {"page": payload}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def offline_clear(
+        self, 
+        payload: int | dict = {"flag": 0}, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """清空离线任务列表
+        POST https://115.com/web/lixian/?ct=lixian&ac=task_clear
+        payload:
+            flag: int = 0
+                - 0: 已完成
+                - 1: 全部
+                - 2: 已失败
+                - 3: 进行中
+                - 4: 已完成+删除源文件
+                - 5: 全部+删除源文件
+        """
+        api = "https://115.com/web/lixian/?ct=lixian&ac=task_clear"
+        if isinstance(payload, int):
+            flag = payload
+            if flag < 0:
+                flag = 0
+            elif flag > 5:
+                flag = 5
+            payload = {"flag": payload}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Recyclebin API ##########
+
+    def recyclebin_clean(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = {}, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """
+        POST https://webapi.115.com/rb/clean
+        payload:
+            - rid[0]: int | str # NOTE: 如果没有 rid，就是清空回收站
+            - rid[1]: int | str
+            - ...
+            - password: int | str = <default>
+        """
+        api = "https://webapi.115.com/rb/clean"
+        if isinstance(payload, (int, str)):
+            payload = {"rid[0]": payload}
+        elif not isinstance(payload, dict):
+            payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def recyclebin_list(
+        self, 
+        payload: dict = {"limit": 32, "offset": 0}, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """GET https://webapi.115.com/rb
+        payload:
+            - aid: int | str = 7
+            - cid: int | str = 0
+            - limit: int = 32
+            - offset: int = 0
+            - format: str = "json"
+            - source: str = <default>
+        """ 
+        api = "https://webapi.115.com/rb"
+        payload = {"aid": 7, "cid": 0, "limit": 32, "offset": 0, "format": "json", **payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    def recyclebin_revert(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """POST https://webapi.115.com/rb/revert
+        payload:
+            - rid[0]: int | str
+            - rid[1]: int | str
+            - ...
+        """
+        api = "https://webapi.115.com/rb/revert"
+        if isinstance(payload, (int, str)):
+            payload = {"rid[0]": payload}
+        elif not isinstance(payload, dict):
+            payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
 
@@ -2302,6 +2497,20 @@ class P115Client:
 
     def get_offline(self, /, *args, **kwargs) -> P115Offline:
         return P115Offline(self, *args, **kwargs)
+
+    @cached_property
+    def recyclebin(self, /) -> P115Recyclebin:
+        return P115Recyclebin(self)
+
+    def get_recyclebin(self, /, *args, **kwargs) -> P115Recyclebin:
+        return P115Recyclebin(self, *args, **kwargs)
+
+    @cached_property
+    def sharing(self, /) -> P115Sharing:
+        return P115Sharing(self)
+
+    def get_sharing(self, /, *args, **kwargs) -> P115Sharing:
+        return P115Sharing(self, *args, **kwargs)
 
     def open(
         self, 
@@ -3517,18 +3726,15 @@ class P115Path(P115PathBase):
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[Self]:
-        attr = self.fs.copy(self, dst_path, pid=pid, overwrite_or_ignore=overwrite_or_ignore)
+        attr = self.fs.copy(
+            self, 
+            dst_path, 
+            pid=pid, 
+            overwrite_or_ignore=overwrite_or_ignore, 
+            recursive=True, 
+        )
         if attr is None:
             return None
-        return type(self)(self.fs, **attr)
-
-    def copytree(
-        self, 
-        /, 
-        dst_dir: IDOrPathType, 
-        pid: Optional[int] = None, 
-    ) -> Self:
-        attr = self.fs.copytree(self, dst_dir, pid=pid)
         return type(self)(self.fs, **attr)
 
     def mkdir(self, /, exist_ok: bool = True) -> Self:
@@ -3834,7 +4040,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                     resp = get_files(id, limit=pagesize, offset=offset)
                     lastest_update = datetime.now()
                     if resp["count"] != count:
-                        raise RuntimeError("detected directory (count) changes during iteration")
+                        raise RuntimeError("detected count changes during iteration")
                     for attr in resp["data"]:
                         attr = normalize_info(attr, lastest_update=lastest_update)
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
@@ -3932,33 +4138,43 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         dst_path: IDOrPathType, 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
+        recursive: bool = False, 
     ) -> Optional[dict]:
         src_patht = self.get_patht(src_path, pid)
         dst_patht = self.get_patht(dst_path, pid)
         src_fullpath = joins(src_patht)
         dst_fullpath = joins(dst_patht)
+        src_attr = self.attr(src_path, pid)
+        if src_attr["is_directory"]:
+            if recursive:
+                return self.copytree(
+                    src_attr["id"], 
+                    dst_path, 
+                    pid, 
+                    overwrite_or_ignore=overwrite_or_ignore, 
+                )
+            if overwrite_or_ignore == False:
+                return None
+            raise IsADirectoryError(
+                errno.EISDIR, f"source is a directory: {src_fullpath!r} -> {dst_fullpath!r}")
         if src_patht == dst_patht:
             if overwrite_or_ignore is None:
                 raise SameFileError(src_fullpath)
             return None
         elif dst_patht == src_patht[:len(dst_patht)]:
-            if overwrite_or_ignore is None:
-                raise PermissionError(
-                    errno.EPERM, 
-                    f"copy a path as its ancestor is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-            return None
+            if overwrite_or_ignore == False:
+                return None
+            raise PermissionError(
+                errno.EPERM, 
+                f"copy a path as its ancestor is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
+            )
         elif src_patht == dst_patht[:len(src_patht)]:
-            if overwrite_or_ignore is None:
-                raise PermissionError(
-                    errno.EPERM, 
-                    f"copy a path as its descendant is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-            return None
-        src_attr = self.attr(src_path, pid)
-        if src_attr["is_directory"]:
-            raise IsADirectoryError(
-                errno.EISDIR, f"source is a directory: {src_fullpath!r} -> {dst_fullpath!r}")
+            if overwrite_or_ignore == False:
+                return None
+            raise PermissionError(
+                errno.EPERM, 
+                f"copy a path as its descendant is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
+            )
         *src_dirt, src_name = src_patht
         *dst_dirt, dst_name = dst_patht
         try:
@@ -3976,6 +4192,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 dst_pid = destdir_attr["id"]
         else:
             if dst_attr["is_directory"]:
+                if overwrite_or_ignore == False:
+                    return None
                 raise IsADirectoryError(
                     errno.EISDIR, 
                     f"destination is a directory: {src_fullpath!r} -> {dst_fullpath!r}", 
@@ -4019,27 +4237,82 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         self, 
         /, 
         src_path: IDOrPathType, 
-        dst_dir: IDOrPathType = "", 
+        dst_path: IDOrPathType = "", 
         pid: Optional[int] = None, 
-    ) -> dict:
+        overwrite_or_ignore: Optional[bool] = None, 
+    ) -> Optional[dict]:
         src_attr = self.attr(src_path, pid)
-        dst_attr = self.attr(dst_dir, pid)
         src_id = src_attr["id"]
-        dst_id = dst_attr["id"]
-        src_name = src_attr["name"]
-        if src_attr["parent_id"] == dst_id:
-            raise SameFileError(src_id)
-        elif any(a["id"] == src_id for a in self.get_ancestors(dst_id)):
-            raise PermissionError(
-                errno.EPERM, 
-                f"copy a directory to its subordinate path is not allowed: {src_id!r} -> {dst_id!r}", 
+        if not src_attr["is_directory"]:
+            return self.copy(
+                src_id, 
+                dst_path, 
+                pid, 
+                overwrite_or_ignore=overwrite_or_ignore, 
             )
-        elif not dst_attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"destination is not directory: {src_id!r} -> {dst_id!r}")
-        elif self.exists([src_name], dst_id):
-            raise FileExistsError(errno.EEXIST, f"destination already exists: {src_id!r} -> {dst_id!r}")
-        self._copy(src_id, dst_id)
-        return self.attr([src_name], dst_id)
+        src_name = src_attr["name"]
+        src_fullpath = src_attr["path"]
+        try:
+            dst_attr = self.attr(dst_path, pid)
+        except FileNotFoundError:
+            if isinstance(dst_path, int):
+                if overwrite_or_ignore == False:
+                    return None
+                raise
+            dst_patht = self.get_patht(dst_path, pid)
+            if len(dst_patht) == 1:
+                dst_attr = self.attr(0)
+                dst_id = 0
+            else:
+                dst_attr = self.makedirs(dst_patht[:-1], exist_ok=True)
+                dst_id = dst_attr["id"]
+                if src_name == dst_patht[-1]:
+                    self._copy(src_id, dst_id)
+                    return self.attr([src_name], dst_id)
+                dst_attr = self.makedirs([src_name], dst_id, exist_ok=True)
+                dst_id = dst_attr["id"]
+        else:
+            dst_id = dst_attr["id"]
+            dst_fullpath = dst_attr["path"]
+            if src_fullpath == dst_fullpath:
+                if overwrite_or_ignore is None:
+                    raise SameFileError(dst_fullpath)
+                return None
+            elif any(a["id"] == src_id for a in self.get_ancestors(dst_id)):
+                if overwrite_or_ignore == False:
+                    return None
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"copy a directory as its descendant is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
+                )
+            elif not dst_attr["is_directory"]:
+                if overwrite_or_ignore == False:
+                    return None
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"destination is not directory: {src_fullpath!r} -> {dst_fullpath!r}", 
+                )
+            elif overwrite_or_ignore is None:
+                raise FileExistsError(
+                    errno.EEXIST, 
+                    f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}", 
+                )
+        for attr in self.listdir_attr(src_id):
+            if attr["is_directory"]:
+                self.copytree(
+                    attr["id"], 
+                    [attr["name"]], 
+                    dst_id, 
+                    overwrite_or_ignore=overwrite_or_ignore, 
+                )
+            else:
+                self.copy(
+                    attr["id"], 
+                    [attr["name"]], 
+                    dst_id, 
+                    overwrite_or_ignore=overwrite_or_ignore, 
+                )
+        return self.attr(dst_attr["id"])
 
     def _dir_get_ancestors(self, id: int, /) -> list[dict]:
         ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
@@ -4370,8 +4643,6 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     ) -> Optional[dict]:
         return self.rename(src_path, dst_path, pid=pid, replace=True)
 
-    rm  = remove
-
     def rmdir(
         self, 
         id_or_path: IDOrPathType, 
@@ -4448,16 +4719,16 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         is_dir = attr["is_directory"]
         lastest_update = attr.get("lastest_update") or datetime.now()
         return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o777, 
-            attr["id"], 
-            attr["parent_id"], 
-            1, 
-            self.client.user_id, 
-            1, 
-            0 if is_dir else attr["size"], 
-            attr.get("open_time", lastest_update).timestamp(), 
-            attr.get("etime", lastest_update).timestamp(), 
-            attr.get("ptime", lastest_update).timestamp(), 
+            (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
+            attr["id"], # ino
+            attr["parent_id"], # dev
+            1, # nlink
+            self.client.user_id, # uid
+            1, # gid
+            0 if is_dir else attr["size"], # size
+            attr.get("open_time", lastest_update).timestamp(), # atime
+            attr.get("etime", lastest_update).timestamp(), # mtime
+            attr.get("ptime", lastest_update).timestamp(), # ctime
         ))
 
     def touch(
@@ -4610,6 +4881,10 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             tio.flush()
             bio.seek(0)
         return self.write_bytes(id_or_path, bio, pid=pid)
+
+    cp  = copy
+    mv  = move
+    rm  = remove
 
 
 class P115SharePath(P115PathBase):
@@ -4885,6 +5160,46 @@ class P115ZipPath(P115PathBase):
     path: str
 
 
+class ExportDirStatus(Future):
+    _condition: Condition
+    _state: str
+
+    def __init__(self, client: P115Client, export_id: int | str, /):
+        super().__init__()
+        self.status = 0
+        self.set_running_or_notify_cancel()
+        self._run_check(client, export_id)
+
+    def __bool__(self, /) -> bool:
+        return self.status == 1
+
+    def __del__(self, /):
+        self.stop()
+
+    def stop(self, /):
+        with self._condition:
+            if self._state in ["RUNNING", "PENDING"]:
+                self._state = "CANCELLED"
+                self.set_exception(OSError(errno.ECANCELED, "canceled"))
+
+    def _run_check(self, client, export_id: int | str, /):
+        check = check_response(client.fs_export_dir_status)
+        payload = {"export_id": export_id}
+        def update_progress():
+            while self.running():
+                try:
+                    data = check(payload)["data"]
+                    if data:
+                        self.status = 1
+                        self.set_result(data)
+                        return
+                except BaseException as e:
+                    self.set_exception(e)
+                    return
+                sleep(1)
+        Thread(target=update_progress).start()
+
+
 class PushExtractProgress(Future):
     _condition: Condition
     _state: str
@@ -4894,6 +5209,12 @@ class PushExtractProgress(Future):
         self.progress = 0
         self.set_running_or_notify_cancel()
         self._run_check(client, pick_code)
+
+    def __del__(self, /):
+        self.stop()
+
+    def __bool__(self, /) -> bool:
+        return self.progress == 100
 
     def stop(self, /):
         with self._condition:
@@ -4938,6 +5259,12 @@ class ExtractProgress(Future):
         self.progress = 0
         self.set_running_or_notify_cancel()
         self._run_check(client, extract_id)
+
+    def __del__(self, /):
+        self.stop()
+
+    def __bool__(self, /) -> bool:
+        return self.progress == 100
 
     def stop(self, /):
         with self._condition:
@@ -4990,7 +5317,8 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         else:
             file_id = None
             pick_code = id_or_pickcode
-        if check_response(client.extract_push_progress(pick_code))["data"]["extract_status"]["unzip_status"] != 4:
+        resp = check_response(client.extract_push_progress(pick_code))
+        if resp["data"]["extract_status"]["unzip_status"] != 4:
             raise OSError(errno.EIO, "file was not decompressed")
         self.__dict__.update(
             client=client, 
@@ -5148,7 +5476,10 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             }
         attr = self.attr(id_or_path, pid)
         if not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
+            )
         id = attr["id"]
         try:
             return iter(self.pid_to_attrs[id])
@@ -5178,117 +5509,359 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             return iter(t)
 
 
-# TODO 清除已完成
-# TODO 用户、密码登陆，直接用app端接口，不需要验证码
 class P115Offline:
+    __slots__ = "client",
 
-    def __init__(self, client, /):
+    def __init__(self, client: P115Client, /):
         self.client = client
-        self.uid = client.user_id
-        self.refresh_sign()
 
-    def refresh_sign(self, /):
-        self.sign = self.client.offline_getsign()["sign"]
+    def __contains__(self, hash: str, /) -> bool:
+        return any(item["info_hash"] == hash for item in self)
 
-    def add_url(self, /, url, pid="", savepath=""):
-        payload = {
-            "url": url,
-            "savepath": savepath, 
-            "wp_path_id": pid, 
-            "uid": self.uid, 
-            "sign": self.sign, 
-            "time": int(time()), 
-        }
-        return self.client.offline_add_url(payload)
+    def __delitem__(self, hash: str, /):
+        return self.remove(hash)
 
-    def add_urls(self, /, urls, pid="", savepath=""):
-        payload = {
-            "savepath": savepath, 
-            "wp_path_id": pid, 
-            "uid": self.uid, 
-            "sign": self.sign, 
-            "time": int(time()), 
-        }
-        payload.update((f"url[{i}]", url) for i, url in enumerate(urls))
-        return self.client.offline_add_urls(payload)
+    def __getitem__(self, hash: str, /) -> dict:
+        for item in self:
+            if item["info_hash"] == hash:
+                return item
+        raise LookupError(f"no such hash: {hash!r}")
 
-    def task_list(self, page=0):
-        if page > 0:
-            payload = {
-                "page": page, 
-                "uid": self.uid, 
-                "sign": self.sign, 
-                "time": int(time()), 
-            }
-            return self.client.offline_list(payload)
-        page = 1
-        payload = {
-            "page": page, 
-            "uid": self.uid, 
-            "sign": self.sign, 
-            "time": int(time()), 
-        }
-        resp = self.client.offline_list(payload)
-        resp["page"] = 0
-        ls = resp['tasks']
-        if not ls:
-            return resp
-        for page in range(2, resp["page_count"]+1):
-            payload["page"] = page
-            sub_resp = self.client.offline_list(payload)
-            ls.extend(sub_resp["tasks"])
-        return resp
+    def __iter__(self, /) -> Iterator[dict]:
+        return self.iter()
 
-    def torrent_info(self, /, sha1_or_fid):
-        payload = {
-            "uid": self.uid, 
-            "sign": self.sign, 
-            "time": int(time()), 
-        }
-        if isinstance(sha1_or_fid, int):
-            resp = self.client.fs_file(sha1_or_fid)
-            data = resp["data"][0]
-            payload["pickcode"] = data["pick_code"]
-            payload["sha1"] = data["sha1"]
+    def __len__(self, /) -> int:
+        return check_response(self.client.offline_list())["count"]
+
+    @check_response
+    def add(
+        self, 
+        urls: str | Iterable[str], 
+        /, 
+        pid: Optional[int] = None, 
+        savepath: Optional[str] = None, 
+    ) -> dict:
+        payload: dict
+        if isinstance(urls, str):
+            payload = {"url": urls}
+            method = self.client.offline_add_url
         else:
-            payload["sha1"] = sha1_or_fid
-        return self.client.offline_torrent_info(payload)
+            payload = {f"url[{i}]": url for i, url in enumerate(urls)}
+            if not payload:
+                raise ValueError("no `url` specified")
+            method = self.client.offline_add_urls
+        if pid is not None:
+            payload["wp_path_id"] = pid
+        if savepath:
+            payload["savepath"] = savepath
+        return check_response(method(payload))
 
-    def add_torrent(self, /, sha1_or_fid, savepath="", filter_func=None):
-        resp = self.torrent_info(sha1_or_fid)
-        if not resp["state"]:
-            raise RuntimeError(resp)
-        filelist = filter(filter_func, resp["torrent_filelist_web"])
+    # TODO: 应该能通过 info_hash 获取文件列表
+    @check_response
+    def add_torrent(
+        self, 
+        sha1_or_fid: int | str, 
+        /, 
+        pid: Optional[int] = None, 
+        savepath: Optional[str] = None, 
+        predicate: None | str | Callable[[dict], bool] = None, 
+    ) -> dict:
+        resp = check_response(self.torrent_info(sha1_or_fid))
+        if predicate is None:
+            wanted = ",".join(
+                str(i) for i, info in enumerate(resp["torrent_filelist_web"]) 
+                if info["wanted"]
+            )
+        elif isinstance(predicate, str):
+            wanted = predicate
+        else:
+            wanted = ",".join(
+                str(i) for i, info in enumerate(resp["torrent_filelist_web"]) 
+                if predicate(info)
+            )
         payload = {
-            "wanted": ",".join(str(info["wanted"]) for info in filelist), 
             "info_hash": resp["info_hash"], 
-            "savepath": savepath or resp["torrent_name"], 
-            "uid": self.uid, 
-            "sign": self.sign, 
-            "time": int(time()), 
+            "wanted": wanted, 
+            "savepath": resp["torrent_name"] if savepath is None else savepath, 
         }
+        if pid is not None:
+            payload["wp_path_id"] = pid
         return self.client.offline_add_torrent(payload)
 
-    def del_tasks(self, /, task_hashes):
-        payload = {
-            "uid": self.uid, 
-            "sign": self.sign, 
-            "time": int(time()), 
-        }
-        payload.update((f"hash[{i}]", h) for i, h in enumerate(task_hashes))
-        return self.client.offline_del(payload)
+    @check_response
+    def clear(self, /, flag: int = 1) -> dict:
+        """清空离线任务列表
+
+        :param flag: 操作目标
+            - 0: 已完成
+            - 1: 全部（默认值）
+            - 2: 已失败
+            - 3: 进行中
+            - 4: 已完成+删除源文件
+            - 5: 全部+删除源文件
+        """
+        return self.client.offline_clear(flag)
+
+    def get(self, hash: str, /, default=None):
+        return next((item for item in self if item["info_hash"] == hash), default)
+
+    def iter(self, /, start_page: int = 1) -> Iterator[dict]:
+        if start_page < 1:
+            page = 1
+        else:
+            page = start_page
+        resp = check_response(self.client.offline_list(page))
+        if not resp["tasks"]:
+            return
+        yield from resp["tasks"]
+        page_count = resp["page_count"]
+        if page_count <= page:
+            return
+        count = resp["count"]
+        for page in range(page + 1, page_count + 1):
+            resp = check_response(self.client.offline_list(page))
+            if count != resp["count"]:
+                raise RuntimeError("detected count changes during iteration")
+            if not resp["tasks"]:
+                return
+            yield from resp["tasks"]
+
+    def list(self, /, page: int = 0) -> list[dict]:
+        if page <= 0:
+            return list(self.iter())
+        return check_response(self.client.offline_list(page))["tasks"]
+
+    @check_response
+    def remove(self, hashes: str | Iterable[str], /) -> dict:
+        if isinstance(hashes, str):
+            payload = {"hash[0]": hashes}
+        else:
+            payload = {f"hash[{i}]": h for i, h in enumerate(hashes)}
+            if not payload:
+                raise ValueError("no `hash` specified")
+        return self.client.offline_remove(payload)
+
+    @check_response
+    def torrent_info(self, sha1_or_fid: int | str, /) -> dict:
+        if isinstance(sha1_or_fid, int):
+            resp = self.client.fs_file(sha1_or_fid)
+            sha1 = resp["data"][0]["sha1"]
+        else:
+            sha1 = sha1_or_fid
+        return self.client.offline_torrent_info(sha1)
 
 
 class P115Recyclebin:
-    ...
+    __slots__ = ("client", "password")
+
+    def __init__(
+        self, 
+        client: P115Client, 
+        /, 
+        password: int | str = "", 
+    ):
+        self.client = client
+        self.password = password
+
+    def __contains__(self, id: int | str, /) -> bool:
+        ids = str(id)
+        return any(item["id"] == ids for item in self)
+
+    def __delitem__(self, id: int | str, /):
+        return self.remove(id)
+
+    def __getitem__(self, id: int | str, /) -> dict:
+        ids = str(id)
+        for item in self:
+            if item["id"] == ids:
+                return item
+        raise LookupError(f"no such id: {id!r}")
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return self.iter()
+
+    def __len__(self, /) -> int:
+        return int(check_response(self.client.recyclebin_list({"limit": 1}))["count"])
+
+    @check_response
+    def clear(self, /, password: None | int | str = None) -> dict:
+        if password is None:
+            password = self.password
+        return self.client.recyclebin_clean({"password": password})
+
+    def get(self, id: int | str, /, default=None):
+        ids = str(id)
+        return next((item for item in self if item["id"] == ids), default)
+
+    def iter(self, /, offset: int = 0, page_size: int = 1 << 10) -> Iterator[dict]:
+        if offset < 0:
+            offset = 0
+        if page_size <= 0:
+            page_size = 1 << 10
+        payload = {"offset": offset, "limit": page_size}
+        count = 0
+        while True:
+            resp = check_response(self.client.recyclebin_list(payload))
+            if resp["offset"] != offset:
+                return
+            if count == 0:
+                count = int(resp["count"])
+            elif count != int(resp["count"]):
+                raise RuntimeError("detected count changes during iteration")
+            yield from resp["data"]
+            if len(resp["data"]) < resp["page_size"]:
+                return
+            payload["offset"] = offset + resp["page_size"]
+
+    def list(self, /, offset: int = 0, limit: int = 0) -> list[dict]:
+        if limit <= 0:
+            return list(self.iter(offset))
+        resp = check_response(self.client.recyclebin_list({"offset": offset, "limit": limit}))
+        if resp["offset"] != offset:
+            return []
+        return resp["data"]
+
+    @check_response
+    def remove(
+        self, 
+        ids: int | str | Iterable[int | str], 
+        /, 
+        password: None | int | str = None, 
+    ) -> dict:
+        if isinstance(ids, (int, str)):
+            payload = {"rid[0]": ids}
+        else:
+            payload = {f"rid[{i}]": id for i, id in enumerate(ids)}
+        payload["password"] = self.password if password is None else password
+        return self.client.recyclebin_clean(payload)
+
+    @check_response
+    def revert(self, ids: int | str | Iterable[int | str], /) -> dict:
+        if isinstance(ids, (int, str)):
+            payload = {"rid[0]": ids}
+        else:
+            payload = {f"rid[{i}]": id for i, id in enumerate(ids)}
+        return self.client.recyclebin_revert(payload)
 
 
-# TODO: 对回收站的封装
+class P115Sharing:
+    __slots__ = "client",
+
+    def __init__(self, client: P115Client, /):
+        self.client = client
+
+    def __contains__(self, code_or_id: int | str, /) -> bool:
+        if isinstance(code_or_id, str):
+            return self.client.share_info(code_or_id)["state"]
+        snap_id = str(code_or_id)
+        return any(item["snap_id"] == snap_id for item in self)
+
+    def __delitem__(self, code_or_id: int | str, /):
+        return self.remove(code_or_id)
+
+    def __getitem__(self, code_or_id: int | str, /) -> dict:
+        if isinstance(code_or_id, str):
+            resp = self.client.share_info(code_or_id)
+            if resp["state"]:
+                return resp["data"]
+            raise LookupError(f"no such share_code: {code_or_id!r}, with message: {resp!r}")
+        snap_id = str(code_or_id)
+        for item in self:
+            if item["snap_id"] == snap_id:
+                return item
+        raise LookupError(f"no such snap_id: {snap_id!r}")
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return self.iter()
+
+    def __len__(self, /) -> int:
+        return check_response(self.client.share_list({"limit": 1}))["count"]
+
+    @check_response
+    def add(
+        self, 
+        file_ids: int | str | Iterable[int | str], 
+        /, 
+        is_asc: Literal[0, 1] = 1, 
+        order: str = "file_name", 
+        ignore_warn: Literal[0, 1] = 1, 
+    ) -> dict:
+        if not isinstance(file_ids, (int, str)):
+            file_ids = ",".join(map(str, file_ids))
+            if not file_ids:
+                raise ValueError("no `file_id` specified") 
+        return self.client.share_send({
+            "file_ids": file_ids, 
+            "is_asc": is_asc, 
+            "order": order, 
+            "ignore_warn": ignore_warn, 
+        })
+
+    @check_response
+    def clear(self, /) -> dict:
+        return self.client.share_update({
+            "share_code": ",".join(item["share_code"] for item in self), 
+            "action": "cancel", 
+        })
+
+    def get(self, code_or_id: int | str, /, default=None):
+        if isinstance(code_or_id, str):
+            resp = self.client.share_info(code_or_id)
+            if resp["state"]:
+                return resp["data"]
+            return default
+        snap_id = str(code_or_id)
+        return next((item for item in self if item["snap_id"] == snap_id), default)
+
+    def iter(self, /, offset: int = 0, page_size: int = 1 << 10) -> Iterator[dict]:
+        if offset < 0:
+            offset = 0
+        if page_size <= 0:
+            page_size = 1 << 10
+        payload = {"offset": offset, "limit": page_size}
+        count = 0
+        while True:
+            resp = check_response(self.client.share_list(payload))
+            if count == 0:
+                count = resp["count"]
+            elif count != resp["count"]:
+                raise RuntimeError("detected count changes during iteration")
+            yield from resp["list"]
+            if len(resp["list"]) < page_size:
+                break
+            payload["offset"] = offset + page_size
+
+    def list(self, /, offset: int = 0, limit: int = 0) -> list[dict]:
+        if limit <= 0:
+            return list(self.iter(offset))
+        return check_response(self.client.share_list({"offset": offset, "limit": limit}))["list"]
+
+    @check_response
+    def remove(self, code_or_id_s: int | str | Iterable[int | str], /) -> dict:
+        def share_code_of(code_or_id: int | str) -> str:
+            if isinstance(code_or_id, str):
+                return code_or_id
+            return self[code_or_id]["share_code"]
+        if isinstance(code_or_id_s, (int, str)):
+            share_code = share_code_of(code_or_id_s)
+        else:
+            share_code = ",".join(map(share_code_of, code_or_id_s))
+            if not share_code:
+                raise ValueError("no `share_code` or `snap_id` specified")
+        return self.client.share_update({
+            "share_code": share_code, 
+            "action": "cancel", 
+        })
+
+    @check_response
+    def update(self, /, share_code: str, **payload) -> dict:
+        return self.client.share_update({"share_code": share_code, **payload})
+
+
 # TODO: 因为支持异步了，因此 client 的签名要普遍修改，根据 aysnc_
 # TODO: 能及时处理文件已不存在
 # TODO: 为各个fs接口添加额外的请求参数
 # TODO: 115中多个文件可以在同一目录下同名，如何处理？
-# TODO: 是否要支持 cd2 的改名策略，也就是遇到 **.，则自动忽略后面的所有部分，改名时，改成 新名字 + **. + 原始扩展名
 # TODO: 批量改名工具：如果后缀名一样，则直接改名，如果修改了后缀名，那就尝试用秒传，重新上传，上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
 #       - file 参数支持接受一个 callable：由于上传时，给出 sha1 本身可能就能成功，为了速度，我认为，一开始就不需要打开一个文件
 #       - 增加 read_range: 由于文件可以一开始就 seek 到目标位置，因此一开始就可以指定对应的位置，因此可以添加一个方法，叫 readrange，直接读取一定范围的 http 数据

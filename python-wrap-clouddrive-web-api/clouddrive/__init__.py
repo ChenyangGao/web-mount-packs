@@ -273,17 +273,14 @@ class CloudDrivePath(Mapping, PathLike[str]):
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[CloudDrivePath]:
-        dst = self.fs.copy(self, dst_path, overwrite_or_ignore=overwrite_or_ignore)
+        dst = self.fs.copy(
+            self, 
+            dst_path, 
+            overwrite_or_ignore=overwrite_or_ignore, 
+            recursive=True, 
+        )
         if not dst:
             return None
-        return type(self)(self.fs, dst)
-
-    def copytree(
-        self, 
-        /, 
-        dst_dir: str | PathLike[str], 
-    ) -> CloudDrivePath:
-        dst = self.fs.copytree(self, dst_dir)
         return type(self)(self.fs, dst)
 
     def download(
@@ -895,6 +892,7 @@ class CloudDriveFileSystem:
         src_path: str | PathLike[str], 
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = True, 
+        recursive: bool = False, 
         _check: bool = True, 
     ) -> str:
         raise UnsupportedOperation(errno.ENOSYS, "copy")
@@ -903,7 +901,8 @@ class CloudDriveFileSystem:
         self, 
         /, 
         src_path: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        dst_path: str | PathLike[str], 
+        overwrite_or_ignore: Optional[bool] = True, 
         _check: bool = True, 
     ) -> str:
         raise UnsupportedOperation(errno.ENOSYS, "copytree")
@@ -1746,7 +1745,6 @@ class CloudDriveFileSystem:
         for attr in self._search_iter(path, search_for, refresh=refresh, fuzzy=fuzzy):
             yield CloudDrivePath(self, path, lastest_update=lastest_update, **MessageToDict(attr))
 
-    # TODO: 需要进一步实现，更准确的 st_mode
     def stat(
         self, 
         /, 
@@ -1756,16 +1754,16 @@ class CloudDriveFileSystem:
         attr = self.attr(path, _check=_check)
         is_dir = attr.get("isDirectory", False)
         return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o777, 
-            0, 
-            0, 
-            1, 
-            0, 
-            0, 
-            0 if is_dir else int(attr["size"]), 
-            parse_datetime(attr["accessTime"]).timestamp(), 
-            parse_datetime(attr["writeTime"]).timestamp(), 
-            parse_datetime(attr["createTime"]).timestamp(), 
+            (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
+            0, # ino
+            0, # dev
+            1, # nlink
+            0, # uid
+            0, # gid
+            int(attr.get("size", 0)), # size
+            parse_datetime(attr["accessTime"]).timestamp(), # atime
+            parse_datetime(attr["writeTime"]).timestamp(), # mtime
+            parse_datetime(attr["createTime"]).timestamp(), # ctime
         ))
 
     def storage_of(
@@ -2041,8 +2039,10 @@ class CloudDriveFileSystem:
         return self.write_bytes(path, bio, _check=_check)
 
     cd  = chdir
+    cp  = copy
     pwd = getcwd
     ls  = listdir
     ll  = listdir_path
+    mv  = move
     rm  = remove
 

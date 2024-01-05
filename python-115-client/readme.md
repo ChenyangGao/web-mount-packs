@@ -639,15 +639,101 @@ for path in fs.rglob("*.mkv"):
 
 ### 4. 针对分享链接的文件系统操作
 
-<kbd>p115.P115ShareFileSystem</kbd> 实现了在分享链接上，只读的文件系统方法
+<kbd>p115.P115ShareFileSystem</kbd> 实现了在<kbd>分享链接</kbd>上，只读的文件系统方法
 
 <kbd>p115.P115SharePath</kbd> 实现了二次封装，从路径的角度来进行操作
 
+**创建实例对象**
+
+```python
+from p115 import P115ShareFileSystem
+
+share_link = "https://115.com/s/swzn4d53w8m?password=f247#"
+
+share_fs = P115ShareFileSystem(client, share_link)
+```
+
+或者直接在 <kbd>client</kbd> 上就可获取
+
+```python
+share_fs = client.get_share_fs(share_link)
+```
+
 ### 5. 针对压缩文件的文件系统操作
 
-<kbd>p115.P115ZipFileSystem</kbd> 实现了在压缩包上，只读的文件系统方法
+<kbd>p115.P115ZipFileSystem</kbd> 实现了在<kbd>压缩包</kbd>上，只读的文件系统方法
 
 <kbd>p115.P115ZipPath</kbd> 实现了二次封装，从路径的角度来进行操作
+
+**创建实例对象**
+
+```python
+from p115 import P115ZipFileSystem
+
+pick_code = "abcdefg"
+
+zip_fs = P115ZipFileSystem(client, pick_code)
+```
+
+或者直接在 <kbd>client</kbd> 上就可获取
+
+```python
+zip_fs = client.get_zip_fs(pick_code)
+```
+
+### 6. 针对云下载的封装
+
+<kbd>p115.P115Offline</kbd> 实现了对于<kbd>云下载</kbd>的封装。
+
+**创建实例对象**
+
+```python
+from p115 import P115Offline
+
+offline = P115Offline(client)
+```
+
+或者直接在 <kbd>client</kbd> 上就可获取
+
+```python
+offline = client.offline
+```
+
+### 7. 针对回收站的封装
+
+<kbd>p115.P115Recyclebin</kbd> 实现了对于<kbd>回收站</kbd>的封装。
+
+**创建实例对象**
+
+```python
+from p115 import P115Recyclebin
+
+recyclebin = P115Recyclebin(client)
+```
+
+或者直接在 <kbd>client</kbd> 上就可获取
+
+```python
+recyclebin = client.recyclebin
+```
+
+### 8. 针对分享的封装
+
+<kbd>p115.P115Sharing</kbd> 实现了对于<kbd>分享记录</kbd>的封装。
+
+**创建实例对象**
+
+```python
+from p115 import P115Sharing
+
+sharing = P115Sharing(client)
+```
+
+或者直接在 <kbd>client</kbd> 上就可获取
+
+```python
+sharing = client.sharing
+```
 
 ## 文档
 

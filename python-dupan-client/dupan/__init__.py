@@ -547,6 +547,9 @@ class DuPanShareList:
             shorturl = query["surl"]
         elif path.startswith("/s/1"):
             shorturl = path.removeprefix("/s/1")
+            idx = shorturl.find("&")
+            if idx > -1:
+                shorturl = shorturl[:idx]
         elif "/" not in path:
             shorturl = path
         else:
