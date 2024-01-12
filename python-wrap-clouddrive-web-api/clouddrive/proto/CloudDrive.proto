@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package clouddrive;
 
-// 0.6.0
-
 option csharp_namespace = "CloudDriveSrv.Protos";
+
+// 0.6.3
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -283,6 +283,7 @@ service CloudDriveFileSrv {
   // enable/disable a backup's FileSystemWatch
   rpc BackupSetFileSystemWatchEnabled(BackupModifyRequest)
       returns (google.protobuf.Empty) {}
+  // deprecated, use BackupUpdate instead
   rpc BackupUpdateStrategies(BackupModifyRequest)
       returns (google.protobuf.Empty) {}
   rpc BackupRestartWalkingThrough(StringValue)
@@ -313,6 +314,7 @@ message UnmountArchiveResult { string result = 1; }
 message ListSubFileRequest {
   string path = 1;
   bool forceRefresh = 2;
+  optional bool checkExpires = 3;
 }
 message SearchRequest {
   string path = 1;
@@ -870,6 +872,16 @@ message BackupDestination {
   bool isEnabled = 2;
   optional google.protobuf.Timestamp lastFinishTime = 3;
 }
+message DaysOfWeek {
+  repeated uint32 daysOfWeek = 1; //Mon: 1, Tue: 2, ..., Sun: 0
+}
+message TimeSchedule {
+  bool isEnabled = 1;
+  uint32 hour = 2;
+  uint32 minute = 3;
+  uint32 second = 4;
+  optional DaysOfWeek daysOfWeek = 5; //none means every day
+}
 message Backup {
   string sourcePath = 1;
   repeated BackupDestination destinations = 2;
@@ -880,6 +892,8 @@ message Backup {
   bool fileSystemWatchEnabled = 7;
   int64 walkingThroughIntervalSecs = 8; // 0 means never auto walking through
   bool forceWalkingThroughOnStart = 9;
+  repeated TimeSchedule timeSchedules = 10;
+  bool isTimeSchedulesEnabled = 11;
 }
 message BackupStatus {
   enum Status {

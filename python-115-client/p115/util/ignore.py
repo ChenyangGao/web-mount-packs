@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["escape", "translate", "parse", "read_file", "read_str", "predicate"]
 
+from enum import Enum
 from fnmatch import translate as wildcard_translate
 from glob import escape
 from mimetypes import guess_type
 from operator import methodcaller
 from os import PathLike
+from posixpath import basename, splitext
 from re import compile as re_compile, escape as re_escape, IGNORECASE
 from typing import Callable, Final, Iterable, Optional, TextIO
 
@@ -17,6 +18,18 @@ from .text import posix_glob_translate_iter
 
 
 CRE_PAT_IN_STR: Final = re_compile(r"[^\\ ]*(?:\\(?s:.)[^\\ ]*)*")
+ExtendedType = Enum("ExtendedType", "mime, path, name, stem, ext")
+
+
+def ensure_enum(val, cls, /):
+    if isinstance(val, cls):
+        return val
+    if isinstance(val, str):
+        try:
+            return cls[val]
+        except KeyError:
+            pass
+    return cls(val)
 
 
 def translate(pattern: str, /) -> str:
@@ -68,15 +81,15 @@ def parse(
     patterns: Iterable[str], 
     /, 
     ignore_case: bool = False, 
-    check_mimetype: bool = False, 
+    extended_type: None | int | str | ExtendedType = None, 
 ) -> Optional[Callable[[str], bool]]:
     shows: list[str] = []
-    show_all: bool = False
     ignores: list[str] = []
     ignore_all: bool = False
-    if check_mimetype:
-        mimetype_shows: list[str] = []
-        mimetype_ignores: list[str] = []
+    if extended_type:
+        extended_type = ensure_enum(extended_type, ExtendedType)
+        ext_shows: list[str] = []
+        ext_ignores: list[str] = []
     for pattern in patterns:
         if not pattern:
             continue
@@ -89,22 +102,20 @@ def parse(
                     ignore_all = True
                 else:
                     ignores.append(pattern)
-        elif check_mimetype and pattern.removeprefix("!").startswith(
+        elif extended_type and pattern.removeprefix("!").startswith(
             ("=", "^", "$", ":", ";", ",", "<", ">", "|", "~", "-", "%")
         ):
             pat = extended_pattern_translate(pattern.removeprefix("!"))
             if pat:
                 if pattern.startswith("!"):
-                    mimetype_shows.append(pat)
+                    ext_shows.append(pat)
                 else:
-                    mimetype_ignores.append(pat)
+                    ext_ignores.append(pat)
         elif pattern.startswith("!"):
-            if show_all:
-                continue
             pattern = pattern[1:]
             if pattern:
                 if pattern == "*":
-                    show_all = True
+                    return None
                 else:
                     shows.append(pattern)
         else:
@@ -114,27 +125,73 @@ def parse(
                 ignore_all = True
             else:
                 ignores.append(pattern)
-    if show_all:
-        return None
     flags = IGNORECASE if ignore_case else 0
     preds: list[Callable] = []
     ignore_preds: list[Callable] = []
-    if check_mimetype:
-        if mimetype_shows:
-            show_mime_search = re_compile("|".join(mimetype_shows), flags).search
-            def predicate(path: str, /) -> bool:
-                if path.endswith("/"):
-                    return True
-                mime = guess_type(path)[0] or "application/octet-stream"
-                return show_mime_search(mime) is None
+    if extended_type:
+        if ext_shows:
+            ext_show_search = re_compile("|".join(ext_shows), flags).search
+            match extended_type:
+                case ExtendedType.mime:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            return True
+                        mime = guess_type(path)[0] or "application/octet-stream"
+                        return ext_show_search(mime) is None
+                case ExtendedType.path:
+                    def predicate(path: str, /) -> bool:
+                        return ext_show_search(path) is None
+                case ExtendedType.name:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            name = basename(path.removesuffix("/")) + "/"
+                        else:
+                            name = basename(path)
+                        return ext_show_search(name) is None
+                case ExtendedType.stem:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            return True
+                        stem, _ = splitext(basename(path))
+                        return ext_show_search(stem) is None
+                case ExtendedType.ext:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            return True
+                        _, ext = splitext(basename(path))
+                        return ext_show_search(ext[1:]) is None
             preds.append(predicate)
-        if mimetype_ignores:
-            ignore_mime_search = re_compile("|".join(mimetype_ignores), flags).search
-            def predicate(path: str, /) -> bool:
-                if path.endswith("/"):
-                    return False
-                mime = guess_type(path)[0] or "application/octet-stream"
-                return ignore_mime_search(mime) is not None
+        if ext_ignores:
+            ext_ignore_search = re_compile("|".join(ext_ignores), flags).search
+            match extended_type:
+                case ExtendedType.mime:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            return False
+                        mime = guess_type(path)[0] or "application/octet-stream"
+                        return ext_ignore_search(mime) is not None
+                case ExtendedType.path:
+                    def predicate(path: str, /) -> bool:
+                        return ext_ignore_search(path) is not None
+                case ExtendedType.name:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            name = basename(path.removesuffix("/")) + "/"
+                        else:
+                            name = basename(path)
+                        return ext_ignore_search(name) is not None
+                case ExtendedType.stem:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            return False
+                        stem, _ = splitext(basename(path))
+                        return ext_ignore_search(stem) is not None
+                case ExtendedType.ext:
+                    def predicate(path: str, /) -> bool:
+                        if path.endswith("/"):
+                            return False
+                        _, ext = splitext(basename(path))
+                        return ext_ignore_search(ext[1:]) is not None
             ignore_preds.append(predicate)
     if shows:
         show = re_compile("|".join(map(translate, shows)), flags).search
@@ -167,7 +224,7 @@ def predicate(
     pats: str | Iterable[str], 
     path: str, 
     ignore_case: bool = False, 
-    check_mimetype: bool = False, 
+    extended_type: None | int | str | ExtendedType = None, 
 ) -> bool:
     """
     Description:
@@ -218,7 +275,7 @@ def predicate(
     """
     if isinstance(pats, str):
         pats = pats,
-    predicate = parse(pats, ignore_case=ignore_case, check_mimetype=check_mimetype)
+    predicate = parse(pats, ignore_case=ignore_case, extended_type=extended_type)
     if predicate is None:
         return False
     return predicate(path)

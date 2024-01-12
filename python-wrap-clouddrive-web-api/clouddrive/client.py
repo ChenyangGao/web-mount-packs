@@ -352,6 +352,7 @@ class Client:
         message ListSubFileRequest {
           string path = 1;
           bool forceRefresh = 2;
+          optional bool checkExpires = 3;
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
@@ -2564,6 +2565,8 @@ class Client:
           bool fileSystemWatchEnabled = 7;
           int64 walkingThroughIntervalSecs = 8; // 0 means never auto walking through
           bool forceWalkingThroughOnStart = 9;
+          repeated TimeSchedule timeSchedules = 10;
+          bool isTimeSchedulesEnabled = 11;
         }
         message BackupDestination {
           string destinationPath = 1;
@@ -2590,6 +2593,13 @@ class Client:
           Skip = 0;
           Overwrite = 1;
           KeepHistoryVersion = 2;
+        }
+        message TimeSchedule {
+          bool isEnabled = 1;
+          uint32 hour = 2;
+          uint32 minute = 3;
+          uint32 second = 4;
+          optional DaysOfWeek daysOfWeek = 5; //none means every day
         }
         """
         return (self.async_stub if async_ else self.stub).BackupAdd(arg, metadata=self.metadata)
@@ -2632,6 +2642,8 @@ class Client:
           bool fileSystemWatchEnabled = 7;
           int64 walkingThroughIntervalSecs = 8; // 0 means never auto walking through
           bool forceWalkingThroughOnStart = 9;
+          repeated TimeSchedule timeSchedules = 10;
+          bool isTimeSchedulesEnabled = 11;
         }
         message BackupDestination {
           string destinationPath = 1;
@@ -2658,6 +2670,13 @@ class Client:
           Skip = 0;
           Overwrite = 1;
           KeepHistoryVersion = 2;
+        }
+        message TimeSchedule {
+          bool isEnabled = 1;
+          uint32 hour = 2;
+          uint32 minute = 3;
+          uint32 second = 4;
+          optional DaysOfWeek daysOfWeek = 5; //none means every day
         }
         """
         return (self.async_stub if async_ else self.stub).BackupUpdate(arg, metadata=self.metadata)
@@ -2833,9 +2852,11 @@ class Client:
 
     def BackupUpdateStrategies(self, arg: CloudDrive_pb2.BackupModifyRequest, /, async_: bool = False) -> None:
         """
+        deprecated, use BackupUpdate instead
 
         ------------------- protobuf rpc definition --------------------
 
+        // deprecated, use BackupUpdate instead
         rpc BackupUpdateStrategies(BackupModifyRequest)
             returns (google.protobuf.Empty) {}
 

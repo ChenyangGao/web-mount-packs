@@ -83,13 +83,14 @@ if __name__ == "__main__":
 
 try:
     # pip install clouddrive
+    from clouddrive import __version__ as clouddrive_version
+    if clouddrive_version < (0, 0, 9, 10):
+        raise ImportError
     from clouddrive import CloudDriveFileSystem
     from clouddrive.util.ignore import read_str, read_file, parse
     from clouddrive.util.file import HTTPFileReader
     # pip install types-cachetools
     from cachetools import LRUCache, TTLCache
-    # pip install types-python-dateutil
-    from dateutil.parser import parse as parse_datetime
     # pip install fusepy
     from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 except ImportError:
@@ -101,7 +102,6 @@ except ImportError:
     from clouddrive.util.ignore import read_str, read_file, parse
     from clouddrive.util.file import HTTPFileReader
     from cachetools import LRUCache, TTLCache
-    from dateutil.parser import parse as parse_datetime
     from fuse import FUSE, FuseOSError, Operations, LoggingMixIn # type: ignore
 
 from collections.abc import Callable, MutableMapping
@@ -124,18 +124,6 @@ from util.log import logger
 
 
 _EXTRA = MappingProxyType({"instance": __name__})
-
-
-def parse_as_ts(s: Optional[str] = None, /) -> float:
-    if not s:
-        return 0.0
-    if s.startswith("0001-01-01"):
-        return 0.0
-    try:
-        return parse_datetime(s).timestamp()
-    except:
-        logger.warning("can't parse datetime: %r", s, extra=_EXTRA)
-        return 0.0
 
 
 def update_readdir_later(
@@ -463,7 +451,7 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
         for pathobj in self.fs.listdir_path(path):
             is_dir = pathobj.is_dir()
             name = pathobj.name
-            mtime = parse_as_ts(pathobj.get("writeTime"))
+            mtime = pathobj["mtime"]
             subpath = joinpath(path, name)
             if self.zipfile_as_dir and not is_dir and name.endswith(".zip", 1):
                 name_d = name + ".d"
@@ -478,17 +466,17 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
                         st_mode=S_IFDIR | 0o555, 
                         st_nlink=1, 
                         st_size=0, 
-                        st_ctime=parse_as_ts(pathobj.get("createTime")), 
+                        st_ctime=pathobj["ctime"], 
                         st_mtime=mtime, 
-                        st_atime=parse_as_ts(pathobj.get("accessTime")), 
+                        st_atime=pathobj["atime"], 
                         _is_zip=True, 
                         _zip_path=subpath, 
                     )
                 else:
                     d.update(
-                        st_ctime=parse_as_ts(pathobj.get("createTime")), 
+                        st_ctime=pathobj["ctime"], 
                         st_mtime=mtime, 
-                        st_atime=parse_as_ts(pathobj.get("accessTime")), 
+                        st_atime=pathobj["atime"], 
                     )
                     cache[name_d] = d
             loaded = False
@@ -519,17 +507,17 @@ class CloudDriveFuseOperations(LoggingMixIn, Operations):
                     st_mode=(S_IFDIR if is_dir else S_IFREG) | 0o555, 
                     st_nlink=1, 
                     st_size=size, 
-                    st_ctime=parse_as_ts(pathobj.get("createTime")), 
-                    st_mtime=parse_as_ts(pathobj.get("writeTime")), 
-                    st_atime=parse_as_ts(pathobj.get("accessTime")), 
+                    st_ctime=pathobj["ctime"], 
+                    st_mtime=mtime, 
+                    st_atime=pathobj["atime"], 
                 )
                 if not is_dir:
                     d.update(_loaded=loaded, _data=data)
             else:
                 d.update(
-                    st_ctime=parse_as_ts(pathobj.get("createTime")), 
+                    st_ctime=pathobj["ctime"], 
                     st_mtime=mtime, 
-                    st_atime=parse_as_ts(pathobj.get("accessTime")), 
+                    st_atime=pathobj["atime"], 
                 )
             cache[name] = d
         self.cache[path] = cache
@@ -570,7 +558,7 @@ if __name__ == "__main__":
         except OSError:
             logger.exception("can't read file: %r", args.strm_file, extra=_EXTRA)
     if ls:
-        strm_predicate = parse(ls, check_mimetype=True)
+        strm_predicate = parse(ls, extended_type="mime")
 
     ls = []
     predicate = None
@@ -582,7 +570,7 @@ if __name__ == "__main__":
         except OSError:
             logger.exception("can't read file: %r", args.ignore_file, extra=_EXTRA)
     if ls:
-        ignore = parse(ls, check_mimetype=True)
+        ignore = parse(ls, extended_type="mime")
         if ignore:
             predicate = lambda p: not ignore(p)
 

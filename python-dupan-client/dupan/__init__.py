@@ -168,15 +168,26 @@ class Error(OSError):
 
 class DuPanClient:
 
-    def __init__(self, cookie: Optional[str] = None):
+    def __init__(
+        self, 
+        /, 
+        cookie: Optional[str] = None, 
+        scan_in_console: bool = True, 
+    ):
         session = self.session = Session()
         session.headers["User-Agent"] = "pan.baidu.com"
-        if not cookie or "BDUSS=" not in cookie:
-            self.login_with_qrcode()
-            self.request("https://pan.baidu.com/disk/main")
-        else:
-            self.cookie = cookie
-        resp = Error.check(self.get_gettemplatevariable("bdstoken"))
+        for _ in range(2):
+            if not cookie or "BDUSS=" not in cookie:
+                self.login_with_qrcode(scan_in_console=scan_in_console)
+                self.request("https://pan.baidu.com/disk/main")
+                resp = Error.check(self.get_gettemplatevariable("bdstoken"))
+                break
+            else:
+                self.cookie = cookie
+                try:
+                    resp = Error.check(self.get_gettemplatevariable("bdstoken"))
+                except:
+                    cookie = None
         self.bdstoken = resp["result"]["bdstoken"]
         #self.logid = b64encode(self.session.cookies["BAIDUID"].encode("ascii")).decode("ascii")
 
@@ -316,19 +327,20 @@ class DuPanClient:
     ) -> dict:
         """罗列目录中的文件列表
         payload:
-            dir: str = ""
-            num: int = 100
-            page: int = 1
-            order: str = "time"
-            desc: 0 | 1 = 1
-            clienttype: int = 0
-            web: int = 1
+            - dir: str = "/"
+            - num: int = 100
+            - page: int = 1
+            - order: str = "time"
+            - desc: 0 | 1 = 1
+            - clienttype: int = 0
+            - web: 0 | 1 = 1
+            - showempty: 0 | 1 = 0
         """
         api = "https://pan.baidu.com/api/list"
         if isinstance(payload, str):
-            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, "dir": payload}
+            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, "showempty": 0, "dir": payload}
         else:
-            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, **payload}
+            payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, "showempty": 0, **payload}
         return self.request(api, params=payload)
 
     def makedir(
@@ -381,6 +393,20 @@ class DuPanClient:
         /, 
         payload: list | tuple | dict, 
     ) -> dict:
+        """复制
+        payload:
+            {
+                filelist: [
+                    {
+                        "path": str,      # 源文件路径
+                        "newname": str,   # 目标文件名
+                        "dest": str = "", # 目标目录
+                        "ondup": "" | "newcopy" | "overwrite" = "", # 文件存在时 1. "": 忽略 2. "newcopy": 生成副本 3. "overwrite": 覆盖文件
+                    }, 
+                    ...
+                ]
+            }
+        """
         return self.filemanager("copy", payload)
 
     def delete(
@@ -388,6 +414,15 @@ class DuPanClient:
         /, 
         payload: str | list | tuple | dict, 
     ) -> dict:
+        """删除
+        payload:
+            {
+                filelist: [
+                    str, # 文件路径
+                    ...
+                ]
+            }
+        """
         return self.filemanager("delete", payload)
 
     def move(
@@ -395,6 +430,20 @@ class DuPanClient:
         /, 
         payload: list | tuple | dict, 
     ) -> dict:
+        """移动
+        payload:
+            {
+                filelist: [
+                    {
+                        "path": str,      # 源文件路径
+                        "newname": str,   # 目标文件名
+                        "dest": str = "", # 目标目录
+                        "ondup": "" | "newcopy" | "overwrite" = "", # 文件存在时 1. "": 忽略 2. "newcopy": 生成副本 3. "overwrite": 覆盖文件
+                    }, 
+                    ...
+                ]
+            }
+        """
         return self.filemanager("move", payload)
 
     def rename(
@@ -402,6 +451,19 @@ class DuPanClient:
         /, 
         payload: list | tuple | dict, 
     ) -> dict:
+        """重命名
+        payload:
+            {
+                filelist: [
+                    {
+                        "id": int,      # 文件 id
+                        "path": str,    # 源文件路径
+                        "newname": str, # 目标文件名
+                    }, 
+                    ...
+                ]
+            }
+        """
         return self.filemanager("rename", payload)
 
     def taskquery(
@@ -409,6 +471,12 @@ class DuPanClient:
         /, 
         payload: int | str | dict, 
     ) -> dict:
+        """任务进度查询
+        status: "pending"
+        status: "running"
+        status: "failed"
+        status: "success"
+        """
         api = "https://pan.baidu.com/share/taskquery"
         if isinstance(payload, (int, str)):
             payload = {"clienttype": 0, "web": 1, "taskid": payload}
@@ -421,13 +489,24 @@ class DuPanClient:
         params: dict, 
         data: int | str | list | tuple | dict, 
     ) -> dict:
+        """转存
+        payload:
+            - shareid: int | str
+            - from: int | str
+            - sekey: str = ""
+            - async: 0 | 1 = 1
+            - bdstoken: str = <default>
+            - clienttype: int = 0
+            - ondup: "" | "overwrite" | "newcopy" = ""
+            - web: 0 | 1 = 1
+        """
         api = "https://pan.baidu.com/share/transfer"
         params = {
-            "ondup": "overwrite", 
             "async": 1, 
-            "bdstoken": self.bdstoken, 
-            "web": 1, 
             "clienttype": 0, 
+            "bdstoken": self.bdstoken, 
+            "ondup": "overwrite", 
+            "web": 1, 
             **params, 
         }
         if isinstance(data, (int, str)):
@@ -760,6 +839,6 @@ class DuPanShareList:
             file["relpath"] = file["path"][start_inx:]
         return ls
 
+
 # TODO: 上传下载使用百度网盘的openapi，直接使用 alist 已经授权的 token
 # TODO: 百度网盘转存时，需要保持相对路径
-

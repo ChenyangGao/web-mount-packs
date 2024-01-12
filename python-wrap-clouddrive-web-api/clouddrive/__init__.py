@@ -11,7 +11,7 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 9, 10)
 __all__ = ["CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem"]
 
 import errno
@@ -31,7 +31,7 @@ from urllib.parse import quote
 from uuid import uuid4
 from warnings import warn
 
-from dateutil.parser import parse as parse_datetime
+from dateutil.parser import parse as dt_parse
 from google.protobuf.json_format import MessageToDict # type: ignore
 from grpc import StatusCode, RpcError # type: ignore
 
@@ -66,6 +66,22 @@ def check_response(func, /):
                 case _:
                     raise OSError(errno.EREMOTE, fargs, e.details()) from e
     return update_wrapper(wrapper, func)
+
+
+def datetime_parse(
+    s: Optional[str] = None, 
+    /, 
+    default=datetime.fromtimestamp(0), 
+    parse=dt_parse, 
+) -> float:
+    if not s:
+        return default
+    if s.startswith("0001-01-01"):
+        return default
+    try:
+        return parse(s)
+    except:
+        return default
 
 
 class CloudDriveClient(Client):
@@ -273,14 +289,17 @@ class CloudDrivePath(Mapping, PathLike[str]):
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[CloudDrivePath]:
-        dst = self.fs.copy(
-            self, 
-            dst_path, 
-            overwrite_or_ignore=overwrite_or_ignore, 
-            recursive=True, 
-        )
+        dst = self.fs.copy(self, dst_path, overwrite_or_ignore=overwrite_or_ignore)
         if not dst:
             return None
+        return type(self)(self.fs, dst)
+
+    def copytree(
+        self, 
+        /, 
+        dst_dir: str | PathLike[str], 
+    ) -> CloudDrivePath:
+        dst = self.fs.copytree(self, dst_dir)
         return type(self)(self.fs, dst)
 
     def download(
@@ -381,30 +400,21 @@ class CloudDrivePath(Mapping, PathLike[str]):
         /, 
         refresh: Optional[bool] = None, 
     ) -> list[str]:
-        return self.fs.listdir(
-            self, 
-            refresh=refresh, 
-        )
+        return self.fs.listdir(self, refresh=refresh)
 
     def listdir_attr(
         self, 
         /, 
         refresh: Optional[bool] = None, 
     ) -> list[dict]:
-        return self.fs.listdir_attr(
-            self, 
-            refresh=refresh, 
-        )
+        return self.fs.listdir_attr(self, refresh=refresh)
 
     def listdir_path(
         self, 
         /, 
         refresh: Optional[bool] = None, 
     ) -> list[CloudDrivePath]:
-        return self.fs.listdir_path(
-            self, 
-            refresh=refresh, 
-        )
+        return self.fs.listdir_path(self, refresh=refresh)
 
     def match(
         self, 
@@ -862,8 +872,12 @@ class CloudDriveFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         attr = MessageToDict(self._attr(path))
+        lastest_update = datetime.now()
         attr["path"] = path
-        attr["lastest_update"] = datetime.now()
+        attr["ctime"] = datetime_parse(attr.get("createTime"))
+        attr["mtime"] = datetime_parse(attr.get("writeTime"))
+        attr["atime"] = datetime_parse(attr.get("accessTime"))
+        attr["lastest_update"] = lastest_update
         return attr
 
     def chdir(
@@ -892,7 +906,6 @@ class CloudDriveFileSystem:
         src_path: str | PathLike[str], 
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = True, 
-        recursive: bool = False, 
         _check: bool = True, 
     ) -> str:
         raise UnsupportedOperation(errno.ENOSYS, "copy")
@@ -901,8 +914,7 @@ class CloudDriveFileSystem:
         self, 
         /, 
         src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
-        overwrite_or_ignore: Optional[bool] = True, 
+        dst_dir: str | PathLike[str], 
         _check: bool = True, 
     ) -> str:
         raise UnsupportedOperation(errno.ENOSYS, "copytree")
@@ -1221,12 +1233,12 @@ class CloudDriveFileSystem:
             return
         if _check:
             top = self.abspath(top)
-            if refresh is None:
-                refresh = self.refresh
+        if refresh is None:
+            refresh = self.refresh
         top = cast(str, top)
         refresh = cast(bool, refresh)
         try:
-            it = self._iterdir(top, refresh=refresh)
+            ls = self.listdir_path(top, refresh=refresh, _check=False)
         except OSError as e:
             if callable(onerror):
                 onerror(e)
@@ -1237,9 +1249,8 @@ class CloudDriveFileSystem:
             min_depth -= 1
         if max_depth > 0:
             max_depth -= 1
-        for attr in it:
-            path = CloudDrivePath(self, joinpath(top, attr.name), **MessageToDict(attr))
-            yield_me = min_depth <= 0
+        yield_me = min_depth <= 0
+        for path in ls:
             if yield_me and predicate:
                 pred = predicate(path)
                 if pred is None:
@@ -1247,7 +1258,7 @@ class CloudDriveFileSystem:
                 yield_me = pred 
             if yield_me and topdown:
                 yield path
-            if attr.isDirectory:
+            if path.is_dir():
                 yield from self.iter(
                     path.path, 
                     refresh=refresh, 
@@ -1278,12 +1289,15 @@ class CloudDriveFileSystem:
         refresh = cast(bool, refresh)
         lastest_update = datetime.now()
         for attr in map(MessageToDict, self._iterdir(path, refresh=refresh)):
-            attr["path"] = joinpath(path, attr["name"])
+            attr["path"] = path
+            attr["ctime"] = datetime_parse(attr.get("createTime"))
+            attr["mtime"] = datetime_parse(attr.get("writeTime"))
+            attr["atime"] = datetime_parse(attr.get("accessTime"))
             attr["lastest_update"] = lastest_update
             yield attr
 
     def list_storage(self, /) -> list[dict]:
-        return [MessageToDict(a) for a in self._iterdir("/")]
+        return self.listdir_attr("/")
 
     def listdir(
         self, 
@@ -1737,14 +1751,15 @@ class CloudDriveFileSystem:
             path = path.path
         elif _check:
             path = self.abspath(path)
-            if refresh is None:
-                refresh = self.refresh
+        if refresh is None:
+            refresh = self.refresh
         path = cast(str, path)
         refresh = cast(bool, refresh)
         lastest_update = datetime.now()
         for attr in self._search_iter(path, search_for, refresh=refresh, fuzzy=fuzzy):
             yield CloudDrivePath(self, path, lastest_update=lastest_update, **MessageToDict(attr))
 
+    # TODO: 需要进一步实现，更准确的 st_mode
     def stat(
         self, 
         /, 
@@ -1754,16 +1769,16 @@ class CloudDriveFileSystem:
         attr = self.attr(path, _check=_check)
         is_dir = attr.get("isDirectory", False)
         return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
+            (S_IFDIR if is_dir else S_IFREG) | 0o777, 
             0, # ino
             0, # dev
             1, # nlink
             0, # uid
             0, # gid
-            int(attr.get("size", 0)), # size
-            parse_datetime(attr["accessTime"]).timestamp(), # atime
-            parse_datetime(attr["writeTime"]).timestamp(), # mtime
-            parse_datetime(attr["createTime"]).timestamp(), # ctime
+            0 if is_dir else int(attr["size"]), # size
+            attr["atime"].timestamp(), # atime
+            attr["mtime"].timestamp(), # mtime
+            attr["ctime"].timestamp(), # ctime
         ))
 
     def storage_of(
@@ -1918,29 +1933,38 @@ class CloudDriveFileSystem:
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         if not max_depth:
             return
-        if _check:
+        if isinstance(top, CloudDrivePath):
+            top = top.path
+        elif _check:
             top = self.abspath(top)
-            if refresh is None:
-                refresh = self.refresh
+        if refresh is None:
+            refresh = self.refresh
         top = cast(str, top)
         refresh = cast(bool, refresh)
         try:
-            it = self._iterdir(top, refresh=refresh)
+            ls = self.listdir_attr(top, refresh=refresh, _check=False)
         except OSError as e:
             if callable(onerror):
                 onerror(e)
             elif onerror:
                 raise
             return
+        if not ls:
+            yield top, [], []
+            return
         dirs: list[str] = []
         files: list[str] = []
-        for attr in it:
-            (dirs if attr.isDirectory else files).append(attr.name)
+        for attr in ls:
+            if attr["is_dir"]:
+                dirs.append(attr["name"])
+            else:
+                files.append(attr["name"])
         if min_depth > 0:
             min_depth -= 1
         if max_depth > 0:
             max_depth -= 1
-        if min_depth <= 0 and topdown:
+        yield_me = min_depth <= 0
+        if yield_me and topdown:
             yield top, dirs, files
         for dir_ in dirs:
             yield from self.walk(
@@ -1952,7 +1976,7 @@ class CloudDriveFileSystem:
                 onerror=onerror, 
                 _check=False, 
             )
-        if min_depth <= 0 and not topdown:
+        if yield_me and topdown:
             yield top, dirs, files
 
     def walk_path(
@@ -1968,25 +1992,32 @@ class CloudDriveFileSystem:
     ) -> Iterator[tuple[str, list[CloudDrivePath], list[CloudDrivePath]]]:
         if not max_depth:
             return
-        if _check:
+        if isinstance(top, CloudDrivePath):
+            top = top.path
+        elif _check:
             top = self.abspath(top)
-            if refresh is None:
-                refresh = self.refresh
+        if refresh is None:
+            refresh = self.refresh
         top = cast(str, top)
         refresh = cast(bool, refresh)
         try:
-            it = self._iterdir(top, refresh=refresh)
+            ls = self.listdir_path(top, refresh=refresh, _check=False)
         except OSError as e:
             if callable(onerror):
                 onerror(e)
             elif onerror:
                 raise
             return
+        if not ls:
+            yield top, [], []
+            return
         dirs: list[CloudDrivePath] = []
         files: list[CloudDrivePath] = []
-        for attr in it:
-            (dirs if attr.isDirectory else files).append(
-                CloudDrivePath(self, joinpath(top, attr.name), **MessageToDict(attr)))
+        for path in ls:
+            if path.is_dir():
+                dirs.append(path)
+            else:
+                files.append(path)
         if min_depth > 0:
             min_depth -= 1
         if max_depth > 0:

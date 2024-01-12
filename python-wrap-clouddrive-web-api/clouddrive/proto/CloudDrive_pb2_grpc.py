@@ -1375,7 +1375,8 @@ class CloudDriveFileSrvServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def BackupUpdateStrategies(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """deprecated, use BackupUpdate instead
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')

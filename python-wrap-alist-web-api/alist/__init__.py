@@ -13,7 +13,7 @@ which refer to `os`, `posixpath`, `pathlib.Path` and `shutil` modules.
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 9, 10)
 __all__ = ["AlistClient", "AlistPath", "AlistFileSystem"]
 
 import errno
@@ -37,7 +37,7 @@ from uuid import uuid4
 from warnings import filterwarnings, warn
 
 from aiohttp import ClientSession
-from dateutil.parser import parse as parse_datetime
+from dateutil.parser import parse as dt_parse
 from requests import Session
 
 from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
@@ -86,6 +86,22 @@ def check_response(func, /):
                 raise PermissionError(errno.EPERM, resp, fargs)
         raise OSError(errno.EIO, resp, fargs)
     return update_wrapper(wrapper, func)
+
+
+def datetime_parse(
+    s: Optional[str] = None, 
+    /, 
+    default=datetime.fromtimestamp(0), 
+    parse=dt_parse, 
+) -> float:
+    if not s:
+        return default
+    if s.startswith("0001-01-01"):
+        return default
+    try:
+        return parse(s)
+    except:
+        return default
 
 
 class AlistClient:
@@ -250,6 +266,87 @@ class AlistClient:
             self.session.headers.pop("Authorization", None)
             self.async_session.headers.pop("Authorization", None)
 
+    # Undocumented
+
+    def me_update(
+        self, 
+        /, 
+        payload: dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        return self.request(
+            "/api/me/update", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_index_progress(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        return self.request(
+            "/api/admin/index/progress", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_index_build(
+        self, 
+        /, 
+        payload: dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        return self.request(
+            "/api/admin/index/build", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_index_clear(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        return self.request(
+            "/api/admin/index/clear", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_index_stop(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        return self.request(
+            "/api/admin/index/stop", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_index_update(
+        self, 
+        /, 
+        payload: dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        return self.request(
+            "/api/admin/index/update", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
     # [auth](https://alist.nn.ci/guide/api/auth.html)
 
     def auth_login(
@@ -403,10 +500,6 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # NOTE: AList 改名的限制：
-    #   1. 受到网盘的改名限制，例如如果挂载的是 115，就不能包含特殊符号 " < > ，也不能改扩展名，各个网盘限制不同
-    #   2. 可以包含斜杠  \，但是改名后，这个文件不能被删改了，因为只能被罗列，但不能单独找到
-    #   3. 名字里（basename）中包含 /，会被替换为 |
     def fs_rename(
         self, 
         /, 
@@ -414,7 +507,13 @@ class AlistClient:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        "https://alist.nn.ci/guide/api/fs.html#post-重命名文件"
+        """https://alist.nn.ci/guide/api/fs.html#post-重命名文件
+
+        NOTE: AList 改名的限制：
+        1. 受到网盘的改名限制，例如如果挂载的是 115，就不能包含特殊符号 " < > ，也不能改扩展名，各个网盘限制不同
+        2. 可以包含斜杠  \，但是改名后，这个文件不能被删改了，因为只能被罗列，但不能单独找到
+        3. 名字里（basename）中包含 /，会被替换为 |
+        """
         return self.request(
             "/api/fs/rename", 
             json=payload, 
@@ -555,10 +654,6 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # NOTE: AList 上传时的问题：
-    #   1. 上传文件成功不会更新缓存，但新增文件夹会更新缓存
-    #   2. 上传时路径中包含斜杠 \，视为路径分隔符 /
-    #   3. put 接口是流式上传，但是不支持 chunked，目前用 requests 上传空文件为处理为 chunked，会报错，这是 requests 的问题
     def fs_put(
         self, 
         /, 
@@ -568,7 +663,13 @@ class AlistClient:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        "https://alist.nn.ci/guide/api/fs.html#put-流式上传文件"
+        """https://alist.nn.ci/guide/api/fs.html#put-流式上传文件
+
+        NOTE: AList 上传的限制：
+        1. 上传文件成功不会更新缓存，但新增文件夹会更新缓存
+        2. 上传时路径中包含斜杠 \，视为路径分隔符 /
+        3. put 接口是流式上传，但是不支持 chunked，目前用 requests 上传空文件为处理为 chunked，会报错，这是 requests 的问题
+        """
         headers = request_kwargs.setdefault("headers", {})
         headers["File-Path"] = quote(remote_path)
         if as_task:
@@ -1213,6 +1314,19 @@ class AlistClient:
             **request_kwargs, 
         )
 
+    def admin_task_upload_retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "Undocumented"
+        return self.request(
+            "/api/admin/task/upload/retry_failed", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
     def admin_task_upload_clear_done(
         self, 
         /, 
@@ -1235,6 +1349,361 @@ class AlistClient:
         "https://alist.nn.ci/guide/api/admin/task.html#post-清除已成功任务"
         return self.request(
             "/api/admin/task/upload/clear_succeeded", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#get-获取已完成任务"
+        return self.request(
+            "/api/admin/task/copy/done", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#get-获取未完成任务"
+        return self.request(
+            "/api/admin/task/copy/undone", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_delete(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-删除任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/copy/delete", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_cancel(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-取消任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/copy/cancel", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_retry(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-重试任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/copy/retry", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "Undocumented"
+        return self.request(
+            "/api/admin/task/copy/retry_failed", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-清除已完成任务"
+        return self.request(
+            "/api/admin/task/copy/clear_done", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_copy_clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-清除已成功任务"
+        return self.request(
+            "/api/admin/task/copy/clear_succeeded", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#get-获取已完成任务"
+        return self.request(
+            "/api/admin/task/offline_download/done", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#get-获取未完成任务"
+        return self.request(
+            "/api/admin/task/offline_download/undone", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_delete(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-删除任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/offline_download/delete", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_cancel(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-取消任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/offline_download/cancel", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_retry(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-重试任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/offline_download/retry", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "Undocumented"
+        return self.request(
+            "/api/admin/task/offline_download/retry_failed", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-清除已完成任务"
+        return self.request(
+            "/api/admin/task/offline_download/clear_done", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-清除已成功任务"
+        return self.request(
+            "/api/admin/task/offline_download/clear_succeeded", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+
+    def admin_task_offline_download_transfer_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#get-获取已完成任务"
+        return self.request(
+            "/api/admin/task/offline_download_transfer/done", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#get-获取未完成任务"
+        return self.request(
+            "/api/admin/task/offline_download_transfer/undone", 
+            "GET", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_delete(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-删除任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/offline_download_transfer/delete", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_cancel(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-取消任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/offline_download_transfer/cancel", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_retry(
+        self, 
+        /, 
+        payload: int | str | dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-重试任务"
+        if isinstance(payload, (int, str)):
+            payload = {"tid": payload}
+        return self.request(
+            "/api/admin/task/offline_download_transfer/retry", 
+            params=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "Undocumented"
+        return self.request(
+            "/api/admin/task/offline_download_transfer/retry_failed", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-清除已完成任务"
+        return self.request(
+            "/api/admin/task/offline_download_transfer/clear_done", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def admin_task_offline_download_transfer_clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        "https://alist.nn.ci/guide/api/admin/task.html#post-清除已成功任务"
+        return self.request(
+            "/api/admin/task/offline_download_transfer/clear_succeeded", 
             async_=async_, 
             **request_kwargs, 
         )
@@ -2335,8 +2804,12 @@ class AlistFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         attr = self.fs_get(path, password, _check=False)["data"]
+        lastest_update = datetime.now()
         attr["path"] = path
-        attr["lastest_update"] = datetime.now()
+        attr["ctime"] = datetime_parse(attr.get("created"))
+        attr["mtime"] = datetime_parse(attr.get("modified"))
+        attr["atime"] = lastest_update
+        attr["lastest_update"] = lastest_update
         return attr
 
     def chdir(
@@ -2445,7 +2918,10 @@ class AlistFileSystem:
             if src_storage != dst_storage:
                 if overwrite_or_ignore == False:
                     return None
-                raise PermissionError(errno.EPERM, f"cross storages replication does not allow renaming: [{src_storage!r}]{src_path!r} -> [{dst_storage!r}]{dst_path!r}")
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"cross storages replication does not allow renaming: [{src_storage!r}]{src_path!r} -> [{dst_storage!r}]{dst_path!r}", 
+                )
             tempdirname = str(uuid4())
             tempdir = joinpath(dst_dir, tempdirname)
             self.fs_mkdir(tempdir, _check=False)
@@ -2499,7 +2975,10 @@ class AlistFileSystem:
         elif commonpath((src_path, dst_path)) == dst_path:
             if overwrite_or_ignore == False:
                 return None
-            raise PermissionError(errno.EPERM, f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_path!r}")
+            raise PermissionError(
+                errno.EPERM, 
+                f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_path!r}", 
+            )
         src_dir, src_name = split(src_path)
         dst_dir, dst_name = split(dst_path)
         try:
@@ -2904,8 +3383,8 @@ class AlistFileSystem:
             min_depth -= 1
         if max_depth > 0:
             max_depth -= 1
+        yield_me = min_depth <= 0
         for path in ls:
-            yield_me = min_depth <= 0
             if yield_me and predicate:
                 pred = predicate(path)
                 if pred is None:
@@ -2913,9 +3392,9 @@ class AlistFileSystem:
                 yield_me = pred
             if yield_me and topdown:
                 yield path
-            if path["is_dir"]:
+            if path.is_dir():
                 yield from self.iter(
-                    joinpath(top, path["name"]), 
+                    path.path, 
                     password=password, 
                     refresh=refresh, 
                     topdown=topdown, 
@@ -2962,6 +3441,10 @@ class AlistFileSystem:
             elif data["total"] != total:
                 raise RuntimeError("detected directory (count) changes during iteration")
             for attr in data["content"]:
+                attr["path"] = joinpath(path, attr["name"])
+                attr["ctime"] = datetime_parse(attr.get("created"))
+                attr["mtime"] = datetime_parse(attr.get("modified"))
+                attr["atime"] = lastest_update
                 attr["lastest_update"] = lastest_update
                 yield attr
             download_count += len(data["content"])
@@ -3012,6 +3495,9 @@ class AlistFileSystem:
         content = data["content"]
         for attr in content:
             attr["path"] = joinpath(path, attr["name"])
+            attr["ctime"] = datetime_parse(attr.get("created"))
+            attr["mtime"] = datetime_parse(attr.get("modified"))
+            attr["atime"] = lastest_update
             attr["lastest_update"] = lastest_update
         return content
 
@@ -3107,7 +3593,10 @@ class AlistFileSystem:
         if src_path == dst_path or dirname(src_path) == dst_path:
             raise SameFileError(src_path)
         if commonpath((src_path, dst_path)) == dst_path:
-            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
+            raise PermissionError(
+                errno.EPERM, 
+                f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
         src_attr = self.attr(src_path, src_password, _check=False)
         try:
             dst_attr = self.attr(dst_path, dst_password, _check=False)
@@ -3340,7 +3829,10 @@ class AlistFileSystem:
         if src_path == "/" or dst_path == "/":
             raise OSError(errno.EINVAL, f"invalid argument: {src_path!r} -> {dst_path!r}")
         if commonpath((src_path, dst_path)) == dst_path:
-            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
+            raise PermissionError(
+                errno.EPERM, 
+                f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
         src_dir, src_name = split(src_path)
         dst_dir, dst_name = split(dst_path)
         src_attr = self.attr(src_path, src_password, _check=False)
@@ -3362,7 +3854,10 @@ class AlistFileSystem:
         else:
             if replace:
                 if dst_attr.get("hash_info") is None:
-                    raise PermissionError(errno.EPERM, f"replace a storage {dst_path!r} is not allowed: {src_path!r} -> {dst_path!r}")
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"replace a storage {dst_path!r} is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
                 elif src_attr["is_dir"]:
                     if dst_attr["is_dir"]:
                         if self.get_directory_capacity(dst_path, dst_password, _check=False):
@@ -3384,7 +3879,10 @@ class AlistFileSystem:
             self.fs_rename(src_path, dst_name, _check=False)
         else:
             if src_storage != dst_storage:
-                raise PermissionError(errno.EPERM, f"cross storages movement does not allow renaming: [{src_storage!r}]{src_path!r} -> [{dst_storage!r}]{dst_path!r}")
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"cross storages movement does not allow renaming: [{src_storage!r}]{src_path!r} -> [{dst_storage!r}]{dst_path!r}", 
+                )
             tempname = f"{uuid4()}{splitext(src_name)[1]}"
             self.fs_rename(src_path, tempname, _check=False)
             try:
@@ -3510,7 +4008,6 @@ class AlistFileSystem:
     ) -> stat_result:
         attr = self.attr(path, password, _check=_check)
         is_dir = attr.get("is_dir", False)
-        lastest_update = attr["lastest_update"]
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
             0, # ino
@@ -3519,9 +4016,9 @@ class AlistFileSystem:
             0, # uid
             0, # gid
             attr.get("size", 0), # size
-            lastest_update.timestamp(), # atime
-            parse_datetime(attr["modified"]).timestamp(), # mtime
-            parse_datetime(attr["created"]).timestamp(), # ctime
+            attr["atime"].timestamp(), # atime
+            attr["mtime"].timestamp(), # mtime
+            attr["ctime"].timestamp(), # ctime
         ))
 
     def storage_of(
@@ -3733,15 +4230,13 @@ class AlistFileSystem:
         top = cast(str, top)
         refresh = cast(bool, refresh)
         try:
-            data = self.fs_list(top, password, refresh=refresh, _check=False)["data"]
+            ls = self.listdir_attr(top, password, refresh=refresh, _check=False)
         except OSError as e:
             if callable(onerror):
                 onerror(e)
             elif onerror:
                 raise
             return
-        else:
-            ls = data and data["content"] or []
         if not ls:
             yield top, [], []
             return
@@ -3811,7 +4306,7 @@ class AlistFileSystem:
         dirs: list[AlistPath] = []
         files: list[AlistPath] = []
         for path in ls:
-            if path["is_dir"]:
+            if path.is_dir():
                 dirs.append(path)
             else:
                 files.append(path)
@@ -3824,7 +4319,7 @@ class AlistFileSystem:
             yield top, dirs, files
         for dir_ in dirs:
             yield from self.walk_path(
-                joinpath(top, dir_["name"]), 
+                dir_.path, 
                 topdown=topdown, 
                 min_depth=min_depth, 
                 max_depth=max_depth, 
@@ -3879,7 +4374,7 @@ class AlistFileSystem:
     mv  = move
     rm  = remove
 
-# TODO: 自动根据文档 https://alist.nn.ci/guide/api 生成 AlistClient 类
+
 # TODO: 所有类和函数都要有文档
 # TODO: 所有类和函数都要有单元测试
 # TODO: 上传下载都支持进度条，下载支持多线程（返回 Future）

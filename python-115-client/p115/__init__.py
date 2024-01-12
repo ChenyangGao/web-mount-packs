@@ -145,6 +145,8 @@ def normalize_info(
         info2["pick_code"] = info["pc"]
     if "m" in info:
         info2["star"] = bool(info["m"])
+    if "u" in info:
+        info2["thumb"] = info["u"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
     if keep_raw:
@@ -356,6 +358,20 @@ class P115Client:
                     return resp.json()
 
     ########## Account API ##########
+
+    def is_login(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> bool:
+        api = "https://my.115.com/?ct=guide&ac=status"
+        def parse(content) -> bool:
+            try:
+                return loads(content)["state"]
+            except:
+                return False
+        return self.request(api, parse=parse, **request_kwargs)
 
     def login_check(
         self, 
@@ -1642,6 +1658,7 @@ class P115Client:
         payload = {"target": "U_1_0", **payload}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    # TODO: 需要添加异步支持
     def upload_file_sample(
         self, 
         /, 
@@ -1679,7 +1696,7 @@ class P115Client:
         resp = self.upload_sample_init(payload, **request_kwargs)
         api = resp["host"]
         payload = {
-            "name": payload["filename"], 
+            "name": filename, 
             "target": payload["target"], 
             "key": resp["object"], 
             "policy": resp["policy"], 
@@ -1688,13 +1705,8 @@ class P115Client:
             "callback": resp["callback"], 
             "signature": resp["signature"], 
         }
-        return self.request(
-            api, 
-            "POST", 
-            data=payload, 
-            files={"file": file}, 
-            **request_kwargs, 
-        )
+        request_kwargs.update(data=payload, files={"file": file})
+        return self.request(api, "POST", **request_kwargs)
 
     def upload_init(
         self, 
@@ -1708,6 +1720,7 @@ class P115Client:
         api = "https://uplb.115.com/4.0/initupload.php"
         return self.request(api, "POST", async_=async_, **request_kwargs)
 
+    # TODO: 需要添加异步支持
     def upload_sha1(
         self, 
         /, 
@@ -1769,6 +1782,7 @@ class P115Client:
             **request_kwargs, 
         )
 
+    # TODO: 需要添加异步支持
     def upload_file_sha1_simple(
         self, 
         /, 
@@ -1802,6 +1816,7 @@ class P115Client:
         resp["fileinfo"] = fileinfo
         return resp
 
+    # TODO: 需要添加异步支持
     def upload_file_sha1(
         self, 
         /, 
@@ -1852,6 +1867,7 @@ class P115Client:
         resp["fileinfo"] = fileinfo
         return resp
 
+    # TODO: 需要添加异步支持
     # TODO: 提供一个可断点续传的版本
     def upload_file(
         self, 
@@ -2211,8 +2227,6 @@ class P115Client:
 
     ########## Offline Download API ##########
 
-    # TODO: 增加一个接口，用于获取一个种子或磁力链接，里面的文件列表，这个文件并未被添加任务
-
     def offline_info(
         self, 
         /, 
@@ -2225,13 +2239,25 @@ class P115Client:
         api = "https://115.com/?ct=offline&ac=space"
         return self.request(api, async_=async_, **request_kwargs)
 
+    def offline_quota_info(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取当前离线配额信息（简略）
+        GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info"
+        return self.request(api, async_=async_, **request_kwargs)
+
     def offline_quota_package_info(
         self, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """获取当前离线配额信息
+        """获取当前离线配额信息（详细）
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
@@ -2351,6 +2377,7 @@ class P115Client:
             - hash[0]: str
             - hash[1]: str
             - ...
+            - flag: 0 | 1 = <default> # 是否删除源文件
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_del"
         if isinstance(payload, str):
@@ -5533,7 +5560,6 @@ class P115Offline:
     def __len__(self, /) -> int:
         return check_response(self.client.offline_list())["count"]
 
-    @check_response
     def add(
         self, 
         urls: str | Iterable[str], 
@@ -5556,20 +5582,18 @@ class P115Offline:
             payload["savepath"] = savepath
         return check_response(method(payload))
 
-    # TODO: 应该能通过 info_hash 获取文件列表
-    @check_response
     def add_torrent(
         self, 
-        sha1_or_fid: int | str, 
+        torrent_or_magnet_or_sha1_or_fid: int | bytes | str, 
         /, 
         pid: Optional[int] = None, 
         savepath: Optional[str] = None, 
         predicate: None | str | Callable[[dict], bool] = None, 
     ) -> dict:
-        resp = check_response(self.torrent_info(sha1_or_fid))
+        resp = check_response(self.torrent_info(torrent_or_magnet_or_sha1_or_fid))
         if predicate is None:
             wanted = ",".join(
-                str(i) for i, info in enumerate(resp["torrent_filelist_web"]) 
+                str(i) for i, info in enumerate(resp["torrent_filelist_web"])
                 if info["wanted"]
             )
         elif isinstance(predicate, str):
@@ -5586,9 +5610,8 @@ class P115Offline:
         }
         if pid is not None:
             payload["wp_path_id"] = pid
-        return self.client.offline_add_torrent(payload)
+        return check_response(self.client.offline_add_torrent(payload))
 
-    @check_response
     def clear(self, /, flag: int = 1) -> dict:
         """清空离线任务列表
 
@@ -5600,7 +5623,7 @@ class P115Offline:
             - 4: 已完成+删除源文件
             - 5: 全部+删除源文件
         """
-        return self.client.offline_clear(flag)
+        return check_response(self.client.offline_clear(flag))
 
     def get(self, hash: str, /, default=None):
         return next((item for item in self if item["info_hash"] == hash), default)
@@ -5631,24 +5654,49 @@ class P115Offline:
             return list(self.iter())
         return check_response(self.client.offline_list(page))["tasks"]
 
-    @check_response
-    def remove(self, hashes: str | Iterable[str], /) -> dict:
+    def remove(
+        self, 
+        hashes: str | Iterable[str], 
+        /, 
+        remove_files: bool = False, 
+    ) -> dict:
         if isinstance(hashes, str):
             payload = {"hash[0]": hashes}
         else:
             payload = {f"hash[{i}]": h for i, h in enumerate(hashes)}
             if not payload:
                 raise ValueError("no `hash` specified")
-        return self.client.offline_remove(payload)
+        if remove_files:
+            payload["flag"] = "1"
+        return check_response(self.client.offline_remove(payload))
 
-    @check_response
-    def torrent_info(self, sha1_or_fid: int | str, /) -> dict:
-        if isinstance(sha1_or_fid, int):
-            resp = self.client.fs_file(sha1_or_fid)
-            sha1 = resp["data"][0]["sha1"]
+    def torrent_info(self, torrent_or_magnet_or_sha1_or_fid: int | bytes | str, /) -> dict:
+        torrent = None
+        if isinstance(torrent_or_magnet_or_sha1_or_fid, int):
+            fid = torrent_or_magnet_or_sha1_or_fid
+            resp = check_response(self.client.fs_file(fid))
+            sha = resp["data"][0]["sha1"]
+        elif isinstance(torrent_or_magnet_or_sha1_or_fid, bytes):
+            torrent = torrent_or_magnet_or_sha1_or_fid
+        elif torrent_or_magnet_or_sha1_or_fid.startswith("magnet:?xt=urn:btih:"):
+            info_hash = torrent_or_magnet_or_sha1_or_fid[20:60]
+            url = f"https://itorrents.org/torrent/{info_hash}.torrent"
+            with Session() as session:
+                with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+                    response.raise_for_status()
+                    torrent = response.content
         else:
-            sha1 = sha1_or_fid
-        return self.client.offline_torrent_info(sha1)
+            sha = torrent_or_magnet_or_sha1_or_fid
+        if torrent is None:
+            return check_response(self.client.offline_torrent_info(sha))
+        else:
+            sha = sha1(torrent).hexdigest()
+            try:
+                return check_response(self.client.offline_torrent_info(sha))
+            except:
+                name = f"{uuid4()}.torrent"
+                check_response(self.client.upload_file_sample(BytesIO(torrent), name))
+                return check_response(self.client.offline_torrent_info(sha))
 
 
 class P115Recyclebin:
@@ -5858,19 +5906,10 @@ class P115Sharing:
         return self.client.share_update({"share_code": share_code, **payload})
 
 
-# TODO: 因为支持异步了，因此 client 的签名要普遍修改，根据 aysnc_
 # TODO: 能及时处理文件已不存在
 # TODO: 为各个fs接口添加额外的请求参数
-# TODO: 115中多个文件可以在同一目录下同名，如何处理？
-# TODO: 批量改名工具：如果后缀名一样，则直接改名，如果修改了后缀名，那就尝试用秒传，重新上传，上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
-#       - file 参数支持接受一个 callable：由于上传时，给出 sha1 本身可能就能成功，为了速度，我认为，一开始就不需要打开一个文件
-#       - 增加 read_range: 由于文件可以一开始就 seek 到目标位置，因此一开始就可以指定对应的位置，因此可以添加一个方法，叫 readrange，直接读取一定范围的 http 数据
-
-# TODO: File 对象要可以获取 url，而且尽量利用 client 上的方法，ShareFile 也要有相关方法（例如转存）
-# TODO: 支持异步io，用 aiohttp
-# TODO 因为获取 url 是个耗时的操作，因此需要缓存
-
+# TODO: 115中多个文件可以在同一目录下同名，如何处理
+# TODO 上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
-# TODO 实现清空已完成，清空所有失败任务，清空所有未完成，具体参考app（抓包）
-# TODO 以后会支持传入作为缓存的 MutableMapping
-# TODO 如果以后有缓存的话，getcwd 会获取最新的名字
+# TODO 支持传入作为缓存的 MutableMapping
+# TODO 调用 getcwd 时需要获取最新的名字
