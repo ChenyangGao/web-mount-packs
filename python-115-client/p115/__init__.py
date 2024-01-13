@@ -64,7 +64,7 @@ from .util.cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
 from .util.file import get_filesize, HTTPFileReader, RequestsFileReader, SupportsRead, SupportsWrite
 from .util.hash import file_digest
 from .util.iter import cut_iter
-from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits
+from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 from .util.property import funcproperty
 from .util.response import get_content_length
 from .util.text import cookies_str_to_dict, posix_glob_translate_iter
@@ -135,10 +135,19 @@ def normalize_info(
         "parent_id": int(parent_id), 
         "sha1": info.get("sha"), 
     }
-    for k1, k2 in (("te", "etime"), ("tu", "utime"), ("tp", "ptime"), ("to", "open_time"), ("t", "time")):
+    for k1, k2, k3 in (
+        ("te", "etime", "mtime"), 
+        ("tu", "utime", None), 
+        ("tp", "ptime", "ctime"), 
+        ("to", "open_time", "atime"), 
+        ("t", "time", None), 
+    ):
         if k1 in info:
             try:
-                info2[k2] = datetime.fromtimestamp(int(info[k1]))
+                t = int(info[k1])
+                info2[k2] = datetime.fromtimestamp(t)
+                if k3:
+                    info2[k3] = t
             except ValueError:
                 pass
     if "pc" in info:
@@ -2653,7 +2662,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
 
     def __call__(self, /) -> Self:
-        self.__dict__.update(self.fs.attr(self.id))
+        attr = self.fs.attr(self)
+        try:
+            if self.__dict__["path"] != attr["path"]:
+                raise KeyError
+            attr["fs"] = self.fs
+            super().__setattr__("__dict__", attr)
+        except KeyError:
+            self.__dict__.update(attr)
         return self
 
     def __contains__(self, key, /) -> bool:
@@ -2769,11 +2785,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         pattern: str = "*", 
         ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
     ) -> Iterator[Self]:
         return self.fs.glob(
             pattern, 
             self if self.is_dir() else self.parent, 
             ignore_case=ignore_case, 
+            allow_escaped_slash=allow_escaped_slash, 
         )
 
     def is_absolute(self, /) -> bool:
@@ -2848,14 +2866,16 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def listdir_path(self, /) -> list[Self]:
         return self.fs.listdir_path(self)
 
-    # TODO: 需要优化，使用 patht
     def match(
         self, 
         /, 
         path_pattern: str, 
         ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
     ) -> bool:
-        pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
+        pattern = "/" + "/".join(
+            t[0] for t in posix_glob_translate_iter(
+                path_pattern, allow_escaped_slash=allow_escaped_slash))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -2888,12 +2908,16 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             seek_threshold=seek_threshold, 
         )
 
-    @cached_property
+    @property
     def parent(self, /) -> Self:
         path = self.path
         if path == "/":
             return self
-        return type(self)(self.fs, dirname(path), id=self["parent_id"])
+        parent = dirname(path)
+        try:
+            return type(self)(self.fs, parent, id=self.__dict__["parent_id"])
+        except:
+            return type(self)(self.fs, parent)
 
     @cached_property
     def parents(self, /) -> tuple[Self, ...]:
@@ -2905,11 +2929,16 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         parent = dirname(path)
         while path != parent:
             parents.append(cls(fs, parent))
+            path, parent = parent, dirname(parent)
         return tuple(parents)
 
     @cached_property
     def parts(self, /) -> tuple[str, ...]:
-        return ("/", *self.path[1:].split("/"))
+        return ("/", *splits(self.path, do_unescape=False)[0][1:])
+
+    @cached_property
+    def patht(self, /) -> tuple[str, ...]:
+        return tuple(splits(self.path)[0])
 
     def read_bytes(
         self, 
@@ -2941,16 +2970,50 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> str:
         return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
 
+    def relative_to(self, other: str | Self, /) -> str:
+        if type(self) is type(other):
+            other = other.path
+        elif not other.startswith("/"):
+            other = self.fs.abspath(other)
+        path = self.path
+        if path == other:
+            return ""
+        elif path.startswith(other+"/"):
+            return path[len(other)+1:]
+        patht, _ = splits(self.path)
+        patht2, _ = splits(other)
+        if len(patht) >= len(patht2):
+            for a, b in zip(patht, patht2):
+                if a != b:
+                    break
+            else:
+                return joins(patht[len(patht2):])
+        raise ValueError(f"{path!r} is not in the subpath of {other!r}")
+
+    @cached_property
+    def relatives(self, /) -> tuple[str]:
+        patht, _ = splits(self.path)
+        def it():
+            path = patht[-1]
+            if path:
+                yield path
+                for p in reversed(patht[1:-1]):
+                    path = joinpath(unescape(p), path)
+                    yield path
+        return tuple(it())
+
     def rglob(
         self, 
         /, 
         pattern: str = "", 
         ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
     ) -> Iterator[Self]:
         return self.fs.rglob(
             pattern, 
             self if self.is_dir() else self.parent, 
             ignore_case=ignore_case, 
+            allow_escaped_slash=allow_escaped_slash, 
         )
 
     @cached_property
@@ -3318,14 +3381,13 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             ppatht.extend(patht)
         return ppatht
 
-    # TODO: 需要优化，使用 patht
-    # TODO: 允许 pattern 里面使用 \/
     def glob(
         self, 
         /, 
         pattern: str = "*", 
         dirname: IDOrPathType = "", 
         ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
     ) -> Iterator[P115PathType]:
         if pattern == "*":
             return self.iter(dirname)
@@ -3341,7 +3403,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                 return iter((path_class(self, **attr),))
         elif not pattern.lstrip("/"):
             return iter((path_class(self, **self.attr(0)),))
-        splitted_pats = tuple(posix_glob_translate_iter(pattern))
+        splitted_pats = tuple(posix_glob_translate_iter(
+            pattern, allow_escaped_slash=allow_escaped_slash))
         dirname_as_id = isinstance(dirname, (int, path_class))
         dirid: int
         if isinstance(dirname, path_class):
@@ -3356,7 +3419,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         dir2 = ""
         if ignore_case:
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dir_), "".join(t[0] for t in splitted_pats))
+                pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iter(
                     dirname, 
@@ -3386,7 +3449,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                 else:
                     return self.iter(dir_, max_depth=-1)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dir_), "".join(t[0] for t in splitted_pats[i:]))
+                pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 if dirname_as_id:
                     return self.iter(
@@ -3617,6 +3680,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         pattern: str = "", 
         dirname: IDOrPathType = "", 
         ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
     ) -> Iterator[P115PathType]:
         if not pattern:
             return self.iter(dirname, max_depth=-1)
@@ -3624,7 +3688,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             pattern = joinpath("/", "**", pattern.lstrip("/"))
         else:
             pattern = joinpath("**", pattern)
-        return self.glob(pattern, dirname, ignore_case=ignore_case)
+        return self.glob(pattern, dirname, ignore_case=ignore_case, allow_escaped_slash=allow_escaped_slash)
 
     def scandir(
         self, 
@@ -4048,7 +4112,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
         id = attr["id"]
         etime = attr["etime"].timestamp()
-        if etime > self.id_to_etime.get(id, 0.0):
+        if etime > self.id_to_etime.get(id, -1):
             pagesize = 1 << 10
             def iterdir():
                 get_files = self._files
@@ -4093,17 +4157,25 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 "open_time": lastest_update, 
             }
         try:
-            resp = self._info(id)
+            data = self._info(id)["data"][0]
         except OSError as e:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
-        attr = normalize_info(resp["data"][0], lastest_update=datetime.now())
-        pid = attr["parent_id"]
+        attr = normalize_info(data, lastest_update=datetime.now())
+        pid_to_attrs = self.pid_to_attrs
+        try:
+            pid = attr["parent_id"]
+            attr_old = pid_to_attrs[pid][id]
+            if attr_old["mtime"] == attr["mtime"]:
+                attr_old.update(attr)
+                return attr_old
+        except KeyError:
+            pass
         path = attr["path"] = joins((*(a["name"] for a in self._dir_get_ancestors(pid)), attr["name"]))
         self.path_to_id[path] = id
         try:
-            self.pid_to_attrs[pid][id] = attr
-        except:
-            pass
+            pid_to_attrs[pid][id] = attr
+        except KeyError:
+            pid_to_attrs[pid] = {id: attr}
         return attr
 
     def _attr_path(
@@ -4744,7 +4816,6 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     ) -> stat_result:
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
-        lastest_update = attr.get("lastest_update") or datetime.now()
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
             attr["id"], # ino
@@ -4753,9 +4824,9 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             self.client.user_id, # uid
             1, # gid
             0 if is_dir else attr["size"], # size
-            attr.get("open_time", lastest_update).timestamp(), # atime
-            attr.get("etime", lastest_update).timestamp(), # mtime
-            attr.get("ptime", lastest_update).timestamp(), # ctime
+            attr.get("atime", 0), # atime
+            attr.get("mtime", 0), # mtime
+            attr.get("ctime", 0), # ctime
         ))
 
     def touch(
@@ -5906,10 +5977,13 @@ class P115Sharing:
         return self.client.share_update({"share_code": share_code, **payload})
 
 
-# TODO: 能及时处理文件已不存在
-# TODO: 为各个fs接口添加额外的请求参数
-# TODO: 115中多个文件可以在同一目录下同名，如何处理
+# TODO 能及时处理文件已不存在
+# TODO 为各个fs接口添加额外的请求参数
+# TODO 115中多个文件可以在同一目录下同名，如何处理
 # TODO 上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
 # TODO 支持传入作为缓存的 MutableMapping
 # TODO 调用 getcwd 时需要获取最新的名字
+# TODO 支持 pickle 序列化和反序列化
+# TODO 支持上传、下载的 Future，可以 cancel、pause、resume 等
+

@@ -20,7 +20,6 @@ import errno
 
 from asyncio import run
 from collections.abc import Callable, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
-from datetime import datetime
 from functools import cached_property, partial, update_wrapper
 from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation
@@ -30,6 +29,7 @@ from posixpath import basename, commonpath, dirname, join as joinpath, normpath,
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
+from time import time
 from typing import cast, Any, IO, Literal, Never, Optional
 from types import MappingProxyType, MethodType
 from urllib.parse import quote
@@ -88,20 +88,15 @@ def check_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-def datetime_parse(
-    s: Optional[str] = None, 
-    /, 
-    default=datetime.fromtimestamp(0), 
-    parse=dt_parse, 
-) -> float:
+def parse_as_timestamp(s: Optional[str] = None, /) -> float:
     if not s:
-        return default
+        return 0.0
     if s.startswith("0001-01-01"):
-        return default
+        return 0.0
     try:
-        return parse(s)
+        return dt_parse(s).timestamp()
     except:
-        return default
+        return 0.0
 
 
 class AlistClient:
@@ -2074,7 +2069,7 @@ class AlistPath(Mapping, PathLike[str]):
         path_pattern: str, 
         ignore_case: bool = False, 
     ) -> bool:
-        pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
+        pattern = "/" + "/".join(t[0] for t in posix_glob_translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -2127,7 +2122,7 @@ class AlistPath(Mapping, PathLike[str]):
             seek_threshold=seek_threshold, 
         )
 
-    @cached_property
+    @property
     def parent(self, /) -> AlistPath:
         path = self.path
         if path == "/":
@@ -2144,6 +2139,7 @@ class AlistPath(Mapping, PathLike[str]):
         parent = dirname(path)
         while path != parent:
             parents.append(cls(fs, parent, password))
+            path, parent = parent, dirname(parent)
         return tuple(parents)
 
     @cached_property
@@ -2804,10 +2800,10 @@ class AlistFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         attr = self.fs_get(path, password, _check=False)["data"]
-        lastest_update = datetime.now()
+        lastest_update = time()
         attr["path"] = path
-        attr["ctime"] = datetime_parse(attr.get("created"))
-        attr["mtime"] = datetime_parse(attr.get("modified"))
+        attr["ctime"] = parse_as_timestamp(attr.get("created"))
+        attr["mtime"] = parse_as_timestamp(attr.get("modified"))
         attr["atime"] = lastest_update
         attr["lastest_update"] = lastest_update
         return attr
@@ -3207,7 +3203,7 @@ class AlistFileSystem:
         i = 0
         if ignore_case:
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats))
+                pattern = joinpath(re_escape(dirname), "/".join(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iter(
                     dirname, 
@@ -3229,7 +3225,7 @@ class AlistFileSystem:
             elif typ == "dstar" and i + 1 == len(splitted_pats):
                 return self.iter(dirname, password=password, max_depth=-1, _check=False)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats[i:]))
+                pattern = joinpath(re_escape(dirname), "/".join(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 return self.iter(
                     dirname, 
@@ -3433,7 +3429,7 @@ class AlistFileSystem:
         download_count = 0
         while not total or download_count < total:
             data = self.fs_list(path, password, refresh=refresh, page=page, per_page=per_page, _check=False)["data"]
-            lastest_update = datetime.now()
+            lastest_update = time()
             if total == 0:
                 total = data["total"]
                 if total == 0:
@@ -3442,8 +3438,8 @@ class AlistFileSystem:
                 raise RuntimeError("detected directory (count) changes during iteration")
             for attr in data["content"]:
                 attr["path"] = joinpath(path, attr["name"])
-                attr["ctime"] = datetime_parse(attr.get("created"))
-                attr["mtime"] = datetime_parse(attr.get("modified"))
+                attr["ctime"] = parse_as_timestamp(attr.get("created"))
+                attr["mtime"] = parse_as_timestamp(attr.get("modified"))
                 attr["atime"] = lastest_update
                 attr["lastest_update"] = lastest_update
                 yield attr
@@ -3491,12 +3487,12 @@ class AlistFileSystem:
         data = self.fs_list(path, password, refresh=refresh, page=page, per_page=per_page, _check=False)["data"]
         if data["total"] == 0:
             return []
-        lastest_update = datetime.now()
+        lastest_update = time()
         content = data["content"]
         for attr in content:
             attr["path"] = joinpath(path, attr["name"])
-            attr["ctime"] = datetime_parse(attr.get("created"))
-            attr["mtime"] = datetime_parse(attr.get("modified"))
+            attr["ctime"] = parse_as_timestamp(attr.get("created"))
+            attr["mtime"] = parse_as_timestamp(attr.get("modified"))
             attr["atime"] = lastest_update
             attr["lastest_update"] = lastest_update
         return content
@@ -4016,9 +4012,9 @@ class AlistFileSystem:
             0, # uid
             0, # gid
             attr.get("size", 0), # size
-            attr["atime"].timestamp(), # atime
-            attr["mtime"].timestamp(), # mtime
-            attr["ctime"].timestamp(), # ctime
+            attr["atime"], # atime
+            attr["mtime"], # mtime
+            attr["ctime"], # ctime
         ))
 
     def storage_of(

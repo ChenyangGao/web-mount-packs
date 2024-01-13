@@ -16,6 +16,8 @@ from re import compile as re_compile, escape as re_escape, Pattern
 from typing import AnyStr, Final, Iterator
 from urllib.parse import urlsplit, urlunsplit
 
+from .path import splits
+
 
 CRE_URL_SCHEME = re_compile(r"^(?i:[a-z][a-z0-9.+-]*)://")
 REFIND_BRACKET: Final = re_compile("\[[^]]+\]").finditer
@@ -146,34 +148,34 @@ def _glob_replace_dots(pat: str, /) -> str:
     return "".join(iter(pat))
 
 
-def posix_glob_translate_iter(pattern: str, /) -> Iterator[tuple[str, str, str]]:
+def posix_glob_translate_iter(
+    pattern: str, 
+    /, 
+    allow_escaped_slash: bool = False, 
+) -> Iterator[tuple[str, str, str]]:
     last_type = ""
-    for part in pattern.split("/"):
+    if allow_escaped_slash:
+        ls, _ = splits(pattern, parse_dots=False, do_unescape=False)
+    else:
+        ls = pattern.split("/")
+    for part in ls:
         if not part:
             continue
         orig_part = ""
         if part == "*":
             pattern = "[^/]*"
-            if last_type:
-                pattern = "/" + pattern
             last_type = "star"
         elif len(part) >=2 and not part.strip("*"):
             if last_type == "dstar":
                 continue
-            pattern = "(?:/[^/]*)*"
-            if not last_type:
-                pattern = "[^/]*" + pattern
+            pattern = "[^/]*(?:/[^/]*)*"
             last_type = "dstar"
         elif _glob_is_pat(part):
             pattern = _glob_replace_dots(wildcard_translate(part)[4:-3])
-            if last_type:
-                pattern = "/" + pattern
             last_type = "pat"
         else:
             orig_part = RESUB_REMOVE_WRAP_BRACKET(part)
             pattern = re_escape(orig_part)
-            if last_type:
-                pattern = "/" + pattern
             last_type = "orig"
         yield pattern, last_type, orig_part
 

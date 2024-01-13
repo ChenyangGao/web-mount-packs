@@ -16,7 +16,6 @@ __all__ = ["CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem"]
 
 import errno
 
-from datetime import datetime
 from collections.abc import Callable, ItemsView, Iterator, KeysView, Mapping, Sequence, ValuesView
 from functools import cached_property, partial, update_wrapper
 from io import BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
@@ -25,6 +24,7 @@ from posixpath import basename, commonpath, dirname, join as joinpath, normpath,
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
+from time import time
 from typing import cast, Any, IO, Literal, Never, Optional
 from types import MappingProxyType
 from urllib.parse import quote
@@ -68,20 +68,15 @@ def check_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-def datetime_parse(
-    s: Optional[str] = None, 
-    /, 
-    default=datetime.fromtimestamp(0), 
-    parse=dt_parse, 
-) -> float:
+def parse_as_timestamp(s: Optional[str] = None, /) -> float:
     if not s:
-        return default
+        return 0.0
     if s.startswith("0001-01-01"):
-        return default
+        return 0.0
     try:
-        return parse(s)
+        return dt_parse(s).timestamp()
     except:
-        return default
+        return 0.0
 
 
 class CloudDriveClient(Client):
@@ -422,7 +417,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         path_pattern: str, 
         ignore_case: bool = False, 
     ) -> bool:
-        pattern = "/" + "".join(t[0] for t in posix_glob_translate_iter(path_pattern))
+        pattern = "/" + "/".join(t[0] for t in posix_glob_translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -464,7 +459,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
             seek_threshold=seek_threshold, 
         )
 
-    @cached_property
+    @property
     def parent(self, /) -> CloudDrivePath:
         path = self.path
         if path == "/":
@@ -481,6 +476,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         parent = dirname(path)
         while path != parent:
             parents.append(cls(fs, parent))
+            path, parent = parent, dirname(parent)
         return tuple(parents)
 
     @cached_property
@@ -872,11 +868,11 @@ class CloudDriveFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         attr = MessageToDict(self._attr(path))
-        lastest_update = datetime.now()
-        attr["path"] = path
-        attr["ctime"] = datetime_parse(attr.get("createTime"))
-        attr["mtime"] = datetime_parse(attr.get("writeTime"))
-        attr["atime"] = datetime_parse(attr.get("accessTime"))
+        lastest_update = time()
+        attr["path"] = attr.get("fullPathName") or path
+        attr["ctime"] = parse_as_timestamp(attr.get("createTime"))
+        attr["mtime"] = parse_as_timestamp(attr.get("writeTime"))
+        attr["atime"] = parse_as_timestamp(attr.get("accessTime"))
         attr["lastest_update"] = lastest_update
         return attr
 
@@ -1088,7 +1084,7 @@ class CloudDriveFileSystem:
         i = 0
         if ignore_case:
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats))
+                pattern = joinpath(re_escape(dirname), "/".join(t[0] for t in splitted_pats))
                 match = re_compile("(?i:%s)" % pattern).fullmatch
                 return self.iter(
                     dirname, 
@@ -1109,7 +1105,7 @@ class CloudDriveFileSystem:
             elif typ == "dstar" and i + 1 == len(splitted_pats):
                 return self.iter(dirname, max_depth=-1, _check=False)
             if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dirname), "".join(t[0] for t in splitted_pats[i:]))
+                pattern = joinpath(re_escape(dirname), "/".join(t[0] for t in splitted_pats[i:]))
                 match = re_compile(pattern).fullmatch
                 return self.iter(
                     dirname, 
@@ -1287,12 +1283,12 @@ class CloudDriveFileSystem:
             refresh = self.refresh
         path = cast(str, path)
         refresh = cast(bool, refresh)
-        lastest_update = datetime.now()
+        lastest_update = time()
         for attr in map(MessageToDict, self._iterdir(path, refresh=refresh)):
-            attr["path"] = path
-            attr["ctime"] = datetime_parse(attr.get("createTime"))
-            attr["mtime"] = datetime_parse(attr.get("writeTime"))
-            attr["atime"] = datetime_parse(attr.get("accessTime"))
+            attr["path"] = attr.get("fullPathName") or joinpath(path, attr["name"])
+            attr["ctime"] = parse_as_timestamp(attr.get("createTime"))
+            attr["mtime"] = parse_as_timestamp(attr.get("writeTime"))
+            attr["atime"] = parse_as_timestamp(attr.get("accessTime"))
             attr["lastest_update"] = lastest_update
             yield attr
 
@@ -1755,11 +1751,10 @@ class CloudDriveFileSystem:
             refresh = self.refresh
         path = cast(str, path)
         refresh = cast(bool, refresh)
-        lastest_update = datetime.now()
+        lastest_update = time()
         for attr in self._search_iter(path, search_for, refresh=refresh, fuzzy=fuzzy):
             yield CloudDrivePath(self, path, lastest_update=lastest_update, **MessageToDict(attr))
 
-    # TODO: 需要进一步实现，更准确的 st_mode
     def stat(
         self, 
         /, 
@@ -1776,9 +1771,9 @@ class CloudDriveFileSystem:
             0, # uid
             0, # gid
             0 if is_dir else int(attr["size"]), # size
-            attr["atime"].timestamp(), # atime
-            attr["mtime"].timestamp(), # mtime
-            attr["ctime"].timestamp(), # ctime
+            attr["atime"], # atime
+            attr["mtime"], # mtime
+            attr["ctime"], # ctime
         ))
 
     def storage_of(

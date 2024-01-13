@@ -118,7 +118,6 @@ class HTTPFileReader(RawIOBase, BinaryIO):
     length: int
     chunked: bool
     start: int
-    closed: bool
     urlopen: Callable
     headers: Mapping
     seek_threshold: int
@@ -204,6 +203,10 @@ class HTTPFileReader(RawIOBase, BinaryIO):
     def close(self, /):
         self.response.close()
         self.__dict__["closed"] = True
+
+    @funcproperty
+    def closed(self, /):
+        return self.__dict__["closed"]
 
     @funcproperty
     def file(self, /) -> BinaryIO:
@@ -300,11 +303,15 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             return start
         self.response.close()
         url = self.url
+        response = self.urlopen(
+            url() if callable(url) else url, 
+            headers={**self.headers, "Range": f"bytes={start}-"}
+        )
+        length_new = get_total_length(response)
+        if self.length != length_new:
+            raise OSError(errno.EIO, "file size changed: %s -> %s", self.length, length_new)
         self.__dict__.update(
-            response=self.urlopen(
-                url() if callable(url) else url, 
-                headers={**self.headers, "Range": f"bytes={start}-"}
-            ), 
+            response=response, 
             start=start, 
             closed=False, 
         )

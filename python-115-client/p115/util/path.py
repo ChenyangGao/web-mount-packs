@@ -39,7 +39,12 @@ def joins(patht: Sequence[str], parents: int = 0, /) -> str:
     return path
 
 
-def splits(path: str, /) -> tuple[list[str], int]:
+def splits(
+    path: str, 
+    /, 
+    parse_dots: bool = True, 
+    do_unescape: bool = True, 
+) -> tuple[list[str], int]:
     parts: list[str] = []
     add_part = parts.append
     if path.startswith("/"):
@@ -53,9 +58,9 @@ def splits(path: str, /) -> tuple[list[str], int]:
     while (m := CRE_PART_match(path, l)):
         p = m[0][:-1]
         if p:
-            if p == ".":
+            if p == "." and parse_dots:
                 pass
-            if p == "..":
+            elif p == ".." and parse_dots:
                 if is_absolute:
                     if len(parts) > 1:
                         parts.pop()
@@ -63,15 +68,17 @@ def splits(path: str, /) -> tuple[list[str], int]:
                     parts.pop()
                 else:
                     parents += 1
-            else:
+            elif do_unescape:
                 add_part(unescape(p))
+            else:
+                add_part(p)
         l = m.end()
     if l < len(path):
         p = path[l:]
         if p:
-            if p == ".":
+            if p == "." and parse_dots:
                 pass
-            if p == "..":
+            elif p == ".." and parse_dots:
                 if is_absolute:
                     if len(parts) > 1:
                         parts.pop()
@@ -79,8 +86,10 @@ def splits(path: str, /) -> tuple[list[str], int]:
                     parts.pop()
                 else:
                     parents += 1
-            else:
+            elif do_unescape:
                 add_part(unescape(p))
+            else:
+                add_part(p)
     return parts, parents
 
 

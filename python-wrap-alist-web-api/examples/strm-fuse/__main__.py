@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 6, 1)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -24,9 +24,9 @@ if __name__ == "__main__":
     2. 模式匹配语法如下：
         1. 如果模式以反斜杠 \\ 开头，则跳过开头的 \\ 后，剩余的部分视为使用 gitignore 语法，对路径执行匹配（开头为 ! 时也不具有结果取反意义）
             - gitignore：https://git-scm.com/docs/gitignore#_pattern_format
-        2. 如果模式以 ! 开头，则跳过开头的 ! 后，执行模式匹配，匹配成功是为失败，匹配失败是为成功，也就是结果取反
+        2. 如果模式以 ! 开头，则跳过开头的 ! 后，执行模式匹配，匹配成功即是失败，匹配失败即是成功，也就是结果取反
         3. 以 ! 开头的模式，优先级高于不以此开头的
-        4. 如果模式以 =、^、$、:、;、,、<、>、|、~、-、% 之一开头，视为匹配文件名对应的 mimetype，否则使用 gitignore 语法，对路径执行匹配
+        4. 如果启用扩展（-e 或 --extended-pattern-on）且模式以 =、^、$、:、;、,、<、>、|、~、-、% 之一开头
             - https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types
 
             0.     跳过下面的开头字符，剩余的部分称为模式字符串
@@ -59,8 +59,14 @@ if __name__ == "__main__":
     parser.add_argument("--strm-file", help="""\
 接受一个配置文件路径，把罗列的文件显示为带 .strm 后缀的文件，打开后是链接。
 优先级高于 --ignore 和 --ignore-file，如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
-    parser.add_argument("-m", "--max-read-threads", type=int, default=1, help="单个文件的最大读取线程数，如果小于 0 就是无限，默认值 1")
-    parser.add_argument("-z", "--zipfile-as-dir", action="store_true", help="为 .zip 文件生成一个同名 + .d 后缀的（虚拟）文件夹")
+    parser.add_argument("-e", "--extended-pattern-on", choices=("mime", "path", "name", "stem", "ext"), help="""\
+启用扩展语法进行模式匹配
+  - mime 针对文件名所对应的 mimetype （只针对文件，不会匹配目录）
+  - path 针对文件路径（如果是目录，会有斜杠 / 作为后缀）
+  - name 针对文件名（如果是目录，会有斜杠 / 作为后缀）
+  - stem 针对文件名不含扩展名
+  - ext  针对扩展名（不含前缀点号 .）
+""")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     parser.add_argument("-d", "--debug", action="store_true", help="调试模式，输出更多信息")
     parser.add_argument("-l", "--log-level", default=0, help=f"指定日志级别，可以是数字或名称，不传此参数则不输出日志，默认值: 0 (NOTSET)")
@@ -82,41 +88,45 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
 try:
-    # pip install python-alist
     from alist import __version__ as alist_version
     if alist_version < (0, 0, 9, 10):
+        __import__("sys").modules.pop("alist")
         raise ImportError
+    # pip install python-alist
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
-    from alist.util.file import HTTPFileReader
     # pip install types-cachetools
     from cachetools import LRUCache, TTLCache
     # pip install fusepy
-    from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+    from fuse import FUSE, FuseOSError, Operations, fuse_get_context
+    # pip install psutil
+    from psutil import Process
 except ImportError:
     from subprocess import run
     from sys import executable
-    run([executable, "-m", "pip", "install", "-U", "python-alist>=0.0.9.10", "cachetools", "fusepy"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "python-alist>=0.0.9.10", "cachetools", "fusepy", "psutil"], check=True)
 
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
-    from alist.util.file import HTTPFileReader
     from cachetools import LRUCache, TTLCache
-    from fuse import FUSE, FuseOSError, Operations, LoggingMixIn # type: ignore
+    from fuse import FUSE, FuseOSError, Operations, fuse_get_context # type: ignore
+    from psutil import Process # type: ignore
 
 from collections.abc import Callable, MutableMapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import partial, update_wrapper
-from errno import EISDIR, ENOENT, EIO
+from errno import EACCES, EISDIR, ENOENT, EIO
 from itertools import count
 from mimetypes import guess_type
 from posixpath import basename, dirname, join as joinpath, split as splitpath
-from sys import maxsize
 from stat import S_IFDIR, S_IFREG
-from threading import Event, Lock, Semaphore, Thread
+from subprocess import run
+from sys import maxsize
+from threading import Event, Lock, Thread
 from time import time
 from types import MappingProxyType
-from typing import cast, Any, IO, Optional
+from typing import cast, Any, BinaryIO, Optional
 from weakref import WeakKeyDictionary, WeakValueDictionary
 from zipfile import ZipFile, Path as ZipPath, BadZipFile
 
@@ -125,24 +135,28 @@ from util.log import logger
 
 _EXTRA = MappingProxyType({"instance": __name__})
 
+if not hasattr(ThreadPoolExecutor, "__del__"):
+    setattr(ThreadPoolExecutor, "__del__", lambda self, /: self.shutdown(cancel_futures=True))
+
+
+def _get_process():
+    pid = fuse_get_context()[-1]
+    if pid <= 0:
+        return "UNDETERMINED"
+    return str(Process(pid))
+PORCESS_STR = type("ProcessStr", (), {"__str__": staticmethod(_get_process)})()
+
 
 def update_readdir_later(
-    func=None, 
-    /, 
-    refresh_max_workers: int = 8, 
-    refresh_min_interval: int = 10, 
+    self, 
+    executor: ThreadPoolExecutor, 
+    refresh_min_interval: int | float = 10, 
 ):
-    if func is None:
-        return partial(
-            update_readdir_later, 
-            refresh_max_workers=refresh_max_workers, 
-            refresh_min_interval=refresh_min_interval, 
-        )
-    event_pool: dict[Any, Event] = {}
+    readdir = type(self).readdir
     refresh_freq: MutableMapping = TTLCache(maxsize, ttl=refresh_min_interval)
+    event_pool: dict[str, Event] = {}
     lock = Lock()
-    sema = Semaphore(refresh_max_workers)
-    def run_update(self, path, fh, /, do_refresh=True):
+    def run_update(path, fh, /, do_refresh=True):
         with lock:
             try:
                 evt = event_pool[path]
@@ -154,34 +168,25 @@ def update_readdir_later(
             if do_refresh:
                 return
             evt.wait()
+            return [".", "..", *self.cache[path]]
         else:
             try:
-                if do_refresh:
-                    with sema:
-                        func(self, path, fh)
-                else:
-                    func(self, path, fh)
-            except BaseException as e:
-                self._log(
-                    logging.ERROR, 
-                    "can't readdir: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                    path, type(e).__qualname__, e, 
-                )
-                raise FuseOSError(EIO) from e
+                return readdir(self, path, fh)
             finally:
-                evt.set()
                 event_pool.pop(path, None)
-    def wrapper(self, /, path, fh=0):
+                evt.set()
+    def wrapper(path, fh=0):
         while True:
             try:
                 cache = self.cache[path]
             except KeyError:
-                pass
+                return run_update(path, fh, do_refresh=False)
             else:
                 try:
                     if path not in refresh_freq:
                         refresh_freq[path] = None
-                        Thread(target=run_update, args=(self, path, fh)).start()
+                        executor.submit(run_update, path, fh)
+                    return [".", "..", *cache]
                 except BaseException as e:
                     self._log(
                         logging.ERROR, 
@@ -189,14 +194,11 @@ def update_readdir_later(
                         path, type(e).__qualname__, e, 
                     )
                     raise FuseOSError(EIO) from e
-                finally:
-                    return [".", "..", *cache]
-            run_update(self, path, fh, do_refresh=False)
-    return update_wrapper(wrapper, func)
+    return update_wrapper(wrapper, readdir)
 
 
 # Learn: https://www.stavros.io/posts/python-fuse-filesystem/
-class AlistFuseOperations(LoggingMixIn, Operations):
+class AlistFuseOperations(Operations):
 
     def __init__(
         self, 
@@ -205,49 +207,55 @@ class AlistFuseOperations(LoggingMixIn, Operations):
         username: str = "", 
         password: str = "", 
         cache: Optional[MutableMapping] = None, 
-        predicate: Optional[Callable] = None, 
-        strm_predicate: Optional[Callable] = None, 
-        max_read_threads: int = 1, 
-        zipfile_as_dir: bool = False, 
+        predicate: Optional[Callable[[str], bool]] = None, 
+        strm_predicate: Optional[Callable[[str], bool]] = None, 
     ):
-        self.fs = AlistFileSystem.login(origin, username, password)
-        if cache is None:
-            cache = TTLCache(maxsize, ttl=3600)
-        self.cache = cache
-        self.predicate = predicate
-        self.strm_predicate = strm_predicate
-        self.max_read_threads = max_read_threads
-        self.zipfile_as_dir = zipfile_as_dir
-        self._next_fh: Callable[[], int] = count(1).__next__
-        self._fh_to_file: MutableMapping[int, IO[bytes]] = TTLCache(maxsize, ttl=60)
-        self._fh_to_zdir: MutableMapping[int, ZipPath] = {}
-        self._path_to_file: WeakValueDictionary[tuple[int, str], IO[bytes]] = WeakValueDictionary()
-        self._path_to_zfile: WeakValueDictionary[str, ZipFile] = WeakValueDictionary()
-        self._file_to_release: MutableMapping[IO[bytes], None] = TTLCache(maxsize, ttl=1)
+        self.__finalizer__: list[Callable] = []
         self._log = partial(logger.log, extra={"instance": repr(self)})
 
-    def __del__(self, /):
-        try:
-            cache = self._fh_to_file
-            popitem = cache.popitem
-            while cache:
+        self.fs = AlistFileSystem.login(origin, username, password)
+        self.predicate = predicate
+        self.strm_predicate = strm_predicate
+        register = self.register_finalize = self.__finalizer__.append
+
+        # id generator for file handler
+        self._next_fh: Callable[[], int] = count(1).__next__
+        # cache `readdir` pulled file attribute map
+        if cache is None:
+            cache = {}
+        self.cache = cache
+        register(cache.clear)
+        # cache all opened files (except in zipfile)
+        self._fh_to_file: dict[int, tuple[BinaryIO, bytes]] = {}
+        def close_all():
+            popitem = self._fh_to_file.popitem
+            while True:
                 try:
-                    _, file = popitem()
-                    file.close()
-                except BaseException as e:
-                    self._log(
-                        logging.WARNING, f"can't close file: %r  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                        file, type(e).__qualname__, e, 
-                    )
-            self._fh_to_zdir.clear()
-            self._path_to_file.clear()
-            self._path_to_zfile.clear()
-            self._file_to_release.clear()
-        except AttributeError:
-            pass
+                    _, (file, _) = popitem()
+                    if file is not None:
+                        file.close()
+                except KeyError:
+                    break
+                except:
+                    pass
+        register(close_all)
+        # multi threaded directory reading control
+        self._executor = ThreadPoolExecutor(8)
+        self.__dict__["readdir"] = update_readdir_later(self, executor=self._executor)
+        register(partial(self._executor.shutdown, cancel_futures=True))
+
+    def __del__(self, /):
+        self.close()
+
+    def close(self, /):
+        for func in self.__finalizer__:
+            try:
+                func()
+            except BaseException as e:
+                self._log(logging.ERROR, "failed to finalize with %r", func)
 
     def getattr(self, /, path: str, fh: int = 0, _rootattr={"st_mode": S_IFDIR | 0o555}) -> dict:
-        self._log(logging.DEBUG, "getattr(path=\x1b[4;34m%r\x1b[0m, fh=%r)", path, fh)
+        self._log(logging.DEBUG, "getattr(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PORCESS_STR)
         if path == "/":
             return _rootattr
         dir_, name = splitpath(path)
@@ -274,151 +282,37 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             )
             raise FuseOSError(ENOENT) from e
 
-    def _open(self, path: str, start: int = 0, /) -> HTTPFileReader:
-        file_size = self.getattr(path)["st_size"]
-        try:
-            file = cast(HTTPFileReader, self.fs.as_path(path).open("rb", start=start))
-        except BaseException as e:
-            self._log(
-                logging.ERROR, 
-                "can't open file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                path, type(e).__qualname__, e, 
-            )
-            raise FuseOSError(EIO) from e
-        if file.length != file_size:
-            self._log(logging.ERROR, "incorrect file size: \x1b[4;34m%s\x1b[0m %s != %s", path, file.length, file_size)
-            raise FuseOSError(EIO)
-        return file
+    def open(self, /, path: str, flags: int = 0) -> int:
+        self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PORCESS_STR)
+        return self._next_fh()
 
-    # TODO: 需要优化，增强协同效率，不要加锁
-    def _open_zip(self, path: str, /) -> ZipFile:
-        try:
-            return self._path_to_zfile[path]
-        except KeyError:
-            zfile = self._path_to_zfile[path] = ZipFile(self.fs.open(path, "rb"))
-            self.cache[path + ".d"] = {
-                zinfo.filename.rstrip("/"): dict(
-                    st_uid=0, 
-                    st_gid=0, 
-                    st_mode=(S_IFDIR if zinfo.is_dir() else S_IFREG) | 0o555, 
-                    st_nlink=1, 
-                    st_size=zinfo.file_size, 
-                    st_ctime=(dt := datetime(*zinfo.date_time).timestamp()), 
-                    st_mtime=dt, 
-                    st_atime=time(), 
-                    _is_zip=True, 
-                    _zip_path=path, 
-                ) for zinfo in zfile.filelist
-            }  
-            return zfile
-
-    def open(self, /, path: str, flags: int=0, fh: int = 0) -> int:
-        self._log(logging.DEBUG, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r, fh=%r)", path, flags, fh)
+    def _open(self, path: str, /):
         attr = self.getattr(path)
-        if attr.get("_loaded", False):
-            return 0
-        size = attr["st_size"]
-        if size == 0:
-            self._log(logging.ERROR, "is a directory: \x1b[4;34m%s\x1b[0m", path)
-            raise FuseOSError(EISDIR)
-        try:
-            if not fh:
-                fh = self._next_fh()
-            if attr.get("_is_zip", False):
-                zip_path = attr["_zip_path"]
-                try:
-                    file = self._path_to_file[(0, path)]
-                except KeyError:
-                    zfile = self._open_zip(zip_path)
-                    fp = zfile.fp
-                    if fp is None or fp.closed:
-                        zfile.close()
-                        self._path_to_zfile.pop(zip_path, None)
-                        zfile = self._open_zip(zip_path)
-                    try:
-                        file = self._path_to_file[(0, path)] = zfile.open(path.removeprefix(zip_path + ".d/"))
-                    except BadZipFile:
-                        zfile.fp and zfile.fp.close()
-                        zfile.close()
-                        self._path_to_zfile.pop(zip_path, None)
-                        zfile = self._open_zip(zip_path)
-                        file = self._path_to_file[(0, path)] = zfile.open(path.removeprefix(zip_path + ".d/"))
-                    attr.update(_data=file.read(2048))
-                    if size <= 2048:
-                        attr.update(_loaded=True)
-                        file.close()
-                        return 0
-            else:
-                threads = self.max_read_threads
-                if threads <= 0:
-                    file = self._open(path)
-                    attr.update(_data=file.read(2048))
-                    if size <= 2048:
-                        attr.update(_loaded=True)
-                        file.close()
-                        return 0
-                else:
-                    try:
-                        file = self._path_to_file[(fh % threads, path)]
-                    except KeyError:
-                        file = self._path_to_file[(fh % threads, path)] = self._open(path)
-                        attr.update(_data=file.read(2048))
-                        if size <= 2048:
-                            attr.update(_loaded=True)
-                            file.close()
-                            return 0
-            self._fh_to_file[fh] = file
-            return fh
-        except BaseException as e:
-            self._log(
-                logging.ERROR, 
-                "can't open file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                path, type(e).__qualname__, e, 
-            )
-            raise FuseOSError(EIO) from e
-
-    def opendir(self, /, path: str) -> int:
-        self._log(logging.DEBUG, "opendir(path=\x1b[4;34m%r\x1b[0m)", path)
-        if not self.zipfile_as_dir:
-            return 0
-        attr = self.getattr(path)
-        if not attr.get("_is_zip", False):
-            return 0
-        zip_path = attr["_zip_path"]
-        try:
-            zfile = self._open_zip(zip_path)
-            fh = self._next_fh()
-            if path == zip_path + ".d":
-                self._fh_to_zdir[fh] = ZipPath(zfile)
-            else:
-                self._fh_to_zdir[fh] = ZipPath(zfile).joinpath(path.removeprefix(zip_path + ".d/"))
-        except BaseException as e:
-            self._log(
-                logging.ERROR, 
-                "can't open file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                zip_path, type(e).__qualname__, e, 
-            )
-            raise FuseOSError(EIO) from e
-        return fh
+        if attr.get("_data") is not None:
+            return None, attr["_data"]
+        file: Optional[BinaryIO]
+        file = cast(BinaryIO, self.fs.as_path(path).open("rb"))
+        # cache 2048 in bytes (2 KB)
+        preread = file.read(2048)
+        if attr["st_size"] <= 2048:
+            file.close()
+            file = None
+        return file, preread
 
     def read(self, /, path: str, size: int, offset: int, fh: int = 0) -> bytes:
-        self._log(logging.DEBUG, "read(path=\x1b[4;34m%r\x1b[0m, size=%r, offset=%r, fh=%r)", path, size, offset, fh)
-        attr = self.getattr(path)
-        if fh == 0:
-            if attr.get("_loaded", False):
-                return attr["_data"][offset:offset+size]
+        self._log(logging.DEBUG, "read(path=\x1b[4;34m%r\x1b[0m, size=%r, offset=%r, fh=%r) by \x1b[3;4m%s\x1b[0m", path, size, offset, fh, PORCESS_STR)
         try:
             try:
-                file = self._fh_to_file[fh] = self._fh_to_file[fh]
-            except (KeyError, OSError):
-                self.open(path, fh=fh)
-                file = self._fh_to_file[fh]
-            if 0 <= offset < 2048:
-                if offset + size <= 2048:
-                    return attr["_data"][offset:offset+size]
-                else:
-                    file.seek(2048)
-                    return attr["_data"][offset:] + file.read(offset+size-2048)
+                file, preread = self._fh_to_file[fh] = self._fh_to_file[fh]
+            except KeyError:
+                file, preread = self._fh_to_file[fh] = self._open(path)
+            cache_size = len(preread)
+            if offset < cache_size:
+                if offset + size <= cache_size:
+                    return preread[offset:offset+size]
+                elif file is not None:
+                    file.seek(cache_size)
+                    return preread[offset:] + file.read(offset+size-cache_size)
             file.seek(offset)
             return file.read(size)
         except BaseException as e:
@@ -429,112 +323,61 @@ class AlistFuseOperations(LoggingMixIn, Operations):
             )
             raise FuseOSError(EIO) from e
 
-    @update_readdir_later
     def readdir(self, /, path: str, fh: int = 0) -> list[str]:
-        self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r)", path, fh)
-        if fh:
-            ls = [".", ".."]
-            try:
-                zdir = self._fh_to_zdir[fh]
-            except KeyError:
-                pass
-            else:
-                ls.extend(p.name for p in zdir.iterdir())
-            return ls
+        self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PORCESS_STR)
         predicate = self.predicate
         strm_predicate = self.strm_predicate
-        try:
-            old_cache = self.cache[path]
-        except KeyError:
-            old_cache = None
         cache = {}
-        for pathobj in self.fs.listdir_path(path):
-            is_dir = pathobj.is_dir()
-            name = pathobj.name
-            mtime = pathobj["mtime"]
-            subpath = joinpath(path, name)
-            if self.zipfile_as_dir and not is_dir and name.endswith(".zip", 1):
-                name_d = name + ".d"
-                try:
-                    d = old_cache[name_d]
-                    if not d["_is_zip"] or d["st_mtime"] != mtime:
-                        raise KeyError 
-                except (TypeError, KeyError):
-                    cache[name_d] = dict(
-                        st_uid=0, 
-                        st_gid=0, 
-                        st_mode=S_IFDIR | 0o555, 
-                        st_nlink=1, 
-                        st_size=0, 
-                        st_ctime=pathobj["ctime"], 
-                        st_mtime=mtime, 
-                        st_atime=pathobj["atime"], 
-                        _is_zip=True, 
-                        _zip_path=subpath, 
-                    )
+        try:
+            for pathobj in self.fs.listdir_path(path):
+                name    = pathobj.name
+                subpath = pathobj.path
+                isdir   = pathobj.is_dir()
+                data = None
+                if not isdir and strm_predicate and strm_predicate(subpath):
+                    data = pathobj.url.encode("latin-1")
+                    size = len(data)
+                    name += ".strm"
+                elif predicate and not predicate(subpath + "/"[:isdir]):
+                    continue
+                elif isdir:
+                    size = 0
                 else:
-                    d.update(
-                        st_ctime=pathobj["ctime"], 
-                        st_mtime=mtime, 
-                        st_atime=pathobj["atime"], 
-                    )
-                    cache[name_d] = d
-            loaded = False
-            data = b""
-            size = 0
-            if not is_dir and strm_predicate and strm_predicate(name):
-                data = pathobj.url.encode("latin-1")
-                size = len(data)
-                name += ".strm"
-                loaded = True
-            elif predicate and not predicate(subpath + "/"[:is_dir]):
-                continue
-            elif not is_dir:
-                try:
                     size = int(pathobj.get("size", 0))
-                except KeyError:
-                    breakpoint()
-                if size == 0:
-                    loaded = True
-            try:
-                d = old_cache[name]
-                if d["st_mtime"] != mtime:
-                    raise KeyError
-            except (KeyError, TypeError):
-                d = dict(
-                    st_uid=0, 
-                    st_gid=0, 
-                    st_mode=(S_IFDIR if is_dir else S_IFREG) | 0o555, 
-                    st_nlink=1, 
+                cache[name] = dict(
+                    st_mode=(S_IFDIR if isdir else S_IFREG) | 0o555, 
                     st_size=size, 
                     st_ctime=pathobj["ctime"], 
-                    st_mtime=mtime, 
+                    st_mtime=pathobj["mtime"], 
                     st_atime=pathobj["atime"], 
+                    _data=data, 
                 )
-                if not is_dir:
-                    d.update(_loaded=loaded, _data=data)
-            else:
-                d.update(
-                    st_ctime=pathobj["ctime"], 
-                    st_mtime=mtime, 
-                    st_atime=pathobj["atime"], 
-                )
-            cache[name] = d
-        self.cache[path] = cache
-        return [".", "..", *cache]
+            self.cache[path] = cache
+            return [".", "..", *cache]
+        except BaseException as e:
+            self._log(
+                logging.ERROR, 
+                "can't readdir: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
+                path, type(e).__qualname__, e, 
+            )
+            raise FuseOSError(EIO) from e
 
     def release(self, /, path: str, fh: int = 0):
-        self._log(logging.DEBUG, "release(path=\x1b[4;34m%r\x1b[0m, fh=%r)", path, fh)
+        self._log(logging.DEBUG, "release(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PORCESS_STR)
         if fh:
-            if self.max_read_threads > 0:
-                self._file_to_release[self._fh_to_file.pop(fh)] = None
-            else:
-                self._fh_to_file.pop(fh)
-
-    def releasedir(self, /, path: str, fh: int = 0):
-        self._log(logging.DEBUG, "releasedir(path=\x1b[4;34m%r\x1b[0m, fh=%r)", path, fh)
-        if fh:
-            self._fh_to_zdir.pop(fh, None)
+            try:
+                file, _ = self._fh_to_file.pop(fh)
+                if file is not None:
+                    file.close()
+            except KeyError:
+                pass
+            except BaseException as e:
+                self._log(
+                    logging.ERROR, 
+                    "can't release file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
+                    path, type(e).__qualname__, e, 
+                )
+                raise FuseOSError(EIO) from e
 
 
 if __name__ == "__main__":
@@ -558,7 +401,7 @@ if __name__ == "__main__":
         except OSError:
             logger.exception("can't read file: %r", args.strm_file, extra=_EXTRA)
     if ls:
-        strm_predicate = parse(ls, extended_type="mime")
+        strm_predicate = parse(ls, extended_type=args.extended_pattern_on)
 
     ls = []
     predicate = None
@@ -570,7 +413,7 @@ if __name__ == "__main__":
         except OSError:
             logger.exception("can't read file: %r", args.ignore_file, extra=_EXTRA)
     if ls:
-        ignore = parse(ls, extended_type="mime")
+        ignore = parse(ls, extended_type=args.extended_pattern_on)
         if ignore:
             predicate = lambda p: not ignore(p)
 
@@ -581,10 +424,9 @@ if __name__ == "__main__":
             args.origin, 
             args.username, 
             args.password, 
+            cache=TTLCache(maxsize, ttl=3600), 
             predicate=predicate, 
             strm_predicate=strm_predicate, 
-            max_read_threads=args.max_read_threads, 
-            zipfile_as_dir=args.zipfile_as_dir, 
         ),
         args.mount_point, 
         ro=True, 
