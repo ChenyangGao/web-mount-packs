@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6, 1)
+__version__ = (0, 0, 6, 2)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -44,9 +44,33 @@ if __name__ == "__main__":
             12. %  模式字符串是为通配符表达式，被匹配字符串的整体匹配此通配符表达式
 """, formatter_class=RawTextHelpFormatter)
     parser.add_argument("mount_point", nargs="?", help="挂载路径")
+    parser.add_argument("-c", "--make-cache", help="""\
+请提供一段代码，这段代码执行后，会产生一个名称为 cache 的值，将会被作为目录列表的缓存，如果代码执行成功却没有名为 cache 的值，则 cache 为 {}
+例如提供的代码为
+
+    from cachetools import TTLCache
+    from sys import maxsize
+
+    cache = TTLCache(maxsize, ttl=3600)
+
+就会产生一个容量为 sys.maxsize 而 key 的存活时间为 1 小时的缓存
+
+这个 cache 至少要求实现接口
+
+    __getitem__, __setitem__
+
+建议实现 collections.abc.MutableMapping 的接口，即以下接口
+
+    __delitem__, __getitem__, __setitem__, __iter__, __len__
+
+最好再实现析构方法
+
+    __del__
+""")
     parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
     parser.add_argument("-u", "--username", default="", help="用户名，默认为空")
     parser.add_argument("-p", "--password", default="", help="密码，默认为空")
+    parser.add_argument("-m", "--max-readdir-workers", default=8, type=int, help="读取目录的文件列表的最大的并发线程数，默认值是 8，等于 0 则自动确定，小于 0 则不限制")
     parser.add_argument("--ignore", help="""\
 接受配置，忽略其中罗列的文件和文件夹。
 如果有多个，用空格分隔（如果文件名中包含空格，请用 \\ 转义）。""")
@@ -96,7 +120,7 @@ try:
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
     # pip install types-cachetools
-    from cachetools import LRUCache, TTLCache
+    from cachetools import TTLCache
     # pip install fusepy
     from fuse import FUSE, FuseOSError, Operations, fuse_get_context
     # pip install psutil
@@ -108,7 +132,7 @@ except ImportError:
 
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
-    from cachetools import LRUCache, TTLCache
+    from cachetools import TTLCache
     from fuse import FUSE, FuseOSError, Operations, fuse_get_context # type: ignore
     from psutil import Process # type: ignore
 
@@ -144,12 +168,12 @@ def _get_process():
     if pid <= 0:
         return "UNDETERMINED"
     return str(Process(pid))
-PORCESS_STR = type("ProcessStr", (), {"__str__": staticmethod(_get_process)})()
+PROCESS_STR = type("ProcessStr", (), {"__str__": staticmethod(_get_process)})()
 
 
 def update_readdir_later(
     self, 
-    executor: ThreadPoolExecutor, 
+    executor: Optional[ThreadPoolExecutor] = None, 
     refresh_min_interval: int | float = 10, 
 ):
     readdir = type(self).readdir
@@ -180,12 +204,19 @@ def update_readdir_later(
             try:
                 cache = self.cache[path]
             except KeyError:
-                return run_update(path, fh, do_refresh=False)
+                if executor is None:
+                    return run_update(path, fh)
+                else:
+                    future = executor.submit(run_update, path, fh)
+                    return future.result()
             else:
                 try:
                     if path not in refresh_freq:
                         refresh_freq[path] = None
-                        executor.submit(run_update, path, fh)
+                        if executor is None:
+                            Thread(target=run_update, args=(path, fh)).start()
+                        else:
+                            executor.submit(run_update, path, fh)
                     return [".", "..", *cache]
                 except BaseException as e:
                     self._log(
@@ -209,6 +240,7 @@ class AlistFuseOperations(Operations):
         cache: Optional[MutableMapping] = None, 
         predicate: Optional[Callable[[str], bool]] = None, 
         strm_predicate: Optional[Callable[[str], bool]] = None, 
+        max_readdir_workers: int = -1, 
     ):
         self.__finalizer__: list[Callable] = []
         self._log = partial(logger.log, extra={"instance": repr(self)})
@@ -224,7 +256,6 @@ class AlistFuseOperations(Operations):
         if cache is None:
             cache = {}
         self.cache = cache
-        register(cache.clear)
         # cache all opened files (except in zipfile)
         self._fh_to_file: dict[int, tuple[BinaryIO, bytes]] = {}
         def close_all():
@@ -240,9 +271,16 @@ class AlistFuseOperations(Operations):
                     pass
         register(close_all)
         # multi threaded directory reading control
-        self._executor = ThreadPoolExecutor(8)
-        self.__dict__["readdir"] = update_readdir_later(self, executor=self._executor)
-        register(partial(self._executor.shutdown, cancel_futures=True))
+        executor: Optional[ThreadPoolExecutor]
+        if max_readdir_workers < 0:
+            executor = None
+        elif max_readdir_workers == 0:
+            executor = ThreadPoolExecutor(None)
+        else:
+            executor = ThreadPoolExecutor(max_readdir_workers)
+        self.__dict__["readdir"] = update_readdir_later(self, executor=executor)
+        if executor is not None:
+            register(partial(executor.shutdown, cancel_futures=True))
 
     def __del__(self, /):
         self.close()
@@ -255,7 +293,7 @@ class AlistFuseOperations(Operations):
                 self._log(logging.ERROR, "failed to finalize with %r", func)
 
     def getattr(self, /, path: str, fh: int = 0, _rootattr={"st_mode": S_IFDIR | 0o555}) -> dict:
-        self._log(logging.DEBUG, "getattr(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PORCESS_STR)
+        self._log(logging.DEBUG, "getattr(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
         if path == "/":
             return _rootattr
         dir_, name = splitpath(path)
@@ -283,7 +321,7 @@ class AlistFuseOperations(Operations):
             raise FuseOSError(ENOENT) from e
 
     def open(self, /, path: str, flags: int = 0) -> int:
-        self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PORCESS_STR)
+        self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
         return self._next_fh()
 
     def _open(self, path: str, /):
@@ -300,10 +338,10 @@ class AlistFuseOperations(Operations):
         return file, preread
 
     def read(self, /, path: str, size: int, offset: int, fh: int = 0) -> bytes:
-        self._log(logging.DEBUG, "read(path=\x1b[4;34m%r\x1b[0m, size=%r, offset=%r, fh=%r) by \x1b[3;4m%s\x1b[0m", path, size, offset, fh, PORCESS_STR)
+        self._log(logging.DEBUG, "read(path=\x1b[4;34m%r\x1b[0m, size=%r, offset=%r, fh=%r) by \x1b[3;4m%s\x1b[0m", path, size, offset, fh, PROCESS_STR)
         try:
             try:
-                file, preread = self._fh_to_file[fh] = self._fh_to_file[fh]
+                file, preread = self._fh_to_file[fh]
             except KeyError:
                 file, preread = self._fh_to_file[fh] = self._open(path)
             cache_size = len(preread)
@@ -324,7 +362,7 @@ class AlistFuseOperations(Operations):
             raise FuseOSError(EIO) from e
 
     def readdir(self, /, path: str, fh: int = 0) -> list[str]:
-        self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PORCESS_STR)
+        self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
         predicate = self.predicate
         strm_predicate = self.strm_predicate
         cache = {}
@@ -363,7 +401,7 @@ class AlistFuseOperations(Operations):
             raise FuseOSError(EIO) from e
 
     def release(self, /, path: str, fh: int = 0):
-        self._log(logging.DEBUG, "release(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PORCESS_STR)
+        self._log(logging.DEBUG, "release(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
         if fh:
             try:
                 file, _ = self._fh_to_file.pop(fh)
@@ -417,6 +455,14 @@ if __name__ == "__main__":
         if ignore:
             predicate = lambda p: not ignore(p)
 
+    cache = None
+    if args.make_cache:
+        from textwrap import dedent
+        code = dedent(args.make_cache)
+        ns: dict = {}
+        exec(code, ns)
+        cache = ns.get("cache")
+
     print("\n    👋 Welcome to use alist fuse and strm 👏\n")
     # https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki
     fuse = FUSE(
@@ -424,9 +470,10 @@ if __name__ == "__main__":
             args.origin, 
             args.username, 
             args.password, 
-            cache=TTLCache(maxsize, ttl=3600), 
+            cache=cache, 
             predicate=predicate, 
             strm_predicate=strm_predicate, 
+            max_readdir_workers=args.max_readdir_workers, 
         ),
         args.mount_point, 
         ro=True, 

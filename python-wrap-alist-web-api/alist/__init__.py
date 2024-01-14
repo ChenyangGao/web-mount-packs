@@ -13,13 +13,18 @@ which refer to `os`, `posixpath`, `pathlib.Path` and `shutil` modules.
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9, 10)
-__all__ = ["AlistClient", "AlistPath", "AlistFileSystem"]
+__version__ = (0, 0, 9, 11)
+__all__ = [
+    "AlistClient", "AlistPath", "AlistFileSystem", "AlistCopyTaskList", "AlistOfflineDownloadTaskList", 
+    "AlistOfflineDownloadTransferTaskList", "AlistUploadTaskList", 
+]
 
 import errno
 
-from asyncio import run
-from collections.abc import Callable, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
+from asyncio import run, TaskGroup
+from collections.abc import (
+    AsyncIterator, Awaitable, Callable, Coroutine, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
+)
 from functools import cached_property, partial, update_wrapper
 from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation
@@ -30,7 +35,7 @@ from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
 from time import time
-from typing import cast, Any, IO, Literal, Never, Optional
+from typing import cast, overload, Any, IO, Literal, Never, Optional
 from types import MappingProxyType, MethodType
 from urllib.parse import quote
 from uuid import uuid4
@@ -63,29 +68,39 @@ class method:
         raise TypeError("can't set value")
 
 
-def check_response(func, /):
-    def wrapper(*args, **kwds):
-        resp = func(*args, **kwds)
-        fargs = (func, args, kwds)
+def check_response(func: dict | Awaitable[dict] | Callable):
+    def check_code(resp):
         code = resp["code"]
         if 200 <= code < 300:
             return resp
         elif code == 403:
-            raise PermissionError(errno.EACCES, resp, fargs)
+            raise PermissionError(errno.EACCES, resp)
         elif code == 500:
             message = resp["message"]
             if (message.endswith("object not found") 
                 or message.startswith("failed get storage: storage not found")
             ):
-                raise FileNotFoundError(errno.ENOENT, resp, fargs)
+                raise FileNotFoundError(errno.ENOENT, resp)
             elif resp["message"].endswith("not a folder"):
-                raise NotADirectoryError(errno.ENOTDIR, resp, fargs)
+                raise NotADirectoryError(errno.ENOTDIR, resp)
             elif message.endswith("file exists"):
-                raise FileExistsError(errno.EEXIST, resp, fargs)
+                raise FileExistsError(errno.EEXIST, resp)
             elif message.startswith("failed get "):
-                raise PermissionError(errno.EPERM, resp, fargs)
-        raise OSError(errno.EIO, resp, fargs)
-    return update_wrapper(wrapper, func)
+                raise PermissionError(errno.EPERM, resp)
+        raise OSError(errno.EIO, resp)
+    async def check_code_async(resp):
+        return check_code(await resp)
+    if callable(func):
+        def wrapper(*args, **kwds):
+            resp = func(*args, **kwds)
+            if isawaitable(resp):
+                return check_code_async(resp)
+            return check_code(resp)
+        return update_wrapper(wrapper, func)
+    elif isawaitable(func):
+        return check_code_async(func)
+    else:
+        return check_code(func)
 
 
 def parse_as_timestamp(s: Optional[str] = None, /) -> float:
@@ -1708,6 +1723,22 @@ class AlistClient:
     @cached_property
     def fs(self, /) -> AlistFileSystem:
         return AlistFileSystem(self)
+
+    @cached_property
+    def copy_tasklist(self, /) -> AlistCopyTaskList:
+        return AlistCopyTaskList(self)
+
+    @cached_property
+    def offline_download_tasklist(self, /) -> AlistOfflineDownloadTaskList:
+        return AlistOfflineDownloadTaskList(self)
+
+    @cached_property
+    def offline_download_transfer_tasklist(self, /) -> AlistOfflineDownloadTransferTaskList:
+        return AlistOfflineDownloadTransferTaskList(self)
+
+    @cached_property
+    def upload_tasklist(self, /) -> AlistUploadTaskList:
+        return AlistUploadTaskList(self)
 
     def get_url(self, /, path: str) -> str:
         return self.origin + "/d" + quote(path, safe=":/?&=#")
@@ -4371,6 +4402,1659 @@ class AlistFileSystem:
     rm  = remove
 
 
+class AlistCopyTaskList:
+    "任务列表：复制"
+    __slots__ = "client",
+
+    def __init__(self, /, client: AlistClient):
+        self.client = client
+
+    def __contains__(self, tid: str, /) -> bool:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return True
+        return any(tid == t["id"] for t in self.list_done())
+
+    def __delitem__(self, tid: str, /):
+        self.cancel(tid)
+        self.delete(tid)
+
+    def __getitem__(self, tid: str, /) -> dict:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return t
+        for t in self.list_done():
+            if tid == t["id"]:
+                return t
+        raise LookupError(f"no such tid: {tid!r}")
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        for t in (await self.list(async_=True)):
+            yield t
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return iter(self.list())
+
+    def __len__(self, /) -> int:
+        return len(self.list())
+
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "取消某个任务"
+        return self.client.admin_task_copy_cancel(tid, async_=async_, **request_kwargs)
+
+    async def _clear_async(self, /, **request_kwargs) -> None:
+        undone = await self._list_async()
+        cancel = self.cancel
+        async with TaskGroup() as tg:
+            create_task = tg.create_task
+            for t in undone:
+                create_task(cancel(t["id"], async_=True, **request_kwargs))
+        await self.clear_done(async_=True, **request_kwargs)
+
+    def _clear_sync(self, /, **request_kwargs) -> None:
+        undone = self._list_sync()
+        cancel = self.cancel
+        for t in undone:
+            cancel(t["id"], **request_kwargs)
+        self.clear_done(**request_kwargs)
+
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def clear(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "清空任务列表"
+        if async_:
+            return self._clear_async(**request_kwargs)
+        else:
+            self._clear_sync(**request_kwargs)
+            return None
+
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已完成任务"
+        return self.client.admin_task_copy_clear_done(async_=async_, **request_kwargs)
+
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已成功任务"
+        return self.client.admin_task_copy_clear_succeeded(async_=async_, **request_kwargs)
+
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "删除某个任务"
+        return self.client.admin_task_copy_delete(tid, async_=async_, **request_kwargs)
+
+    async def _get_async(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in (await self.list_undone(async_=True, **request_kwargs)):
+            if tid == t["id"]:
+                return t
+        return next((t for t in (await self.list_done(async_=True, **request_kwargs)) if tid == t["id"]), default)
+
+    def _get_sync(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in self.list_undone(**request_kwargs):
+            if tid == t["id"]:
+                return t
+        return next((t for t in self.list_done(**request_kwargs) if tid == t["id"]), default)
+
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Any:
+        ...
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, Any]:
+        ...
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> Any | Coroutine[None, None, Any]:
+        "获取某个任务信息"
+        if async_:
+            return self._get_async(tid, default, **request_kwargs)
+        else:
+            return self._get_sync(tid, default, **request_kwargs)
+
+    async def _list_async(self, /, **request_kwargs) -> list[dict]:
+        undone = await self.list_undone(async_=True, **request_kwargs)
+        tasks = await self.list_done(async_=True, **request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    def _list_sync(self, /, **request_kwargs) -> list[dict]:
+        undone = self.list_undone(**request_kwargs)
+        tasks = self.list_done(**request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有已完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_copy_done(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有未完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_copy_undone(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有任务"
+        if async_:
+            return self._list_async(**request_kwargs)
+        else:
+            return self._list_sync(**request_kwargs)
+
+    remove = delete
+
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试某个任务"
+        return self.client.admin_task_copy_retry(tid, async_=async_, **request_kwargs)
+
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试所有失败任务"
+        return self.client.admin_task_copy_retry_failed(async_=async_, **request_kwargs)
+
+
+class AlistOfflineDownloadTaskList:
+    "任务列表：离线下载（到本地）"
+    __slots__ = "client",
+
+    def __init__(self, /, client: AlistClient):
+        self.client = client
+
+    def __contains__(self, tid: str, /) -> bool:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return True
+        return any(tid == t["id"] for t in self.list_done())
+
+    def __delitem__(self, tid: str, /):
+        self.cancel(tid)
+        self.delete(tid)
+
+    def __getitem__(self, tid: str, /) -> dict:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return t
+        for t in self.list_done():
+            if tid == t["id"]:
+                return t
+        raise LookupError(f"no such tid: {tid!r}")
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        for t in (await self.list(async_=True)):
+            yield t
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return iter(self.list())
+
+    def __len__(self, /) -> int:
+        return len(self.list())
+
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "取消某个任务"
+        return self.client.admin_task_offline_download_cancel(tid, async_=async_, **request_kwargs)
+
+    async def _clear_async(self, /, **request_kwargs) -> None:
+        undone = await self._list_async()
+        cancel = self.cancel
+        async with TaskGroup() as tg:
+            create_task = tg.create_task
+            for t in undone:
+                create_task(cancel(t["id"], async_=True, **request_kwargs))
+        await self.clear_done(async_=True, **request_kwargs)
+
+    def _clear_sync(self, /, **request_kwargs) -> None:
+        undone = self._list_sync()
+        cancel = self.cancel
+        for t in undone:
+            cancel(t["id"], **request_kwargs)
+        self.clear_done(**request_kwargs)
+
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def clear(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "清空任务列表"
+        if async_:
+            return self._clear_async(**request_kwargs)
+        else:
+            self._clear_sync(**request_kwargs)
+            return None
+
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已完成任务"
+        return self.client.admin_task_offline_download_clear_done(async_=async_, **request_kwargs)
+
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已成功任务"
+        return self.client.admin_task_offline_download_clear_succeeded(async_=async_, **request_kwargs)
+
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "删除某个任务"
+        return self.client.admin_task_offline_download_delete(tid, async_=async_, **request_kwargs)
+
+    async def _get_async(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in (await self.list_undone(async_=True, **request_kwargs)):
+            if tid == t["id"]:
+                return t
+        return next((t for t in (await self.list_done(async_=True, **request_kwargs)) if tid == t["id"]), default)
+
+    def _get_sync(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in self.list_undone(**request_kwargs):
+            if tid == t["id"]:
+                return t
+        return next((t for t in self.list_done(**request_kwargs) if tid == t["id"]), default)
+
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Any:
+        ...
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, Any]:
+        ...
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> Any | Coroutine[None, None, Any]:
+        "获取某个任务信息"
+        if async_:
+            return self._get_async(tid, default, **request_kwargs)
+        else:
+            return self._get_sync(tid, default, **request_kwargs)
+
+    async def _list_async(self, /, **request_kwargs) -> list[dict]:
+        undone = await self.list_undone(async_=True, **request_kwargs)
+        tasks = await self.list_done(async_=True, **request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    def _list_sync(self, /, **request_kwargs) -> list[dict]:
+        undone = self.list_undone(**request_kwargs)
+        tasks = self.list_done(**request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有已完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_offline_download_done(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有未完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_offline_download_undone(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有任务"
+        if async_:
+            return self._list_async(**request_kwargs)
+        else:
+            return self._list_sync(**request_kwargs)
+
+    remove = delete
+
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试某个任务"
+        return self.client.admin_task_offline_download_retry(tid, async_=async_, **request_kwargs)
+
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试所有失败任务"
+        return self.client.admin_task_offline_download_retry_failed(async_=async_, **request_kwargs)
+
+
+class AlistOfflineDownloadTransferTaskList:
+    "任务列表：离线下载（到存储）"
+    __slots__ = "client",
+
+    def __init__(self, /, client: AlistClient):
+        self.client = client
+
+    def __contains__(self, tid: str, /) -> bool:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return True
+        return any(tid == t["id"] for t in self.list_done())
+
+    def __delitem__(self, tid: str, /):
+        self.cancel(tid)
+        self.delete(tid)
+
+    def __getitem__(self, tid: str, /) -> dict:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return t
+        for t in self.list_done():
+            if tid == t["id"]:
+                return t
+        raise LookupError(f"no such tid: {tid!r}")
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        for t in (await self.list(async_=True)):
+            yield t
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return iter(self.list())
+
+    def __len__(self, /) -> int:
+        return len(self.list())
+
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "取消某个任务"
+        return self.client.admin_task_offline_download_transfer_cancel(tid, async_=async_, **request_kwargs)
+
+    async def _clear_async(self, /, **request_kwargs) -> None:
+        undone = await self._list_async()
+        cancel = self.cancel
+        async with TaskGroup() as tg:
+            create_task = tg.create_task
+            for t in undone:
+                create_task(cancel(t["id"], async_=True, **request_kwargs))
+        await self.clear_done(async_=True, **request_kwargs)
+
+    def _clear_sync(self, /, **request_kwargs) -> None:
+        undone = self._list_sync()
+        cancel = self.cancel
+        for t in undone:
+            cancel(t["id"], **request_kwargs)
+        self.clear_done(**request_kwargs)
+
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def clear(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "清空任务列表"
+        if async_:
+            return self._clear_async(**request_kwargs)
+        else:
+            self._clear_sync(**request_kwargs)
+            return None
+
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已完成任务"
+        return self.client.admin_task_offline_download_transfer_clear_done(async_=async_, **request_kwargs)
+
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已成功任务"
+        return self.client.admin_task_offline_download_transfer_clear_succeeded(async_=async_, **request_kwargs)
+
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "删除某个任务"
+        return self.client.admin_task_offline_download_transfer_delete(tid, async_=async_, **request_kwargs)
+
+    async def _get_async(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in (await self.list_undone(async_=True, **request_kwargs)):
+            if tid == t["id"]:
+                return t
+        return next((t for t in (await self.list_done(async_=True, **request_kwargs)) if tid == t["id"]), default)
+
+    def _get_sync(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in self.list_undone(**request_kwargs):
+            if tid == t["id"]:
+                return t
+        return next((t for t in self.list_done(**request_kwargs) if tid == t["id"]), default)
+
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Any:
+        ...
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, Any]:
+        ...
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> Any | Coroutine[None, None, Any]:
+        "获取某个任务信息"
+        if async_:
+            return self._get_async(tid, default, **request_kwargs)
+        else:
+            return self._get_sync(tid, default, **request_kwargs)
+
+    async def _list_async(self, /, **request_kwargs) -> list[dict]:
+        undone = await self.list_undone(async_=True, **request_kwargs)
+        tasks = await self.list_done(async_=True, **request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    def _list_sync(self, /, **request_kwargs) -> list[dict]:
+        undone = self.list_undone(**request_kwargs)
+        tasks = self.list_done(**request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有已完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_offline_download_transfer_done(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有未完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_offline_download_transfer_undone(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有任务"
+        if async_:
+            return self._list_async(**request_kwargs)
+        else:
+            return self._list_sync(**request_kwargs)
+
+    remove = delete
+
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试某个任务"
+        return self.client.admin_task_offline_download_transfer_retry(tid, async_=async_, **request_kwargs)
+
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试所有失败任务"
+        return self.client.admin_task_offline_download_transfer_retry_failed(async_=async_, **request_kwargs)
+
+
+class AlistUploadTaskList:
+    "任务列表：上传"
+    __slots__ = "client",
+
+    def __init__(self, /, client: AlistClient):
+        self.client = client
+
+    def __contains__(self, tid: str, /) -> bool:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return True
+        return any(tid == t["id"] for t in self.list_done())
+
+    def __delitem__(self, tid: str, /):
+        self.cancel(tid)
+        self.delete(tid)
+
+    def __getitem__(self, tid: str, /) -> dict:
+        for t in self.list_undone():
+            if tid == t["id"]:
+                return t
+        for t in self.list_done():
+            if tid == t["id"]:
+                return t
+        raise LookupError(f"no such tid: {tid!r}")
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        for t in (await self.list(async_=True)):
+            yield t
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return iter(self.list())
+
+    def __len__(self, /) -> int:
+        return len(self.list())
+
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def cancel(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "取消某个任务"
+        return self.client.admin_task_upload_cancel(tid, async_=async_, **request_kwargs)
+
+    async def _clear_async(self, /, **request_kwargs) -> None:
+        undone = await self._list_async()
+        cancel = self.cancel
+        async with TaskGroup() as tg:
+            create_task = tg.create_task
+            for t in undone:
+                create_task(cancel(t["id"], async_=True, **request_kwargs))
+        await self.clear_done(async_=True, **request_kwargs)
+
+    def _clear_sync(self, /, **request_kwargs) -> None:
+        undone = self._list_sync()
+        cancel = self.cancel
+        for t in undone:
+            cancel(t["id"], **request_kwargs)
+        self.clear_done(**request_kwargs)
+
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def clear(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "清空任务列表"
+        if async_:
+            return self._clear_async(**request_kwargs)
+        else:
+            self._clear_sync(**request_kwargs)
+            return None
+
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已完成任务"
+        return self.client.admin_task_upload_clear_done(async_=async_, **request_kwargs)
+
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def clear_succeeded(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "清除所有已成功任务"
+        return self.client.admin_task_upload_clear_succeeded(async_=async_, **request_kwargs)
+
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def delete(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "删除某个任务"
+        return self.client.admin_task_upload_delete(tid, async_=async_, **request_kwargs)
+
+    async def _get_async(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in (await self.list_undone(async_=True, **request_kwargs)):
+            if tid == t["id"]:
+                return t
+        return next((t for t in (await self.list_done(async_=True, **request_kwargs)) if tid == t["id"]), default)
+
+    def _get_sync(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        **request_kwargs, 
+    ):
+        for t in self.list_undone(**request_kwargs):
+            if tid == t["id"]:
+                return t
+        return next((t for t in self.list_done(**request_kwargs) if tid == t["id"]), default)
+
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Any:
+        ...
+    @overload
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default: Any, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, Any]:
+        ...
+    def get(
+        self, 
+        /, 
+        tid: str, 
+        default=None, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> Any | Coroutine[None, None, Any]:
+        "获取某个任务信息"
+        if async_:
+            return self._get_async(tid, default, **request_kwargs)
+        else:
+            return self._get_sync(tid, default, **request_kwargs)
+
+    async def _list_async(self, /, **request_kwargs) -> list[dict]:
+        undone = await self.list_undone(async_=True, **request_kwargs)
+        tasks = await self.list_done(async_=True, **request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    def _list_sync(self, /, **request_kwargs) -> list[dict]:
+        undone = self.list_undone(**request_kwargs)
+        tasks = self.list_done(**request_kwargs)
+        if not tasks:
+            return undone
+        if undone:
+            seen = {t["id"] for t in tasks}
+            tasks.extend(t for t in undone if t["id"] not in seen)
+        return tasks
+
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_done(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_done(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有已完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_upload_done(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_undone(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list_undone(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有未完成任务"
+        def parse(content):
+            data = check_response(loads(content))
+            return data["data"] or []
+        request_kwargs["parse"] = parse
+        return self.client.admin_task_upload_undone(async_=async_, **request_kwargs) # type: ignore
+
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有任务"
+        if async_:
+            return self._list_async(**request_kwargs)
+        else:
+            return self._list_sync(**request_kwargs)
+
+    remove = delete
+
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试某个任务"
+        return self.client.admin_task_upload_retry(tid, async_=async_, **request_kwargs)
+
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def retry_failed(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, dict]:
+        ...
+    @check_response
+    def retry_failed(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[None, None, dict]:
+        "重试所有失败任务"
+        return self.client.admin_task_upload_retry_failed(async_=async_, **request_kwargs)
+
+
 # TODO: 所有类和函数都要有文档
 # TODO: 所有类和函数都要有单元测试
 # TODO: 上传下载都支持进度条，下载支持多线程（返回 Future）
+# TODO: task 的 Future 封装，支持进度条

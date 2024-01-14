@@ -5262,7 +5262,7 @@ class ExportDirStatus(Future):
     _condition: Condition
     _state: str
 
-    def __init__(self, client: P115Client, export_id: int | str, /):
+    def __init__(self, /, client: P115Client, export_id: int | str):
         super().__init__()
         self.status = 0
         self.set_running_or_notify_cancel()
@@ -5302,7 +5302,7 @@ class PushExtractProgress(Future):
     _condition: Condition
     _state: str
 
-    def __init__(self, client: P115Client, pick_code: str, /):
+    def __init__(self, /, client: P115Client, pick_code: str):
         super().__init__()
         self.progress = 0
         self.set_running_or_notify_cancel()
@@ -5352,7 +5352,7 @@ class ExtractProgress(Future):
     _condition: Condition
     _state: str
 
-    def __init__(self, client: P115Client, extract_id: int | str, /):
+    def __init__(self, /, client: P115Client, extract_id: int | str):
         super().__init__()
         self.progress = 0
         self.set_running_or_notify_cancel()
@@ -5610,7 +5610,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
 class P115Offline:
     __slots__ = "client",
 
-    def __init__(self, client: P115Client, /):
+    def __init__(self, /, client: P115Client):
         self.client = client
 
     def __contains__(self, hash: str, /) -> bool:
