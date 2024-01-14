@@ -4757,7 +4757,55 @@ class AlistCopyTaskList:
         else:
             return self._list_sync(**request_kwargs)
 
-    remove = delete
+    async def _remove_async(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        await self.cancel(tid, async_=True, **request_kwargs)
+        await self.delete(tid, async_=True, **request_kwargs)
+
+    def _remove_sync(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        self.cancel(tid, **request_kwargs)
+        self.delete(tid, **request_kwargs)
+
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "删除某个任务（无论是否完成）"
+        if async_:
+            return self._remove_async(tid, **request_kwargs)
+        else:
+            self._remove_sync(tid, **request_kwargs)
+            return None
 
     @overload
     def retry(
@@ -5170,7 +5218,55 @@ class AlistOfflineDownloadTaskList:
         else:
             return self._list_sync(**request_kwargs)
 
-    remove = delete
+    async def _remove_async(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        await self.cancel(tid, async_=True, **request_kwargs)
+        await self.delete(tid, async_=True, **request_kwargs)
+
+    def _remove_sync(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        self.cancel(tid, **request_kwargs)
+        self.delete(tid, **request_kwargs)
+
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "删除某个任务（无论是否完成）"
+        if async_:
+            return self._remove_async(tid, **request_kwargs)
+        else:
+            self._remove_sync(tid, **request_kwargs)
+            return None
 
     @overload
     def retry(
@@ -5583,7 +5679,55 @@ class AlistOfflineDownloadTransferTaskList:
         else:
             return self._list_sync(**request_kwargs)
 
-    remove = delete
+    async def _remove_async(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        await self.cancel(tid, async_=True, **request_kwargs)
+        await self.delete(tid, async_=True, **request_kwargs)
+
+    def _remove_sync(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        self.cancel(tid, **request_kwargs)
+        self.delete(tid, **request_kwargs)
+
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "删除某个任务（无论是否完成）"
+        if async_:
+            return self._remove_async(tid, **request_kwargs)
+        else:
+            self._remove_sync(tid, **request_kwargs)
+            return None
 
     @overload
     def retry(
@@ -5996,7 +6140,55 @@ class AlistUploadTaskList:
         else:
             return self._list_sync(**request_kwargs)
 
-    remove = delete
+    async def _remove_async(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        await self.cancel(tid, async_=True, **request_kwargs)
+        await self.delete(tid, async_=True, **request_kwargs)
+
+    def _remove_sync(
+        self, 
+        /, 
+        tid: str, 
+        **request_kwargs, 
+    ) -> None:
+        self.cancel(tid, **request_kwargs)
+        self.delete(tid, **request_kwargs)
+
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None:
+        ...
+    @overload
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[None, None, None]:
+        ...
+    def remove(
+        self, 
+        /, 
+        tid: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> None | Coroutine[None, None, None]:
+        "删除某个任务（无论是否完成）"
+        if async_:
+            return self._remove_async(tid, **request_kwargs)
+        else:
+            self._remove_sync(tid, **request_kwargs)
+            return None
 
     @overload
     def retry(
