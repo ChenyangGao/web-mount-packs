@@ -26,6 +26,7 @@ from copy import deepcopy
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import cached_property, partial, update_wrapper
+from mimetypes import guess_type
 from hashlib import md5, sha1
 from inspect import isawaitable, iscoroutinefunction
 from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
@@ -2880,6 +2881,12 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
 
+    @property
+    def media_type(self, /) -> Optional[str]:
+        if not self.is_file():
+            return None
+        return guess_type(self.path)[0] or "application/octet-stream"
+
     @cached_property
     def name(self, /) -> str:
         return basename(self.path)
@@ -2972,9 +2979,11 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     def relative_to(self, other: str | Self, /) -> str:
         if type(self) is type(other):
+            other = cast(Self, other)
             other = other.path
-        elif not other.startswith("/"):
+        elif not cast(str, other).startswith("/"):
             other = self.fs.abspath(other)
+        other = cast(str, other)
         path = self.path
         if path == other:
             return ""

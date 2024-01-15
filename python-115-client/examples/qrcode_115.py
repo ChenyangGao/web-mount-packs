@@ -117,7 +117,7 @@ def login_with_qrcode(app="web", scan_in_console=True):
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "qrcode"], check=True)
-            from qrcode import QRCode
+            from qrcode import QRCode # type: ignore
         qr = QRCode(border=1)
         qr.add_data(qrcode)
         qr.print_ascii(tty=True)
@@ -134,7 +134,7 @@ def login_with_qrcode(app="web", scan_in_console=True):
         def open_qrcode():
             platform = __import__("platform").system()
             if platform == "Windows":
-                from os import startfile
+                from os import startfile # type: ignore
                 startfile(f.name)
             elif platform == "Darwin":
                 from subprocess import run
