@@ -19,8 +19,9 @@ import errno
 from collections.abc import Callable, ItemsView, Iterator, KeysView, Mapping, Sequence, ValuesView
 from functools import cached_property, partial, update_wrapper
 from io import BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
+from mimetypes import guess_type
 from os import fsdecode, fspath, makedirs, scandir, stat_result, path as ospath, PathLike
-from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
+from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split as splitpath, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
@@ -208,7 +209,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.path
 
     def __getitem__(self, key, /):
-        if key not in self.__dict__ and self.__dict__.get("lastest_update"):
+        if key not in self.__dict__ and not self.__dict__.get("lastest_update"):
             self()
         return self.__dict__[key]
 
@@ -284,17 +285,14 @@ class CloudDrivePath(Mapping, PathLike[str]):
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = None, 
     ) -> Optional[CloudDrivePath]:
-        dst = self.fs.copy(self, dst_path, overwrite_or_ignore=overwrite_or_ignore)
+        dst = self.fs.copy(
+            self, 
+            dst_path, 
+            overwrite_or_ignore=overwrite_or_ignore, 
+            recursive=True, 
+        )
         if not dst:
             return None
-        return type(self)(self.fs, dst)
-
-    def copytree(
-        self, 
-        /, 
-        dst_dir: str | PathLike[str], 
-    ) -> CloudDrivePath:
-        dst = self.fs.copytree(self, dst_dir)
         return type(self)(self.fs, dst)
 
     def download(
@@ -422,6 +420,12 @@ class CloudDrivePath(Mapping, PathLike[str]):
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
 
+    @property
+    def media_type(self, /) -> Optional[str]:
+        if not self.is_file():
+            return None
+        return guess_type(self.path)[0] or "application/octet-stream"
+
     def mkdir(self, /, exist_ok: bool = True):
         self.fs.makedirs(self, exist_ok=exist_ok)
 
@@ -507,6 +511,27 @@ class CloudDrivePath(Mapping, PathLike[str]):
         newline: Optional[str] = None, 
     ) -> str:
         return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
+
+    def relative_to(self, other: str | CloudDrivePath, /) -> str:
+        if isinstance(other, CloudDrivePath):
+            other = other.path
+        elif not other.startswith("/"):
+            other = self.fs.abspath(other)
+        path = self.path
+        if path == other:
+            return ""
+        elif path.startswith(other+"/"):
+            return path[len(other)+1:]
+        raise ValueError(f"{path!r} is not in the subpath of {other!r}")
+
+    @cached_property
+    def relatives(self, /) -> tuple[str]:
+        def it(path):
+            stop = len(path)
+            while stop:
+                stop = path.rfind("/", 0, stop)
+                yield path[stop+1:]
+        return tuple(it(self.path))
 
     def remove(self, /, recursive: bool = False):
         self.fs.remove(self, recursive=recursive)
@@ -766,7 +791,7 @@ class CloudDriveFileSystem:
 
     @check_response
     def _mkdir(self, path: str, /):
-        dirname, name = split(path)
+        dirname, name = splitpath(path)
         return self.client.CreateFolder(
             CloudDrive_pb2.CreateFolderRequest(parentPath=dirname, folderName=name))
 
@@ -810,7 +835,7 @@ class CloudDriveFileSystem:
     @check_response
     def _upload(self, path: str, file=None, /):
         client = self.client
-        dir_, name = split(path)
+        dir_, name = splitpath(path)
         fh = client.CreateFile(CloudDrive_pb2.CreateFileRequest(parentPath=dir_, fileName=name)).fileHandle
         try:
             if file is not None:
@@ -902,17 +927,19 @@ class CloudDriveFileSystem:
         src_path: str | PathLike[str], 
         dst_path: str | PathLike[str], 
         overwrite_or_ignore: Optional[bool] = True, 
+        recursive: bool = False, 
         _check: bool = True, 
-    ) -> str:
+    ) -> Optional[str]:
         raise UnsupportedOperation(errno.ENOSYS, "copy")
 
     def copytree(
         self, 
         /, 
         src_path: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        dst_path: str | PathLike[str], 
+        overwrite_or_ignore: Optional[bool] = None, 
         _check: bool = True, 
-    ) -> str:
+    ) -> Optional[str]:
         raise UnsupportedOperation(errno.ENOSYS, "copytree")
 
     def download(
@@ -972,8 +999,7 @@ class CloudDriveFileSystem:
             path = path.path
         elif _check:
             path = self.abspath(path)
-            attr = self._attr(path)
-            is_dir = attr.isDirectory
+            is_dir = self._attr(path).isDirectory
         else:
             is_dir = True
         if refresh is None:
@@ -1356,7 +1382,7 @@ class CloudDriveFileSystem:
         /, 
         path: str | PathLike[str], 
         _check: bool = True, 
-    ) -> dict:
+    ) -> str:
         if isinstance(path, CloudDrivePath):
             path = path.path
         elif _check:
@@ -1394,14 +1420,23 @@ class CloudDriveFileSystem:
         src_path = cast(str, src_path)
         dst_path = cast(str, dst_path)
         if src_path == dst_path:
-            raise SameFileError(src_path)
-        if commonpath((src_path, dst_path)) == dst_path:
-            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
+            return src_path
+        cmpath = commonpath((src_path, dst_path))
+        if cmpath == dst_path:
+            raise PermissionError(
+                errno.EPERM, 
+                f"rename a path as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        elif cmpath == src_path:
+            raise PermissionError(
+                errno.EPERM, 
+                f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
         src_attr = self._attr(src_path)
         try:
             dst_attr = self._attr(dst_path)
         except FileNotFoundError:
-            self.rename(src_path, dst_path, _check=False)
+            return self.rename(src_path, dst_path, _check=False)
         else:
             if dst_attr.isDirectory:
                 dst_filename = basename(src_path)
@@ -1410,9 +1445,7 @@ class CloudDriveFileSystem:
                     raise FileExistsError(errno.EEXIST, f"destination path {dst_filepath!r} already exists")
                 self._move([src_path], dst_path)
                 return dst_filepath
-            else:
-                self.rename(src_path, dst_path, _check=False)
-        return dst_path
+            raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists")
 
     def open(
         self, 
@@ -1581,10 +1614,19 @@ class CloudDriveFileSystem:
             return dst_path
         if src_path == "/" or dst_path == "/":
             raise OSError(errno.EINVAL, f"invalid argument: {src_path!r} -> {dst_path!r}")
-        if commonpath((src_path, dst_path)) == dst_path:
-            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}")
-        src_dir, src_name = split(src_path)
-        dst_dir, dst_name = split(dst_path)
+        cmpath = commonpath((src_path, dst_path))
+        if cmpath == dst_path:
+            raise PermissionError(
+                errno.EPERM, 
+                f"rename a path as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        elif cmpath == src_path:
+            raise PermissionError(
+                errno.EPERM, 
+                f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        src_dir, src_name = splitpath(src_path)
+        dst_dir, dst_name = splitpath(dst_path)
         src_attr = self._attr(src_path)
         try:
             dst_attr = self._attr(dst_path)
@@ -1710,9 +1752,7 @@ class CloudDriveFileSystem:
             raise NotADirectoryError(errno.ENOTDIR, path)
         elif not self.is_empty(path, _check=False):
             raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
-        if path == "/":
-            return
-        elif dirname(path) == "/":
+        if dirname(path) == "/":
             self._delete_cloud(attr.name, attr.CloudAPI.userName)
         else:
             self._delete(path)
@@ -1811,10 +1851,10 @@ class CloudDriveFileSystem:
                 raise PermissionError(errno.EPERM, f"can't create file in the root directory directly: {path!r}")
             if not self._attr(dir_).isDirectory:
                 raise NotADirectoryError(errno.ENOTDIR, f"parent path {dir_!r} is not a directory: {path!r}")
-        resp = self._upload(path)
-        d = MessageToDict(resp)
-        if "resultFilePaths" in d:
-            path = cast(str, d["resultFilePaths"][0])
+            resp = self._upload(path)
+            d = MessageToDict(resp)
+            if "resultFilePaths" in d:
+                path = cast(str, d["resultFilePaths"][0])
         return path
 
     def upload(
@@ -1950,7 +1990,7 @@ class CloudDriveFileSystem:
         dirs: list[str] = []
         files: list[str] = []
         for attr in ls:
-            if attr["is_dir"]:
+            if attr["isDirectory"]:
                 dirs.append(attr["name"])
             else:
                 files.append(attr["name"])
@@ -1964,6 +2004,65 @@ class CloudDriveFileSystem:
         for dir_ in dirs:
             yield from self.walk(
                 joinpath(top, dir_), 
+                refresh=refresh, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                _check=False, 
+            )
+        if yield_me and topdown:
+            yield top, dirs, files
+
+    def walk_attr(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        refresh: Optional[bool] = None, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        _check: bool = True, 
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        if not max_depth:
+            return
+        if isinstance(top, CloudDrivePath):
+            top = top.path
+        elif _check:
+            top = self.abspath(top)
+        if refresh is None:
+            refresh = self.refresh
+        top = cast(str, top)
+        refresh = cast(bool, refresh)
+        try:
+            ls = self.listdir_attr(top, refresh=refresh, _check=False)
+        except OSError as e:
+            if callable(onerror):
+                onerror(e)
+            elif onerror:
+                raise
+            return
+        if not ls:
+            yield top, [], []
+            return
+        dirs: list[dict] = []
+        files: list[dict] = []
+        for attr in ls:
+            if attr["isDirectory"]:
+                dirs.append(attr)
+            else:
+                files.append(attr)
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
+        if yield_me and topdown:
+            yield top, dirs, files
+        for dir_ in dirs:
+            yield from self.walk_attr(
+                dir_["path"], 
                 refresh=refresh, 
                 topdown=topdown, 
                 min_depth=min_depth, 

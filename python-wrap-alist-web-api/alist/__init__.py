@@ -29,8 +29,9 @@ from functools import cached_property, partial, update_wrapper
 from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation
 from json import loads
+from mimetypes import guess_type
 from os import fsdecode, fspath, fstat, makedirs, scandir, stat_result, path as ospath, PathLike
-from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split, splitext
+from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split as splitpath, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
@@ -2105,6 +2106,12 @@ class AlistPath(Mapping, PathLike[str]):
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
 
+    @property
+    def media_type(self, /) -> Optional[str]:
+        if not self.is_file():
+            return None
+        return guess_type(self.path)[0] or "application/octet-stream"
+
     def mkdir(self, /, exist_ok: bool = True):
         self.fs.makedirs(self, exist_ok=exist_ok)
 
@@ -2201,6 +2208,27 @@ class AlistPath(Mapping, PathLike[str]):
         newline: Optional[str] = None, 
     ) -> str:
         return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
+
+    def relative_to(self, other: str | AlistPath, /) -> str:
+        if isinstance(other, AlistPath):
+            other = other.path
+        elif not other.startswith("/"):
+            other = self.fs.abspath(other)
+        path = self.path
+        if path == other:
+            return ""
+        elif path.startswith(other+"/"):
+            return path[len(other)+1:]
+        raise ValueError(f"{path!r} is not in the subpath of {other!r}")
+
+    @cached_property
+    def relatives(self, /) -> tuple[str]:
+        def it(path):
+            stop = len(path)
+            while stop:
+                stop = path.rfind("/", 0, stop)
+                yield path[stop+1:]
+        return tuple(it(self.path))
 
     def remove(self, /, recursive: bool = True):
         self.fs.remove(self, recursive=recursive)
@@ -2902,27 +2930,30 @@ class AlistFileSystem:
                 if overwrite_or_ignore == False:
                     return None
                 raise IsADirectoryError(
-                    errno.EISDIR, f"source path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}")
+                    errno.EISDIR, 
+                    f"source path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}", 
+                )
         if src_path == dst_path:
             if overwrite_or_ignore is None:
                 raise SameFileError(src_path)
             return None
-        elif commonpath((src_path, dst_path)) == dst_path:
+        cmpath = commonpath((src_path, dst_path))
+        if cmpath == dst_path:
             if overwrite_or_ignore == False:
                 return None
             raise PermissionError(
                 errno.EPERM, 
                 f"copy a file as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
             )
-        elif commonpath((src_path, dst_path)) == src_path:
+        elif cmpath == src_path:
             if overwrite_or_ignore == False:
                 return None
             raise PermissionError(
                 errno.EPERM, 
                 f"copy a file as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
             )
-        src_dir, src_name = split(src_path)
-        dst_dir, dst_name = split(dst_path)
+        src_dir, src_name = splitpath(src_path)
+        dst_dir, dst_name = splitpath(dst_path)
         try:
             dst_attr = self.attr(dst_path, dst_password, _check=False)
         except FileNotFoundError:
@@ -2931,9 +2962,15 @@ class AlistFileSystem:
             if dst_attr["is_dir"]:
                 if overwrite_or_ignore == False:
                     return None
-                raise IsADirectoryError(errno.EISDIR, f"destination path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}")
+                raise IsADirectoryError(
+                    errno.EISDIR, 
+                    f"destination path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}", 
+                )
             elif overwrite_or_ignore is None:
-                raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists: {src_path!r} -> {dst_path!r}")
+                raise FileExistsError(
+                    errno.EEXIST, 
+                    f"destination path {dst_path!r} already exists: {src_path!r} -> {dst_path!r}", 
+                )
             elif not overwrite_or_ignore:
                 return None
             self.fs_remove(dst_dir, [dst_name], _check=False)
@@ -3006,8 +3043,8 @@ class AlistFileSystem:
                 errno.EPERM, 
                 f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_path!r}", 
             )
-        src_dir, src_name = split(src_path)
-        dst_dir, dst_name = split(dst_path)
+        src_dir, src_name = splitpath(src_path)
+        dst_dir, dst_name = splitpath(dst_path)
         try:
             dst_attr = self.attr(dst_path, dst_password, _check=False)
         except FileNotFoundError:
@@ -3114,8 +3151,7 @@ class AlistFileSystem:
             path = path.path
         elif _check:
             path = self.abspath(path)
-            attr = self.attr(path, password, _check=False)
-            is_dir = attr["is_dir"]
+            is_dir = self.attr(path, password, _check=False)["is_dir"]
         else:
             is_dir = True
         if refresh is None:
@@ -3618,17 +3654,23 @@ class AlistFileSystem:
         src_path = cast(str, src_path)
         dst_path = cast(str, dst_path)
         if src_path == dst_path or dirname(src_path) == dst_path:
-            raise SameFileError(src_path)
-        if commonpath((src_path, dst_path)) == dst_path:
+            return src_path
+        cmpath = commonpath((src_path, dst_path))
+        if cmpath == dst_path:
             raise PermissionError(
                 errno.EPERM, 
-                f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}", 
+                f"rename a path as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        elif cmpath == src_path:
+            raise PermissionError(
+                errno.EPERM, 
+                f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
             )
         src_attr = self.attr(src_path, src_password, _check=False)
         try:
             dst_attr = self.attr(dst_path, dst_password, _check=False)
         except FileNotFoundError:
-            self.rename(src_path, dst_path, src_password, dst_password, _check=False)
+            return self.rename(src_path, dst_path, src_password, dst_password, _check=False)
         else:
             if dst_attr["is_dir"]:
                 dst_filename = basename(src_path)
@@ -3637,9 +3679,7 @@ class AlistFileSystem:
                     raise FileExistsError(errno.EEXIST, f"destination path {dst_filepath!r} already exists")
                 self.fs_move(dirname(src_path), dst_path, [dst_filename], _check=False)
                 return dst_filepath
-            else:
-                self.rename(src_path, dst_path, src_password, dst_password, _check=False)
-        return dst_path
+            raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists")
 
     def open(
         self, 
@@ -3855,13 +3895,19 @@ class AlistFileSystem:
             return dst_path
         if src_path == "/" or dst_path == "/":
             raise OSError(errno.EINVAL, f"invalid argument: {src_path!r} -> {dst_path!r}")
-        if commonpath((src_path, dst_path)) == dst_path:
+        cmpath = commonpath((src_path, dst_path))
+        if cmpath == dst_path:
             raise PermissionError(
                 errno.EPERM, 
-                f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}", 
+                f"rename a path as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
             )
-        src_dir, src_name = split(src_path)
-        dst_dir, dst_name = split(dst_path)
+        elif cmpath == src_path:
+            raise PermissionError(
+                errno.EPERM, 
+                f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+            )
+        src_dir, src_name = splitpath(src_path)
+        dst_dir, dst_name = splitpath(dst_path)
         src_attr = self.attr(src_path, src_password, _check=False)
         try:
             dst_attr = self.attr(dst_path, dst_password, _check=False)
@@ -4109,7 +4155,8 @@ class AlistFileSystem:
             dir_ = dirname(path)
             if not self.attr(dir_, password, _check=False)["is_dir"]:
                 raise NotADirectoryError(errno.ENOTDIR, f"parent path {dir_!r} is not a directory: {path!r}")
-        return self.upload(BytesIO(), path, password, _check=False)
+            return self.upload(BytesIO(), path, password, _check=False)
+        return path
 
     def upload(
         self, 
@@ -4284,6 +4331,69 @@ class AlistFileSystem:
         for dir_ in dirs:
             yield from self.walk(
                 joinpath(top, dir_), 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                password=password, 
+                refresh=refresh, 
+                _check=False, 
+            )
+        if yield_me and not topdown:
+            yield top, dirs, files
+
+    def walk_attr(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        password: str = "", 
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        if not max_depth:
+            return
+        if isinstance(top, AlistPath):
+            if not password:
+                password = top.password
+            top = top.path
+        elif _check:
+            top = self.abspath(top)
+        if refresh is None:
+            refresh = self.refresh
+        top = cast(str, top)
+        refresh = cast(bool, refresh)
+        try:
+            ls = self.listdir_attr(top, password, refresh=refresh, _check=False)
+        except OSError as e:
+            if callable(onerror):
+                onerror(e)
+            elif onerror:
+                raise
+            return
+        if not ls:
+            yield top, [], []
+            return
+        dirs: list[dict] = []
+        files: list[dict] = []
+        for attr in ls:
+            if attr["is_dir"]:
+                dirs.append(attr)
+            else:
+                files.append(attr)
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
+        if yield_me and topdown:
+            yield top, dirs, files
+        for dir_ in dirs:
+            yield from self.walk_attr(
+                dir_["path"], 
                 topdown=topdown, 
                 min_depth=min_depth, 
                 max_depth=max_depth, 

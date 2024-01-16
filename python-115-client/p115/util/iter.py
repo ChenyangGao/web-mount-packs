@@ -4,7 +4,6 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["acc_step", "cut_iter"]
 
-
 from typing import Iterator, Optional
 
 

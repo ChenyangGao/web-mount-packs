@@ -2989,14 +2989,6 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             return ""
         elif path.startswith(other+"/"):
             return path[len(other)+1:]
-        patht, _ = splits(self.path)
-        patht2, _ = splits(other)
-        if len(patht) >= len(patht2):
-            for a, b in zip(patht, patht2):
-                if a != b:
-                    break
-            else:
-                return joins(patht[len(patht2):])
         raise ValueError(f"{path!r} is not in the subpath of {other!r}")
 
     @cached_property
@@ -3624,12 +3616,9 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        if isinstance(id_or_path, type(self).path_class):
-            path = id_or_path
-        else:
-            path = self.as_path(id_or_path, pid)
+        url = self.get_url(id_or_path, pid)
         return self.client.open(
-            path.as_uri, 
+            url, 
             headers=headers, 
             start=start, 
             seek_threshold=seek_threshold, 
@@ -3649,7 +3638,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         stop: Optional[int] = None, 
         pid: Optional[int] = None, 
     ) -> bytes:
-        return self.client.read_bytes(self.get_url(id_or_path, pid), start, stop)
+        url = self.get_url(id_or_path, pid)
+        return self.client.read_bytes(url, start, stop)
 
     def read_bytes_range(
         self, 
@@ -3658,7 +3648,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         bytes_range: str = "0-", 
         pid: Optional[int] = None, 
     ) -> bytes:
-        return self.client.read_bytes_range(self.get_url(id_or_path, pid), bytes_range)
+        url = self.get_url(id_or_path, pid)
+        return self.client.read_bytes_range(url, bytes_range)
 
     def read_block(
         self, 
@@ -3670,7 +3661,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     ) -> bytes:
         if size <= 0:
             return b""
-        return self.client.read_block(self.get_url(id_or_path, pid), size, offset)
+        url = self.get_url(id_or_path, pid)
+        return self.client.read_block(url, size, offset)
 
     def read_text(
         self, 
@@ -3681,7 +3673,13 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         newline: Optional[str] = None, 
         pid: Optional[int] = None, 
     ):
-        return self.open(id_or_path, encoding=encoding, errors=errors, newline=newline, pid=pid).read()
+        return self.open(
+            id_or_path, 
+            encoding=encoding, 
+            errors=errors, 
+            newline=newline, 
+            pid=pid, 
+        ).read()
 
     def rglob(
         self, 
@@ -4846,7 +4844,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     ) -> dict:
         try:
             return self.attr(id_or_path, pid)
-        except:
+        except FileNotFoundError:
             if isinstance(id_or_path, int):
                 raise ValueError(f"no such id: {id_or_path!r}")
             return self.upload(BytesIO(), id_or_path, pid=pid)

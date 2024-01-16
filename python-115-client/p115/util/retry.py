@@ -4,9 +4,11 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["retry", "raise_for_value"]
 
+from asyncio import sleep as asleep
 from functools import partial, update_wrapper
 from inspect import isawaitable, iscoroutinefunction
 from itertools import count
+from time import sleep
 from typing import Any, Callable, Iterable, Optional, TypeVar
 
 
@@ -14,7 +16,7 @@ T = TypeVar("T")
 
 
 async def ensure_awaitable(o, /):
-    "make an object awaitable"
+    "Make an object awaitable."
     if isawaitable(o):
         return await o
     return o
@@ -25,15 +27,19 @@ def retry(
     /, 
     retry_times: int = 0, 
     suppress_exceptions: type[BaseException] | tuple[type[BaseException], ...] = Exception, 
-    do_interval: Optional[Callable[[int], Any]] = None, 
+    do_interval: None | Callable[[int], Any] | int | float = None, 
     mark_async: bool = False, 
 ) -> Callable:
     """Decorator to make a function retryable.
 
     :param func: The function to be decorated.
     :param retry_times: The number of times the decorated function will be retried if it raises an exception. Default is 0, which means no retries.
+                        It will run at least once. If it is less than 0, it will run infinitely. Otherwise, it will run `retry_times`+1 times.
     :param suppress_exceptions: The type or types of exceptions that should be suppressed during retries.
-    :param do_interval: An optional function that can be used to perform a delay between retries. It takes the current retry count as an argument.
+    :param do_interval: An optional number or function that can be used to perform a delay between retries. 
+                        If None (the default), no delay will be performed.
+                        If a number is provided, it represents the number of seconds to sleep before each retry. 
+                        If a function is provided, it takes the current retry count as an argument, and can dynamically determine the sleep duration if a number is returned. 
     :param mark_async`: A flag to explicitly indicate whether the decorated function is asynchronous. 
 
     :return: If the `func` argument is provided, it returns a wrapper function that wraps the original function with retry logic. 
@@ -61,7 +67,12 @@ def retry(
             for i in loops:
                 try:
                     if i and do_interval is not None:
-                        await ensure_awaitable(do_interval(i))
+                        if callable(do_interval):
+                            sleep_secs = await ensure_awaitable(do_interval(i))
+                        else:
+                            sleep_secs = do_interval
+                        if isinstance(sleep_secs, (int, float)) and sleep_secs > 0:
+                            await asleep(sleep_secs)
                     return await ensure_awaitable(func(*args, **kwds))
                 except suppress_exceptions as exc:
                     add_exc and add_exc(exc)
@@ -78,7 +89,12 @@ def retry(
             for i in loops:
                 try:
                     if i and do_interval is not None:
-                        do_interval(i)
+                        if callable(do_interval):
+                            sleep_secs = do_interval(i)
+                        else:
+                            sleep_secs = do_interval
+                        if isinstance(sleep_secs, (int, float)) and sleep_secs > 0:
+                            sleep(sleep_secs)
                     return func(*args, **kwds)
                 except suppress_exceptions as exc:
                     add_exc and add_exc(exc)

@@ -16,13 +16,13 @@ CRE_PART = re_compile(r"[^\\/]*(?:\\(?s:.)[^\\/]*)*$")
 
 
 def escape(name: str, /) -> str:
-    return "\\" + name if name in (".", "..") else name.replace("/", r"\/")
+    return "\\" + name if name in (".", "..") else name.replace("\\", r"\\").replace("/", r"\/")
 
 
 def unescape(name: str, /) -> str:
     if name.startswith(r"\."):
         name = name[1:]
-    return name.replace(r"\/", "/")
+    return name.replace(r"\/", "/").replace(r"\\", "\\")
 
 
 def joins(patht: Sequence[str], parents: int = 0, /) -> str:

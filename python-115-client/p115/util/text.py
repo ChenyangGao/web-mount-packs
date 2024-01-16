@@ -8,7 +8,6 @@ __all__ = [
     "posix_glob_translate_iter", "text_within", 
 ]
 
-
 from codecs import decode
 from fnmatch import translate as wildcard_translate
 from functools import partial

@@ -4,6 +4,7 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["funcproperty", "lazyproperty", "cacheproperty", "final_cacheproperty"]
 
+
 from typing import Any
 
 

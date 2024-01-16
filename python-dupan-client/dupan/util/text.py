@@ -8,7 +8,6 @@ __all__ = [
     "posix_glob_translate_iter", "text_within"
 ]
 
-
 from codecs import decode
 from fnmatch import translate as wildcard_translate
 from functools import partial
@@ -154,26 +153,18 @@ def posix_glob_translate_iter(pattern: str, /) -> Iterator[tuple[str, str, str]]
         orig_part = ""
         if part == "*":
             pattern = "[^/]*"
-            if last_type:
-                pattern = "/" + pattern
             last_type = "star"
         elif len(part) >=2 and not part.strip("*"):
             if last_type == "dstar":
                 continue
-            pattern = "(?:/[^/]*)*"
-            if not last_type:
-                pattern = "[^/]*" + pattern
+            pattern = "[^/]*(?:/[^/]*)*"
             last_type = "dstar"
         elif _glob_is_pat(part):
             pattern = _glob_replace_dots(wildcard_translate(part)[4:-3])
-            if last_type:
-                pattern = "/" + pattern
             last_type = "pat"
         else:
             orig_part = RESUB_REMOVE_WRAP_BRACKET(part)
             pattern = re_escape(orig_part)
-            if last_type:
-                pattern = "/" + pattern
             last_type = "orig"
         yield pattern, last_type, orig_part
 
