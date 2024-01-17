@@ -566,7 +566,7 @@ class DuPanClient:
             params = {"opera": "delete"}
         elif params.get("opera") != "delete":
             params = {**params, "opera": "delete"}
-        return self.filemanager(params_, payload, **request_kwargs)
+        return self.filemanager(params, payload, **request_kwargs)
 
     def move(
         self, 
