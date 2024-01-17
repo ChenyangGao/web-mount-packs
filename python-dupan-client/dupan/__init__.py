@@ -2833,6 +2833,7 @@ class DuPanFileSystem:
     cp  = copy
     pwd = getcwd
     ls  = listdir
+    la  = listdir_attr
     ll  = listdir_path
     mv  = move
     rm  = remove
