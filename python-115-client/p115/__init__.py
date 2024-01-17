@@ -3811,6 +3811,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     cd  = chdir
     pwd = getcwd
     ls  = listdir
+    la  = listdir_attr
     ll  = listdir_path
 
 
