@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-__version__ = (0, 0, 0)
+__version__ = (0, 0, 1)
 __author__ = "ChenyangGao <https://github.com/ChenyangGao>"
 __all__ = ["Error", "DuPanClient", "DuPanShareList", "DuPanPath", "DuPanFileSystem"]
 
@@ -35,7 +35,7 @@ from ddddocr import DdddOcr # type: ignore
 from lxml.html import fromstring, tostring, HtmlElement
 from qrcode import QRCode # type: ignore
 from requests import get, Session
-from requests.cookies import create_cookie
+from requests.cookies import create_cookie, RequestsCookieJar
 
 from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
 from .util.response import get_content_length
@@ -301,10 +301,14 @@ class DuPanClient:
         return resp
 
     @property
-    def cookie(self) -> str:
+    def cookie(self, /) -> str:
         "获取 cookie"
         cookies = self.session.cookies.get_dict()
         return "; ".join(f"{key}={val}" for key, val in cookies.items())
+
+    @property
+    def cookiejar(self, /) -> RequestsCookieJar:
+        return self.session.cookies
 
     def set_cookie(self, cookie, /):
         "设置 cookie"
@@ -321,73 +325,80 @@ class DuPanClient:
             cookiejar.update(cookie)
 
     @staticmethod
-    def list_app_version() -> dict:
+    def list_app_version(**request_kwargs) -> dict:
         "罗列最新的 app 版本的信息"
         url = "https://pan.baidu.com/disk/cmsdata?clienttype=0&web=1&do=client"
-        return get(url).json()
+        return get(url, **request_kwargs).json()
 
     @staticmethod
-    def get_userinfo(payload: int | str | dict) -> dict:
+    def get_userinfo(
+        payload: int | str | dict, 
+        /, 
+        **request_kwargs, 
+    ) -> dict:
         """查询某个用户信息
         payload:
-            - uk: int | str
-            - clienttype: int = 0
-            - web: 0 | 1 = 1
+            - query_uk: int | str
         """
         api = "https://pan.baidu.com/pcloud/user/getinfo"
         if isinstance(payload, (int, str)):
             payload = {"clienttype": 0, "web": 1, "query_uk": payload}
         else:
             payload = {"clienttype": 0, "web": 1, **payload}
-        return get(api, params=payload).json()
+        request_kwargs["params"] = payload
+        return get(api, **request_kwargs).json()
 
-    def userinfo(self, /) -> dict:
+    def userinfo(self, /, **request_kwargs) -> dict:
         "获取用户信息"
         api = "https://pan.baidu.com/sbox/user/query?web=1&clienttype=0"
-        return self.request(api)
+        return self.request(api, **request_kwargs)
 
-    def membership(self, /, payload: str | dict = "rights") -> dict:
+    def membership(
+        self, 
+        payload: str | dict = "rights", 
+        /, 
+        **request_kwargs, 
+    ) -> dict:
         """获取会员相关权益
         payload:
             - method: str = "rights"
-            - clienttype: int = 0
-            - web: 0 | 1 = 1
         """
         api = "https://pan.baidu.com/rest/2.0/membership/user"
         if isinstance(payload, (int, str)):
             payload = {"clienttype": 0, "web": 1, "method": payload}
         else:
             payload = {"clienttype": 0, "web": 1, **payload}
-        return self.request(api, params=payload)
+        request_kwargs["params"] = payload
+        return self.request(api, **request_kwargs)
 
-    def get_qrcode(self, /, gid):
-        return self.request(
-            "https://passport.baidu.com/v2/api/getqrcode", 
-            params={
-                "apiver": "v3", 
-                "tpl": "netdisk", 
-                "lp": "pc", 
-                "qrloginfrom": "pc", 
-                "gid": gid, 
-            }
-        )
+    def get_qrcode(self, gid, /, **request_kwargs) -> dict:
+        "获取二维码"
+        api = "https://passport.baidu.com/v2/api/getqrcode"
+        request_kwargs["params"] = {
+            "apiver": "v3", 
+            "tpl": "netdisk", 
+            "lp": "pc", 
+            "qrloginfrom": "pc", 
+            "gid": gid, 
+        }
+        return self.request(api, **request_kwargs)
 
-    def get_qrcode_status(self, /, gid, channel_id):
+    def get_qrcode_status(self, gid, channel_id, /, **request_kwargs) -> dict:
         "获取扫码状态"
-        return self.request(
-            "https://passport.baidu.com/channel/unicast", 
-            params={
-                "apiver": "v3", 
-                "tpl": "netdisk", 
-                "gid": gid, 
-                "channel_id": channel_id, 
-            }
-        )
+        api = "https://passport.baidu.com/channel/unicast"
+        request_kwargs["params"] = {
+            "apiver": "v3", 
+            "tpl": "netdisk", 
+            "gid": gid, 
+            "channel_id": channel_id, 
+        }
+        return self.request(api, **request_kwargs)
 
     def get_gettemplatevariable(
         self, 
-        /, 
         payload: str | list[str] | tuple[str] | dict, 
+        /, 
+        **request_kwargs, 
     ) -> dict:
         """获取模版变量，例如 "bdstoken", "isPcShareIdWhiteList", "openlogo", "pcShareIdFrom", etc.
         payload:
@@ -398,12 +409,14 @@ class DuPanClient:
             payload = {"fields": dumps([payload], separators=(",", ":"))}
         elif isinstance(payload, (list, tuple)):
             payload = {"fields": dumps(payload, separators=(",", ":"))}
-        return self.request(api, params=payload)
+        request_kwargs["params"] = payload
+        return self.request(api, **request_kwargs)
 
     def listdir(
         self, 
-        /, 
         payload: str | dict = "/", 
+        /, 
+        **request_kwargs, 
     ) -> dict:
         """罗列目录中的文件列表
         payload:
@@ -412,8 +425,6 @@ class DuPanClient:
             - page: int = 1
             - order: str = "time"
             - desc: 0 | 1 = 1
-            - clienttype: int = 0
-            - web: 0 | 1 = 1
             - showempty: 0 | 1 = 0
         """
         api = "https://pan.baidu.com/api/list"
@@ -421,12 +432,14 @@ class DuPanClient:
             payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, "showempty": 0, "dir": payload}
         else:
             payload = {"num": 100, "page": 1, "order": "time", "desc": 1, "clienttype": 0, "web": 1, "showempty": 0, **payload}
-        return self.request(api, params=payload)
+        request_kwargs["params"] = payload
+        return self.request(api, **request_kwargs)
 
     def makedir(
         self, 
-        /, 
         payload: str | dict, 
+        /, 
+        **request_kwargs, 
     ) -> dict:
         """创建文件夹
         payload:
@@ -435,7 +448,7 @@ class DuPanClient:
             - block_list: str = "[]" # JSON array
         """
         api = "https://pan.baidu.com/api/create"
-        params = {
+        request_kwargs["params"] = {
             "a": "commit", 
             "bdstoken": self.bdstoken, 
             "clienttype": 0, 
@@ -445,18 +458,18 @@ class DuPanClient:
             payload = {"isdir": 1, "block_list": "[]", "path": payload}
         else:
             payload = {"isdir": 1, "block_list": "[]", **payload}
-        return self.request(api, "POST", params=params, data=payload)
+        request_kwargs["data"] = payload
+        return self.request(api, "POST", **request_kwargs)
 
     def filemetas(
         self, 
-        /, 
         payload: str | list[str] | tuple[str] | dict, 
+        /, 
+        **request_kwargs, 
     ) -> dict:
         """获取文件信息
         payload:
             - target: str # JSON array
-            - clienttype: int = 0
-            - web: 0 | 1 = 1
             - dlink: 0 | 1 = 1
         """
         api = "https://pan.baidu.com/api/filemetas"
@@ -464,24 +477,35 @@ class DuPanClient:
             payload = {"clienttype": 0, "web": 1, "dlink": 1, "target": dumps([payload], separators=(",", ":"))}
         elif isinstance(payload, (list, tuple)):
             payload = {"clienttype": 0, "web": 1, "dlink": 1, "target": dumps(payload, separators=(",", ":"))}
-        return self.request(api, params=payload)
+        request_kwargs["params"] = payload
+        return self.request(api, **request_kwargs)
 
     def filemanager(
         self, 
         /, 
         params: str | dict, 
         data: str | list | tuple | dict, 
+        **request_kwargs, 
     ) -> dict:
-        """文件管理（copy、delete、move、rename）
+        """文件管理，可批量操作
+        params:
+            - opera: "copy" | "delete" | "move" | "rename"
+            - async: int = 1 # 如果值为 2，则是异步，可用 `taskquery()` 查询进度
+            - onnest: str = "fail"
+            - newVerify: 0 | 1 = 1
+            - ondup: "newcopy" | "overwrite" = <default>
+            - bdstoken: str = <default>
+        data:
+            - filelist: list # 取决于具体 opera
         """
         api = "https://pan.baidu.com/api/filemanager"
         if isinstance(params, str):
             params = {"opera": params}
         params = {
-            "async": 2, 
+            "async": 1, 
             "onnest": "fail", 
-            "bdstoken": self.bdstoken, 
             "newVerify": 1, 
+            "bdstoken": self.bdstoken, 
             "clienttype": 0, 
             "web": 1, 
             **params, 
@@ -493,33 +517,41 @@ class DuPanClient:
                 data = {"filelist": dumps([data], separators=(",", ":"))}
         elif isinstance(data, (list, tuple)):
             data = {"filelist": dumps(data, separators=(",", ":"))}
-        return self.request(api, "POST", params=params, data=data)
+        return self.request(api, "POST", params=params, data=data, **request_kwargs)
 
     def copy(
         self, 
-        /, 
         payload: list | tuple | dict, 
+        /, 
+        params: Optional[dict] = None, 
+        **request_kwargs, 
     ) -> dict:
         """复制
         payload:
             {
                 filelist: [
                     {
-                        "path": str,      # 源文件路径
-                        "newname": str,   # 目标文件名
-                        "dest": str = "", # 目标目录
-                        "ondup": "" | "newcopy" | "overwrite" = "", # 文件存在时 1. "": 忽略 2. "newcopy": 生成副本 3. "overwrite": 覆盖文件
+                        "path": str      # 源文件路径
+                        "newname": str   # 目标文件名
+                        "dest": str = "" # 目标目录
+                        "ondup": "newcopy" | "overwrite" = <default>
                     }, 
                     ...
                 ]
             }
         """
-        return self.filemanager("copy", payload)
+        if params is None:
+            params = {"opera": "copy"}
+        elif params.get("opera") != "copy":
+            params = {**params, "opera": "copy"}
+        return self.filemanager(params, payload, **request_kwargs)
 
     def delete(
         self, 
-        /, 
         payload: str | list | tuple | dict, 
+        /, 
+        params: Optional[dict] = None, 
+        **request_kwargs, 
     ) -> dict:
         """删除
         payload:
@@ -530,40 +562,52 @@ class DuPanClient:
                 ]
             }
         """
-        return self.filemanager("delete", payload)
+        if params is None:
+            params = {"opera": "delete"}
+        elif params.get("opera") != "delete":
+            params = {**params, "opera": "delete"}
+        return self.filemanager(params_, payload, **request_kwargs)
 
     def move(
         self, 
-        /, 
         payload: list | tuple | dict, 
+        /, 
+        params: Optional[dict] = None, 
+        **request_kwargs, 
     ) -> dict:
         """移动
         payload:
             {
                 filelist: [
                     {
-                        "path": str,      # 源文件路径
-                        "newname": str,   # 目标文件名
-                        "dest": str = "", # 目标目录
-                        "ondup": "" | "newcopy" | "overwrite" = "", # 文件存在时 1. "": 忽略 2. "newcopy": 生成副本 3. "overwrite": 覆盖文件
+                        "path": str      # 源文件路径
+                        "newname": str   # 目标文件名
+                        "dest": str = "" # 目标目录
+                        "ondup": "newcopy" | "overwrite" = <default>
                     }, 
                     ...
                 ]
             }
         """
-        return self.filemanager("move", payload)
+        if params is None:
+            params = {"opera": "move"}
+        elif params.get("opera") != "move":
+            params = {**params, "opera": "move"}
+        return self.filemanager(params, payload, **request_kwargs)
 
     def rename(
         self, 
-        /, 
         payload: list | tuple | dict, 
+        /, 
+        params: Optional[dict] = None, 
+        **request_kwargs, 
     ) -> dict:
         """重命名
         payload:
             {
                 filelist: [
                     {
-                        "id": int,      # 文件 id
+                        "id": int,      # 文件 id，可以不传
                         "path": str,    # 源文件路径
                         "newname": str, # 目标文件名
                     }, 
@@ -571,23 +615,32 @@ class DuPanClient:
                 ]
             }
         """
-        return self.filemanager("rename", payload)
+        if params is None:
+            params = {"opera": "rename"}
+        elif params.get("opera") != "rename":
+            params = {**params, "opera": "rename"}
+        return self.filemanager(params, payload, **request_kwargs)
 
     def taskquery(
         self, 
-        /, 
         payload: int | str | dict, 
+        /, 
+        **request_kwargs, 
     ) -> dict:
         """任务进度查询
-        status: "pending"
-        status: "running"
-        status: "failed"
-        status: "success"
+        payload:
+            - taskid: int | str
+        返回值状态:
+            - status: "pending"
+            - status: "running"
+            - status: "failed"
+            - status: "success"
         """
         api = "https://pan.baidu.com/share/taskquery"
         if isinstance(payload, (int, str)):
             payload = {"clienttype": 0, "web": 1, "taskid": payload}
-        return self.request(api, params=payload)
+        request_kwargs["params"] = payload
+        return self.request(api, **request_kwargs)
 
     def transfer(
         self, 
@@ -595,6 +648,7 @@ class DuPanClient:
         url, 
         params: dict = {}, 
         data: None | str | int | list[int] | tuple[int] | dict = None, 
+        **request_kwargs, 
     ) -> dict:
         """转存
         params:
@@ -603,9 +657,7 @@ class DuPanClient:
             - sekey: str = ""
             - async: 0 | 1 = 1
             - bdstoken: str = <default>
-            - clienttype: int = 0
-            - ondup: "" | "overwrite" | "newcopy" = ""
-            - web: 0 | 1 = 1
+            - ondup: "overwrite" | "newcopy" = <default>
         data:
             - fsidlist: str # JSON array
             - path: str = "/"
@@ -620,9 +672,8 @@ class DuPanClient:
             })
         params = {
             "async": 1, 
-            "clienttype": 0, 
             "bdstoken": self.bdstoken, 
-            "ondup": "overwrite", 
+            "clienttype": 0, 
             "web": 1, 
             **params, 
         }
@@ -640,13 +691,15 @@ class DuPanClient:
                 data["fsidlist"] = "[%s]" % ",".join(f["fs_id"] for f in sl.list_index())
             elif isinstance(data["fsidlist"], (list, tuple)):
                 data["fsidlist"] = "[%s]" % ",".join(map(str, data["fsidlist"]))
-        return self.request(api, "POST", params=params, data=data, headers={"Referer": url})
+        request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Referer": url}
+        return self.request(api, "POST", params=params, data=data, **request_kwargs)
 
     def oauth_authorize(
         self, 
         /, 
         client_id: str = CLIENT_ID, 
         scope: str = "basic,netdisk", 
+        **request_kwargs, 
     ) -> str:
         """OAuth 授权
         """
@@ -655,14 +708,14 @@ class DuPanClient:
             if error_msg:
                 raise OSError(tostring(error_msg[0], encoding="utf-8").decode("utf-8").strip())
         api = "https://openapi.baidu.com/oauth/2.0/authorize"
-        params = {
+        request_kwargs["params"] = {
             "response_type": "code", 
             "client_id": client_id, 
             "redirect_uri": "oob", 
             "scope": scope, 
             "display": "popup", 
         }
-        resp = self.request(api, params=params)
+        resp = self.request(api, **request_kwargs)
         etree: HtmlElement = fromstring(resp)
         check(etree)
         try:
@@ -681,13 +734,14 @@ class DuPanClient:
                 payload.append(("grant_permissions", ",".join(grant_permissions)))
             else:
                 payload.append((name, value))
-        resp = self.request(
-            api, 
-            "POST", 
-            params=params, 
+        request_kwargs.update(
             data=urlencode(payload), 
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
+            headers={
+                **(request_kwargs.get("headers") or {}), 
+                "Content-Type": "application/x-www-form-urlencoded", 
+            }, 
         )
+        resp = self.request(api, "POST", **request_kwargs)
         etree = fromstring(resp)
         return etree.get_element_by_id("Verifier").value
 
@@ -697,18 +751,19 @@ class DuPanClient:
         client_id: str = CLIENT_ID, 
         client_secret: str = CLIENT_SECRET, 
         scope: str = "basic,netdisk", 
+        **request_kwargs, 
     ) -> dict:
         """获取 OAuth token
         """
         api = "https://openapi.baidu.com/oauth/2.0/token"
-        params = {
+        request_kwargs["params"] = {
             "grant_type": "authorization_code", 
-            "code": self.oauth_authorize(client_id, scope), 
+            "code": self.oauth_authorize(client_id, scope, **request_kwargs), 
             "client_id": client_id, 
             "client_secret": client_secret, 
             "redirect_uri": "oob", 
         }
-        return self.request(api, params=params)
+        return self.request(api, **request_kwargs)
 
     @cached_property
     def fs(self, /) -> DuPanFileSystem:
@@ -2842,3 +2897,4 @@ class DuPanFileSystem:
 # TODO: 上传下载使用百度网盘的openapi，直接使用 alist 已经授权的 token
 # TODO: 百度网盘转存时，需要保持相对路径
 # TODO: 等待 filemanager 任务完成
+# TODO: 分享、回收站、分享转存、群分享转存等的接口封装
