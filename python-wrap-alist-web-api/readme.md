@@ -622,19 +622,19 @@ upload_tasklist = client.upload_tasklist
 
 # 或者自己创建实例
 
-# 创建 复制 任务列表
+# 创建 复制 任务列表实例
 from alist import AlistCopyTaskList
 copy_tasklist = AlistCopyTaskList(client)
 
-# 创建 离线下载（到本地） 任务列表
+# 创建 离线下载（到本地） 任务列表实例
 from alist import AlistOfflineDownloadTaskList
 copy_tasklist = AlistOfflineDownloadTaskList(client)
 
-# 创建 离线下载（到存储） 任务列表
+# 创建 离线下载（到存储） 任务列表实例
 from alist import AlistOfflineDownloadTransferTaskList
 copy_tasklist = AlistOfflineDownloadTransferTaskList(client)
 
-# 创建 上传 任务列表
+# 创建 上传 任务列表实例
 from alist import AlistUploadTaskList
 copy_tasklist = AlistUploadTaskList(client)
 ```

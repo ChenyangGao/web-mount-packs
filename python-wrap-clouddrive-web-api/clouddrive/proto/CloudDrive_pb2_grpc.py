@@ -120,6 +120,11 @@ class CloudDriveFileSrvStub(object):
                 request_serializer=CloudDrive__pb2.AddOfflineFileRequest.SerializeToString,
                 response_deserializer=CloudDrive__pb2.FileOperationResult.FromString,
                 )
+        self.RemoveOfflineFiles = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/RemoveOfflineFiles',
+                request_serializer=CloudDrive__pb2.RemoveOfflineFilesRequest.SerializeToString,
+                response_deserializer=CloudDrive__pb2.FileOperationResult.FromString,
+                )
         self.ListOfflineFilesByPath = channel.unary_unary(
                 '/clouddrive.CloudDriveFileSrv/ListOfflineFilesByPath',
                 request_serializer=CloudDrive__pb2.FileRequest.SerializeToString,
@@ -313,6 +318,11 @@ class CloudDriveFileSrvStub(object):
         self.ApiLoginGoogleDriveRefreshToken = channel.unary_unary(
                 '/clouddrive.CloudDriveFileSrv/ApiLoginGoogleDriveRefreshToken',
                 request_serializer=CloudDrive__pb2.LoginGoogleDriveRefreshTokenRequest.SerializeToString,
+                response_deserializer=CloudDrive__pb2.APILoginResult.FromString,
+                )
+        self.ApiLoginXunleiOAuth = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/ApiLoginXunleiOAuth',
+                request_serializer=CloudDrive__pb2.LoginXunleiOAuthRequest.SerializeToString,
                 response_deserializer=CloudDrive__pb2.APILoginResult.FromString,
                 )
         self.APILogin189QRCode = channel.unary_stream(
@@ -740,6 +750,13 @@ class CloudDriveFileSrvServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RemoveOfflineFiles(self, request, context):
+        """remove offline files by info hash
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ListOfflineFilesByPath(self, request, context):
         """list offline files
         """
@@ -1011,6 +1028,13 @@ class CloudDriveFileSrvServicer(object):
 
     def ApiLoginGoogleDriveRefreshToken(self, request, context):
         """add Google Drive with refresh token
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ApiLoginXunleiOAuth(self, request, context):
+        """add Xunlei Drive with OAuth result
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1501,6 +1525,11 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
                     request_deserializer=CloudDrive__pb2.AddOfflineFileRequest.FromString,
                     response_serializer=CloudDrive__pb2.FileOperationResult.SerializeToString,
             ),
+            'RemoveOfflineFiles': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveOfflineFiles,
+                    request_deserializer=CloudDrive__pb2.RemoveOfflineFilesRequest.FromString,
+                    response_serializer=CloudDrive__pb2.FileOperationResult.SerializeToString,
+            ),
             'ListOfflineFilesByPath': grpc.unary_unary_rpc_method_handler(
                     servicer.ListOfflineFilesByPath,
                     request_deserializer=CloudDrive__pb2.FileRequest.FromString,
@@ -1694,6 +1723,11 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
             'ApiLoginGoogleDriveRefreshToken': grpc.unary_unary_rpc_method_handler(
                     servicer.ApiLoginGoogleDriveRefreshToken,
                     request_deserializer=CloudDrive__pb2.LoginGoogleDriveRefreshTokenRequest.FromString,
+                    response_serializer=CloudDrive__pb2.APILoginResult.SerializeToString,
+            ),
+            'ApiLoginXunleiOAuth': grpc.unary_unary_rpc_method_handler(
+                    servicer.ApiLoginXunleiOAuth,
+                    request_deserializer=CloudDrive__pb2.LoginXunleiOAuthRequest.FromString,
                     response_serializer=CloudDrive__pb2.APILoginResult.SerializeToString,
             ),
             'APILogin189QRCode': grpc.unary_stream_rpc_method_handler(
@@ -2329,6 +2363,23 @@ class CloudDriveFileSrv(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/AddOfflineFiles',
             CloudDrive__pb2.AddOfflineFileRequest.SerializeToString,
+            CloudDrive__pb2.FileOperationResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def RemoveOfflineFiles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/RemoveOfflineFiles',
+            CloudDrive__pb2.RemoveOfflineFilesRequest.SerializeToString,
             CloudDrive__pb2.FileOperationResult.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
@@ -2992,6 +3043,23 @@ class CloudDriveFileSrv(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/ApiLoginGoogleDriveRefreshToken',
             CloudDrive__pb2.LoginGoogleDriveRefreshTokenRequest.SerializeToString,
+            CloudDrive__pb2.APILoginResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ApiLoginXunleiOAuth(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/ApiLoginXunleiOAuth',
+            CloudDrive__pb2.LoginXunleiOAuthRequest.SerializeToString,
             CloudDrive__pb2.APILoginResult.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

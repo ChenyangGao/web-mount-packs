@@ -309,7 +309,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         )
         length_new = get_total_length(response)
         if self.length != length_new:
-            raise OSError(errno.EIO, "file size changed: %s -> %s", self.length, length_new)
+            raise OSError(errno.EIO, f"file size changed: {self.length} -> {length_new}")
         self.__dict__.update(
             response=response, 
             start=start, 

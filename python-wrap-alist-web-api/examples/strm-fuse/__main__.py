@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6, 2)
+__version__ = (0, 0, 6, 3)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -128,7 +128,7 @@ try:
 except ImportError:
     from subprocess import run
     from sys import executable
-    run([executable, "-m", "pip", "install", "-U", "python-alist>=0.0.9.10", "cachetools", "fusepy", "psutil"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "python-alist>=0.0.10", "cachetools", "fusepy", "psutil"], check=True)
 
     from alist import AlistFileSystem
     from alist.util.ignore import read_str, read_file, parse
@@ -324,17 +324,18 @@ class AlistFuseOperations(Operations):
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
         return self._next_fh()
 
-    def _open(self, path: str, /):
+    def _open(self, path: str, /, start: int = 0):
         attr = self.getattr(path)
         if attr.get("_data") is not None:
             return None, attr["_data"]
-        file: Optional[BinaryIO]
-        file = cast(BinaryIO, self.fs.as_path(path).open("rb"))
-        # cache 2048 in bytes (2 KB)
-        preread = file.read(2048)
         if attr["st_size"] <= 2048:
-            file.close()
-            file = None
+            return None, self.fs.as_path(path).read_bytes()
+        file = cast(BinaryIO, self.fs.as_path(path).open("rb"))
+        if start == 0:
+            # cache 2048 in bytes (2 KB)
+            preread = file.read(2048)
+        else:
+            preread = b""
         return file, preread
 
     def read(self, /, path: str, size: int, offset: int, fh: int = 0) -> bytes:
@@ -343,7 +344,7 @@ class AlistFuseOperations(Operations):
             try:
                 file, preread = self._fh_to_file[fh]
             except KeyError:
-                file, preread = self._fh_to_file[fh] = self._open(path)
+                file, preread = self._fh_to_file[fh] = self._open(path, offset)
             cache_size = len(preread)
             if offset < cache_size:
                 if offset + size <= cache_size:

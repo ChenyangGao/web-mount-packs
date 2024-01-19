@@ -13,7 +13,7 @@ which refer to `os`, `posixpath`, `pathlib.Path` and `shutil` modules.
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9, 11)
+__version__ = (0, 0, 10, 2)
 __all__ = [
     "AlistClient", "AlistPath", "AlistFileSystem", "AlistCopyTaskList", "AlistOfflineDownloadTaskList", 
     "AlistOfflineDownloadTransferTaskList", "AlistUploadTaskList", 

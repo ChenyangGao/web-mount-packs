@@ -660,6 +660,33 @@ for path in fs.rglob("*.mkv"):
     print(path.url)
 ```
 
+### 4. 任务列表
+
+<kbd>CloudDrive</kbd> 目前支持 `2` 种类型的任务，我分别进行了封装，大部分方法都支持异步调用 (`async_=True`)
+
+- <kbd>clouddrive.CloudDriveDownloadTaskList</kbd> 封装了 `下载` 的任务列表。
+- <kbd>clouddrive.CloudDriveUploadTaskList</kbd> 封装了 `上传` 的任务列表。
+
+```python
+from clouddrive import CloudDriveClient
+
+client = CloudDriveClient("http://localhost:19798", "test", "test@test")
+
+# 获取各种任务列表
+download_tasklist = client.download_tasklist
+upload_tasklist = client.upload_tasklist
+
+# 或者自己创建实例
+
+# 创建 下载 任务列表实例
+from clouddrive import CloudDriveDownloadTaskList
+download_tasklist = CloudDriveDownloadTaskList(client)
+
+# 创建 下载 任务列表实例
+from clouddrive import CloudDriveUploadTaskList
+download_tasklist = CloudDriveUploadTaskList(client)
+```
+
 ## 文档
 
 > 正在编写中

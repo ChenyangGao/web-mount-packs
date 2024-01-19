@@ -11,13 +11,19 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9, 10)
-__all__ = ["CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem"]
+__version__ = (0, 0, 10, 2)
+__all__ = [
+    "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
+    "CloudDriveDownloadTaskList", "CloudDriveUploadTaskList", 
+]
 
 import errno
 
-from collections.abc import Callable, ItemsView, Iterator, KeysView, Mapping, Sequence, ValuesView
+from collections.abc import (
+    AsyncIterator, Callable, Coroutine, ItemsView, Iterable, Iterator, KeysView, Mapping, Sequence, ValuesView
+)
 from functools import cached_property, partial, update_wrapper
+from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
 from mimetypes import guess_type
 from os import fsdecode, fspath, makedirs, scandir, stat_result, path as ospath, PathLike
@@ -26,7 +32,7 @@ from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
 from time import time
-from typing import cast, Any, IO, Literal, Never, Optional
+from typing import cast, overload, Any, IO, Literal, Never, Optional
 from types import MappingProxyType
 from urllib.parse import quote
 from uuid import uuid4
@@ -46,26 +52,36 @@ from .util.urlopen import urlopen
 
 
 def check_response(func, /):
+    def raise_for_code(fargs, e):
+        if not hasattr(e, "code"):
+            raise
+        match e.code():
+            case StatusCode.PERMISSION_DENIED:
+                raise PermissionError(errno.EPERM, fargs, e.details()) from e
+            case StatusCode.NOT_FOUND:
+                raise FileNotFoundError(errno.ENOENT, fargs, e.details()) from e
+            case StatusCode.ALREADY_EXISTS:
+                raise FileExistsError(errno.EEXIST, fargs, e.details()) from e
+            case StatusCode.UNIMPLEMENTED:
+                raise UnsupportedOperation(errno.ENOSYS, fargs, e.details()) from e
+            case StatusCode.UNAUTHENTICATED:
+                raise PermissionError(errno.EACCES, fargs, e.details()) from e
+            case _:
+                raise OSError(errno.EIO, fargs, e.details()) from e
     def wrapper(*args, **kwds):
         try:
-            return func(*args, **kwds)
+            resp = func(*args, **kwds)
         except RpcError as e:
-            if not hasattr(e, "code"):
-                raise
-            fargs = (func, args, kwds)
-            match e.code():
-                case StatusCode.PERMISSION_DENIED:
-                    raise PermissionError(errno.EPERM, fargs, e.details()) from e
-                case StatusCode.NOT_FOUND:
-                    raise FileNotFoundError(errno.ENOENT, fargs, e.details()) from e
-                case StatusCode.ALREADY_EXISTS:
-                    raise FileExistsError(errno.EEXIST, fargs, e.details()) from e
-                case StatusCode.UNIMPLEMENTED:
-                    raise UnsupportedOperation(errno.ENOSYS, fargs, e.details()) from e
-                case StatusCode.UNAUTHENTICATED:
-                    raise PermissionError(errno.EACCES, fargs, e.details()) from e
-                case _:
-                    raise OSError(errno.EREMOTE, fargs, e.details()) from e
+            raise_for_code((func, args, kwds), e)
+        else:
+            if isawaitable(resp):
+                async def async_check(resp):
+                    try:
+                        return await resp
+                    except RpcError as e:
+                        raise_for_code((func, args, kwds), e)
+                return async_check(resp)
+            return resp
     return update_wrapper(wrapper, func)
 
 
@@ -85,6 +101,14 @@ class CloudDriveClient(Client):
     @cached_property
     def fs(self, /) -> CloudDriveFileSystem:
         return CloudDriveFileSystem(self)
+
+    @cached_property
+    def download_tasklist(self, /) -> CloudDriveDownloadTaskList:
+        return CloudDriveDownloadTaskList(self)
+
+    @cached_property
+    def upload_tasklist(self, /) -> CloudDriveUploadTaskList:
+        return CloudDriveUploadTaskList(self)
 
     def get_url(self, /, path: str) -> str:
         return self.download_baseurl + quote(path, safe="?&=")
@@ -2171,4 +2195,319 @@ class CloudDriveFileSystem:
     ll  = listdir_path
     mv  = move
     rm  = remove
+
+
+class CloudDriveDownloadTaskList:
+    "任务列表：下载"
+    __slots__ = "client",
+
+    def __init__(self, /, client: CloudDriveClient):
+        self.client = client
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        for t in await self._list_async():
+            yield t
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return iter(self._list_sync())
+
+    @check_response
+    def __len__(self, /) -> int:
+        return self.client.GetDownloadFileCount().fileCount
+
+    @check_response
+    async def _list_async(self, /) -> list[dict]:
+        resp = await self.client.GetDownloadFileList(async_=True)
+        return [MessageToDict(t) for t in resp.downloadFiles]
+
+    @check_response
+    def _list_sync(self, /) -> list[dict]:
+        resp = self.client.GetDownloadFileList()
+        return [MessageToDict(t) for t in resp.downloadFiles]
+
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        async_: bool = False, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有任务"
+        if async_:
+            return self._list_async()
+        else:
+            return self._list_sync()
+
+
+class CloudDriveUploadTaskList:
+    "任务列表：复制"
+    __slots__ = "client",
+
+    def __init__(self, /, client: CloudDriveClient):
+        self.client = client
+
+    def __contains__(self, key: str, /) -> bool:
+        return any(key == t["key"] for t in self._list_sync())
+
+    def __delitem__(self, keys: None | str | Iterable[str], /):
+        self.cancel(keys)
+
+    def __getitem__(self, key: str, /) -> dict:
+        for t in self._list_sync():
+            if key == t["key"]:
+                return t
+        raise LookupError(f"no such key: {key!r}")
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        for t in await self._list_async():
+            yield t
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return iter(self._list_sync())
+
+    @check_response
+    def __len__(self, /) -> int:
+        return self.client.GetUploadFileCount().fileCount
+
+    @overload
+    def cancel(
+        self, 
+        /, 
+        keys: None | str | Iterable[str] = None, 
+        async_: Literal[False] = False, 
+    ):
+        ...
+    @overload
+    def cancel(
+        self, 
+        /, 
+        keys: None | str | Iterable[str] = None, 
+        async_: Literal[True] = True, 
+    ) -> Coroutine:
+        ...
+    @check_response
+    def cancel(
+        self, 
+        /, 
+        keys: None | str | Iterable[str] = None, 
+        async_: bool = False, 
+    ):
+        "取消某些任务"
+        if keys is None:
+            return self.client.CancelAllUploadFiles(async_=async_)
+        if isinstance(keys, str):
+            keys = keys,
+        return self.client.CancelUploadFiles(CloudDrive_pb2.MultpleUploadFileKeyRequest(keys=keys), async_=async_)
+
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[None, None, None]:
+        ...
+    @check_response
+    def clear(
+        self, 
+        /, 
+        async_: bool = False, 
+    ) -> None | Coroutine[None, None, None]:
+        "清空任务列表"
+        return self.cancel()
+
+    async def _get_async(
+        self, 
+        /, 
+        key: str, 
+        default=None, 
+    ):
+        return next((t for t in (await self._list_async()) if key == t["key"]), default)
+
+    def _get_sync(
+        self, 
+        /, 
+        key: str, 
+        default=None, 
+    ):
+        return next((t for t in self._list_sync() if key == t["key"]), default)
+
+    @overload
+    def get(
+        self, 
+        /, 
+        key: str, 
+        default: Any, 
+        async_: Literal[False] = False, 
+    ) -> Any:
+        ...
+    @overload
+    def get(
+        self, 
+        /, 
+        key: str, 
+        default: Any, 
+        async_: Literal[True], 
+    ) -> Coroutine[None, None, Any]:
+        ...
+    def get(
+        self, 
+        /, 
+        key: str, 
+        default=None, 
+        async_: bool = False, 
+    ) -> Any | Coroutine[None, None, Any]:
+        "获取某个任务信息"
+        if async_:
+            return self._get_async(key, default)
+        else:
+            return self._get_sync(key, default)
+
+    @overload
+    def pause(
+        self, 
+        /, 
+        keys: None | str | Iterable[str], 
+        async_: Literal[False] = False, 
+    ):
+        ...
+    @overload
+    def pause(
+        self, 
+        /, 
+        keys: None | str | Iterable[str], 
+        async_: Literal[True], 
+    ) -> Coroutine:
+        ...
+    @check_response
+    def pause(
+        self, 
+        /, 
+        keys: None | str | Iterable[str] = None, 
+        async_: bool = False, 
+    ):
+        "暂停某些任务"
+        if keys is None:
+            return self.client.PauseAllUploadFiles(async_=async_)
+        if isinstance(keys, str):
+            keys = keys,
+        return self.client.PauseUploadFiles(CloudDrive_pb2.MultpleUploadFileKeyRequest(keys=keys), async_=async_)
+
+    @overload
+    def resume(
+        self, 
+        /, 
+        keys: None | str | Iterable[str], 
+        async_: Literal[False] = False, 
+    ):
+        ...
+    @overload
+    def resume(
+        self, 
+        /, 
+        keys: None | str | Iterable[str], 
+        async_: Literal[True], 
+    ) -> Coroutine:
+        ...
+    @check_response
+    def resume(
+        self, 
+        /, 
+        keys: None | str | Iterable[str] = None, 
+        async_: bool = False, 
+    ):
+        "恢复某些任务"
+        if keys is None:
+            return self.client.ResumeAllUploadFiles(async_=async_)
+        if isinstance(keys, str):
+            keys = keys,
+        return self.client.ResumeUploadFiles(CloudDrive_pb2.MultpleUploadFileKeyRequest(keys=keys), async_=async_)
+
+    @check_response
+    async def _list_async(
+        self, 
+        /, 
+        page: int = 0, 
+        page_size: int = 0, 
+        filter: str = "", 
+    ) -> list[dict]:
+        if page_size <= 0:
+            req = CloudDrive_pb2.GetUploadFileListRequest(getAll=True, filter=filter)
+        else:
+            if page < 0:
+                page = 0
+            req = CloudDrive_pb2.GetUploadFileListRequest(pageNumber=page, itemsPerPage=page_size, filter=filter)
+        resp = await self.client.GetUploadFileList(req, async_=True)
+        return [MessageToDict(t) for t in resp.uploadFiles]
+
+    @check_response
+    def _list_sync(
+        self, 
+        /, 
+        page: int = 0, 
+        page_size: int = 0, 
+        filter: str = "", 
+    ) -> list[dict]:
+        if page_size <= 0:
+            req = CloudDrive_pb2.GetUploadFileListRequest(getAll=True, filter=filter)
+        else:
+            if page < 0:
+                page = 0
+            req = CloudDrive_pb2.GetUploadFileListRequest(pageNumber=page, itemsPerPage=page_size, filter=filter)
+        resp = self.client.GetUploadFileList(req)
+        return [MessageToDict(t) for t in resp.uploadFiles]
+
+    @overload
+    def list(
+        self, 
+        /, 
+        page: int, 
+        page_size: int, 
+        filter: str, 
+        async_: Literal[False] = False, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        page: int, 
+        page_size: int, 
+        filter: str, 
+        async_: Literal[True], 
+    ) -> Coroutine[None, None, list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        page: int = 0, 
+        page_size: int = 0, 
+        filter: str = "", 
+        async_: bool = False, 
+    ) -> list[dict] | Coroutine[None, None, list[dict]]:
+        "列出所有任务"
+        if async_:
+            return self._list_async(page, page_size, filter)
+        else:
+            return self._list_sync(page, page_size, filter)
+
+    delete = remove = cancel
 

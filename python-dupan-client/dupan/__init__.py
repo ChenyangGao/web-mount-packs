@@ -191,7 +191,7 @@ class DuPanClient:
         scan_in_console: bool = True, 
     ):
         self.__dict__["session"] = session = Session()
-        session.headers["User-Agent"] = "pan.baidu.com"
+        session.headers["User-Agent"] = "Mozilla/5.0"
         for _ in range(2):
             if not cookie or "BDUSS=" not in cookie:
                 self.login_with_qrcode(scan_in_console=scan_in_console)
@@ -224,6 +224,10 @@ class DuPanClient:
     @cached_property
     def logid(self, /) -> str:
         return b64encode(self.baiduid.encode("ascii")).decode("ascii")
+
+    @cached_property
+    def sign_and_timestamp(self, /) -> dict:
+        return self.get_sign()
 
     def close(self, /):
         try:
@@ -409,6 +413,49 @@ class DuPanClient:
             payload = {"fields": dumps([payload], separators=(",", ":"))}
         elif isinstance(payload, (list, tuple)):
             payload = {"fields": dumps(payload, separators=(",", ":"))}
+        request_kwargs["params"] = payload
+        return self.request(api, **request_kwargs)
+
+    def get_sign(self, /) -> dict:
+        resp = Error.check(self.get_gettemplatevariable(["sign1", "sign3", "timestamp"]))
+        result = resp["result"]
+        sign1 = result["sign1"].encode("ascii")
+        sign3 = result["sign3"].encode("ascii")
+        a = sign3 * (256 // len(sign3))
+        p = bytearray(range(256))
+        o = bytearray()
+        u = q = 0
+        for q in range(256):
+            u = (u + p[q] + a[q]) % 256
+            t = p[q]
+            p[q] = p[u]
+            p[u] = t
+        i = u = q = 0
+        for q in range(len(sign1)):
+            i = (i + 1) % 256
+            u = (u + p[i]) % 256
+            t = p[i]
+            p[i] = p[u]
+            p[u] = t
+            k = p[(p[i] + p[u]) % 256]
+            o.append(sign1[q] ^ k)
+        return {
+            "sign": b64encode(o).decode("utf-8"), 
+            "timestamp": result["timestamp"], 
+        }
+
+    def get_url(
+        self, 
+        /, 
+        fids: int | str | list[int | str] | tuple[int | str], 
+        **request_kwargs, 
+    ):
+        "获取文件的下载链接"
+        api = "https://pan.baidu.com/api/download"
+        if isinstance(fids, (int, str)):
+            payload = {"clienttype": 0, "web": 1, "type": "dlink", **self.sign_and_timestamp, "fidlist": "[%s]" % fids}
+        else:
+            payload = {"clienttype": 0, "web": 1, "type": "dlink", **self.sign_and_timestamp, "fidlist": "[%s]" % ",".join(map(str, fids))}
         request_kwargs["params"] = payload
         return self.request(api, **request_kwargs)
 
@@ -1976,7 +2023,7 @@ class DuPanFileSystem:
         attr = self.attr(path)
         if attr["isdir"]:
             raise OSError(errno.EISDIR, path)
-        return attr["dlink"]
+        return Error.check(self.client.get_url(attr["fs_id"]))["dlink"][0]["dlink"]
 
     def glob(
         self, 

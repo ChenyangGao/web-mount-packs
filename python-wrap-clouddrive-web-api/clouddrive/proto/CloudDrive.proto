@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package clouddrive;
 
-option csharp_namespace = "CloudDriveSrv.Protos";
+// 0.6.4-beta
 
-// 0.6.3
+option csharp_namespace = "CloudDriveSrv.Protos";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -57,6 +57,9 @@ service CloudDriveFileSrv {
   // add offline files by providing magnet, sha1, ..., applies only with folders
   // with canOfflineDownload is tru
   rpc AddOfflineFiles(AddOfflineFileRequest) returns (FileOperationResult) {}
+  // remove offline files by info hash
+  rpc RemoveOfflineFiles(RemoveOfflineFilesRequest)
+      returns (FileOperationResult) {}
   // list offline files
   rpc ListOfflineFilesByPath(FileRequest) returns (OfflineFileListResult) {}
   // list all offline files of a cloud with pagination
@@ -163,6 +166,9 @@ service CloudDriveFileSrv {
   // add Google Drive with refresh token
   rpc ApiLoginGoogleDriveRefreshToken(LoginGoogleDriveRefreshTokenRequest)
       returns (APILoginResult) {}
+  // add Xunlei Drive with OAuth result
+  rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest)
+    returns (APILoginResult) {}
   // add 189 cloud with qr scanning
   rpc APILogin189QRCode(google.protobuf.Empty)
       returns (stream QRCodeScanMessage) {}
@@ -325,6 +331,12 @@ message SearchRequest {
 message AddOfflineFileRequest {
   string urls = 1;
   string toFolder = 2;
+}
+message RemoveOfflineFilesRequest {
+  string cloudName = 1;
+  string cloudAccountId = 2;
+  bool deleteFiles = 3;
+  repeated string infoHashes = 4;
 }
 message AddSharedLinkRequest {
   string sharedLinkUrl = 1;
@@ -609,6 +621,11 @@ message LoginGoogleDriveRefreshTokenRequest {
   string client_secret = 2;
   string refresh_token = 3;
 }
+message LoginXunleiOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+}
 message LoginWebDavRequest {
   string serverUrl = 1;
   string userName = 2;
@@ -855,6 +872,7 @@ message FileBackupRule {
   }
   bool isEnabled = 100;
   bool isBlackList = 101;
+  bool applyToFolder = 102;
 }
 enum FileReplaceRule {
   Skip = 0;

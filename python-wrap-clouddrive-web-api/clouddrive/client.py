@@ -752,6 +752,32 @@ class Client:
         """
         return (self.async_stub if async_ else self.stub).AddOfflineFiles(arg, metadata=self.metadata)
 
+    def RemoveOfflineFiles(self, arg: CloudDrive_pb2.RemoveOfflineFilesRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+        """
+        remove offline files by info hash
+
+        ------------------- protobuf rpc definition --------------------
+
+        // remove offline files by info hash
+        rpc RemoveOfflineFiles(RemoveOfflineFilesRequest)
+            returns (FileOperationResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message FileOperationResult {
+          bool success = 1;
+          string errorMessage = 2;
+          repeated string resultFilePaths = 3;
+        }
+        message RemoveOfflineFilesRequest {
+          string cloudName = 1;
+          string cloudAccountId = 2;
+          bool deleteFiles = 3;
+          repeated string infoHashes = 4;
+        }
+        """
+        return (self.async_stub if async_ else self.stub).RemoveOfflineFiles(arg, metadata=self.metadata)
+
     def ListOfflineFilesByPath(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.OfflineFileListResult:
         """
         list offline files
@@ -1616,6 +1642,30 @@ class Client:
         }
         """
         return (self.async_stub if async_ else self.stub).ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
+
+    def ApiLoginXunleiOAuth(self, arg: CloudDrive_pb2.LoginXunleiOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+        """
+        add Xunlei Drive with OAuth result
+
+        ------------------- protobuf rpc definition --------------------
+
+        // add Xunlei Drive with OAuth result
+        rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest)
+          returns (APILoginResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message APILoginResult {
+          bool success = 1;
+          string errorMessage = 2;
+        }
+        message LoginXunleiOAuthRequest {
+          string refresh_token = 1;
+          string access_token = 2;
+          uint64 expires_in = 3;
+        }
+        """
+        return (self.async_stub if async_ else self.stub).ApiLoginXunleiOAuth(arg, metadata=self.metadata)
 
     def APILogin189QRCode(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
         """
@@ -2582,6 +2632,7 @@ class Client:
           }
           bool isEnabled = 100;
           bool isBlackList = 101;
+          bool applyToFolder = 102;
         }
         enum FileDeleteRule {
           Delete = 0;
@@ -2659,6 +2710,7 @@ class Client:
           }
           bool isEnabled = 100;
           bool isBlackList = 101;
+          bool applyToFolder = 102;
         }
         enum FileDeleteRule {
           Delete = 0;
@@ -2716,6 +2768,7 @@ class Client:
           }
           bool isEnabled = 100;
           bool isBlackList = 101;
+          bool applyToFolder = 102;
         }
         enum FileDeleteRule {
           Delete = 0;
@@ -2766,6 +2819,7 @@ class Client:
           }
           bool isEnabled = 100;
           bool isBlackList = 101;
+          bool applyToFolder = 102;
         }
         enum FileDeleteRule {
           Delete = 0;
@@ -2835,6 +2889,7 @@ class Client:
           }
           bool isEnabled = 100;
           bool isBlackList = 101;
+          bool applyToFolder = 102;
         }
         enum FileDeleteRule {
           Delete = 0;
@@ -2885,6 +2940,7 @@ class Client:
           }
           bool isEnabled = 100;
           bool isBlackList = 101;
+          bool applyToFolder = 102;
         }
         enum FileDeleteRule {
           Delete = 0;

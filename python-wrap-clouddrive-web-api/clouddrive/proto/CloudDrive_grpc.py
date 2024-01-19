@@ -101,6 +101,10 @@ class CloudDriveFileSrvBase(abc.ABC):
         pass
 
     @abc.abstractmethod
+    async def RemoveOfflineFiles(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.RemoveOfflineFilesRequest, CloudDrive_pb2.FileOperationResult]') -> None:
+        pass
+
+    @abc.abstractmethod
     async def ListOfflineFilesByPath(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.FileRequest, CloudDrive_pb2.OfflineFileListResult]') -> None:
         pass
 
@@ -254,6 +258,10 @@ class CloudDriveFileSrvBase(abc.ABC):
 
     @abc.abstractmethod
     async def ApiLoginGoogleDriveRefreshToken(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest, CloudDrive_pb2.APILoginResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def ApiLoginXunleiOAuth(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.LoginXunleiOAuthRequest, CloudDrive_pb2.APILoginResult]') -> None:
         pass
 
     @abc.abstractmethod
@@ -600,6 +608,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 CloudDrive_pb2.AddOfflineFileRequest,
                 CloudDrive_pb2.FileOperationResult,
             ),
+            '/clouddrive.CloudDriveFileSrv/RemoveOfflineFiles': grpclib.const.Handler(
+                self.RemoveOfflineFiles,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.RemoveOfflineFilesRequest,
+                CloudDrive_pb2.FileOperationResult,
+            ),
             '/clouddrive.CloudDriveFileSrv/ListOfflineFilesByPath': grpclib.const.Handler(
                 self.ListOfflineFilesByPath,
                 grpclib.const.Cardinality.UNARY_UNARY,
@@ -832,6 +846,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 self.ApiLoginGoogleDriveRefreshToken,
                 grpclib.const.Cardinality.UNARY_UNARY,
                 CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest,
+                CloudDrive_pb2.APILoginResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/ApiLoginXunleiOAuth': grpclib.const.Handler(
+                self.ApiLoginXunleiOAuth,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.LoginXunleiOAuthRequest,
                 CloudDrive_pb2.APILoginResult,
             ),
             '/clouddrive.CloudDriveFileSrv/APILogin189QRCode': grpclib.const.Handler(
@@ -1290,6 +1310,12 @@ class CloudDriveFileSrvStub:
             CloudDrive_pb2.AddOfflineFileRequest,
             CloudDrive_pb2.FileOperationResult,
         )
+        self.RemoveOfflineFiles = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/RemoveOfflineFiles',
+            CloudDrive_pb2.RemoveOfflineFilesRequest,
+            CloudDrive_pb2.FileOperationResult,
+        )
         self.ListOfflineFilesByPath = grpclib.client.UnaryUnaryMethod(
             channel,
             '/clouddrive.CloudDriveFileSrv/ListOfflineFilesByPath',
@@ -1522,6 +1548,12 @@ class CloudDriveFileSrvStub:
             channel,
             '/clouddrive.CloudDriveFileSrv/ApiLoginGoogleDriveRefreshToken',
             CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest,
+            CloudDrive_pb2.APILoginResult,
+        )
+        self.ApiLoginXunleiOAuth = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/ApiLoginXunleiOAuth',
+            CloudDrive_pb2.LoginXunleiOAuthRequest,
             CloudDrive_pb2.APILoginResult,
         )
         self.APILogin189QRCode = grpclib.client.UnaryStreamMethod(

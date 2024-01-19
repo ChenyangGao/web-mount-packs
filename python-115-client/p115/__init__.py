@@ -24,7 +24,7 @@ from collections.abc import (
 from concurrent.futures import Future
 from copy import deepcopy
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from functools import cached_property, partial, update_wrapper
 from mimetypes import guess_type
 from hashlib import md5, sha1
@@ -1324,6 +1324,65 @@ class P115Client:
         else:
             payload = {"star": 1, **payload}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def life_list(
+        self, 
+        payload: dict = {}, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """罗列登录和增删改操作记录（最新几条）
+        payload:
+            - show_type: int | str = "1,2,3,4"
+            - tab_type: int | str = 0
+            - start: int = 0
+            - show_note_cal: 0 | 1 = 0
+            - end_time: int = <default> # 默认为次日零点前一秒
+            - last_data: str = <default> # JSON object, e.g. {"last_time":1700000000,"last_count":1,"total_count":200}
+        """
+        api = "https://life.115.com/api/1.0/android/99.99.99/life/life_list"
+        now = datetime.now()
+        datetime.combine(now.date(), now.time().max)
+        payload = {
+            "show_type": "1,2,3,4", 
+            "tab_type": 0, 
+            "start": 0, 
+            "show_note_cal": 0, 
+            "end_time": int(datetime.combine(now.date(), now.time().max).timestamp()), 
+            **payload, 
+        }
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    def behavior_detail(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取增删改操作记录明细
+        payload:
+            - type: str
+                # 操作类型
+                # - "new_folder":    新增文件夹
+                # - "copy_folder":   复制文件夹
+                # - "folder_rename": 文件夹改名
+                # - "move_file":     移动文件或文件夹
+                # - "delete_file":   删除文件或文件夹
+                # - "upload_file":   上传文件
+                # - "rename_file":   文件改名（未实现）
+                # - "copy_file":     复制文件（未实现）
+            - limit: int = 32
+            - offset: int = 0
+            - date: str = <default> # 默认为今天，格式为 yyyy-mm-dd
+        """
+        api = "https://proapi.115.com/android/1.0/behavior/detail"
+        if isinstance(payload, str):
+            payload = {"limit": 32, "offset": 0, "date": str(date.today()), "type": payload}
+        else:
+            payload = {"limit": 32, "offset": 0, "date": str(date.today()), **payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     ########## Share API ##########
 
