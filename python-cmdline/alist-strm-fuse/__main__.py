@@ -19,7 +19,7 @@ MIT licensed: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cm
 ⏰ 由于网盘对多线程访问的限制，请停用挂载目录的显示图标预览
 
 访问源代码：
-    - https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-alist-web-api/examples/strm-fuse
+    - https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/alist-strm-fuse
 
 下面的选项 --ignore、--ignore-file、--strm、--strm-file 支持相同的配置语法。
     0. --strm、--strm-file 优先级高于 --ignore、--ignore-file，但前两者只针对文件（不针对目录），后两者都针对
