@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 6, 4)
-__license__ = "MIT <https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-alist-web-api/examples/strm-fuse/LICENSE>"
+__license__ = "MIT <https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/alist-strm-fuse/LICENSE>"
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -14,7 +14,7 @@ if __name__ == "__main__":
     2. MacOSX 要安装 MacFUSE： https://github.com/osxfuse/osxfuse
     3. Windows 要安装 WinFsp： https://github.com/winfsp/winfsp
 
-MIT licensed: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-alist-web-api/examples/strm-fuse/LICENSE
+MIT licensed: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/alist-strm-fuse/LICENSE
 
 ⏰ 由于网盘对多线程访问的限制，请停用挂载目录的显示图标预览
 

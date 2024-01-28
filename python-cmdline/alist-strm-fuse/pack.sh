@@ -6,7 +6,7 @@ CURDIR=$(pwd)
 VERSION=$(head -1 ${PROJDIR}/VERSION || echo latest)
 
 function createpack() {
-    local file=$1/clouddrive-${PROJNAME}_${VERSION}.pyz
+    local file=$1/${PROJNAME}_${VERSION}.pyz
     if /usr/bin/env python3 -m zipapp --compress ${PROJDIR} --output ${file}
     then
         echo -e "Create a package file located in \n\t${file}"
