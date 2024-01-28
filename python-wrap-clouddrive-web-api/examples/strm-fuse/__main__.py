@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6, 3)
+__version__ = (0, 0, 6, 4)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -91,6 +91,14 @@ if __name__ == "__main__":
   - stem 针对文件名不含扩展名
   - ext  针对扩展名（不含前缀点号 .）
 """)
+    parser.add_argument(
+        "-dn", "--direct-open-names", 
+        help="为这些名字（忽略大小写）的程序直接打开链接，有多个时用空格分隔（如果文件名中包含空格，请用 \\ 转义）", 
+    )
+    parser.add_argument(
+        "-de", "--direct-open-exes", 
+        help="为这些路径的程序直接打开链接，有多个时用空格分隔（如果文件名中包含空格，请用 \\ 转义）", 
+    )
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     parser.add_argument("-d", "--debug", action="store_true", help="调试模式，输出更多信息")
     parser.add_argument("-l", "--log-level", default=0, help=f"指定日志级别，可以是数字或名称，不传此参数则不输出日志，默认值: 0 (NOTSET)")
@@ -116,7 +124,7 @@ try:
     if clouddrive_version < (0, 0, 9, 10):
         __import__("sys").modules.pop("clouddrive")
         raise ImportError
-    # pip install python-clouddrive
+    # pip install clouddrive
     from clouddrive import CloudDriveFileSystem
     from clouddrive.util.ignore import read_str, read_file, parse
     # pip install types-cachetools
@@ -128,7 +136,7 @@ try:
 except ImportError:
     from subprocess import run
     from sys import executable
-    run([executable, "-m", "pip", "install", "-U", "python-clouddrive>=0.0.10", "cachetools", "fusepy", "psutil"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "clouddrive>=0.0.10", "cachetools", "fusepy", "psutil"], check=True)
 
     from clouddrive import CloudDriveFileSystem
     from clouddrive.util.ignore import read_str, read_file, parse
@@ -136,7 +144,7 @@ except ImportError:
     from fuse import FUSE, FuseOSError, Operations, fuse_get_context # type: ignore
     from psutil import Process # type: ignore
 
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Container, MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import partial, update_wrapper
@@ -144,19 +152,22 @@ from errno import EACCES, EISDIR, ENOENT, EIO
 from itertools import count
 from mimetypes import guess_type
 from posixpath import basename, dirname, join as joinpath, split as splitpath
+from re import compile as re_compile
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
 from sys import maxsize
 from threading import Event, Lock, Thread
-from time import time
+from time import sleep, time
 from types import MappingProxyType
-from typing import cast, Any, BinaryIO, Optional
+from typing import cast, Any, BinaryIO, Final, Optional
+from unicodedata import normalize
 from weakref import WeakKeyDictionary, WeakValueDictionary
 from zipfile import ZipFile, Path as ZipPath, BadZipFile
 
 from util.log import logger
 
 
+CRE_PAT_IN_STR: Final = re_compile(r"[^\\ ]*(?:\\(?s:.)[^\\ ]*)*")
 _EXTRA = MappingProxyType({"instance": __name__})
 
 if not hasattr(ThreadPoolExecutor, "__del__"):
@@ -192,7 +203,7 @@ def update_readdir_later(
             if do_refresh:
                 return
             evt.wait()
-            return [".", "..", *self.cache[path]]
+            return [".", "..", *self.cache[normalize("NFC", path)]]
         else:
             try:
                 return readdir(self, path, fh)
@@ -202,7 +213,7 @@ def update_readdir_later(
     def wrapper(path, fh=0):
         while True:
             try:
-                cache = self.cache[path]
+                cache = self.cache[normalize("NFC", path)]
             except KeyError:
                 if executor is None:
                     return run_update(path, fh)
@@ -241,6 +252,8 @@ class CloudDriveFuseOperations(Operations):
         predicate: Optional[Callable[[str], bool]] = None, 
         strm_predicate: Optional[Callable[[str], bool]] = None, 
         max_readdir_workers: int = -1, 
+        direct_open_names: Optional[Callable[[str], bool]] = None, 
+        direct_open_exes: Optional[Callable[[str], bool]] = None, 
     ):
         self.__finalizer__: list[Callable] = []
         self._log = partial(logger.log, extra={"instance": repr(self)})
@@ -249,6 +262,8 @@ class CloudDriveFuseOperations(Operations):
         self.predicate = predicate
         self.strm_predicate = strm_predicate
         register = self.register_finalize = self.__finalizer__.append
+        self.direct_open_names = direct_open_names
+        self.direct_open_exes = direct_open_exes
 
         # id generator for file handler
         self._next_fh: Callable[[], int] = count(1).__next__
@@ -281,6 +296,7 @@ class CloudDriveFuseOperations(Operations):
         self.__dict__["readdir"] = update_readdir_later(self, executor=executor)
         if executor is not None:
             register(partial(executor.shutdown, cancel_futures=True))
+        self.normpath_map = {}
 
     def __del__(self, /):
         self.close()
@@ -296,7 +312,7 @@ class CloudDriveFuseOperations(Operations):
         self._log(logging.DEBUG, "getattr(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
         if path == "/":
             return _rootattr
-        dir_, name = splitpath(path)
+        dir_, name = splitpath(normalize("NFC", path))
         try:
             dird = self.cache[dir_]
         except KeyError:
@@ -314,7 +330,7 @@ class CloudDriveFuseOperations(Operations):
             return dird[name]
         except KeyError as e:
             self._log(
-                logging.ERROR, 
+                logging.WARNING, 
                 "file not found: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
                 path, type(e).__qualname__, e, 
             )
@@ -322,10 +338,25 @@ class CloudDriveFuseOperations(Operations):
 
     def open(self, /, path: str, flags: int = 0) -> int:
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
+        pid = fuse_get_context()[-1]
+        if pid > 0:
+            process = Process(pid)
+            exe = process.exe()
+            if (
+                self.direct_open_names is not None and self.direct_open_names(process.name().lower()) or
+                self.direct_open_exes is not None and self.direct_open_exes(exe)
+            ):
+                process.kill()
+                def push():
+                    sleep(.01)
+                    run([exe, self.fs.get_url(path)])
+                Thread(target=push).start()
+                return 0
         return self._next_fh()
 
     def _open(self, path: str, /, start: int = 0):
         attr = self.getattr(path)
+        path = self.normpath_map.get(normalize("NFC", path), path)
         if attr.get("_data") is not None:
             return None, attr["_data"]
         if attr["st_size"] <= 2048:
@@ -340,6 +371,8 @@ class CloudDriveFuseOperations(Operations):
 
     def read(self, /, path: str, size: int, offset: int, fh: int = 0) -> bytes:
         self._log(logging.DEBUG, "read(path=\x1b[4;34m%r\x1b[0m, size=%r, offset=%r, fh=%r) by \x1b[3;4m%s\x1b[0m", path, size, offset, fh, PROCESS_STR)
+        if not fh:
+            return b""
         try:
             try:
                 file, preread = self._fh_to_file[fh]
@@ -367,8 +400,10 @@ class CloudDriveFuseOperations(Operations):
         predicate = self.predicate
         strm_predicate = self.strm_predicate
         cache = {}
+        path = normalize("NFC", path)
+        realpath = self.normpath_map.get(path, path)
         try:
-            for pathobj in self.fs.listdir_path(path):
+            for pathobj in self.fs.listdir_path(realpath):
                 name    = pathobj.name
                 subpath = pathobj.path
                 isdir   = pathobj.is_dir()
@@ -383,7 +418,8 @@ class CloudDriveFuseOperations(Operations):
                     size = 0
                 else:
                     size = int(pathobj.get("size", 0))
-                cache[name] = dict(
+                normname = normalize("NFC", name)
+                cache[normname] = dict(
                     st_mode=(S_IFDIR if isdir else S_IFREG) | 0o555, 
                     st_size=size, 
                     st_ctime=pathobj["ctime"], 
@@ -391,6 +427,9 @@ class CloudDriveFuseOperations(Operations):
                     st_atime=pathobj["atime"], 
                     _data=data, 
                 )
+                normsubpath = joinpath(path, normname)
+                if normsubpath != normalize("NFD", normsubpath):
+                    self.normpath_map[normsubpath] = joinpath(realpath, name)
             self.cache[path] = cache
             return [".", "..", *cache]
         except BaseException as e:
@@ -403,20 +442,21 @@ class CloudDriveFuseOperations(Operations):
 
     def release(self, /, path: str, fh: int = 0):
         self._log(logging.DEBUG, "release(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
-        if fh:
-            try:
-                file, _ = self._fh_to_file.pop(fh)
-                if file is not None:
-                    file.close()
-            except KeyError:
-                pass
-            except BaseException as e:
-                self._log(
-                    logging.ERROR, 
-                    "can't release file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                    path, type(e).__qualname__, e, 
-                )
-                raise FuseOSError(EIO) from e
+        if not fh:
+            return
+        try:
+            file, _ = self._fh_to_file.pop(fh)
+            if file is not None:
+                file.close()
+        except KeyError:
+            pass
+        except BaseException as e:
+            self._log(
+                logging.ERROR, 
+                "can't release file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
+                path, type(e).__qualname__, e, 
+            )
+            raise FuseOSError(EIO) from e
 
 
 if __name__ == "__main__":
@@ -464,6 +504,18 @@ if __name__ == "__main__":
         exec(code, ns)
         cache = ns.get("cache")
 
+    direct_open_names = None
+    if args.direct_open_names:
+        names = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(args.direct_open_names) if n}
+        if names:
+            direct_open_names = names.__contains__
+
+    direct_open_exes = None
+    if args.direct_open_exes:
+        exes = {e.replace(r"\ ", " ") for e in CRE_PAT_IN_STR.findall(args.direct_open_exes) if n}
+        if names:
+            direct_open_exes = exes.__contains__
+
     print("\n    👋 Welcome to use clouddrive fuse and strm 👏\n")
     # https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki
     fuse = FUSE(
@@ -475,6 +527,8 @@ if __name__ == "__main__":
             predicate=predicate, 
             strm_predicate=strm_predicate, 
             max_readdir_workers=args.max_readdir_workers, 
+            direct_open_names=direct_open_names, 
+            direct_open_exes=direct_open_exes, 
         ),
         args.mount_point, 
         ro=True, 

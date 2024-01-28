@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "get_header", "get_filename", "get_content_length", "get_length", "get_total_length", "get_range", 
+    "get_filename", "get_content_length", "get_length", "get_total_length", "get_range", 
     "is_chunked", "is_range_request", 
 ]
 
@@ -17,21 +17,27 @@ from urllib.parse import urlsplit, unquote
 CRE_CONTENT_RANGE = re_compile(r"bytes\s+(?:\*|(?P<begin>[0-9]+)-(?P<end>[0-9]+))/(?:(?P<size>[0-9]+)|\*)")
 
 
-def get_header(response, /, name: str) -> Optional[str]:
-    get = response.headers.get
-    return get(name.title()) or get(name.lower())
-
-
 def get_filename(response, /, default: str = "") -> str:
-    hdr_cd = get_header(response, "Content-Disposition")
+    try:
+        hdr_cd = response.headers["content-disposition"]
+    except KeyError:
+        hdr_cd = None
     if hdr_cd and hdr_cd.startswith("attachment; filename="):
-        return unquote(hdr_cd.rstrip()[22:-1])
-    urlp = urlsplit(unquote(response.url))
-    filename = basename(urlp.path) or default
+        filename = hdr_cd[21:]
+        if filename.startswith(("'", '"')):
+            filename = filename[1:-1]
+        elif filename.startswith(" "):
+            filename = filename[1:]
+        return unquote(filename)
+    urlp = urlsplit(response.url)
+    filename = basename(unquote(urlp.path)) or default
     if filename:
         if guess_type(filename)[0]:
             return filename
-        hdr_ct = get_header(response, "Content-Type")
+        try:
+            hdr_ct = response.headers["content-type"]
+        except KeyError:
+            hdr_ct = None
         if hdr_ct and (idx := hdr_ct.find(";")) > -1:
             hdr_ct = hdr_ct[:idx]
         ext = hdr_ct and guess_extension(hdr_ct) or ""
@@ -41,10 +47,13 @@ def get_filename(response, /, default: str = "") -> str:
 
 
 def get_content_length(response, /) -> Optional[int]:
-    length = get_header(response, "Content-Length")
-    if length:
-        return int(length)
-    return None
+    try:
+        length = response.headers["content-length"]
+        if not length:
+            return None
+    except KeyError:
+        return None
+    return int(length)
 
 
 def get_length(response, /) -> Optional[int]:
@@ -64,8 +73,11 @@ def get_total_length(response, /) -> Optional[int]:
 
 
 def get_range(response, /) -> Optional[tuple[int, int, int]]:
-    hdr_cr = get_header(response, "Content-Range")
-    if not hdr_cr:
+    try:
+        hdr_cr = response.headers["content-range"]
+        if not hdr_cr:
+            return None
+    except KeyError:
         return None
     match = CRE_CONTENT_RANGE.fullmatch(hdr_cr)
     if match is None:
@@ -88,9 +100,15 @@ def get_range(response, /) -> Optional[tuple[int, int, int]]:
 
 
 def is_chunked(response, /) -> bool:
-    return get_header(response, "Transfer-Encoding") == "chunked"
+    try:
+        return response.headers["transfer-encoding"] == "chunked"
+    except KeyError:
+        return False
 
 
 def is_range_request(response, /) -> bool:
-    return get_header(response, "Accept-Ranges") == "bytes"
+    try:
+        return response.headers["accept-ranges"] == "bytes"
+    except KeyError:
+        return False
 

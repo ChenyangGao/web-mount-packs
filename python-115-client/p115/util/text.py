@@ -12,7 +12,7 @@ from codecs import decode
 from fnmatch import translate as wildcard_translate
 from functools import partial
 from re import compile as re_compile, escape as re_escape, Pattern
-from typing import AnyStr, Final, Iterator
+from typing import AnyStr, Final, Iterator, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from .path import splits
@@ -181,31 +181,41 @@ def posix_glob_translate_iter(
 
 def text_within(
     text: AnyStr, 
-    begin: None | AnyStr | Pattern[AnyStr] = None, 
-    end: None | AnyStr | Pattern[AnyStr] = None, 
+    begin: Optional[AnyStr | Pattern[AnyStr]] = None, 
+    end: Optional[AnyStr | Pattern[AnyStr]] = None, 
+    start: int = 0, 
+    greedy: bool = False, 
     with_begin: bool = False, 
     with_end: bool = False, 
-    greedy: bool = False, 
 ) -> AnyStr:
     empty = text[:0]
     if not begin:
-        start = start0 = 0
-    elif isinstance(begin, Pattern):
-        match = begin.search(text)
-        if match is None:
-            return empty
-        start0 = match.end()
-        start = match.start() if with_begin else match.end()
-    else:
-        start = text.find(begin)
+        start0 = start
+    elif isinstance(begin, (bytes, bytearray, str)):
+        start = text.find(begin, start)
         if start == -1:
             return empty
         start0 = start + len(begin)
         if not with_begin:
             start = start0
+    else:
+        match = begin.search(text, start)
+        if match is None:
+            return empty
+        start0 = match.end()
+        start = match.start() if with_begin else match.end()
     if not end:
         return text[start:]
-    elif isinstance(end, Pattern):
+    elif isinstance(end, (bytes, bytearray, str)):
+        if greedy:
+            stop = text.rfind(end, start0)
+        else:
+            stop = text.find(end, start0)
+        if stop == -1:
+            return empty
+        if with_end:
+            stop += len(end)
+    else:
         if greedy:
             match = None
             for match in end.finditer(text, start0):
@@ -215,14 +225,5 @@ def text_within(
         if match is None:
             return empty
         stop = match.end() if with_end else match.start()
-    else:
-        if greedy:
-            stop = text.rfind(end, start0)
-        else:
-            stop = text.find(end, start0)
-        if stop == -1:
-            return empty
-        if with_end:
-            stop += len(end)
     return text[start:stop]
 

@@ -4,6 +4,17 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["download", "requests_download"]
 
+if __name__ == "__main__":
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser(description="python url downloader")
+    parser.add_argument("url", nargs="?", help="URL(s) to be downloaded (one URL per line), if omitted, read from stdin")
+    parser.add_argument("-d", "--savedir", default="", help="path to the downloaded file")
+    parser.add_argument("-r", "--resume", action="store_true", help="skip downloaded data")
+    parser.add_argument("-hs", "--headers", help="dictionary of HTTP Headers to send with")
+    parser.add_argument("-rq", "--use-requests", action="store_true", help="use `requests` module")
+    args = parser.parse_args()
+
 # NOTE https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests
 # NOTE https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Accept-Ranges
 # NOTE https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Range
@@ -16,43 +27,47 @@ __all__ = ["download", "requests_download"]
 
 import errno
 
-from concurrent.futures import ThreadPoolExecutor
-from io import TextIOWrapper
+from collections.abc import Callable, Generator
+from inspect import isgenerator
 from os import fsdecode, fstat, makedirs, PathLike
-from os.path import isdir, join as joinpath
+from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
-from typing import cast, Any, BinaryIO, Callable, Mapping, NamedTuple, Optional
+from typing import cast, Any, Optional
 
 from requests import Response, Session
 
-from .file import bio_skip_bytes, SupportsRead, SupportsWrite
-from .iter import cut_iter
-from .response import get_filename, get_length, get_range, get_header, is_chunked, is_range_request
-from .urlopen import urlopen
+if __name__ == "__main__":
+    from sys import path
+    path.insert(0, dirname(dirname(__file__)))
+    from util.file import bio_skip_bytes, SupportsRead, SupportsWrite # type: ignore
+    from util.iter import cut_iter # type: ignore
+    from util.response import get_filename, get_length, is_chunked, is_range_request # type: ignore
+    from util.text import headers_str_to_dict # type: ignore
+    from util.urlopen import urlopen # type: ignore
+    del path[0]
+else:
+    from .file import bio_skip_bytes, SupportsRead, SupportsWrite
+    from .iter import cut_iter
+    from .response import get_filename, get_length, is_chunked, is_range_request
+    from .text import headers_str_to_dict
+    from .urlopen import urlopen
 
 
-if not hasattr(Response, "__del__"):
-    Response.__del__ = Response.close # type: ignore
-if not hasattr(Session, "__del__"):
-    Session.__del__  = Session.close # type: ignore
-
-
-class DownloadResult(NamedTuple):
-    downloaded_size: int
-    total_size: int
+if "__del__" not in Response.__dict__:
+    setattr(Response, "__del__", Response.close)
+if "__del__" not in Session.__dict__:
+    setattr(Session, "__del__", Session.close)
 
 
 def download(
     url: str, 
-    file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
+    file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
-    chunksize = COPY_BUFSIZE, 
-    headers: Optional[Mapping] = None, 
-    make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any]]] = None, 
-    max_workers: int = 1, 
+    chunksize: int = COPY_BUFSIZE, 
+    headers: Optional[dict[str, str]] = None, 
+    make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any] | Generator[int, Any, Any]]] = None, 
     urlopen: Callable = urlopen, 
-    **request_kwargs, 
-) -> DownloadResult:
+) -> str | SupportsWrite[bytes]:
     """
     """
     if headers:
@@ -60,296 +75,142 @@ def download(
     else:
         headers = {"Accept-Encoding": "identity"}
 
-    resp = None
+    if chunksize <= 0:
+        chunksize = COPY_BUFSIZE
+
+    resp = urlopen(url, headers=headers)
+    length = get_length(resp)
+    if length == 0 and is_chunked(resp):
+        length = None
+
     fdst: SupportsWrite[bytes]
-    if isinstance(file, TextIOWrapper):
-        fdst = file.buffer
-    elif hasattr(file, "write"):
-        fdst = cast(SupportsWrite[bytes], file)
+    if hasattr(file, "write"):
+        file = fdst = cast(SupportsWrite[bytes], file)
     else:
-        file = fsdecode(file)
-        if not file or isdir(file):
-            resp = urlopen(url, headers=headers, **request_kwargs)
-            length = get_length(resp)
+        file = abspath(fsdecode(file))
+        if isdir(file):
             file = joinpath(file, get_filename(resp, "download"))
-        fdst = open(file, "ab" if resume else "wb")
+        try:
+            fdst = open(file, "ab" if resume else "wb")
+        except FileNotFoundError:
+            makedirs(dirname(file), exist_ok=True)
+            fdst = open(file, "ab" if resume else "wb")
 
     filesize = 0
     if resume:
         try:
             filesize = fstat(fdst.fileno()).st_size # type: ignore
         except (AttributeError, OSError):
-            filesize = 0
+            pass
         else:
-            if resp is None:
-                if filesize:
-                    resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
-                    length = get_length(resp)
-                    if is_range_request(resp):
-                        length = cast(int, length)
-                        length += filesize
-                else:
-                    resp = urlopen(url, headers=headers, **request_kwargs)
-                    length = get_length(resp)
-            if length is None or length == 0 and is_chunked(resp):
-                pass
-            elif filesize >= length:
-                return DownloadResult(0, length)
-
-    if max_workers != 1:
-        if resp is None:
-            if filesize:
-                resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
-                length = get_length(resp)
-                if is_range_request(resp):
-                    length = cast(int, length)
-                    length += filesize
-            else:
-                resp = urlopen(url, headers=headers, **request_kwargs)
-                length = get_length(resp)
-        if length and length - filesize <= chunksize:
-            max_workers = 1
-        elif is_range_request(resp):
-            resp.close()
-        else:
-            max_workers = 1
-
-    downloaded_size = 0
-
-    if max_workers != 1:
-        if make_reporthook:
-            reporthook = make_reporthook(length)
-        else:
-            reporthook = None
-
-        def fetch_chunk(cut):
-            start, stop = cut
-            with urlopen(url, headers={**headers, "Range": "bytes=%d-%d" % (start, stop-1)}, **request_kwargs) as resp:
-                return resp.read()
-
-        with ThreadPoolExecutor(max_workers if max_workers > 0 else None) as executor:
-            fdst_write = fdst.write
-            if reporthook:
-                reporthook(filesize)
-            chunk_it = executor.map(fetch_chunk, cut_iter(filesize, length, chunksize))
-            for chunk in chunk_it:
-                downloaded_size += cast(int, fdst_write(chunk))
-                if reporthook:
-                    reporthook(len(chunk))
-
-        return DownloadResult(downloaded_size, length or downloaded_size)
-
-    if resp is None:
-        if filesize:
-            headers["Range"] = "bytes=%d-" % filesize
-        else:
-            headers["Accept-Encoding"] = "gzip"
-        resp = urlopen(url, headers=headers, **request_kwargs)
-        length = get_length(resp)
-        if is_range_request(resp):
-            length = cast(int, length)
-            length += filesize
-    elif is_range_request(resp):
-        rng = get_range(resp)
-        if filesize and (not rng or rng[0] < filesize):
-            resp.close()
-            resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
+            if filesize == length:
+                return file
+            elif length is not None and filesize > length:
+                raise OSError(errno.EIO, f"file {file!r} is larger than url {url!r}: {filesize} > {length} (in bytes)")
+    elif length == 0:
+        return file
 
     if make_reporthook:
         reporthook = make_reporthook(length)
+        if isgenerator(reporthook):
+            next(reporthook)
+            reporthook = reporthook.send
+        reporthook = cast(Callable[[int], Any], reporthook)
     else:
         reporthook = None
 
-    with resp:
-        fdst_write = fdst.write
-        if is_range_request(resp):
-            fsrc_read = resp.read
-            if reporthook:
-                reporthook(filesize)
-            chunk_it = iter(lambda: fsrc_read(chunksize), b"")
-        else:
-            content_encoding = get_header(resp, "Content-Encoding") or ""
-            fsrc: SupportsRead[bytes]
-            if content_encoding in ("", "identity"):
-                pass
-            elif content_encoding in ("gzip", "deflate"):
-                fsrc = __import__("gzip").open(fsrc)
-            elif content_encoding == "bzip2":
-                fsrc = __import__("bz2").open(fsrc)
-            elif content_encoding == "application/x-xz":
-                fsrc = __import__("lzma").open(fsrc)
-            else:
-                raise ValueError(f"unable to decode this Content-Encoding: {content_encoding!r}")
-            fsrc_read = fsrc.read
-            bio_skip_bytes(fsrc, filesize, callback=reporthook)
-            chunk_it = iter(lambda: fsrc_read(chunksize), b"")
+    if filesize and is_range_request(resp):
+        resp.close()
+        resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize})
+        if not is_range_request(resp):
+            raise OSError(errno.EIO, f"range request failed: {url!r}")
 
-        for chunk in chunk_it:
-            downloaded_size += cast(int, fdst_write(chunk))
+    with resp:
+        fsrc_read = resp.read
+        fdst_write = fdst.write
+        if filesize:
+            if is_range_request(resp):
+                if reporthook:
+                    reporthook(filesize)
+            else:
+                bio_skip_bytes(resp, filesize, callback=reporthook)
+
+        while (chunk := fsrc_read(chunksize)):
+            fdst_write(chunk)
             if reporthook:
                 reporthook(len(chunk))
 
-    return DownloadResult(downloaded_size, filesize + downloaded_size)
+    return file
 
 
 def requests_download(
     url: str, 
-    file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
-    resume: bool = False, 
-    chunksize = COPY_BUFSIZE, 
-    headers: Optional[Mapping] = None, 
-    make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any]]] = None, 
-    max_workers: int = 1, 
     urlopen: Callable = Session().get, 
-    **request_kwargs, 
-) -> DownloadResult:
+    **kwargs, 
+) -> str | SupportsWrite[bytes]:
     """
     """
-    request_kwargs["stream"] = True
-
-    if headers:
-        headers = {**headers, "Accept-Encoding": "identity"}
-    else:
-        headers = {"Accept-Encoding": "identity"}
-
-    resp = None
-    fdst: SupportsWrite[bytes]
-    if isinstance(file, TextIOWrapper):
-        fdst = file.buffer
-    elif hasattr(file, "write"):
-        fdst = cast(SupportsWrite[bytes], file)
-    else:
-        file = fsdecode(file)
-        if not file or isdir(file):
-            resp = urlopen(url, headers=headers, **request_kwargs)
-            resp.raise_for_status()
-            length = get_length(resp)
-            file = joinpath(file, get_filename(resp, "download"))
-        fdst = open(file, "ab" if resume else "wb")
-
-    filesize = 0
-    if resume:
-        try:
-            filesize = fstat(fdst.fileno()).st_size # type: ignore
-        except (AttributeError, OSError):
-            filesize = 0
-        else:
-            if resp is None:
-                if filesize:
-                    resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
-                    resp.raise_for_status()
-                    length = get_length(resp)
-                    if is_range_request(resp):
-                        length = cast(int, length)
-                        length += filesize
-                else:
-                    resp = urlopen(url, headers=headers, **request_kwargs)
-                    resp.raise_for_status()
-                    length = get_length(resp)
-            if length is None or length == 0 and is_chunked(resp):
-                pass
-            elif filesize >= length:
-                return DownloadResult(0, length)
-
-    if max_workers != 1:
-        if resp is None:
-            if filesize:
-                resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
-                resp.raise_for_status()
-                length = get_length(resp)
-                if is_range_request(resp):
-                    length = cast(int, length)
-                    length += filesize
-            else:
-                resp = urlopen(url, headers=headers, **request_kwargs)
-                resp.raise_for_status()
-                length = get_length(resp)
-        if length and length - filesize <= chunksize:
-            max_workers = 1
-        elif is_range_request(resp):
-            resp.close()
-        else:
-            max_workers = 1
-
-    downloaded_size = 0
-
-    if max_workers != 1:
-        if make_reporthook:
-            reporthook = make_reporthook(length)
-        else:
-            reporthook = None
-
-        def fetch_chunk(cut):
-            start, stop = cut
-            with urlopen(url, headers={**headers, "Range": "bytes=%d-%d" % (start, stop-1)}, **request_kwargs) as resp:
-                resp.raise_for_status()
-                return resp.content
-
-        with ThreadPoolExecutor(max_workers if max_workers > 0 else None) as executor:
-            fdst_write = fdst.write
-            if reporthook:
-                reporthook(filesize)
-            chunk_it = executor.map(fetch_chunk, cut_iter(filesize, length, chunksize))
-            for chunk in chunk_it:
-                downloaded_size += cast(int, fdst_write(chunk))
-                if reporthook:
-                    reporthook(len(chunk))
-
-        return DownloadResult(downloaded_size, length or downloaded_size)
-
-    if resp is None:
-        if filesize:
-            headers["Range"] = "bytes=%d-" % filesize
-        else:
-            headers["Accept-Encoding"] = "gzip"
-        resp = urlopen(url, headers=headers, **request_kwargs)
+    def urlopen_wrapper(url, headers):
+        resp = urlopen(url, headers=headers, stream=True)
         resp.raise_for_status()
-        length = get_length(resp)
-        if is_range_request(resp):
-            length = cast(int, length)
-            length += filesize
-    elif is_range_request(resp):
-        rng = get_range(resp)
-        if filesize and (not rng or rng[0] < filesize):
-            resp.close()
-            resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
-            resp.raise_for_status()
+        resp.read = resp.raw.read
+        return resp
+    return download(url, urlopen=urlopen_wrapper, **kwargs)
 
-    if make_reporthook:
-        reporthook = make_reporthook(length)
+
+if __name__ == "__main__":
+    from collections import deque
+    from time import perf_counter
+
+    def progress(total=None):
+        dq: deque[tuple[int, float]] = deque(maxlen=64)
+        read_num = 0
+        dq.append((read_num, perf_counter()))
+        while True:
+            read_num += yield
+            cur_t = perf_counter()
+            speed = (read_num - dq[0][0]) / 1024 / 1024 / (cur_t - dq[0][1])
+            if total:
+                percentage = read_num / total * 100
+                print(f"\r\x1b[K{read_num} / {total} | {speed:.2f} MB/s | {percentage:.2f} %", end="", flush=True)
+            else:
+                print(f"\r\x1b[K{read_num} | {speed:.2f} MB/s", end="", flush=True)
+            dq.append((read_num, cur_t))
+
+    url = args.url
+    if url:
+        urls = url.splitlines()
     else:
-        reporthook = None
+        from sys import stdin
+        urls = (l.removesuffix("\n") for l in stdin)
+    savedir = args.savedir
+    if savedir:
+        makedirs(savedir, exist_ok=True)
 
-    with resp:
-        fdst_write = fdst.write
-        if is_range_request(resp):
-            fsrc_read = resp.raw.read
-            if reporthook:
-                reporthook(filesize)
-            chunk_it = iter(lambda: fsrc_read(chunksize), b"")
-        else:
-            def chunk_iter():
-                remaining_bytes_to_skip = filesize
-                for chunk in resp.iter_content(chunk_size=chunksize):
-                    if remaining_bytes_to_skip:
-                        chunk_size = len(chunk)
-                        if remaining_bytes_to_skip >= chunk_size:
-                            remaining_bytes_to_skip -= chunk_size
-                            if reporthook:
-                                reporthook(chunk_size)
-                        else:
-                            if reporthook:
-                                reporthook(remaining_bytes_to_skip)
-                            yield chunk[remaining_bytes_to_skip:]
-                            remaining_bytes_to_skip = 0
-                    else:
-                        yield chunk
-            chunk_it = chunk_iter()
+    if args.use_requests:
+        downloader: Callable = requests_download
+    else:
+        downloader = download
 
-        for chunk in chunk_it:
-            downloaded_size += cast(int, fdst_write(chunk))
-            if reporthook:
-                reporthook(len(chunk))
-
-    return DownloadResult(downloaded_size, filesize + downloaded_size)
+    try:
+        headers = args.headers
+        if headers is not None:
+            headers = headers_str_to_dict(headers)
+        for url in urls:
+            if not url:
+                continue
+            try:
+                file = downloader(
+                    url, 
+                    file=savedir, 
+                    resume=args.resume, 
+                    make_reporthook=progress, 
+                    headers=headers, 
+                )
+                print(f"\r\x1b[K\x1b[1;32mDOWNLOADED\x1b[0m \x1b[4;34m{url!r}\x1b[0m\n |_ ⏬ \x1b[4;34m{file!r}\x1b[0m")
+            except BaseException as e:
+                print(f"\r\x1b[K\x1b[1;31mERROR\x1b[0m \x1b[4;34m{url!r}\x1b[0m\n  |_ 🙅 \x1b[1;31m{type(e).__qualname__}\x1b[0m: {e}")
+    except BrokenPipeError:
+        from sys import stderr
+        stderr.close()
 
