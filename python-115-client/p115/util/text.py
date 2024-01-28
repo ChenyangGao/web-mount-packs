@@ -8,11 +8,12 @@ __all__ = [
     "posix_glob_translate_iter", "text_within", 
 ]
 
+from collections.abc import Iterator
 from codecs import decode
 from fnmatch import translate as wildcard_translate
 from functools import partial
 from re import compile as re_compile, escape as re_escape, Pattern
-from typing import AnyStr, Final, Iterator, Optional
+from typing import AnyStr, Final, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from .path import splits
