@@ -24,9 +24,10 @@ from json import dumps
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
-from ssl import SSLContext
+from ssl import SSLContext, _create_unverified_context
 from typing import cast, Any, Optional
-from urllib.parse import urlencode
+from urllib.error import HTTPError
+from urllib.parse import urlencode, urlsplit
 from urllib.request import build_opener, HTTPSHandler, OpenerDirector, Request
 
 if __name__ == "__main__":
@@ -55,9 +56,15 @@ def urlopen(
     method: str = "GET", 
     timeout: Optional[int | float] = None, 
     proxy: Optional[tuple[str, str]] = None, 
-    opener: OpenerDirector = build_opener(), 
+    opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context())), 
     context: Optional[SSLContext] = None, 
+    origin: Optional[str] = None, 
 ) -> HTTPResponse:
+    if isinstance(url, str) and not urlsplit(url).scheme:
+        if origin:
+            if not url.startswith("/"):
+                url = "/" + url
+            url = origin + url
     if params:
         if not isinstance(params, str):
             params = urlencode(params)
@@ -155,17 +162,17 @@ def download(
     if chunksize <= 0:
         chunksize = COPY_BUFSIZE
 
-    resp: Optional[HTTPResponse] = None
+    resp: HTTPResponse = urlopen(url, headers=headers, **urlopen_kwargs)
+    length = get_length(resp)
+    if length == 0 and is_chunked(resp):
+        length = None
+
     fdst: SupportsWrite[bytes]
     if hasattr(file, "write"):
         file = fdst = cast(SupportsWrite[bytes], file)
     else:
         file = abspath(fsdecode(file))
         if isdir(file):
-            resp = urlopen(url, headers=headers, **urlopen_kwargs)
-            length = get_length(resp)
-            if length == 0 and is_chunked(resp):
-                length = None
             file = joinpath(file, get_filename(resp, "download"))
         try:
             fdst = open(file, "ab" if resume else "wb")
@@ -180,35 +187,13 @@ def download(
         except (AttributeError, OSError):
             pass
         else:
-            if resp is None:
-                if filesize:
-                    resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **urlopen_kwargs)
-                    length = get_length(resp)
-                    if is_range_request(resp):
-                        length = cast(int, length)
-                        length += filesize
-                else:
-                    resp = urlopen(url, headers=headers, **urlopen_kwargs)
-                    length = get_length(resp)
-                if length == 0 and is_chunked(resp):
-                    length = None
-            elif filesize and is_range_request(resp):
-                if filesize == length:
-                    return file
-                resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **urlopen_kwargs)
-                if not is_range_request(resp):
-                    raise OSError(errno.EIO, f"range request failed: {url!r}")
-                length = cast(int, get_length(resp)) + filesize
             if filesize == length:
                 return file
+            if filesize and is_range_request(resp):
+                if filesize == length:
+                    return file
             elif length is not None and filesize > length:
                 raise OSError(errno.EIO, f"file {file!r} is larger than url {url!r}: {filesize} > {length} (in bytes)")
-
-    if resp is None:
-        resp = urlopen(url, headers=headers, **urlopen_kwargs)
-        length = get_length(resp)
-        if length == 0 and is_chunked(resp):
-            length = None
 
     if make_reporthook:
         reporthook = make_reporthook(length)
@@ -219,9 +204,13 @@ def download(
     else:
         reporthook = None
 
-    with resp:
+    try:
         if filesize:
             if is_range_request(resp):
+                resp.close()
+                resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **urlopen_kwargs)
+                if not is_range_request(resp):
+                    raise OSError(errno.EIO, f"range request failed: {url!r}")
                 if reporthook:
                     reporthook(filesize)
             elif resume:
@@ -233,6 +222,9 @@ def download(
             fdst_write(chunk)
             if reporthook:
                 reporthook(len(chunk))
+    finally:
+        resp.close()
+
     return file
 
 

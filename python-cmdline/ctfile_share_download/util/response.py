@@ -107,8 +107,9 @@ def is_chunked(response, /) -> bool:
 
 
 def is_range_request(response, /) -> bool:
+    headers = response.headers
     try:
-        return response.headers["accept-ranges"] == "bytes"
+        return "accept-ranges" in headers and headers["accept-ranges"] == "bytes" or headers["content-range"]
     except KeyError:
         return False
 

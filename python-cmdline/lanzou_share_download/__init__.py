@@ -2,49 +2,65 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["get_download_url", "iterdir"]
+__all__ = ["set_global_origin", "get_download_url", "iterdir"]
 
 from collections.abc import Callable, Iterator
-from copy import copy
 from datetime import datetime
 from itertools import count
 from json import load
-from posixpath import join as joinpath
-from re import compile as re_compile
+from posixpath import basename, join as joinpath
+from re import compile as re_compile, Match
 from time import sleep
-from typing import cast, Optional
-from urllib.parse import urlsplit
+from typing import cast, Final, Optional
+from urllib.parse import unquote, urlsplit
 
-from util.text import text_within
-from util.urlopen import urlopen, download
+try:
+    from .util.response import get_filename
+    from .util.urlopen import urlopen
+except ImportError:
+    from util.response import get_filename # type: ignore
+    from util.urlopen import urlopen # type: ignore
 
 
-ORIGIN = "https://lanzoui.com"
-CRE_DOWNLOAD_search = re_compile(br'<iframe[^>]+?name="(?P<name>[^"]+)"[^>]+?src="(?P<link>/fn\?[^"]{64,})').search
-CRE_SUBDIR_finditer = re_compile(br'(?:folderlink|mbxfolder)"[^>]*><a [^>]*?\bhref="/(?P<fid>[^"]+)"[^>]*>(?P<name>[^<]+)').finditer
+ORIGIN: str = "https://lanzoui.com"
+CRE_PAYLOAD_search: Final = re_compile(br'(?<=\sdata :)(?s:.*?\})').search
+CRE_DOWNLOAD_search: Final = re_compile(br'<iframe[^>]+?name="(?P<name>[^"]+)"[^>]+?src="(?P<link>/fn\?[^"]{64,})').search
+CRE_SUBDIR_finditer: Final = re_compile(br'(?:folderlink|mbxfolder)"[^>]*><a [^>]*?\bhref="/(?P<fid>[^"]+)"[^>]*>(?P<name>[^<]+)').finditer
+CRE_BEFORE_SQUOT_match : Final = re_compile(br"[^']*").match
 
 
-def extract_payload(content: bytes, start: int = 0) -> Optional[dict]:
+def set_global_origin(origin: str):
+    "设置全局变量 ORIGIN，它是各个函数省略 origin 参数时的默认值"
+    global ORIGIN
+    ORIGIN = origin
+
+
+def extract_payload(
+    content: bytes, 
+    /, 
+    start: int = 0, 
+) -> Optional[dict]:
     "从包含 javascript 代码的文本中，提取请求参数"
-    def __getitem__(key):
-        match = re_compile(br"\b%s\s*=\s*([^;]+)" % key.encode("ascii")).search(content)
-        if match is not None:
+    def __getitem__(key: str):
+        matches = re_compile(br"\b%s\s*=\s*([^;]+)" % key.encode("ascii")).search(content)
+        if matches is not None:
             try:
-                return eval(match[1])
+                return eval(matches[1])
             except:
                 pass
         return ""
     ns = type("", (), {"__getitem__": staticmethod(__getitem__)})()
-    payload_text = text_within(content, re_compile(br'\sdata :'), b'}', start=start, with_end=True)
-    if not payload_text:
+    payload_code = CRE_PAYLOAD_search(content, start)
+    if payload_code is None:
         return None
-    return eval(payload_text, None, ns)
+    return eval(payload_code[0], None, ns)
 
 
-def extract_single_item(content: bytes) -> tuple[str, dict]:
+def extract_single_link_payload(content: bytes) -> tuple[str, dict]:
+    "提取单个文件获取信息所需的：请求链接 和 请求数据"
     idx = content.index(b"/ajaxm.php?")
     return (
-        text_within(content, end=b"'", with_begin=True, start=idx).decode("ascii"), 
+        CRE_BEFORE_SQUOT_match(content, idx)[0].decode("ascii"), # type: ignore
         cast(dict, extract_payload(content, start=idx)), 
     )
 
@@ -54,14 +70,19 @@ def get_single_item(
     password: str = "", 
     origin: Optional[str] = None, 
 ) -> dict:
+    "获取文件信息"
+    origin = origin or ORIGIN
     if id_or_url.startswith(("http://", "https://")):
         url = id_or_url
     else:
-        url = "%s/%s" % (origin or ORIGIN, id_or_url)
-    content = urlopen(url).read()
+        url = "%s/%s" % (origin, id_or_url)
+    content = urlopen(url, origin=origin).read()
     # NOTE: 这种情况意味着单文件分享
     if b"/ajaxm.php?" in content:
-        link, payload = extract_single_item(content)
+        try:
+            link, payload = extract_single_link_payload(content)
+        except TypeError as e:
+            raise ValueError(f"invalid id or url: {id_or_url!r}")
         if password:
             payload["p"] = password
     else:
@@ -71,7 +92,7 @@ def get_single_item(
         fid = match["name"].decode("ascii")
         link = match["link"].decode("ascii")
         content = urlopen(link, origin=origin).read()
-        payload = extract_payload(content)
+        payload = cast(dict, extract_payload(content))
         link = "/ajaxm.php?file=%s" % fid
     return load(urlopen(link, data=payload, headers={"Referer": url, "User-agent": ""}, method="POST", origin=origin))
 
@@ -81,31 +102,27 @@ def get_download_url(
     password: str = "", 
     origin: Optional[str] = None, 
 ) -> str:
-    "获取下载链接"
+    "获取文件的下载链接"
     json = get_single_item(id_or_url, password, origin)
     return json["dom"] + "/file/" + json["url"]
-
-
-def get_name_from_content_disposition(value):
-    value = value.removeprefix("attachment; filename=")
-    if value.startswith('"'):
-        return value[1:-1]
-    elif value.startswith(" "):
-        return value[1:]
-    return value
 
 
 def attr_from_download_url(
     url: str, 
     origin: Optional[str] = None, 
 ) -> dict:
-    resp = urlopen(url, headers={"Accept-language": "zh-CN"}, method="HEAD", origin=origin)
+    "请求下载链接，获取文件信息"
+    resp = urlopen(url, headers={"Accept-language": "zh-CN"}, method="HEAD", origin=origin or ORIGIN)
     headers = resp.headers
-    last_modified = datetime.strptime(headers["Last-Modified"], "%a, %d %b %Y %H:%M:%S %Z")
+    date = datetime.strptime(headers["date"], "%a, %d %b %Y %H:%M:%S %Z")
+    if "last-modified" in headers:
+        last_modified = datetime.strptime(headers["last-modified"], "%a, %d %b %Y %H:%M:%S %Z")
+    else:
+        last_modified = date
     return {
-        "filename": get_name_from_content_disposition(headers["Content-Disposition"]), 
-        "size": int(headers["Content-Length"]), 
-        "created_time": datetime.strptime(headers["Date"], "%a, %d %b %Y %H:%M:%S %Z"), 
+        "filename": get_filename(resp), 
+        "size": int(headers["content-length"]), 
+        "created_time": date, 
         "modified_time": last_modified, 
         "access_time": last_modified, 
         "download_url": resp.url, 
@@ -113,25 +130,31 @@ def attr_from_download_url(
 
 
 def iterdir(
-    url: str, 
+    id_or_url: str, 
     password: str = "", 
-    show_detail: bool = False, 
-    for_download: bool = False, 
     predicate: Optional[Callable] = None, 
     files_only: Optional[bool] = None, 
-    origin: Optional[str] = None, 
+    show_download: bool = False, 
+    show_detail: bool = False, 
     relpath: str = "", 
+    origin: Optional[str] = None, 
 ) -> Iterator[dict]:
     "获取分享链接中的条目信息，迭代器"
-    urlp = urlsplit(url)
-    fid = urlp.path.strip("/")
+    if id_or_url.startswith(("http://", "https://")):
+        urlp = urlsplit(id_or_url)
+        fid = basename(unquote(urlp.path).rstrip("/"))
+        if not origin and urlp.scheme:
+            origin = "%s://%s" % (urlp.scheme, urlp.netloc)
+    else:
+        fid = id_or_url
+    origin = origin or ORIGIN
     # 这种情况意味着单文件分享
     if fid.startswith("i"):
         if files_only != False:
-            item = get_single_item(url, password, origin)
+            item = get_single_item(fid, password, origin)
             name = item["inf"]
             attr = {
-                "id": urlsplit(url).path.strip("/"), 
+                "id": fid, 
                 "name": name, 
                 "relpath": joinpath(relpath, name), 
                 "isdir": False, 
@@ -145,17 +168,12 @@ def iterdir(
             except:
                 pass
         return
-    if origin is None:
-        if urlp.scheme:
-            origin = "%s://%s" % (urlp.scheme, urlp.netloc)
-        else:
-            origin = ORIGIN
     if files_only != False:
         api = "%s/filemoreajax.php" % origin
-        content = urlopen(url, origin=origin).read()
+        content = urlopen(id_or_url, origin=origin).read()
         payload = extract_payload(content)
         if payload is None:
-            raise ValueError("wrong url: %r" % url)
+            raise ValueError("wrong id or url: %r" % id_or_url)
         payload["pwd"] = password
         for i in count(1):
             payload["pg"] = i
@@ -177,7 +195,7 @@ def iterdir(
                 }
                 if show_detail:
                     attr.update(attr_from_download_url(get_download_url(attr["id"], origin)))
-                elif for_download:
+                elif show_download:
                     attr["download_url"] = get_download_url(attr["id"], origin)
                 try:
                     if not predicate or predicate(attr):
