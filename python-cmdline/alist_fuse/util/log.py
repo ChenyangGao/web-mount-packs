@@ -7,7 +7,7 @@ __all__ = ["logger", "ColoredLevelNameFormatter"]
 import logging
 
 
-logger = logging.getLogger("alist-strm-fuse")
+logger = logging.getLogger("alist_fuse")
 
 
 class ColoredLevelNameFormatter(logging.Formatter):

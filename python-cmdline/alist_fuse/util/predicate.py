@@ -10,8 +10,11 @@ from runpy import run_path
 from textwrap import dedent
 from typing import Final, Optional
 
+from alist import AlistPath
+from alist.util.ignore import read_str, read_file, parse
 
-ConditionSourceType = dict
+
+ConditionSourceType = AlistPath
 PredicateType = Callable[[ConditionSourceType], bool]
 PredicateMakerType = Callable[[str, dict], Optional[PredicateType]]
 
@@ -41,6 +44,54 @@ def make_predicate(
     return TYPE_TO_PREIDCATE_MAKERS[type](code, ns)
 
 
+@register_maker("ignore")
+def make_predicate_ignore(
+    expr: str, 
+    ns: dict, 
+    /, 
+) -> Optional[PredicateType]:
+    ignore = parse(read_str(expr))
+    if not ignore:
+        return None
+    return lambda p, /: not ignore(p.path + "/"[:p.is_dir()])
+
+
+@register_maker("ignore-file")
+def make_predicate_ignore_file(
+    path: str, 
+    ns: dict, 
+    /, 
+) -> Optional[PredicateType]:
+    ignore = parse(read_file(open(path, encoding="utf-8")))
+    if not ignore:
+        return None
+    return lambda p, /: not ignore(p.path + "/"[:p.is_dir()])
+
+
+@register_maker("filter")
+def make_predicate_filter(
+    expr: str, 
+    ns: dict, 
+    /, 
+) -> Optional[PredicateType]:
+    ignore = parse(read_str(expr))
+    if not ignore:
+        return None
+    return lambda p, /: ignore(p.path + "/"[:p.is_dir()])
+
+
+@register_maker("filter-file")
+def make_predicate_filter_file(
+    path: str, 
+    ns: dict, 
+    /, 
+) -> Optional[PredicateType]:
+    ignore = parse(read_file(open(path, encoding="utf-8")))
+    if not ignore:
+        return None
+    return lambda p, /: ignore(p.path + "/"[:p.is_dir()])
+
+
 @register_maker("expr")
 def make_predicate_expr(
     expr: str, 
@@ -51,7 +102,7 @@ def make_predicate_expr(
     if not expr:
         return None
     code = compile(expr, "-", "eval")
-    return lambda attr: eval(code, ns, {"attr": attr})
+    return lambda path: eval(code, ns, {"path": path})
 
 
 @register_maker("re")
@@ -61,7 +112,7 @@ def make_predicate_re(
     /, 
 ) -> Optional[PredicateType]:
     search = re_compile(expr).search
-    return lambda attr: search(attr["name"]) is not None
+    return lambda path: search(path["name"]) is not None
 
 
 @register_maker("lambda")
@@ -89,9 +140,9 @@ def make_predicate_stmt(
     if not stmt:
         return None
     code = compile(stmt, "-", "exec")
-    def predicate(attr):
+    def predicate(path):
         try:
-            eval(code, ns, {"attr": attr})
+            eval(code, ns, {"path": path})
             return True
         except:
             return False

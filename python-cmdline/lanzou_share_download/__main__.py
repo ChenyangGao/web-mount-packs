@@ -8,7 +8,8 @@ from argparse import ArgumentParser, RawTextHelpFormatter
 parser = ArgumentParser(description="""\
     🔧 从蓝奏云的分享，提取下载链接或下载文件
 
-MIT licensed: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/lanzou_share_download/LICENSE
+Source Code:  https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/lanzou_share_download
+MIT Licensed: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/lanzou_share_download/LICENSE
 """, epilog=r"""------------------------------
 
 🔨 使用示例：
@@ -49,16 +50,17 @@ parser.add_argument("url", nargs="?", help="""\
 parser.add_argument("-hs", "--headers", help="请求头，用冒号分开，一行一个")
 parser.add_argument("-d", "--download-dir", help="下载文件夹，如果指定此参数，会下载文件且断点续传")
 parser.add_argument("-sd", "--show-detail", action="store_true", help="获取文件的详细信息，下载链接也会变成直链（不指定时为 302 链接）")
+parser.add_argument("-p", "--print-attr", action="store_true", help="输出属性字典，而不是下载链接")
 parser.add_argument("-c", "--predicate-code", help="断言，当断言的结果为 True 时，链接会被输出，未指定此参数则自动为 True")
 parser.add_argument(
     "-t", "--predicate-type", choices=("expr", "re", "lambda", "stmt", "code", "path"), default="expr", 
     help="""断言类型
-    - expr    （默认值）表达式，会注入一个名为 attr 的字典，包含文件的信息
-    - re      正则表达式，如果在文件名中可搜索到此模式，则断言为 True
-    - lambda  lambda 函数，接受一个参数，此参数是一个包含文件信息的字典
-    - stmt    语句，当且仅当不抛出异常，则视为 True，会注入一个名为 attr 的字典，包含文件的信息
-    - code    代码，运行后需要在它的全局命名空间中生成一个 check 函数用于断言，接受一个参数，此参数是一个包含文件信息的字典
-    - path    代码的路径，运行后需要在它的全局命名空间中生成一个 check 函数用于断言，接受一个参数，此参数是一个包含文件信息的字典
+    - expr    （默认值）表达式，会注入一个名为 attr 的文件信息的 dict
+    - re      正则表达式，如果文件的名字匹配此模式，则断言为 True
+    - lambda  lambda 函数，接受一个文件信息的 dict 作为参数
+    - stmt    语句，当且仅当不抛出异常，则视为 True，会注入一个名为 attr 的文件信息的 dict
+    - code    代码，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个文件信息的 dict 作为参数
+    - path    代码的路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个文件信息的 dict 作为参数
 
 attr 字典的格式如下（包含这些 key），下载链接是 302 链接
 
@@ -92,7 +94,11 @@ attr 字典的格式如下（包含这些 key），下载链接是 302 链接
         'access_time': datetime.datetime(2024, 1, 28, 10, 7, 11), 
         'download_url': 'https://i-010.wwentua.com:446/01291200160550790bb/2024/01/28/369eebad02206a585b5fa324a4aa8ec2.apk?st=4cUHqZHiM7fNve0KGxb7Qg&e=1706506286&b=AQBcLFI3B2cENQMhATQDdFR1XSxRAFQgBzFaOlwyA3QHOF1wA3VUZAB7XzpRLwM2CAIAPgdzC2QJNl82XARSYgFjXGpSawc6BGEDeAEcA2hUZV0sUTFUIAc5WmFcbwMsByNdZQNiVA4ALF9xUXIDdAgtAHIHZQtiCTdffFw6UiABOA_c_c&fi=160550790&pid=223-94-212-221&up=2&mp=0&co=0', 
     }
+
+可以通过 -i/--init-code 或 -ip/--init-code-path 提前为断言函数的全局命名空间注入一些变量，默认会注入 re （正则表达式模块）
 """)
+parser.add_argument("-i", "--init-code", help="执行这段代码一次，以初始化断言函数的全局命名空间")
+parser.add_argument("-ip", "--init-code-path", help="执行此路径的代码一次，以初始化断言函数的全局命名空间")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.add_argument("-li", "--license", action="store_true", help="输出 license")
 args = parser.parse_args()
@@ -112,8 +118,11 @@ from __init__ import iterdir # type: ignore
 url = args.url
 headers = args.headers
 download_dir = args.download_dir
+print_attr = args.print_attr
 predicate_code = args.predicate_code
 predicate_type = args.predicate_type
+init_code = args.init_code
+init_code_path = args.init_code_path
 
 if url:
     urls = url.splitlines()
@@ -129,6 +138,14 @@ else:
     headers = {"Accept-language": "zh-CN"}
 
 if predicate_code:
+    ns = {"re": __import__("re")}
+    if predicate_type != "re":
+        if init_code:
+            from textwrap import dedent
+            exec(dedent(init_code), ns)
+        if init_code_path:
+            from runpy import run_path
+            ns = run_path(init_code_path, ns)
     from util.predicate import make_predicate # type: ignore
     predicate = make_predicate(predicate_code, predicate_type)
 else:
@@ -151,8 +168,11 @@ try:
             else:
                 password = ""
             try:
-                for item in iterdir(url, password, **kwargs):
-                    print(item["download_url"], flush=True)
+                for attr in iterdir(url, password, **kwargs):
+                    if print_attr:
+                        print(attr, flush=True)
+                    else:
+                        print(attr["download_url"], flush=True)
             except BaseException as e:
                 print(f"\r😮‍💨 \x1b[K\x1b[1;31mERROR\x1b[0m \x1b[4;34m{url!r}\x1b[0m\n  |_ \x1b[5m🙅\x1b[0m \x1b[1;31m{type(e).__qualname__}\x1b[0m: {e}")
                 if isinstance(e, (BrokenPipeError, EOFError, KeyboardInterrupt)):
@@ -182,20 +202,22 @@ try:
         for url in urls:
             if not url:
                 continue
-            print("-"*get_terminal_size().columns)
-            print(f"🚀 \x1b[1;5mPROCESSING\x1b[0m \x1b[4;34m{url!r}\x1b[0m")
             parts = url.rsplit(" ", maxsplit=1)
             if len(parts) == 2:
                 url, password = parts
             else:
                 password = ""
+            print("-"*get_terminal_size().columns)
+            print(f"🚀 \x1b[1;5mPROCESSING\x1b[0m \x1b[4;34m{url!r}\x1b[0m {password!r}")
             try:
-                for item in iterdir(url, password, **kwargs):
-                    down_url = item["download_url"]
+                for attr in iterdir(url, password, **kwargs):
+                    if print_attr:
+                        print(attr)
+                    down_url = attr["download_url"]
                     try:
                         file = download(
                             down_url, 
-                            joinpath(download_dir, item["relpath"]), 
+                            joinpath(download_dir, attr["relpath"]), 
                             resume=True, 
                             headers=headers, 
                             make_reporthook=progress, 

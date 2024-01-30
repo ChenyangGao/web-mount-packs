@@ -7,7 +7,7 @@ __all__ = ["logger", "ColoredLevelNameFormatter"]
 import logging
 
 
-logger = logging.getLogger("clouddrive-strm-fuse")
+logger = logging.getLogger("clouddrive_fuse")
 
 
 class ColoredLevelNameFormatter(logging.Formatter):

@@ -24,7 +24,6 @@ from requests import Session
 
 from .property import funcproperty
 from .response import get_filename, get_range, get_total_length, is_chunked, is_range_request
-from .urlopen import urlopen
 
 
 _T_co = TypeVar("_T_co", covariant=True)
@@ -111,6 +110,8 @@ def get_filesize(file, /) -> int:
         raise ValueError(f"{file!r} is not a file-like object in reading mode.")
     return total
 
+
+from .urlopen import urlopen
 
 class HTTPFileReader(RawIOBase, BinaryIO):
     url: str | Callable[[], str]
