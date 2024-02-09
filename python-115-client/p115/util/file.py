@@ -3,19 +3,20 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "SupportsWrite", "SupportsRead", 
-    "bio_skip_bytes", "get_filesize", "HTTPFileReader", "RequestsFileReader"
+    "SupportsRead", "SupportsWrite", "SupportsGetUrl", 
+    "bio_chunk_iter", "bio_skip_bytes", "get_filesize", "HTTPFileReader", "RequestsFileReader"
 ]
 
 import errno
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from functools import cached_property, partial
 from http.client import HTTPResponse
 from io import (
     BufferedReader, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE, 
 )
 from os import fstat, stat, PathLike
+from shutil import COPY_BUFSIZE # type: ignore
 from typing import Any, BinaryIO, IO, Optional, Protocol, Self, TypeVar
 from types import MappingProxyType
 from warnings import warn
@@ -23,91 +24,156 @@ from warnings import warn
 from requests import Session
 
 from .property import funcproperty
-from .response import get_filename, get_range, get_total_length, is_chunked, is_range_request
+from .response import get_filename, get_length, get_range, get_total_length, is_chunked, is_range_request
 
 
 _T_co = TypeVar("_T_co", covariant=True)
 _T_contra = TypeVar("_T_contra", contravariant=True)
 
 
-class SupportsWrite(Protocol[_T_contra]):
-    def write(self, __s: _T_contra) -> object: ...
-
-
 class SupportsRead(Protocol[_T_co]):
     def read(self, __length: int = ...) -> _T_co: ...
 
 
-BIOReader = TypeVar('BIOReader', BinaryIO, SupportsRead[bytes])
+class SupportsWrite(Protocol[_T_contra]):
+    def write(self, __s: _T_contra) -> object: ...
+
+
+class SupportsGetUrl(Protocol):
+    def geturl(self) -> str: ...
+
+
+BytesReadable = TypeVar("BytesReadable", bound=SupportsRead[bytes])
+
+
+# TODO: 支持 aiofiles
+def bio_chunk_iter(
+    bio: SupportsRead[bytes], 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: Optional[Callable[[int], Any]] = None, 
+) -> Iterator[bytes]:
+    read = bio.read
+    if size > 0:
+        while size:
+            readsize = min(chunksize, size)
+            yield (chunk := read(readsize))
+            length = len(chunk)
+            if callback:
+                callback(length)
+            if length < readsize:
+                break
+            size -= readsize
+    elif size < 0:
+        while (chunk := read(chunksize)):
+            yield chunk
+            if callback:
+                callback(len(chunk))
 
 
 def bio_skip_bytes(
-    bio: BIOReader, 
-    skipsize: int, 
-    chunksize: int = 1 << 16, 
+    bio: BytesReadable, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
     callback: Optional[Callable[[int], Any]] = None, 
-) -> BIOReader:
-    if skipsize <= 0:
+) -> BytesReadable:
+    if size == 0:
         return bio
     if chunksize <= 0:
-        chunksize = 1 << 16
+        chunksize = COPY_BUFSIZE
     try:
-        bio.seek(skipsize, 1) # type: ignore
+        if size > 0:
+            pos = bio.seek(size, 1) # type: ignore
+        else:
+            pos = bio.seek(0, 2) # type: ignore
         if callback:
-            callback(skipsize)
-    except:
-        q, r = divmod(skipsize, chunksize)
-        read = bio.read
-        if q:
-            if hasattr(bio, "readinto"):
-                buf = bytearray(chunksize)
-                readinto = bio.readinto
-                for _ in range(q):
-                    readinto(buf)
+            callback(pos)
+    except Exception:
+        if hasattr(bio, "readinto"):
+            readinto = bio.readinto
+            buf = bytearray(chunksize)
+            if size > 0:
+                while size >= chunksize:
+                    length = readinto(buf)
                     if callback:
-                        callback(chunksize)
+                        callback(length)
+                    if length < chunksize:
+                        break
+                    size -= chunksize
+                if size:
+                    del buf[size:]
+                    length = readinto(buf)
+                    if callback:
+                        callback(length)
             else:
-                for _ in range(q):
-                    read(chunksize)
+                while (length := readinto(buf)):
                     if callback:
-                        callback(chunksize)
-        if r:
-            read(r)
-            if callback:
-                callback(r)
+                        callback(length)
+        else:
+            read = bio.read
+            if size > 0:
+                while size:
+                    readsize = min(chunksize, size)
+                    chunk = read(readsize)
+                    length = len(chunk)
+                    if callback:
+                        callback(length)
+                    if length < readsize:
+                        break
+                    size -= readsize
+            else:
+                while (chunk := read(chunksize)):
+                    if callback:
+                        callback(len(chunk))
     return bio
 
 
-def get_filesize(file, /) -> int:
+def get_filesize(file, /, dont_read: bool = True) -> int:
     if isinstance(file, (bytes, str, PathLike)):
         return stat(file).st_size
-    if hasattr(file, "fileno"):
+    curpos = 0
+    try:
+        curpos = file.seek(0, 1)
+        seekable = True
+    except Exception:
+        seekable = False
+    if not seekable:
         try:
-            return fstat(file.fileno()).st_size
+            curpos = file.tell()
         except Exception:
             pass
     try:
-        return len(file)
+        return len(file) - curpos
     except TypeError:
         pass
-    bufsize = 1 << 16
+    if hasattr(file, "fileno"):
+        try:
+            return fstat(file.fileno()).st_size - curpos
+        except Exception:
+            pass
+    if hasattr(file, "headers"):
+        l = get_length(file)
+        if l is not None:
+            return l - curpos
+    if seekable:
+        try:
+            return file.seek(0, 2) - curpos
+        finally:
+            file.seek(curpos)
+    if dont_read:
+        return -1
     total = 0
     if hasattr(file, "readinto"):
         readinto = file.readinto
-        buf = bytearray(bufsize)
+        buf = bytearray(COPY_BUFSIZE)
         while (size := readinto(buf)):
             total += size
     elif hasattr(file, "read"):
-        if isinstance(file, TextIOWrapper):
-            file = file.buffer
-        else:
-            if file.read(0) != b"":
-                raise ValueError(f"{file!r} is not a file-like object in reading binary mode.")
         read = file.read
-        while (data := read(bufsize)):
-            total += len(data)
+        while (chunk := read(COPY_BUFSIZE)):
+            total += len(chunk)
     else:
-        raise ValueError(f"{file!r} is not a file-like object in reading mode.")
+        return -1
     return total
 
 

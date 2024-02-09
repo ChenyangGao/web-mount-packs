@@ -3,11 +3,12 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "text_to_dict", "dict_to_text", "cookies_str_to_dict", "headers_str_to_dict", 
-    "unicode_unescape", "extract_origin", "complete_base_url", 
-    "posix_glob_translate_iter", "text_within", 
+    "to_base64", "text_to_dict", "dict_to_text", "cookies_str_to_dict", "headers_str_to_dict", 
+    "unicode_unescape", "extract_origin", "complete_base_url", "posix_glob_translate_iter", 
+    "text_within", 
 ]
 
+from base64 import b64encode
 from collections.abc import Iterator
 from codecs import decode
 from fnmatch import translate as wildcard_translate
@@ -23,6 +24,12 @@ CRE_URL_SCHEME = re_compile(r"^(?i:[a-z][a-z0-9.+-]*)://")
 REFIND_BRACKET: Final = re_compile("\[[^]]+\]").finditer
 RESUB_DOT: Final = re_compile("((?:^|(?<=[^\\\\]))(?s:\\\\.)*)\\.").sub
 RESUB_REMOVE_WRAP_BRACKET: Final = partial(re_compile("(?s:\\[(.[^]]*)(?<![?*])\\])").sub, "\\1")
+
+
+def to_base64(s: bytes | str, /) -> str:
+    if isinstance(s, str):
+        s = bytes(s, "utf-8")
+    return str(b64encode(s), "ascii")
 
 
 def text_to_dict(

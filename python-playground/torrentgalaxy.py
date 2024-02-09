@@ -136,6 +136,8 @@ def extract_row(row):
 
 def extract_table(etree):
     table = etree.find('.//div[@class="tgxtable"]')
+    if table is None:
+        return 0, ()
     return len(table)-1, map(extract_row, table[1:])
 
 
@@ -209,4 +211,4 @@ if __name__ == "__main__":
 # TODO: 支持多线程，退出时自动关闭所有网络链接
 # TODO: 支持把数据采集到 json 和 sqlite，都是增量采集，不是完成后一次性写入
 # TODO: 一开始就确定总的页数，当采集完最后一个后，看一下是不是40个，如果是40个，才尝试继续去获取之后的
-
+# TODO: 如果采集的一页中最后一条已经存在，就立即终止

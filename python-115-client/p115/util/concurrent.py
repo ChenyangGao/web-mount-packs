@@ -8,21 +8,16 @@ from asyncio import CancelledError, Semaphore, TaskGroup
 from collections.abc import Callable, Coroutine, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
-from inspect import getfullargspec, isawaitable
+from inspect import isawaitable
 from queue import Queue
 from threading import Event, Lock, Thread
 from typing import cast, Any, Optional, TypeVar
 
+from .args import argcount
+
 
 T = TypeVar("T")
 V = TypeVar("V")
-
-
-def argcount(func: Callable) -> int:
-    try:
-        return func.__code__.co_argcount
-    except AttributeError:
-        return len(getfullargspec(func).args)
 
 
 def thread_batch(

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.4.2"
+version = "0.0.4.3"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -31,10 +31,10 @@ aiohttp = "*"
 cachetools = "*"
 ecdsa = "*"
 lz4 = "*"
-oss2 = "*"
 pycryptodome = "*"
 qrcode = "*"
 requests = "*"
+yarl = "*"
 
 [tool.poetry.dev-dependencies]
 

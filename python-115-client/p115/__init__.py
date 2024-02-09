@@ -13,25 +13,26 @@ __all__ = [
 import errno
 
 from abc import ABC, abstractmethod
-from asyncio import run
-from base64 import b64encode
+from asyncio import get_running_loop, run, to_thread
 from binascii import b2a_hex
 from collections import deque
 from collections.abc import (
-    Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, MutableMapping, 
-    Sequence, ValuesView, 
+    AsyncIterator, Awaitable, Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, 
+    MutableMapping, Sequence, ValuesView, 
 )
 from concurrent.futures import Future
 from copy import deepcopy
 from contextlib import asynccontextmanager
 from datetime import date, datetime
+from email.utils import formatdate
 from functools import cached_property, partial, update_wrapper
-from mimetypes import guess_type
-from hashlib import md5, sha1
+from hashlib import md5, sha1, file_digest
+from hmac import digest as hmac_digest
 from inspect import isawaitable, iscoroutinefunction
 from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
 from itertools import count
 from json import dumps, loads
+from mimetypes import guess_type
 from os import fsdecode, fspath, fstat, makedirs, scandir, stat, stat_result, PathLike
 from os import path as ospath
 from posixpath import join as joinpath, splitext
@@ -41,34 +42,35 @@ from stat import S_IFDIR, S_IFREG
 from threading import Condition, Thread
 from time import sleep, time
 from typing import (
-    cast, Any, ClassVar, Final, Generic, IO, Literal, Optional, Never, Self, TypeAlias, 
+    cast, overload, Any, ClassVar, Final, Generic, IO, Literal, Optional, Never, Self, TypeAlias, 
     TypedDict, TypeVar, Unpack, 
 )
 from types import MappingProxyType
 from urllib.parse import parse_qsl, quote, urlencode, urlparse
 from uuid import uuid4
 from warnings import filterwarnings
+from xml.etree.ElementTree import fromstring
 
 from aiohttp import ClientSession
 from requests.cookies import create_cookie
 from requests.exceptions import Timeout
 from requests.models import Response
 from requests.sessions import Session
+from yarl import URL
 
-# TODO: 以后会去除这个依赖，自己实现对上传接口的调用，以支持异步
-import oss2 # type: ignore
 # NOTE: OR use `pyqrcode` instead
 import qrcode # type: ignore
 
 from .exception import AuthenticationError, LoginError
+from .util.args import argcount
 from .util.cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
-from .util.file import get_filesize, HTTPFileReader, RequestsFileReader, SupportsRead, SupportsWrite
-from .util.hash import file_digest
-from .util.iter import cut_iter
+from .util.file import bio_chunk_iter, bio_skip_bytes, get_filesize, HTTPFileReader, RequestsFileReader, SupportsRead, SupportsWrite, SupportsGetUrl
+from .util.iter import asyncify_iter
 from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 from .util.property import funcproperty
-from .util.response import get_content_length
-from .util.text import cookies_str_to_dict, posix_glob_translate_iter
+from .util.response import get_content_length, get_filename, is_range_request
+from .util.text import cookies_str_to_dict, posix_glob_translate_iter, to_base64
+from .util.urlopen import urlopen
 
 
 filterwarnings("ignore", category=DeprecationWarning)
@@ -173,19 +175,17 @@ class HeadersKeyword(TypedDict):
 class P115Client:
     cookie: str
     session: Session
-    async_session: ClientSession
     user_id: int
     user_key: str
 
     def __init__(self, /, cookie=None, login_app: str = "web"):
         ns = self.__dict__
         session = ns["session"] = Session()
-        ns["async_session"] = ClientSession(raise_for_status=True)
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
         if not cookie:
             cookie = self.login_with_qrcode(login_app)["data"]["cookie"]
         self.set_cookie(cookie)
-        resp = self.upload_info()
+        resp = self.upload_info
         if resp["errno"]:
             raise AuthenticationError(resp)
         ns.update(user_id=resp["user_id"], user_key=resp["userkey"])
@@ -202,15 +202,27 @@ class P115Client:
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
 
+    @cached_property
+    def async_session(self, /) -> ClientSession:
+        session = ClientSession(raise_for_status=True)
+        session.headers.update(self.session.headers) # type: ignore
+        cookiejar = session.cookie_jar
+        cookiejar.clear()
+        cookiejar.update_cookies(self.session.cookies, URL("http://.115.com"))
+        return session
+
     def close(self, /) -> None:
         try:
             self.session.close()
-        except:
+        except AttributeError:
             pass
-        try:
-            run(self.async_session.close())
-        except:
-            pass
+        if "async_session" in self.__dict__:
+            try:
+                loop = get_running_loop()
+            except RuntimeError:
+                run(self.async_session.close())
+            else:
+                loop.create_task(self.async_session.close())
 
     def set_cookie(self, cookie, /):
         if isinstance(cookie, str):
@@ -224,9 +236,10 @@ class P115Client:
                 )
         else:
             cookiejar.update(cookie)
-        cookiejar2 = self.async_session.cookie_jar
-        cookiejar2.clear()
-        cookiejar2.update_cookies(cookiejar)
+        if "async_session" in self.__dict__:
+            cookiejar2 = self.async_session.cookie_jar
+            cookiejar2.clear()
+            cookiejar2.update_cookies(cookiejar, URL("http://.115.com"))
         cookies = cookiejar.get_dict()
         self.__dict__["cookie"] = "; ".join(f"{key}={cookies[key]}" for key in ("UID", "CID", "SEID"))
 
@@ -278,15 +291,21 @@ class P115Client:
         /, 
         url: str, 
         method: str = "GET", 
-        parse: bool | Callable[[bytes], Any] = False, 
+        parse: None | bool | Callable = False, 
         **request_kwargs, 
     ):
         request_kwargs["stream"] = True
         resp = self.session.request(method, url, **request_kwargs)
         resp.raise_for_status()
-        if callable(parse):
+        if parse is None:
+            resp.close()
+        elif callable(parse):
+            ac = argcount(parse)
             with resp:
-                return parse(resp.content)
+                if ac == 1:
+                    return parse(resp)
+                else:
+                    return parse(resp, resp.content)
         elif parse:
             with resp:
                 content_type = resp.headers.get("Content-Type", "")
@@ -304,15 +323,24 @@ class P115Client:
         /, 
         url: str, 
         method: str = "GET", 
-        parse: bool | Callable[[bytes], Any] = False, 
+        parse: None | bool | Callable = False, 
         **request_kwargs, 
     ):
         request_kwargs.pop("stream", None)
         req = self.async_session.request(method, url, **request_kwargs)
-        if callable(parse):
+        if parse is None:
             async def request():
                 async with req as resp:
-                    ret = parse(await resp.read())
+                    pass
+            return request()
+        elif callable(parse):
+            ac = argcount(parse)
+            async def request():
+                async with req as resp:
+                    if ac == 1:
+                        ret = parse(resp)
+                    else:
+                        ret = parse(resp, (await resp.read()))
                     if isawaitable(ret):
                         ret = await ret
                     return ret
@@ -336,7 +364,7 @@ class P115Client:
         /, 
         url: str, 
         method: str = "GET", 
-        parse: bool | Callable[[bytes], Any] = loads, 
+        parse: None | bool | Callable = lambda resp, content: loads(content), 
         async_: bool = False, 
         **request_kwargs, 
     ):
@@ -376,7 +404,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bool:
         api = "https://my.115.com/?ct=guide&ac=status"
-        def parse(content) -> bool:
+        def parse(resp, content: bytes) -> bool:
             try:
                 return loads(content)["state"]
             except:
@@ -1572,7 +1600,7 @@ class P115Client:
             - user_id: int | str = <default>
         """
         api = "https://proapi.115.com/app/share/downurl"
-        def parse(content: bytes) -> dict:
+        def parse(resp, content: bytes) -> dict:
             resp = loads(content)
             if resp["state"]:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
@@ -1646,7 +1674,7 @@ class P115Client:
         api = "https://proapi.115.com/app/chrome/downurl"
         if isinstance(payload, str):
             payload = {"pickcode": payload}
-        def parse(content: bytes) -> dict:
+        def parse(resp, content: bytes) -> dict:
             resp = loads(content)
             if resp["state"]:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
@@ -1681,24 +1709,728 @@ class P115Client:
 
     ########## Upload API ##########
 
-    def upload_info(
+    @staticmethod
+    def _oss_upload_sign(
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        method: str = "PUT", 
+        params: None | str | Mapping | Sequence[tuple[Any, Any]] = "", 
+        headers: None | str | dict = "", 
+    ) -> dict:
+        """帮助函数：计算认证信息，返回带认证信息的请求头
+        """
+        subresource_key_set = frozenset((
+            "response-content-type", "response-content-language",
+            "response-cache-control", "logging", "response-content-encoding",
+            "acl", "uploadId", "uploads", "partNumber", "group", "link",
+            "delete", "website", "location", "objectInfo", "objectMeta",
+            "response-expires", "response-content-disposition", "cors", "lifecycle",
+            "restore", "qos", "referer", "stat", "bucketInfo", "append", "position", "security-token",
+            "live", "comp", "status", "vod", "startTime", "endTime", "x-oss-process",
+            "symlink", "callback", "callback-var", "tagging", "encryption", "versions",
+            "versioning", "versionId", "policy", "requestPayment", "x-oss-traffic-limit", "qosInfo", "asyncFetch",
+            "x-oss-request-payer", "sequential", "inventory", "inventoryId", "continuation-token", "callback",
+            "callback-var", "worm", "wormId", "wormExtend", "replication", "replicationLocation",
+            "replicationProgress", "transferAcceleration", "cname", "metaQuery",
+            "x-oss-ac-source-ip", "x-oss-ac-subnet-mask", "x-oss-ac-vpc-id", "x-oss-ac-forward-allow",
+            "resourceGroup", "style", "styleName", "x-oss-async-process", "regionList"
+        ))
+        date = formatdate(usegmt=True)
+        if params is None:
+            params = ""
+        else:
+            if not isinstance(params, str):
+                if isinstance(params, dict):
+                    if params.keys() - subresource_key_set:
+                        params = [(k, params[k]) for k in params.keys() & subresource_key_set]
+                elif isinstance(params, Mapping):
+                    params = [(k, params[k]) for k in params if k in subresource_key_set]
+                else:
+                    params = [(k, v) for k, v in params if k in subresource_key_set]
+                params = urlencode(params)
+            if params:
+                params = "?" + params
+        if headers is None:
+            headers = ""
+        elif isinstance(headers, dict):
+            it = (
+                (k2, v)
+                for k, v in headers.items()
+                if (k2 := k.lower()).startswith("x-oss-")
+            )
+            headers = "\n".join("%s:%s" % e for e in sorted(it))
+        signature_data = f"""{method.upper()}
+
+
+{date}
+{headers}
+/{bucket_name}/{key}{params}""".encode("utf-8")
+        signature = to_base64(hmac_digest(bytes(token["AccessKeySecret"], "utf-8"), signature_data, "sha1"))
+        return {
+            "date": date, 
+            "authorization": "OSS {0}:{1}".format(token["AccessKeyId"], signature), 
+        }
+
+    def _oss_upload_request(
         self, 
         /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        method: str = "PUT", 
+        params: None | str | dict | list[tuple] = None, 
+        headers: None | dict = None, 
         async_: bool = False, 
         **request_kwargs, 
+    ):
+        """帮助函数：上传到阿里云 OSS 对公用函数
+        """
+        headers2 = self._oss_upload_sign(
+            bucket_name, 
+            key, 
+            token, 
+            method=method, 
+            params=params, 
+            headers=headers, 
+        )
+        if headers:
+            headers2.update(headers)
+        headers2["Content-Type"] = ""
+        return self.request(
+            url, 
+            params=params, 
+            headers=headers2, 
+            method=method, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    # NOTE: https://github.com/aliyun/aliyun-oss-python-sdk/blob/master/oss2/api.py#L1359-L1595
+    @overload
+    def _oss_multipart_upload_init(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> str:
+        ...
+    @overload
+    def _oss_multipart_upload_init(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[str]:
+        ...
+    def _oss_multipart_upload_init(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> str | Awaitable[str]:
+        """帮助函数：初始化分片上传，获取 upload_id
+        """
+        request_kwargs["parse"] = lambda resp, content, /: fromstring(content).find("UploadId").text # type: ignore
+        request_kwargs["method"] = "POST"
+        request_kwargs["params"] = "uploads"
+        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
+        return self._oss_upload_request(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def _oss_multipart_upload_part(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        part_number: int, 
+        part_size: int = 10485760, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def _oss_multipart_upload_part(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        part_number: int, 
+        part_size: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def _oss_multipart_upload_part(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        part_number: int, 
+        part_size: int = 10485760, # default to: 10 MB
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """帮助函数：上传分片
+        """
+        def parse(resp) -> dict:
+            headers = resp.headers
+            return {
+                "PartNumber": part_number, 
+                "LastModified": datetime.strptime(headers["date"], "%a, %d %b %Y %H:%M:%S GMT").strftime("%FT%X.%f")[:-3] + "Z", 
+                "ETag": headers["ETag"], 
+                "HashCrc64ecma": int(headers["x-oss-hash-crc64ecma"]), 
+                "Size": count_in_bytes, 
+            }
+        count_in_bytes = 0
+        def acc(length):
+            nonlocal count_in_bytes
+            count_in_bytes += length
+        request_kwargs["parse"] = parse
+        request_kwargs["params"] = {"partNumber": part_number, "uploadId": upload_id}
+        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
+        if hasattr(file, "read"):
+            bio_it = bio_chunk_iter(file, part_size, callback=acc)
+            if async_:
+                request_kwargs["data"] = asyncify_iter(bio_it, busy_io=True)
+            else:
+                request_kwargs["data"] = bio_it
+        else:
+            request_kwargs["data"] = file
+        return self._oss_upload_request(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def _oss_multipart_upload_complete(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        callback: dict, 
+        parts: list[dict], 
+        async_: bool = False, 
+        **request_kwargs, 
+    ):
+        """帮助函数：完成分片上传，创建文件
+        """
+        request_kwargs["method"] = "POST"
+        request_kwargs["params"] = {"uploadId": upload_id}
+        request_kwargs["headers"] = {
+            "x-oss-security-token": token["SecurityToken"], 
+            "x-oss-callback": to_base64(callback["callback"]), 
+            "x-oss-callback-var": to_base64(callback["callback_var"]), 
+        }
+        request_kwargs["data"] = ("<CompleteMultipartUpload>%s</CompleteMultipartUpload>" % "".join(map(
+            "<Part><PartNumber>{PartNumber}</PartNumber><ETag>{ETag}</ETag></Part>".format_map, 
+            parts, 
+        ))).encode("utf-8")
+        return self._oss_upload_request(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def _oss_multipart_upload_cancel(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ):
+        """帮助函数：取消分片上传
+        """
+        request_kwargs["parse"] = None
+        request_kwargs["method"] = "DELETE"
+        request_kwargs["params"] = {"uploadId": upload_id}
+        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
+        return self._oss_upload_request(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def _oss_multipart_upload_part_iter_sync(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        part_number_start: int = 1, 
+        part_size: int = 10485760, # default to: 10 MB
+        **request_kwargs, 
+    ) -> Iterator[dict]:
+        """帮助函数：迭代器，迭代一次上传一个分片
+        """
+        for part_number in count(part_number_start):
+            part = self._oss_multipart_upload_part(
+                file, 
+                bucket_name, 
+                key, 
+                token, 
+                url, 
+                upload_id, 
+                part_number=part_number, 
+                part_size=part_size, 
+                **request_kwargs, 
+            )
+            yield part
+            if part["Size"] < part_size:
+                break
+
+    async def _oss_multipart_upload_part_iter_async(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        part_number_start: int = 1, 
+        part_size: int = 10485760, # default to: 10 MB
+        **request_kwargs, 
+    ) -> AsyncIterator[dict]:
+        """帮助函数：迭代器，迭代一次上传一个分片
+        """
+        for part_number in count(part_number_start):
+            part = await self._oss_multipart_upload_part(
+                file, 
+                bucket_name, 
+                key, 
+                token, 
+                url, 
+                upload_id, 
+                part_number=part_number, 
+                part_size=part_size, 
+                async_=True, 
+                **request_kwargs, 
+            )
+            yield part
+            if part["Size"] < part_size:
+                break
+
+    def _oss_multipart_upload_part_iter(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        part_number_start: int = 1, 
+        part_size: int = 10485760, # default to: 10 MB
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> Iterator[dict]:
+        """帮助函数：迭代器，迭代一次上传一个分片
+        """
+        if async_:
+            method: Callable = self._oss_multipart_upload_part_iter_async
+        else:
+            method = self._oss_multipart_upload_part_iter_sync
+        return method(
+            file, 
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            upload_id, 
+            part_number_start=part_number_start, 
+            part_size=part_size, 
+            **request_kwargs, 
+        )
+
+    def _oss_multipart_part_iter_sync(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        **request_kwargs, 
+    ) -> Iterator[dict]:
+        """帮助函数：上传文件到阿里云 OSS，罗列已经上传的分块
+        """
+        to_num = lambda s: int(s) if isinstance(s, str) and s.isnumeric() else s
+        request_kwargs["method"] = "GET"
+        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
+        request_kwargs["params"] = params = {"uploadId": upload_id}
+        request_kwargs["parse"] = lambda resp, content, /: fromstring(content)
+        while True:
+            etree = self._oss_upload_request(
+                bucket_name, 
+                key, 
+                token, 
+                url, 
+                **request_kwargs, 
+            )
+            for el in etree.iterfind("Part"):
+                yield {sel.tag: to_num(sel.text) for sel in el}
+            if etree.find("IsTruncated").text == "false":
+                break
+            params["part-number-marker"] = etree.find("NextPartNumberMarker").text
+
+    async def _oss_multipart_part_iter_async(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        **request_kwargs, 
+    ) -> AsyncIterator[dict]:
+        """帮助函数：上传文件到阿里云 OSS，罗列已经上传的分块
+        """
+        to_num = lambda s: int(s) if isinstance(s, str) and s.isnumeric() else s
+        request_kwargs["method"] = "GET"
+        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
+        request_kwargs["params"] = params = {"uploadId": upload_id}
+        request_kwargs["parse"] = lambda resp, content, /: fromstring(content)
+        while True:
+            etree = await self._oss_upload_request(
+                bucket_name, 
+                key, 
+                token, 
+                url, 
+                async_=True, 
+                **request_kwargs, 
+            )
+            for el in etree.iterfind("Part"):
+                yield {sel.tag: to_num(sel.text) for sel in el}
+            if etree.find("IsTruncated").text == "false":
+                break
+            params["part-number-marker"] = etree.find("NextPartNumberMarker").text
+
+    def _oss_multipart_part_iter(
+        self, 
+        /, 
+        bucket_name: str, 
+        key: str, 
+        token: dict, 
+        url: str, 
+        upload_id: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> Iterator[dict]:
+        """帮助函数：上传文件到阿里云 OSS，罗列已经上传的分块
+        """
+        if async_:
+            method: Callable = self._oss_multipart_part_iter_async
+        else:
+            method = self._oss_multipart_part_iter_sync
+        return method(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            upload_id, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def _oss_upload(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        callback: dict, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _oss_upload(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        callback: dict, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def _oss_upload(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        callback: dict, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """帮助函数：上传文件到阿里云 OSS，一次上传全部
+        """
+        upload_url = self.upload_url
+        urlp = urlparse(upload_url["endpoint"])
+        url = f"{urlp.scheme}://{bucket_name}.{urlp.netloc}/{key}"
+        if async_:
+            async def request():
+                token = await self.request(upload_url["gettokenurl"], async_=True)
+                request_kwargs["data"] = file
+                request_kwargs["headers"] = {
+                    "x-oss-security-token": token["SecurityToken"], 
+                    "x-oss-callback": to_base64(callback["callback"]), 
+                    "x-oss-callback-var": to_base64(callback["callback_var"]), 
+                }
+                return await self._oss_upload_request(
+                    bucket_name, 
+                    key, 
+                    token, 
+                    url, 
+                    async_=True, 
+                    **request_kwargs, 
+                )
+            return request()
+        token = self.request(upload_url["gettokenurl"])
+        request_kwargs["data"] = file
+        request_kwargs["headers"] = {
+            "x-oss-security-token": token["SecurityToken"], 
+            "x-oss-callback": to_base64(callback["callback"]), 
+            "x-oss-callback-var": to_base64(callback["callback_var"]), 
+        }
+        return self._oss_upload_request(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            **request_kwargs, 
+        )
+
+    def _oss_multipart_upload_sync(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        stash: dict, 
+        part_size: int = 10485760, # default to: 10 MB
+        **request_kwargs, 
+    ) -> dict:
+        """帮助函数：上传文件到阿里云 OSS，分块上传，支持断点续传
+        """
+        parts: list[dict]
+        if "upload_id" in stash:
+            url = stash["url"]
+            token = stash["token"]
+            upload_id = stash["upload_id"]
+            parts = list(self._oss_multipart_part_iter_sync(
+                bucket_name, key, token, url, upload_id, **request_kwargs))
+            skipsze = sum(part["Size"] for part in parts)
+            if skipsze:
+                try:
+                    file.seek(skipsze) # type: ignore
+                except (AttributeError, TypeError, UnsupportedOperation):
+                    bio_skip_bytes(file, skipsze)
+        else:
+            upload_url = self.upload_url
+            urlp = urlparse(upload_url["endpoint"])
+            url = stash["url"] = f"{urlp.scheme}://{bucket_name}.{urlp.netloc}/{key}"
+            token = stash["token"] = self.request(upload_url["gettokenurl"], **request_kwargs)
+            upload_id = stash["upload_id"] = self._oss_multipart_upload_init(
+                bucket_name, key, token, url, **request_kwargs)
+            parts = []
+
+        parts.extend(self._oss_multipart_upload_part_iter_sync(
+            file, 
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            upload_id, 
+            part_number_start=len(parts) + 1, 
+            part_size=part_size, 
+            **request_kwargs, 
+        ))
+
+        return self._oss_multipart_upload_complete(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            upload_id, 
+            callback=stash["callback"], 
+            parts=parts, 
+            **request_kwargs, 
+        )
+
+    async def _oss_multipart_upload_async(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        stash: dict, 
+        part_size: int = 10485760, # default to: 10 MB
+        **request_kwargs, 
+    ) -> dict:
+        """帮助函数：上传文件到阿里云 OSS，分块上传，支持断点续传
+        """
+        parts: list[dict]
+        if "upload_id" in stash:
+            url = stash["url"]
+            token = stash["token"]
+            upload_id = stash["upload_id"]
+            parts = [p async for p in self._oss_multipart_part_iter_async(
+                bucket_name, key, token, url, upload_id, **request_kwargs
+            )]
+            skipsze = sum(part["Size"] for part in parts)
+            if skipsze:
+                try:
+                    file.seek(skipsze) # type: ignore
+                except (AttributeError, TypeError, UnsupportedOperation):
+                    bio_skip_bytes(file, skipsze)
+        else:
+            upload_url = self.upload_url
+            urlp = urlparse(upload_url["endpoint"])
+            url = stash["url"] = f"{urlp.scheme}://{bucket_name}.{urlp.netloc}/{key}"
+            token = stash["token"] = await self.request(upload_url["gettokenurl"], async_=True, **request_kwargs)
+            upload_id = stash["upload_id"] = await self._oss_multipart_upload_init(
+                bucket_name, key, token, url, async_=True, **request_kwargs)
+            parts = []
+
+        parts.extend([p async for p in self._oss_multipart_upload_part_iter_async(
+            file, 
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            upload_id, 
+            part_number_start=len(parts) + 1, 
+            part_size=part_size, 
+            **request_kwargs, 
+        )])
+
+        return await self._oss_multipart_upload_complete(
+            bucket_name, 
+            key, 
+            token, 
+            url, 
+            upload_id, 
+            callback=stash["callback"], 
+            parts=parts, 
+            async_=True, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def _oss_multipart_upload(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        stash: dict, 
+        part_size: int = 10485760, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _oss_multipart_upload(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        stash: dict, 
+        part_size: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def _oss_multipart_upload(
+        self, 
+        /, 
+        file: SupportsRead[bytes], 
+        bucket_name: str, 
+        key: str, 
+        stash: dict, 
+        part_size: int = 10485760, # default to: 10 MB
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        if async_:
+            method: Callable = self._oss_multipart_upload_async
+        else:
+            method = self._oss_multipart_upload_sync
+        return method(
+            file, 
+            bucket_name, 
+            key, 
+            stash=stash, 
+            part_size=part_size, 
+            **request_kwargs, 
+        )
+
+    @cached_property
+    def upload_info(self, /) -> dict:
         """获取和上传有关的各种服务信息
         GET https://proapi.115.com/app/uploadinfo
         """
         api = "https://proapi.115.com/app/uploadinfo"
-        return self.request(api, async_=async_, **request_kwargs)
+        return self.request(api)
 
-    def upload_url(
-        self, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
+    @cached_property
+    def upload_url(self, /) -> dict:
         """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可
         GET https://uplb.115.com/3.0/getuploadinfo.php
         response:
@@ -1706,75 +2438,134 @@ class P115Client:
             - gettokenurl: 上传前需要用此接口获取 token
         """
         api = "https://uplb.115.com/3.0/getuploadinfo.php"
-        return self.request(api, async_=async_, **request_kwargs)
+        return self.request(api)
 
+    @overload
     def upload_sample_init(
         self, 
-        payload: dict, 
         /, 
-        async_: bool = False, 
+        filename: str, 
+        pid: int = 0, 
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def upload_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int = 0, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """网页端的上传接口，并不能秒传
         POST https://uplb.115.com/3.0/sampleinitupload.php
-        payload:
-            - userid: int | str
-            - filename: str
-            - filesize: int
-            - target: str = "U_1_0"
         """
         api = "https://uplb.115.com/3.0/sampleinitupload.php"
-        payload = {"target": "U_1_0", **payload}
+        payload = {"filename": filename, "target": f"U_1_{pid}"}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
-    # TODO: 需要添加异步支持
+    # TODO: 以后或许可以接受使用 httpx 进行同步和异步请求
+    # TODO: 支持读取 aiofiles 打开的文件
+    @overload
     def upload_file_sample(
         self, 
         /, 
         file, 
         filename: Optional[str] = None, 
-        pid: int | str = 0, 
-        filesize: int = -1, 
+        pid: int = 0, 
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
-        """基于 `upload_sample_init` 的上传接口
+        ...
+    @overload
+    def upload_file_sample(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str], 
+        pid: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_file_sample(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str] = None, 
+        pid: int = 0, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """非秒传的上传接口，但也不需要文件大小和 sha1
         """
-        if hasattr(file, "read"):
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
+        if isinstance(file, (bytes, bytearray, memoryview)):
+            if not filename:
+                filename = str(uuid4())
+        elif isinstance(file, (str, PathLike)):
+            if not filename:
+                filename = ospath.basename(fsdecode(file))
+            file = open(file, "rb")
+        elif hasattr(file, "read"):
             if not filename:
                 try:
                     filename = ospath.basename(fsdecode(file.name))
                 except Exception:
                     filename = str(uuid4())
-            if filesize < 0:
-                filesize = get_filesize(file)
-                if file.tell() != 0:
-                    file.seek(0)
+        elif isinstance(file, URL) or hasattr(file, "geturl"):
+            if isinstance(file, URL):
+                url = str(file)
+            else:
+                url = file.geturl()
+            file = urlopen(url)
+            if not filename:
+                filename = get_filename(file) or str(uuid4())
         else:
             if not filename:
-                filename = ospath.basename(fsdecode(file))
-            if filesize < 0:
-                filesize = get_filesize(file)
-            file = open(file, "rb", buffering=0)
-        payload = {
-            "filename": filename, 
-            "filesize": filesize, 
-            "target": f"U_1_{pid}", 
-        }
-        resp = self.upload_sample_init(payload, **request_kwargs)
+                filename = str(uuid4())
+        if async_:
+            async def request():
+                resp = await self.upload_sample_init(filename, pid, async_=True, **request_kwargs)
+                api = resp["host"]
+                request_kwargs["data"] = {
+                    "key": resp["object"], 
+                    "policy": resp["policy"], 
+                    "OSSAccessKeyId": resp["accessid"], 
+                    "success_action_status": "200", 
+                    "callback": resp["callback"], 
+                    "signature": resp["signature"], 
+                }
+                request_kwargs["files"] = {"file": file}
+                # TODO: 使用 aiohttp，执行下面的代码，会报错：400，The body of your POST request is not well-formed multipart/form-data
+                #       需要修复解决方案或可参考：
+                #       - https://docs.aiohttp.org/en/stable/multipart.html#hacking-multipart
+                #       - https://docs.aiohttp.org/en/stable/client_quickstart.html#post-a-multipart-encoded-file
+                # request_kwargs["data"]["file"] = file
+                # return await self.request(api, "POST", async_=True, **request_kwargs)
+                return await to_thread(self.request, api, "POST", **request_kwargs)
+            return request()
+        resp = self.upload_sample_init(filename, pid, **request_kwargs)
         api = resp["host"]
-        payload = {
-            "name": filename, 
-            "target": payload["target"], 
+        request_kwargs["data"] = {
             "key": resp["object"], 
             "policy": resp["policy"], 
             "OSSAccessKeyId": resp["accessid"], 
-            "success_action_status": 200, 
+            "success_action_status": "200", 
             "callback": resp["callback"], 
             "signature": resp["signature"], 
         }
-        request_kwargs.update(data=payload, files={"file": file})
+        request_kwargs["files"] = {"file": file}
         return self.request(api, "POST", **request_kwargs)
 
     def upload_init(
@@ -1789,20 +2580,47 @@ class P115Client:
         api = "https://uplb.115.com/4.0/initupload.php"
         return self.request(api, "POST", async_=async_, **request_kwargs)
 
-    # TODO: 需要添加异步支持
-    def upload_sha1(
+    @overload
+    def _upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        target: str = "U_1_0", 
+        sign_key: str = "", 
+        sign_val: str = "", 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _upload_file_init(
         self, 
         /, 
         filename: str, 
         filesize: int, 
         file_sha1: str, 
         target: str, 
+        sign_key: str, 
+        sign_val: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def _upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        target: str = "U_1_0", 
         sign_key: str = "", 
         sign_val: str = "", 
+        async_: bool = False, 
         **request_kwargs, 
-    ) -> dict:
-        """秒传接口，此接口是对 `upload_init` 的封装，但不建议直接使用
-        POST https://uplb.115.com/4.0/initupload.php
+    ) -> dict | Awaitable[dict]:
+        """秒传接口，此接口是对 `upload_init` 的封装
         """
         def gen_sig() -> str:
             sig_sha1 = sha1()
@@ -1822,7 +2640,6 @@ class P115Client:
         sig = gen_sig()
         token = gen_token()
         encoded_token = ECDH_ENCODER.encode_token(t).decode("ascii")
-        params = {"k_ec": encoded_token}
         data = {
             "appid": 0, 
             "appversion": APP_VERSION, 
@@ -1838,230 +2655,470 @@ class P115Client:
         if sign_key and sign_val:
             data["sign_key"] = sign_key
             data["sign_val"] = sign_val
-        encrypted = ECDH_ENCODER.encode(urlencode(sorted(data.items())))
         if (headers := request_kwargs.get("headers")):
-            headers = request_kwargs["headers"] = dict(headers)
+            request_kwargs["headers"] = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
         else:
-            headers = request_kwargs["headers"] = {}
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request_kwargs["parse"] = lambda content: loads(ECDH_ENCODER.decode(content))
-        return self.upload_init(
-            params=params, 
-            data=encrypted, 
-            **request_kwargs, 
-        )
+            request_kwargs["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
+        request_kwargs["parse"] = lambda resp, content: loads(ECDH_ENCODER.decode(content))
+        request_kwargs["params"] = {"k_ec": encoded_token}
+        request_kwargs["data"] = ECDH_ENCODER.encode(urlencode(sorted(data.items())))
+        return self.upload_init(async_=async_, **request_kwargs)
 
-    # TODO: 需要添加异步支持
-    def upload_file_sha1_simple(
+    def _upload_file_init_sync(
         self, 
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        file_sha1: str | Callable[[], str], 
         read_range_bytes_or_hash: Callable[[str], str | bytes | bytearray | memoryview], 
-        pid: int | str = 0, 
+        pid: int = 0, 
+        **request_kwargs, 
     ) -> dict:
-        """秒传接口，此接口是对 `upload_sha1` 的封装，推荐使用
+        """秒传接口，此接口是对 `upload_init` 的封装，文件大小 和 sha1 是必需的
         """
-        fileinfo = {
-            "filename": filename, 
-            "filesize": filesize, 
-            "file_sha1": file_sha1.upper(), 
-            "target": f"U_1_{pid}", 
-        }
-        resp = self.upload_sha1(**fileinfo) # type: ignore
+        if not isinstance(file_sha1, str):
+            file_sha1 = file_sha1()
+        file_sha1 = file_sha1.upper()
+        target = f"U_1_{pid}"
+        resp = self._upload_file_init(
+            filename, 
+            filesize, 
+            file_sha1, 
+            target, 
+            **request_kwargs, 
+        )
+        # NOTE: 这种情况意思是，需要二次检验一个范围哈希，它会给出此文件的一个范围区间，你读取对应的数据计算 sha1 后上传以供检验
         if resp["status"] == 7 and resp["statuscode"] == 701:
             sign_key = resp["sign_key"]
             sign_check = resp["sign_check"]
             data = read_range_bytes_or_hash(sign_check)
             if isinstance(data, str):
-                sha = data.upper()
+                sign_val = data.upper()
             else:
-                sha = sha1(data).hexdigest().upper()
-            fileinfo["sign_key"] = sign_key
-            fileinfo["sign_val"] = sha
-            resp = self.upload_sha1(**fileinfo) # type: ignore
-            fileinfo["sign_check"] = sign_check
-        resp["fileinfo"] = fileinfo
+                sign_val = sha1(data).hexdigest().upper()
+            resp = self._upload_file_init(
+                filename, 
+                filesize, 
+                file_sha1, 
+                target, 
+                sign_key=sign_key, 
+                sign_val=sign_val, 
+                **request_kwargs, 
+            )
+        resp["state"] = True
+        resp["data"] = {
+            "file_name": filename, 
+            "file_size": filesize, 
+            "sha1": file_sha1, 
+            "cid": pid, 
+            "pick_code": resp["pickcode"], 
+        }
         return resp
 
-    # TODO: 需要添加异步支持
-    def upload_file_sha1(
+    async def _upload_file_init_async(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str | Callable[[], str], 
+        read_range_bytes_or_hash: Callable[[str], str | bytes | bytearray | memoryview], 
+        pid: int = 0, 
+        **request_kwargs, 
+    ) -> dict:
+        """秒传接口，此接口是对 `upload_init` 的封装，文件大小 和 sha1 是必需的
+        """
+        if not isinstance(file_sha1, str):
+            file_sha1 = await to_thread(file_sha1)
+            if isawaitable(file_sha1):
+                file_sha1 = await file_sha1
+            file_sha1 = cast(str, file_sha1)
+        file_sha1 = file_sha1.upper()
+        target = f"U_1_{pid}"
+        resp = await self._upload_file_init(
+            filename, 
+            filesize, 
+            file_sha1, 
+            target, 
+            async_=True, 
+            **request_kwargs, 
+        )
+        # NOTE: 这种情况意思是，需要二次检验一个范围哈希，它会给出此文件的一个范围区间，你读取对应的数据计算 sha1 后上传以供检验
+        if resp["status"] == 7 and resp["statuscode"] == 701:
+            sign_key = resp["sign_key"]
+            sign_check = resp["sign_check"]
+            data = await to_thread(read_range_bytes_or_hash, sign_check)
+            if isawaitable(data):
+                data = await data
+            if isinstance(data, str):
+                sign_val = data.upper()
+            else:
+                sign_val = sha1(data).hexdigest().upper()
+            resp = await self._upload_file_init(
+                filename, 
+                filesize, 
+                file_sha1, 
+                target, 
+                sign_key=sign_key, 
+                sign_val=sign_val, 
+                async_=True, 
+                **request_kwargs, 
+            )
+        resp["state"] = True
+        resp["data"] = {
+            "file_name": filename, 
+            "file_size": filesize, 
+            "sha1": file_sha1, 
+            "cid": pid, 
+            "pick_code": resp["pickcode"], 
+        }
+        return resp
+
+    def upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str | Callable[[], str], 
+        read_range_bytes_or_hash: Callable[[str], str | bytes | bytearray | memoryview], 
+        pid: int = 0, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """秒传接口，此接口是对 `upload_init` 的封装，文件大小 和 sha1 是必需的
+        """
+        if async_:
+            method: Callable = self._upload_file_init_async
+        else:
+            method = self._upload_file_init_sync
+        return method(
+            filename, 
+            filesize, 
+            file_sha1, 
+            read_range_bytes_or_hash=read_range_bytes_or_hash, 
+            pid=pid, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def upload_init_file(
         self, 
         /, 
         file, 
         filename: Optional[str] = None, 
-        pid: int | str = 0, 
         filesize: int = -1, 
-        file_sha1: Optional[str] = None, 
+        file_sha1: None | str | Callable[[], str] = None, 
+        pid: int = 0, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
     ) -> dict:
-        """秒传接口，此接口是对 `upload_sha1` 的封装，推荐使用
+        ...
+    @overload
+    def upload_init_file(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str], 
+        filesize: int, 
+        file_sha1: None | str | Callable[[], str], 
+        pid: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_init_file(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str] = None, 
+        filesize: int = -1, 
+        file_sha1: None | str | Callable[[], str] = None, 
+        pid: int = 0, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """秒传接口，此接口是对 `upload_file_init` 的封装
         """
-        if hasattr(file, "read"):
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
+        if isinstance(file, (bytes, bytearray, memoryview)):
+            data = file
+            if not filename:
+                filename = str(uuid4())
+            if filesize < 0:
+                filesize = len(data)
+            if not file_sha1:
+                file_sha1 = sha1(data).hexdigest()
+            def read_range_bytes_or_hash(sign_check):
+                start, end = map(int, sign_check.split("-"))
+                return sha1(data[start : end + 1]).hexdigest()
+        elif isinstance(file, (str, PathLike)):
+            path = fsdecode(file)
+            if not filename:
+                filename = ospath.basename(path)
+            if filesize < 0:
+                filesize = stat(path).st_size
+            if not file_sha1:
+                file_sha1 = lambda: file_digest(open(path, "rb"), "sha1").hexdigest()
+            def read_range_bytes_or_hash(sign_check):
+                start, end = map(int, sign_check.split("-"))
+                with open(path, "rb") as file:
+                    file.seek(start)
+                    return sha1(file.read(end - start + 1)).hexdigest()
+        elif hasattr(file, "read"):
+            try:
+                curpos = file.seek(0, 1)
+                seekable = True
+            except Exception:
+                curpos = 0
+                seekable = False
             if not filename:
                 try:
                     filename = ospath.basename(fsdecode(file.name))
                 except Exception:
                     filename = str(uuid4())
             if not file_sha1:
-                filesize, sha1obj = file_digest(file, "sha1")
-                file_sha1 = sha1obj.hexdigest()
-            file_sha1 = cast(str, file_sha1)
+                if not seekable:
+                    raise TypeError(f"not a seekable reader: {file!r}")
+                def file_sha1():
+                    try:
+                        return file_digest(file, "sha1").hexdigest()
+                    finally:
+                        file.seek(curpos)
             if filesize < 0:
-                filesize = get_filesize(file)
-        else:
+                try:
+                    filesize = fstat(file.fileno()).st_size - curpos
+                except Exception:
+                    try:
+                        filesize = len(file) - curpos
+                    except TypeError:
+                        if not seekable:
+                            raise TypeError(f"unable to determine the length of file: {file!r}")
+                        try:
+                            filesize = file.seek(0, 2) - curpos
+                        finally:
+                            file.seek(curpos)
+            def read_range_bytes_or_hash(sign_check):
+                if not seekable:
+                    raise TypeError(f"not a seekable reader: {file!r}")
+                start, end = map(int, sign_check.split("-"))
+                try:
+                    file.seek(start)
+                    return sha1(file.read(end - start + 1)).hexdigest()
+                finally:
+                    file.seek(curpos)
+        elif isinstance(file, URL) or hasattr(file, "geturl"):
+            if isinstance(file, URL):
+                url = str(file)
+            else:
+                url = file.geturl()
+            resp = urlopen(url)
+            is_ranged_url = is_range_request(resp)
             if not filename:
-                filename = ospath.basename(fsdecode(file))
+                filename = get_filename(resp) or str(uuid4())
             if not file_sha1:
-                filesize, sha1obj = file_digest(open(file, "rb"), "sha1")
-                file_sha1 = sha1obj.hexdigest()
-            file_sha1 = cast(str, file_sha1)
+                file_sha1 = lambda: file_digest(resp, "sha1").hexdigest()
             if filesize < 0:
-                filesize = get_filesize(file)
-        fileinfo = {"filename": filename, "filesize": filesize, "file_sha1": file_sha1.upper(), "target": f"U_1_{pid}"}
-        resp = self.upload_sha1(**fileinfo) # type: ignore
-        if resp["status"] == 7 and resp["statuscode"] == 701:
-            sign_key = resp["sign_key"]
-            sign_check = resp["sign_check"]
-            if not hasattr(file, "read"):
-                file = open(file, "rb")
-            start, end = map(int, sign_check.split("-"))
-            file.seek(start)
-            fileinfo["sign_key"] = sign_key
-            fileinfo["sign_val"] = sha1(file.read(end-start+1)).hexdigest().upper()
-            resp = self.upload_sha1(**fileinfo) # type: ignore
-            fileinfo["sign_check"] = sign_check
-        resp["fileinfo"] = fileinfo
-        return resp
+                length = resp.length
+            def read_range_bytes_or_hash(sign_check):
+                nonlocal resp
+                resp.close()
+                if is_ranged_url:
+                    with urlopen(url, headers={"Range": "bytes=%s" % sign_check}) as resp:
+                        data = resp.read()
+                else:
+                    start, end = map(int, sign_check.split("-"))
+                    with urlopen(url) as resp:
+                        bio_skip_bytes(resp, start)
+                        data = resp.read(end - start + 1)
+                return sha1(data).hexdigest()
+        else:
+            raise TypeError(f"unable to process: {file!r}")
+        return self.upload_file_init(
+            filename, 
+            filesize, 
+            file_sha1, 
+            read_range_bytes_or_hash, 
+            pid=pid, 
+            async_=async_, 
+            **request_kwargs, 
+        )
 
-    # TODO: 需要添加异步支持
-    # TODO: 提供一个可断点续传的版本
+    def _upload_file_sync(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str] = None, 
+        pid: int = 0, 
+        filesize: int = -1, 
+        file_sha1: Optional[str] = None, 
+        part_size: int = 0, 
+        upload_directly: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """文件上传接口，这是高层封装，推荐使用
+        """
+        if upload_directly:
+            return self.upload_file_sample(file, filename, pid, **request_kwargs)
+        if not file_sha1 and hasattr(file, "read"):
+            try:
+                file.seek(0, 1)
+                return self.upload_file_sample(file, filename, pid, **request_kwargs)
+            except Exception:
+                pass
+
+        resp = self.upload_init_file(
+            file, 
+            filename, 
+            filesize=filesize, 
+            file_sha1=file_sha1, 
+            pid=pid, 
+            **request_kwargs, 
+        )
+        status = resp["status"]
+        statuscode = resp.get("statuscode", 0)
+        if status == 2 and statuscode == 0:
+            return resp
+        elif status == 1 and statuscode == 0:
+            bucket_name, key, callback = resp["bucket"], resp["object"], resp["callback"]
+        else:
+            raise ValueError(resp)
+
+        if isinstance(file, (bytes, bytearray, memoryview)):
+            pass
+        elif isinstance(file, (str, PathLike)):
+            file = open(file, "rb")
+        elif hasattr(file, "read"):
+            pass
+        elif isinstance(file, URL) or hasattr(file, "geturl"):
+            if isinstance(file, URL):
+                url = str(file)
+            else:
+                url = file.geturl()
+            file = urlopen(url)
+
+        if part_size <= 0:
+            return self._oss_upload(
+                file, 
+                bucket_name, 
+                key, 
+                callback, 
+                **request_kwargs, 
+            )
+        else:
+            return self._oss_multipart_upload(
+                file, 
+                bucket_name, 
+                key, 
+                stash={"callback": callback}, 
+                **request_kwargs, 
+            )
+
+    async def _upload_file_async(
+        self, 
+        /, 
+        file, 
+        filename: Optional[str] = None, 
+        pid: int = 0, 
+        filesize: int = -1, 
+        file_sha1: Optional[str] = None, 
+        part_size: int = 0, 
+        upload_directly: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """文件上传接口，这是高层封装，推荐使用
+        """
+        if upload_directly:
+            return await self.upload_file_sample(file, filename, pid, async_=True, **request_kwargs)
+        if not file_sha1 and hasattr(file, "read"):
+            try:
+                file.seek(0, 1)
+                return await self.upload_file_sample(file, filename, pid, async_=True, **request_kwargs)
+            except Exception:
+                pass
+
+        resp = await self.upload_init_file(
+            file, 
+            filename, 
+            filesize=filesize, 
+            file_sha1=file_sha1, 
+            pid=pid, 
+            async_=True, 
+            **request_kwargs, 
+        )
+        status = resp["status"]
+        statuscode = resp.get("statuscode", 0)
+        if status == 2 and statuscode == 0:
+            return resp
+        elif status == 1 and statuscode == 0:
+            bucket_name, key, callback = resp["bucket"], resp["object"], resp["callback"]
+        else:
+            raise ValueError(resp)
+
+        if isinstance(file, (bytes, bytearray, memoryview)):
+            pass
+        elif isinstance(file, (str, PathLike)):
+            file = open(file, "rb")
+        elif hasattr(file, "read"):
+            pass
+        elif isinstance(file, URL) or hasattr(file, "geturl"):
+            if isinstance(file, URL):
+                url = str(file)
+            else:
+                url = file.geturl()
+            file = urlopen(url)
+
+        if part_size <= 0:
+            return await self._oss_upload(
+                file, 
+                bucket_name, 
+                key, 
+                callback, 
+                async_=True, 
+                **request_kwargs, 
+            )
+        else:
+            return await self._oss_multipart_upload(
+                file, 
+                bucket_name, 
+                key, 
+                stash={"callback": callback}, 
+                async_=True, 
+                **request_kwargs, 
+            )
+
     def upload_file(
         self, 
         /, 
         file, 
         filename: Optional[str] = None, 
-        pid: int | str = 0, 
+        pid: int = 0, 
         filesize: int = -1, 
         file_sha1: Optional[str] = None, 
-        progress_callback: Optional[Callable] = None, 
-        multipart_threshold: Optional[int] = None, 
+        part_size: int = 0, 
+        upload_directly: bool = False, 
+        async_: bool = False, 
+        **request_kwargs, 
     ) -> dict:
-        """基于 `upload_file_sha1` 的上传接口，是高层封装，推荐使用
+        """文件上传接口，这是高层封装，推荐使用
         """
-        resp = self.upload_file_sha1(file, filename, pid, filesize=filesize, file_sha1=file_sha1)
-        if resp["status"] == 2 and resp.get("statuscode", 0) == 0:
-            return resp
-        elif resp["status"] == 1 and resp.get("statuscode", 0) == 0:
-            bucket_name, key, callback = resp["bucket"], resp["object"], resp["callback"]
+        if async_:
+            method: Callable = self._upload_file_async
         else:
-            raise ValueError(resp)
-        filesize = resp["fileinfo"]["filesize"]
-        if hasattr(file, "read"):
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
-            if file.tell() != 0:
-                file.seek(0)
-        else:
-            file = open(file, "rb")
-        multipart_threshold = multipart_threshold or oss2.defaults.multipart_threshold
-        if filesize <= multipart_threshold:
-            upload_resp = self._oss_upload(
-                bucket_name, 
-                key, 
-                file, 
-                callback, 
-                progress_callback=progress_callback, 
-            )
-        else:
-            upload_resp = self._oss_multipart_upload(
-                bucket_name, 
-                key, 
-                file, 
-                callback, 
-                progress_callback=progress_callback, 
-                total_size=resp["fileinfo"]["filesize"], 
-            )
-        resp["upload"] = upload_resp
-        return resp
+            method = self._upload_file_sync
+        return method(
+            file, 
+            filename, 
+            pid=pid, 
+            filesize=filesize, 
+            file_sha1=file_sha1, 
+            part_size=part_size, 
+            upload_directly=upload_directly, 
+            **request_kwargs, 
+        )
 
-    def _oss_upload(
-        self, 
-        /, 
-        bucket_name: str, 
-        key: str, 
-        file, 
-        callback: dict, 
-        progress_callback: Optional[Callable] = None, 
-    ) -> dict:
-        """帮助函数：上传文件到阿里云 OSS，一次上传全部
-        """
-        uploadinfo = self.upload_url()
-        token = self.request(uploadinfo["gettokenurl"])
-        auth = oss2.Auth(token["AccessKeyId"], token["AccessKeySecret"])
-        bucket = oss2.Bucket(auth, uploadinfo["endpoint"], bucket_name)
-        headers={
-            "User-Agent": "aliyun-sdk-android/2.9.1", 
-            "x-oss-security-token": token["SecurityToken"], 
-            "x-oss-callback": b64encode(bytes(callback["callback"], "ascii")).decode("ascii"),
-            "x-oss-callback-var": b64encode(bytes(callback["callback_var"], "ascii")).decode("ascii"),
-        }
-        result = bucket.put_object(key, file, headers=headers, progress_callback=progress_callback)
-        data = loads(result.resp.read())
-        data["headers"] = result.headers
-        return data
-
-    # TODO 提供一个可迭代版本，这样便于获取断点续传信息，并且支持多线程上传
-    def _oss_multipart_upload(
-        self, 
-        /, 
-        bucket_name, 
-        key, 
-        file, 
-        callback, 
-        progress_callback=None, 
-        *, 
-        total_size=None, 
-        part_size=None, 
-    ) -> dict:
-        """帮助函数：上传文件到阿里云 OSS，分块上传，支持断点续传
-        """
-        uploadinfo = self.upload_url()
-        token = self.request(uploadinfo["gettokenurl"])
-        auth = oss2.Auth(token["AccessKeyId"], token["AccessKeySecret"])
-        bucket = oss2.Bucket(auth, uploadinfo["endpoint"], bucket_name)
-        if total_size is None:
-            if hasattr(file, "fileno"):
-                total_size = fstat(file).st_size
-            else:
-                total_size = stat(file).st_size
-                file = open(file, "rb")
-        part_size = oss2.determine_part_size(total_size, preferred_size=part_size or oss2.defaults.part_size)
-        headers={
-            "User-Agent": "aliyun-sdk-android/2.9.1", 
-            "x-oss-security-token": token["SecurityToken"], 
-        }
-        upload_id = bucket.init_multipart_upload(key, headers=headers).upload_id
-        parts = []
-        offset = 0
-        for part_number, (start, stop) in enumerate(cut_iter(total_size, step=part_size), 1):
-            result = bucket.upload_part(
-                key, 
-                upload_id, 
-                part_number, 
-                oss2.SizedFileAdapter(file, stop-start), 
-                progress_callback=progress_callback, 
-                headers=headers, 
-            )
-            parts.append(oss2.models.PartInfo(part_number, result.etag, size=stop-start, part_crc=result.crc))
-        headers["x-oss-callback"] = b64encode(bytes(callback["callback"], "ascii")).decode("ascii")
-        headers["x-oss-callback-var"] = b64encode(bytes(callback["callback_var"], "ascii")).decode("ascii")
-        result = bucket.complete_multipart_upload(key, upload_id, parts, headers=headers)
-        data = loads(result.resp.read())
-        data["headers"] = result.headers
-        return data
+    # TODO: 提供一个可断点续传的版本
+    # TODO: 支持进度条
+    # TODO: 返回 future，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait
+    def upload_file_future(self):
+        ...
 
     ########## Decompress API ##########
 
@@ -3260,15 +4317,13 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
+        local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
         pid: Optional[int] = None, 
         write_mode: Literal["", "x", "w", "a"] = "w", 
         download: Optional[Callable[[str, SupportsWrite[bytes], Unpack[HeadersKeyword]], Any]] = None, 
     ):
         if hasattr(local_path_or_file, "write"):
             file = local_path_or_file
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
         else:
             local_path = fspath(local_path_or_file)
             mode: str = write_mode
@@ -4096,7 +5151,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             else:
                 self.client.upload_file(file, name, pid)
                 return self._attr_path([name], pid)
-        resp = check_response(self.client.upload_file_sample)(file, name, pid, filesize=0)
+        resp = check_response(self.client.upload_file_sample)(file, name, pid)
         id = int(resp["data"]["file_id"])
         return self._attr(id)
 
@@ -4375,13 +5430,13 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             dst_pid = dst_attr["parent_id"]
         src_id = src_attr["id"]
         if splitext(src_name)[1] != splitext(dst_name)[1]:
-            dst_name = check_response(self.client.upload_file_sha1_simple)(
+            dst_name = check_response(self.client.upload_file_init)(
                 dst_name, 
                 filesize=src_attr["size"], 
                 file_sha1=src_attr["sha1"], 
                 read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
                 pid=dst_pid, 
-            )["fileinfo"]["filename"]
+            )["data"]["file_name"]
             return self.attr([dst_name], dst_pid)
         elif src_name == dst_name:
             self._copy(src_id, dst_pid)
@@ -4756,13 +5811,13 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 raise FileExistsError(errno.EEXIST, f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}")
             dst_pid = dst_attr["parent_id"]
         if not (src_attr["is_directory"] or src_ext == dst_ext):
-            name = check_response(self.client.upload_file_sha1_simple)(
+            name = check_response(self.client.upload_file_init)(
                 dst_name, 
                 filesize=src_attr["size"], 
                 file_sha1=src_attr["sha1"], 
                 read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
                 pid=dst_pid, 
-            )["fileinfo"]["filename"]
+            )["data"]["file_name"]
             self._delete(src_id)
             new_attr = self._attr_path([name], dst_pid)
             self._update_cache_path(src_attr, new_attr)
@@ -4913,7 +5968,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     def upload(
         self, 
         /, 
-        file: bytes | str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
+        file: bytes | str | PathLike | SupportsRead[bytes], 
         path: IDOrPathType = "", 
         pid: Optional[int] = None, 
         overwrite_or_ignore: Optional[bool] = None, 
@@ -4928,10 +5983,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         else:
             *dirname, name = (p for p in path if p)
         if hasattr(file, "read"):
-            if isinstance(file, TextIOWrapper):
-                fio = file.buffer
-            else:
-                fio = cast(SupportsRead[bytes], file)
+            fio = cast(SupportsRead[bytes], file)
             if not name:
                 try:
                     name = ospath.basename(file.name) # type: ignore
@@ -5833,7 +6885,7 @@ class P115Offline:
                 return check_response(self.client.offline_torrent_info(sha))
             except:
                 name = f"{uuid4()}.torrent"
-                check_response(self.client.upload_file_sample(BytesIO(torrent), name))
+                check_response(self.client.upload_file_sample(torrent, name, 0))
                 return check_response(self.client.offline_torrent_info(sha))
 
 

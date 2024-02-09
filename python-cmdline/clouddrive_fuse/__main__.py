@@ -30,9 +30,9 @@ parser.add_argument(
     "-t1", "--show-predicate-type", default="ignore", 
     choices=("ignore", "ignore-file", "expr", "re", "lambda", "stmt", "code", "path"), 
     help="""断言类型，默认值为 'ignore'
-    - ignore       （默认值）gitignore 配置文本，在文件路径上执行模式匹配，匹配成功则断言为 False
+    - ignore       （默认值）gitignore 配置文本（有多个时用空格隔开），在文件路径上执行模式匹配，匹配成功则断言为 False
                    NOTE: https://git-scm.com/docs/gitignore#_pattern_format
-    - ignore-file  接受一个文件路径，包含 gitignore 的配置文本，在文件路径上执行模式匹配，匹配成功则断言为 False
+    - ignore-file  接受一个文件路径，包含 gitignore 的配置文本（一行一个），在文件路径上执行模式匹配，匹配成功则断言为 False
                    NOTE: https://git-scm.com/docs/gitignore#_pattern_format
     - expr         表达式，会注入一个名为 path 的 clouddrive.CloudDrivePath 对象
     - re           正则表达式，如果文件的名字匹配此模式，则断言为 True
@@ -46,9 +46,9 @@ parser.add_argument(
     "-t2", "--strm-predicate-type", default="filter", 
     choices=("filter", "filter-file", "expr", "re", "lambda", "stmt", "code", "path"), 
     help="""断言类型，默认值为 'filter'
-    - filter       （默认值）gitignore 配置文本，在文件路径上执行模式匹配，匹配成功则断言为 True
+    - filter       （默认值）gitignore 配置文本（有多个时用空格隔开），在文件路径上执行模式匹配，匹配成功则断言为 True
                    请参考：https://git-scm.com/docs/gitignore#_pattern_format
-    - filter-file  接受一个文件路径，包含 gitignore 的配置文本，在文件路径上执行模式匹配，匹配成功则断言为 True
+    - filter-file  接受一个文件路径，包含 gitignore 的配置文本（一行一个），在文件路径上执行模式匹配，匹配成功则断言为 True
                    请参考：https://git-scm.com/docs/gitignore#_pattern_format
     - expr         表达式，会注入一个名为 path 的 clouddrive.CloudDrivePath 对象
     - re           正则表达式，如果文件的名字匹配此模式，则断言为 True

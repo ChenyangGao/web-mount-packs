@@ -115,6 +115,7 @@ def parse_as_timestamp(s: Optional[str] = None, /) -> float:
         return 0.0
 
 
+# TODO: async_session 应该懒加载
 class AlistClient:
     """AList client that encapsulates web APIs
 
@@ -582,13 +583,22 @@ class AlistClient:
                 file = file.buffer
         else:
             file = open(local_path_or_file, "rb")
-        return self.request(
-            "/api/fs/form", 
-            "PUT", 
-            files={"file": file}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
+        if async_:
+            return self.request(
+                "/api/fs/form", 
+                "PUT", 
+                data={"file": file}, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+        else:
+            return self.request(
+                "/api/fs/form", 
+                "PUT", 
+                files={"file": file}, 
+                async_=async_, 
+                **request_kwargs, 
+            )
 
     def fs_move(
         self, 
