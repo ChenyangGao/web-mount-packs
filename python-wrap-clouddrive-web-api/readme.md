@@ -684,7 +684,7 @@ download_tasklist = CloudDriveDownloadTaskList(client)
 
 # 创建 上传 任务列表实例
 from clouddrive import CloudDriveUploadTaskList
-download_tasklist = CloudDriveUploadTaskList(client)
+upload_tasklist = CloudDriveUploadTaskList(client)
 ```
 
 ## 文档

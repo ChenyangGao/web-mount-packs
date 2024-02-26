@@ -212,17 +212,19 @@ class P115Client:
         return session
 
     def close(self, /) -> None:
-        try:
-            self.session.close()
-        except AttributeError:
-            pass
-        if "async_session" in self.__dict__:
+        ns = self.__dict__
+        if "session" in ns:
+            try:
+                ns["session"].close()
+            except:
+                pass
+        if "async_session" in ns:
             try:
                 loop = get_running_loop()
             except RuntimeError:
-                run(self.async_session.close())
+                run(ns["async_session"].close())
             else:
-                loop.create_task(self.async_session.close())
+                loop.create_task(ns["async_session"].close())
 
     def set_cookie(self, cookie, /):
         if isinstance(cookie, str):
@@ -294,6 +296,8 @@ class P115Client:
         parse: None | bool | Callable = False, 
         **request_kwargs, 
     ):
+        """帮助函数：执行同步的网络请求
+        """
         request_kwargs["stream"] = True
         resp = self.session.request(method, url, **request_kwargs)
         resp.raise_for_status()
@@ -326,6 +330,8 @@ class P115Client:
         parse: None | bool | Callable = False, 
         **request_kwargs, 
     ):
+        """帮助函数：执行异步的网络请求
+        """
         request_kwargs.pop("stream", None)
         req = self.async_session.request(method, url, **request_kwargs)
         if parse is None:
@@ -368,6 +374,8 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ):
+        """帮助函数：可执行同步和异步的网络请求
+        """
         return (self._async_request if async_ else self._request)(
             url, method, parse=parse, **request_kwargs)
 
@@ -378,7 +386,7 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """获取当前各平台最新版 115 app
+        """获取当前各平台最新版 115 app 下载链接
         GET https://appversion.115.com/1/web/1.0/api/chrome
         """
         api = "https://appversion.115.com/1/web/1.0/api/chrome"
@@ -403,13 +411,17 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> bool:
+        """检查是否已登录
+        GET https://my.115.com/?ct=guide&ac=status
+        """
         api = "https://my.115.com/?ct=guide&ac=status"
         def parse(resp, content: bytes) -> bool:
             try:
                 return loads(content)["state"]
             except:
                 return False
-        return self.request(api, parse=parse, **request_kwargs)
+        request_kwargs["parse"] = parse
+        return self.request(api, **request_kwargs)
 
     def login_check(
         self, 
@@ -417,7 +429,7 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """检查当前用户的登录状态（用处不大）
+        """检查当前用户的登录状态
         GET http://passportapi.115.com/app/1.0/web/1.0/check/sso/
         """
         api = "http://passportapi.115.com/app/1.0/web/1.0/check/sso/"
@@ -1924,7 +1936,7 @@ class P115Client:
         if hasattr(file, "read"):
             bio_it = bio_chunk_iter(file, part_size, callback=acc)
             if async_:
-                request_kwargs["data"] = asyncify_iter(bio_it, busy_io=True)
+                request_kwargs["data"] = asyncify_iter(bio_it, io_bound=True)
             else:
                 request_kwargs["data"] = bio_it
         else:
@@ -2957,12 +2969,12 @@ class P115Client:
         """
         if upload_directly:
             return self.upload_file_sample(file, filename, pid, **request_kwargs)
+
         if not file_sha1 and hasattr(file, "read"):
             try:
                 file.seek(0, 1)
-                return self.upload_file_sample(file, filename, pid, **request_kwargs)
             except Exception:
-                pass
+                return self.upload_file_sample(file, filename, pid, **request_kwargs)
 
         resp = self.upload_init_file(
             file, 
@@ -3027,12 +3039,12 @@ class P115Client:
         """
         if upload_directly:
             return await self.upload_file_sample(file, filename, pid, async_=True, **request_kwargs)
+
         if not file_sha1 and hasattr(file, "read"):
             try:
                 file.seek(0, 1)
-                return await self.upload_file_sample(file, filename, pid, async_=True, **request_kwargs)
             except Exception:
-                pass
+                return await self.upload_file_sample(file, filename, pid, async_=True, **request_kwargs)
 
         resp = await self.upload_init_file(
             file, 
@@ -3557,6 +3569,23 @@ class P115Client:
 
     ########## Recyclebin API ##########
 
+    def recyclebin_info(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """回收站：文件信息
+        POST https://webapi.115.com/rb/rb_info
+        payload:
+            - rid: int | str
+        """
+        api = "https://webapi.115.com/rb/rb_info"
+        if isinstance(payload, (int, str)):
+            payload = {"rid": payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
     def recyclebin_clean(
         self, 
         payload: int | str | Iterable[int | str] | dict = {}, 
@@ -3564,7 +3593,7 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """
+        """回收站：删除或清空
         POST https://webapi.115.com/rb/clean
         payload:
             - rid[0]: int | str # NOTE: 如果没有 rid，就是清空回收站
@@ -3586,7 +3615,8 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """GET https://webapi.115.com/rb
+        """回收站：罗列
+        GET https://webapi.115.com/rb
         payload:
             - aid: int | str = 7
             - cid: int | str = 0
@@ -3606,7 +3636,8 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """POST https://webapi.115.com/rb/revert
+        """回收站：还原
+        POST https://webapi.115.com/rb/revert
         payload:
             - rid[0]: int | str
             - rid[1]: int | str
@@ -5038,7 +5069,7 @@ class P115Path(P115PathBase):
 
 class P115FileSystem(P115FileSystemBase[dict, P115Path]):
     path_to_id: MutableMapping[str, int]
-    id_to_etime: MutableMapping[int, float]
+    id_to_utime: MutableMapping[int, float]
     pid_to_attrs: MutableMapping[int, dict]
     path_class = P115Path
 
@@ -5052,7 +5083,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             cid = 0, 
             path = "/", 
             path_to_id = {"/": 0}, 
-            id_to_etime = {}, 
+            id_to_utime = {}, 
             pid_to_attrs = {}, 
         )
 
@@ -5149,7 +5180,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             except:
                 pass
             else:
-                self.client.upload_file(file, name, pid)
+                resp = self.client.upload_file(file, name, pid)
+                name = resp["data"]["file_name"]
                 return self._attr_path([name], pid)
         resp = check_response(self.client.upload_file_sample)(file, name, pid)
         id = int(resp["data"]["file_id"])
@@ -5233,8 +5265,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         if not attr["is_directory"]:
             raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
         id = attr["id"]
-        etime = attr["etime"].timestamp()
-        if etime > self.id_to_etime.get(id, -1):
+        utime = attr["utime"].timestamp()
+        if utime > self.id_to_utime.get(id, -1):
             pagesize = 1 << 10
             def iterdir():
                 get_files = self._files
@@ -5260,7 +5292,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                         path_to_id[path] = attr["id"]
                         yield attr
             self.pid_to_attrs[id] = {a["id"]: a for a in iterdir()}
-            self.id_to_etime[id] = etime
+            self.id_to_utime[id] = utime
         return iter(self.pid_to_attrs[id].values())
 
     def _attr(self, id: int, /) -> dict:
@@ -5989,33 +6021,35 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                     name = ospath.basename(file.name) # type: ignore
                 except:
                     pass
-        else:
+        elif isinstance(file, (str, PathLike)):
             file = fsdecode(file)
             fio = open(file, "rb")
             if not name:
                 name = ospath.basename(file)
-        if not name:
-            raise ValueError(f"can't determine the upload path: {path!r} (in {pid!r})")
+        else:
+            fio = BytesIO(file)
         if pid is None:
             pid = self.cid
         if dirname:
             pid = cast(int, self.makedirs(dirname, pid=pid, exist_ok=True)["id"])
-        try:
-            attr = self._attr_path([name], pid)
-        except FileNotFoundError:
-            pass
-        else:
-            if overwrite_or_ignore is None:
-                raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
-            elif attr["is_directory"]:
-                raise IsADirectoryError(errno.EISDIR, f"{path!r} (in {pid!r}) is a directory")
-            elif not overwrite_or_ignore:
-                return attr
-            self._delete(attr["id"])
+        if name:
+            try:
+                attr = self._attr_path([name], pid)
+            except FileNotFoundError:
+                pass
+            else:
+                if overwrite_or_ignore is None:
+                    raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
+                elif attr["is_directory"]:
+                    raise IsADirectoryError(errno.EISDIR, f"{path!r} (in {pid!r}) is a directory")
+                elif not overwrite_or_ignore:
+                    return attr
+                self._delete(attr["id"])
         return self._upload(fio, name, pid)
 
     # TODO: 为了提升速度，之后会支持多线程上传，以及直接上传不做检查
     # TODO: 增加功能，可以多线程上传或异步上传，返回 Future 对象，可以获取每个上传任务的进度，并且可以随时取消
+    # TODO: 增加断言，可以选择不上传某些文件
     def upload_tree(
         self, 
         /, 

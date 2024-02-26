@@ -40,11 +40,11 @@ def cut_iter(
 
 
 @overload
-async def _asyncify_iter(it: Generator[TI, TO, Any], /, busy_io: bool) -> AsyncGenerator[TI, TO]: ...
+async def _asyncify_iter(it: Generator[TI, TO, Any], /, io_bound: bool) -> AsyncGenerator[TI, TO]: ...
 @overload
-async def _asyncify_iter(it: Iterable[TO], /, busy_io: bool) -> AsyncGenerator[Any, TO]: ...
-async def _asyncify_iter(it, /, busy_io: bool = False):
-    if busy_io:
+async def _asyncify_iter(it: Iterable[TO], /, io_bound: bool) -> AsyncGenerator[Any, TO]: ...
+async def _asyncify_iter(it, /, io_bound: bool = False):
+    if io_bound:
             if isinstance(it, Generator):
                 send = it.send
                 def nextval(val):
@@ -82,13 +82,13 @@ async def _asyncify_iter(it, /, busy_io: bool = False):
 
 
 @overload
-def asyncify_iter(it: AsyncIterable[TO], /, busy_io: bool) -> AsyncIterable[TO]: ...
+def asyncify_iter(it: AsyncIterable[TO], /, io_bound: bool) -> AsyncIterable[TO]: ...
 @overload
-def asyncify_iter(it: Generator[TI, TO, Any], /, busy_io: bool) -> AsyncGenerator[TI, TO]: ...
+def asyncify_iter(it: Generator[TI, TO, Any], /, io_bound: bool) -> AsyncGenerator[TI, TO]: ...
 @overload
-def asyncify_iter(it: Iterable[TO], /, busy_io: bool) -> AsyncGenerator[Any, TO]: ...
-def asyncify_iter(it, /, busy_io: bool = False):
+def asyncify_iter(it: Iterable[TO], /, io_bound: bool) -> AsyncGenerator[Any, TO]: ...
+def asyncify_iter(it, /, io_bound: bool = False):
     if isinstance(it, AsyncIterable):
         return it
-    return _asyncify_iter(it, busy_io=busy_io)
+    return _asyncify_iter(it, io_bound=io_bound)
 

@@ -608,6 +608,10 @@ for path in fs.rglob("*.mkv"):
 - <kbd>alist.AlistOfflineDownloadTaskList</kbd> 封装了 `离线下载（到本地）` 的任务列表。
 - <kbd>alist.AlistOfflineDownloadTransferTaskList</kbd> 封装了 `离线下载（到存储）` 的任务列表。
 - <kbd>alist.AlistUploadTaskList</kbd> 封装了 `上传` 的任务列表。
+- <kbd>alist.AlistAria2DownTaskList</kbd> 封装了 `aria2下载` 的任务列表。
+- <kbd>alist.AlistAria2TransferTaskList</kbd> 封装了 `aria2转存` 的任务列表。
+- <kbd>alist.AlistQbitDownTaskList</kbd> 封装了 `qbit下载` 的任务列表。
+- <kbd>alist.AlistQbitTransferTaskList</kbd> 封装了 `qbit转存` 的任务列表。
 
 ```python
 from alist import AlistClient
@@ -619,6 +623,10 @@ copy_tasklist = client.copy_tasklist
 offline_download_tasklist = client.offline_download_tasklist
 offline_download_transfer_tasklist = client.offline_download_transfer_tasklist
 upload_tasklist = client.upload_tasklist
+aria2_down_tasklist = client.aria2_down_tasklist
+aria2_transfer_tasklist = client.aria2_transfer_tasklist
+qbit_down_tasklist = client.qbit_down_tasklist
+qbit_transfer_tasklist = client.qbit_transfer_tasklist
 
 # 或者自己创建实例
 
@@ -628,15 +636,31 @@ copy_tasklist = AlistCopyTaskList(client)
 
 # 创建 离线下载（到本地） 任务列表实例
 from alist import AlistOfflineDownloadTaskList
-copy_tasklist = AlistOfflineDownloadTaskList(client)
+offline_download_tasklist = AlistOfflineDownloadTaskList(client)
 
 # 创建 离线下载（到存储） 任务列表实例
 from alist import AlistOfflineDownloadTransferTaskList
-copy_tasklist = AlistOfflineDownloadTransferTaskList(client)
+offline_download_transfer_tasklist = AlistOfflineDownloadTransferTaskList(client)
 
 # 创建 上传 任务列表实例
 from alist import AlistUploadTaskList
-copy_tasklist = AlistUploadTaskList(client)
+upload_tasklist = AlistUploadTaskList(client)
+
+# 创建 上传 任务列表实例
+from alist import AlistAria2DownTaskList
+aria2_down_tasklist = AlistAria2DownTaskList(client)
+
+# 创建 上传 任务列表实例
+from alist import AlistAria2TransferTaskList
+aria2_transfer_tasklist = AlistAria2TransferTaskList(client)
+
+# 创建 上传 任务列表实例
+from alist import AlistQbitDownTaskList
+qbit_down_tasklist = AlistQbitDownTaskList(client)
+
+# 创建 上传 任务列表实例
+from alist import AlistQbitTransferTaskList
+qbit_transfer_tasklist = AlistQbitTransferTaskList(client)
 ```
 
 ## 文档

@@ -440,10 +440,12 @@ def update_archives(
                     files = []
                     for link in download_links:
                         if link.startswith("ed2k://"):
-                            files.append(ed2k_extract(link))
+                            attr = ed2k_extract(link)
+                            attr["link"] = link
+                            files.append(attr)
                         elif "://pan.baidu.com/" in link:
                             try:
-                                files = [item for item in DuPanShareList(link) if not item["isdir"]]
+                                files = [{**attr, "link": link} for attr in DuPanShareList(link) if not attr["isdir"]]
                                 print(f"\x1b[1m\x1b[38;5;2mOK\x1b[0m \x1b[4m\x1b[38;5;4m{link}\x1b[0m")
                             except:
                                 print(f"\x1b[1m\x1b[38;5;1mNA\x1b[0m \x1b[4m\x1b[38;5;4m{link}\x1b[0m")
