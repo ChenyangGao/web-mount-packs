@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-115"
-version = "0.0.5"
-description = "Python wrapper for 115 webdisk."
+name = "torrent_tool"
+version = "0.0.3.1"
+description = "torrent tool."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
-keywords = ["nas", "115"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/torrent_tool"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/torrent_tool"
+keywords = ["torrent", "magnet"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -25,22 +25,9 @@ include = [
     "LICENSE",
 ]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-aiohttp = "*"
-cachetools = "*"
-ecdsa = "*"
-lz4 = "*"
-pycryptodome = "*"
-qrcode = "*"
-requests = "*"
-yarl = "*"
-
-[tool.poetry.dev-dependencies]
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "p115"
+include = "torrent_tool.py"

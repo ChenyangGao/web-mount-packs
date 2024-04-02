@@ -2,15 +2,15 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["thread_batch", "thread_pool_batch", "async_batch", "as_thread"]
+__all__ = ["thread_batch", "thread_pool_batch", "async_batch", "as_thread", "run_thread"]
 
-from asyncio import CancelledError, Semaphore, TaskGroup
+from asyncio import CancelledError, Semaphore as AsyncSemaphore, TaskGroup
 from collections.abc import Callable, Coroutine, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from inspect import isawaitable
 from queue import Queue
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Semaphore, Thread
 from typing import cast, Any, Optional, TypeVar
 
 from .args import argcount
@@ -107,7 +107,7 @@ async def async_batch(
     work: Callable[[T], Coroutine[None, None, V]] | Callable[[T, Callable], Coroutine[None, None, V]], 
     tasks: Iterable[T], 
     callback: Optional[Callable[[V], Any]] = None, 
-    sema: Optional[Semaphore] = None, 
+    sema: Optional[AsyncSemaphore] = None, 
 ):
     ac = argcount(work)
     if ac < 1:
@@ -143,20 +143,44 @@ async def async_batch(
 
 
 def as_thread(
-    func: Optional[Callable[..., V]] = None, 
+    func: Optional[Callable] = None, 
     /, 
+    lock = None, 
     **thread_init_kwds, 
 ):
     if func is None:
         return partial(as_thread, **thread_init_kwds)
-    def wrapper(*args, **kwds) -> Future[V]: 
-        def asfuture(): 
-            try: 
-                fu.set_result(func(*args, **kwds))
-            except BaseException as e:
-                fu.set_exception(e)
+    if isinstance(lock, int):
+        lock = Semaphore(lock)
+    def wrapper(*args, **kwds) -> Future[V]:
+        if lock is None:
+            def asfuture():
+                try: 
+                    fu.set_result(func(*args, **kwds))
+                except BaseException as e:
+                    fu.set_exception(e)
+        else:
+            def asfuture():
+                with lock:
+                    try: 
+                        fu.set_result(func(*args, **kwds))
+                    except BaseException as e:
+                        fu.set_exception(e)
         fu: Future[V] = Future()
-        Thread(target=asfuture, **thread_init_kwds).start()
+        thread = fu.thread = Thread(target=asfuture, **thread_init_kwds) # type: ignore
+        thread.start()
         return fu
     return update_wrapper(wrapper, func)
+
+
+def run_thread(
+    func: Optional[Callable] = None, 
+    /, 
+    *args, 
+    **kwargs, 
+):
+    if func is None:
+        f = as_thread(None, *args, **kwargs)
+        return lambda func, *args, **kwargs: f(func)(*args, **kwargs)
+    return as_thread(func)(*args, **kwargs)
 

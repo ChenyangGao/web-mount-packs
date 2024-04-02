@@ -4,7 +4,8 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "SupportsRead", "SupportsWrite", "SupportsGetUrl", 
-    "bio_chunk_iter", "bio_skip_bytes", "get_filesize", "HTTPFileReader", "RequestsFileReader"
+    "bio_chunk_iter", "bio_skip_iter", "bio_skip_bytes", "get_filesize", 
+    "HTTPFileReader", "RequestsFileReader", 
 ]
 
 import errno
@@ -71,14 +72,13 @@ def bio_chunk_iter(
                 callback(len(chunk))
 
 
-def bio_skip_bytes(
+def bio_skip_iter(
     bio: BytesReadable, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
-    callback: Optional[Callable[[int], Any]] = None, 
-) -> BytesReadable:
+) -> Iterator[int]:
     if size == 0:
-        return bio
+        return
     if chunksize <= 0:
         chunksize = COPY_BUFSIZE
     try:
@@ -86,45 +86,47 @@ def bio_skip_bytes(
             pos = bio.seek(size, 1) # type: ignore
         else:
             pos = bio.seek(0, 2) # type: ignore
-        if callback:
-            callback(pos)
+        yield pos
     except Exception:
         if hasattr(bio, "readinto"):
             readinto = bio.readinto
             buf = bytearray(chunksize)
             if size > 0:
                 while size >= chunksize:
-                    length = readinto(buf)
-                    if callback:
-                        callback(length)
+                    yield (length := readinto(buf))
                     if length < chunksize:
                         break
                     size -= chunksize
                 if size:
                     del buf[size:]
-                    length = readinto(buf)
-                    if callback:
-                        callback(length)
+                    yield readinto(buf)
             else:
                 while (length := readinto(buf)):
-                    if callback:
-                        callback(length)
+                    yield length
         else:
             read = bio.read
             if size > 0:
                 while size:
                     readsize = min(chunksize, size)
                     chunk = read(readsize)
-                    length = len(chunk)
-                    if callback:
-                        callback(length)
+                    yield (length := len(chunk))
                     if length < readsize:
                         break
                     size -= readsize
             else:
                 while (chunk := read(chunksize)):
-                    if callback:
-                        callback(len(chunk))
+                    yield len(chunk)
+
+
+def bio_skip_bytes(
+    bio: BytesReadable, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: Optional[Callable[[int], Any]] = None, 
+) -> BytesReadable:
+    for length in bio_skip_iter(bio, size, chunksize):
+        if callback:
+            callback(length)
     return bio
 
 

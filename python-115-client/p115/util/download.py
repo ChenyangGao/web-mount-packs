@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["download", "requests_download"]
+__all__ = ["DownloadTask", "download_iter", "download", "requests_download"]
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
@@ -27,26 +27,29 @@ if __name__ == "__main__":
 
 import errno
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
 from inspect import isgenerator
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
-from typing import cast, Any, Optional
+from threading import Event
+from typing import cast, Any, NamedTuple, Never, Optional, Self
 
 from requests import Response, Session
 
 if __name__ == "__main__":
     from sys import path
     path.insert(0, dirname(dirname(__file__)))
-    from util.file import bio_skip_bytes, SupportsRead, SupportsWrite # type: ignore
+    from util.concurrent import run_thread # type: ignore
+    from util.file import bio_skip_iter, SupportsRead, SupportsWrite # type: ignore
     from util.iter import cut_iter # type: ignore
     from util.response import get_filename, get_length, is_chunked, is_range_request # type: ignore
     from util.text import headers_str_to_dict # type: ignore
     from util.urlopen import urlopen # type: ignore
     del path[0]
 else:
-    from .file import bio_skip_bytes, SupportsRead, SupportsWrite
+    from .concurrent import run_thread
+    from .file import bio_skip_iter, SupportsRead, SupportsWrite
     from .iter import cut_iter
     from .response import get_filename, get_length, is_chunked, is_range_request
     from .text import headers_str_to_dict
@@ -59,17 +62,122 @@ if "__del__" not in Session.__dict__:
     setattr(Session, "__del__", Session.close)
 
 
-def download(
-    url: str, 
+class DownloadProgress(NamedTuple):
+    total: int
+    downloaded: int
+    skipped: int
+    last_incr: int = 0
+    extra: Any = None
+
+
+class DownloadTask:
+
+    def __init__(self, /, gen, submit=run_thread):
+        if not callable(submit):
+            submit = submit.submit
+        self._submit = submit
+        self._state = "PENDING"
+        self._gen = gen
+        self._done_event = Event()
+
+    def __repr__(self, /) -> str:
+        return f"<{type(self).__qualname__} :: state={self.state!r} progress={self.progress!r}>"
+
+    @classmethod
+    def create_task(
+        cls, 
+        /, 
+        *args, 
+        submit=run_thread, 
+        **kwargs, 
+    ) -> Self:
+        return cls(download_iter(*args, **kwargs), submit=submit)
+
+    @property
+    def closed(self, /) -> bool:
+        return self._state in ("CANCELED", "FAILED", "FINISHED")
+
+    @property
+    def progress(self, /) -> Optional[DownloadProgress]:
+        return self.__dict__.get("_progress")
+
+    @property
+    def result(self, /):
+        self._done_event.wait()
+        return self._result
+
+    @result.setter
+    def result(self, val, /):
+        self._result = val
+        self._done_event.set()
+
+    @property
+    def state(self, /) -> str:
+        return self._state
+
+    def close(self, /):
+        if self._state in ("CANCELED", "FAILED", "FINISHED"):
+            pass
+        else:
+            state = self._state
+            self._state = "CANCELED"
+            if state != "RUNNING":
+                self.run()
+
+    def pause(self, /):
+        if self._state in ("PAUSED", "RUNNING"):
+            self._state = "PAUSED"
+        else:
+            raise RuntimeError(f"can't pause when state={self._state!r}")
+
+    def _run(self, /):
+        if self._state in ("PENDING", "PAUSED"):
+            self._state = "RUNNING"
+        else:
+            raise RuntimeError(f"can't run when state={self._state!r}")
+        gen = self._gen
+        try:
+            while self._state == "RUNNING":
+                self._progress = next(gen)
+        except KeyboardInterrupt:
+            raise
+        except StopIteration as exc:
+            self._state = "FINISHED"
+            self.result = exc.value
+        except BaseException as exc:
+            self._state = "FAILED"
+            self.result = exc
+        else:
+            if self._state == "CANCELED":
+                try:
+                    gen.close()
+                finally:
+                    self.result = None
+
+    def run(self, /):
+        return self._submit(self._run)
+
+    def run_wait(self, /):
+        if not self._done_event.is_set():
+            if self._state == "RUNNING":
+                self._done_event.wait()
+            else:
+                self._run()
+
+
+def download_iter(
+    url: str | Callable[[], str], 
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
     headers: Optional[dict[str, str]] = None, 
-    make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any] | Generator[int, Any, Any]]] = None, 
     urlopen: Callable = urlopen, 
-) -> str | SupportsWrite[bytes]:
+) -> Iterator[DownloadProgress]:
     """
     """
+    if not isinstance(url, str):
+        url = url()
+
     if headers:
         headers = {**headers, "Accept-Encoding": "identity"}
     else:
@@ -96,6 +204,8 @@ def download(
             makedirs(dirname(file), exist_ok=True)
             fdst = open(file, "ab" if resume else "wb")
 
+    extra = {"url": url, "file": file, "resume": resume}
+
     filesize = 0
     if resume:
         try:
@@ -104,20 +214,13 @@ def download(
             pass
         else:
             if filesize == length:
-                return file
+                yield DownloadProgress(length, 0, length, length, extra)
+                return
             elif length is not None and filesize > length:
                 raise OSError(errno.EIO, f"file {file!r} is larger than url {url!r}: {filesize} > {length} (in bytes)")
     elif length == 0:
-        return file
-
-    if make_reporthook:
-        reporthook = make_reporthook(length)
-        if isgenerator(reporthook):
-            next(reporthook)
-            reporthook = reporthook.send
-        reporthook = cast(Callable[[int], Any], reporthook)
-    else:
-        reporthook = None
+        yield DownloadProgress(0, 0, 0, 0, extra)
+        return
 
     if filesize and is_range_request(resp):
         resp.close()
@@ -125,29 +228,60 @@ def download(
         if not is_range_request(resp):
             raise OSError(errno.EIO, f"range request failed: {url!r}")
 
+    yield DownloadProgress(length, 0, 0, 0, extra)
+
+    length_downloaded = 0
+    length_skipped = 0
     with resp:
         fsrc_read = resp.read
         fdst_write = fdst.write
         if filesize:
             if is_range_request(resp):
-                if reporthook:
-                    reporthook(filesize)
+                length_skipped = filesize
+                yield DownloadProgress(length, 0, length_skipped, length_skipped, extra)
             else:
-                bio_skip_bytes(resp, filesize, callback=reporthook)
+                for skiplen in bio_skip_iter(resp, filesize):
+                    length_skipped += skiplen
+                    yield DownloadProgress(length, 0, length_skipped, skiplen, extra)
 
         while (chunk := fsrc_read(chunksize)):
-            fdst_write(chunk)
-            if reporthook:
-                reporthook(len(chunk))
+            downlen = fdst_write(chunk)
+            length_downloaded += downlen
+            yield DownloadProgress(length, length_downloaded, length_skipped, downlen, extra)
 
-    return file
+
+def download(
+    url: str | Callable[[], str], 
+    file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
+    resume: bool = False, 
+    chunksize: int = COPY_BUFSIZE, 
+    headers: Optional[dict[str, str]] = None, 
+    urlopen: Callable = urlopen, 
+    make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any] | Generator[int, Any, Any]]] = None, 
+):
+    """
+    """
+    gen = download_iter(url, file, resume=resume, chunksize=chunksize, headers=headers, urlopen=urlopen)
+    if make_reporthook:
+        progress = next(gen)
+        reporthook = make_reporthook(progress.total)
+        if isgenerator(reporthook):
+            next(reporthook)
+            reporthook = reporthook.send
+        reporthook = cast(Callable[[int], Any], reporthook)
+        reporthook(progress.last_incr)
+    else:
+        reporthook = None
+
+    for progress in gen:
+        reporthook and reporthook(progress.last_incr)
 
 
 def requests_download(
-    url: str, 
+    url: str | Callable[[], str], 
     urlopen: Callable = Session().get, 
     **kwargs, 
-) -> str | SupportsWrite[bytes]:
+):
     """
     """
     def urlopen_wrapper(url, headers):

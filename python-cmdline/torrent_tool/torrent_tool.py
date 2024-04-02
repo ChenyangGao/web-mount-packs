@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["bencode", "bdecode", "torrent_list", "torrent_tree", "torrent_to_magnet"]
+__version__ = (0, 0, 3)
+__all__ = [
+    "bencode", "bdecode", "dump", "load", "torrent_files", "torrent_to_magnet", 
+]
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
@@ -23,6 +25,7 @@ from collections.abc import Sequence, Mapping
 from functools import singledispatch
 from hashlib import sha1, new as hash_new
 from numbers import Integral
+from os import PathLike
 from posixpath import join as joinpath
 from typing import cast
 from urllib.parse import urlencode
@@ -94,28 +97,32 @@ def decode(
     /, 
 ) -> tuple[BDecodedType, int]:
     match s[p:p+1]:
-        case b"l":
+        case b"l": # l for list
             return decode_list(s, p)
-        case b"d":
+        case b"d": # d for dict
             return decode_dict(s, p)
-        case b"i":
+        case b"i": # i for integer
             return decode_int(s, p)
-        case v if v in b"0123456789":
+        case v if v in b"0123456789": # for bytes
             return decode_bytes(s, p)
         case _:
             raise ValueError(f"invalid bencoded string: at {p}")
 
 
-def bdecode(s, /) -> BDecodedType:
+def bdecode(data, /) -> BDecodedType:
     "Decode bencode formatted bytes object."
-    if isinstance(s, (bytearray, bytes, memoryview)):
-        b = s
-    elif hasattr(s, "getbuffer"):
-        b = s.getbuffer()
-    elif hasattr(s, "read"):
-        b = s.read()
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        b = data
+    elif isinstance(data, (str, PathLike)):
+        b = open(data, "rb").read()
+    elif hasattr(data, "getbuffer"):
+        b = data.getbuffer()
+    elif hasattr(data, "read"):
+        b = data.read()
+        if isinstance(b, str):
+            b = bytes(b, "utf-8")
     else:
-        b = memoryview(s).tobytes()
+        b = memoryview(data).tobytes()
     v, p = decode(b)
     if p != len(b):
         raise ValueError(f"invalid bencoded string: in slice({p}, {len(b)})")
@@ -176,37 +183,32 @@ def bencode(o, fp=None, /):
         write(w)
 
 
-def torrent_list(data, /) -> list[str]:
-    "list all files from a torrent"
+dump = bencode
+load = bdecode
+
+
+def torrent_files(data, /, tree: bool = False) -> dict:
+    "show all files and their lengths for a torrent"
     metadata = cast(dict, bdecode(data))
     info = cast(dict, metadata[b"info"])
     if b"files" in info:
-        return [str(joinpath(*f[b"path"]), "utf-8") for f in info[b"files"]]
+        if tree:
+            d: dict = {}
+            for f in info[b"files"]:
+                parts = f[b"path"]
+                d2 = d
+                for p in parts[:-1]:
+                    p = str(p, "utf-8")
+                    try:
+                        d2 = d2[p]
+                    except KeyError:
+                        d2[p] = d2 = {}
+                d2[str(parts[-1], "utf-8")] = f[b"length"]
+            return d
+        else:
+            return {str(joinpath(*f[b"path"]), "utf-8"): f[b"length"] for f in info[b"files"]}
     elif b"name" in info:
-        return [str(info[b"name"], "utf-8")]
-    else:
-        raise ValueError("invalid torrent file")
-
-
-def torrent_tree(data, /) -> dict:
-    "tree all files from a torrent"
-    metadata = cast(dict, bdecode(data))
-    info = cast(dict, metadata[b"info"])
-    if b"files" in info:
-        d: dict = {}
-        for l in info[b"files"]:
-            l = l[b"path"]
-            d2 = d
-            for p in l[:-1]:
-                p = str(p, "utf-8")
-                try:
-                    d2 = d2[p]
-                except KeyError:
-                    d2[p] = d2 = {}
-            d2[str(l[-1], "utf-8")] = None
-        return d
-    elif b"name" in info:
-        return {str(info[b"name"], "utf-8"): None}
+        return {str(info[b"name"], "utf-8"): info[b"length"]}
     else:
         raise ValueError("invalid torrent file")
 
@@ -223,7 +225,7 @@ def torrent_to_magnet(
     full: bool = False, 
     infohash_alg: str = "btih", 
 ) -> str:
-    "convert a torrent into a magnet link"
+    "convert a torrent to a magnet link"
     metadata = cast(dict, bdecode(data))
     info = cast(dict, metadata[b"info"])
     infohash = calc_infohash(bencode(info), infohash_alg)
