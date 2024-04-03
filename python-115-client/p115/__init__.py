@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
     "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin", "P115Sharing", 
@@ -56,6 +56,7 @@ from requests.cookies import create_cookie
 from requests.exceptions import Timeout
 from requests.models import Response
 from requests.sessions import Session
+from magnet2torrent import Magnet2Torrent # type: ignore
 from yarl import URL
 
 # NOTE: OR use `pyqrcode` instead
@@ -312,6 +313,16 @@ class P115Client:
             else:
                 raise LoginError(f"qrcode: aborted with {resp!r}")
         return self.login_qrcode_result({"account": qrcode_token["uid"], "app": app}, **request_kwargs)
+
+    def login(
+        self, 
+        /, 
+        app: str = "web", 
+        **request_kwargs, 
+    ):
+        if not self.is_login(**request_kwargs):
+            cookie = self.login_with_qrcode(app, **request_kwargs)["data"]["cookie"]
+            self.set_cookie(cookie)
 
     def _request(
         self, 
@@ -3949,8 +3960,11 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def exists(self, /) -> bool:
         return self.fs.exists(self)
 
-    def get_url(self, /, headers: Optional[Mapping] = None) -> str:
-        return self.fs.get_url(self, headers=headers)
+    @property
+    def file_extension(self, /) -> Optional[str]:
+        if not self.is_file():
+            return None
+        return splitext(basename(self.path))[1]
 
     def glob(
         self, 
@@ -4413,7 +4427,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         submit = None, 
         no_root: bool = False, 
         predicate: Optional[Callable[[P115PathType], bool]] = None, 
-        onerror: Optional[Callable[[BaseException], Any]] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = None, 
     ) -> Iterator[DownloadTask]:
         local_dir = fsdecode(local_dir)
         if local_dir:
@@ -4446,12 +4460,16 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                         write_mode=write_mode, 
                         submit=submit, 
                     )
-                    if task is not None:
-                        yield task
                 except KeyboardInterrupt:
                     raise
                 except BaseException as exc:
-                    onerror and onerror(exc)
+                    if onerror is None or onerror is True:
+                        raise
+                    elif callable(onerror):
+                        onerror(exc)
+                else:
+                    if task is not None:
+                        yield task
 
     def exists(
         self, 
@@ -4471,7 +4489,9 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     def getcid(self, /) -> int:
         return self.cid
 
-    def getcwd(self, /) -> str:
+    def getcwd(self, /, fetch_attr: bool = False) -> str:
+        if fetch_attr:
+            return self.attr(self.cid)["path"]
         return self.path
 
     def get_id(
@@ -4486,8 +4506,15 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             return id_or_path.id
         elif isinstance(id_or_path, int):
             return id_or_path
-        if self.get_path(id_or_path, pid) == "/":
+        if id_or_path == "/":
             return 0
+        try:
+            path_to_id = getattr(self, "path_to_id", None)
+            if path_to_id is not None:
+                path = self.get_path(id_or_path, pid)
+                return path_to_id[path]
+        except LookupError:
+            pass
         return self.attr(id_or_path, pid)["id"]
 
     def get_path(
@@ -5400,17 +5427,19 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         pid: Optional[int] = None, 
         refresh: bool = False, 
     ) -> Iterator[dict]:
+        path_to_id = self.path_to_id
         id_to_children = self.id_to_children
         get_version = self.get_version
+        version = None
         if id_to_children is None and isinstance(id_or_path, int):
             id = id_or_path
-            version = None
         else:
             attr = self.attr(id_or_path, pid)
             if not attr["is_directory"]:
                 raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
             id = attr["id"]
-            version = get_version and get_version(attr)
+            if get_version is not None:
+                version = get_version(attr)
         if id_to_children is None:
             pid_attrs = None
         else:
@@ -5422,9 +5451,31 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             version != pid_attrs["version"]
         ):
             pagesize = 1 << 10
+            def normalize_attr(attr, dirname, /, **extra):
+                attr = normalize_info(attr, **extra)
+                path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                if path_to_id is not None:
+                    path_to_id[path] = attr["id"]
+                if id_to_children is not None:
+                    try:
+                        id_attrs = id_to_children[attr["id"]]
+                    except LookupError:
+                        id_to_children[attr["id"]] = {"attr": attr}
+                    else:
+                        try:
+                            old_attr = id_attrs["attr"]
+                        except LookupError:
+                            id_attrs["attr"] = attr
+                        else:
+                            if path != old_attr["path"] and path_to_id is not None:
+                                try:
+                                    del path_to_id[old_attr["path"]]
+                                except LookupError:
+                                    pass
+                            old_attr.update(attr)
+                return attr
             def iterdir():
                 get_files = self._files
-                path_to_id = self.path_to_id
                 resp = get_files(id, limit=pagesize)
                 dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
                 if path_to_id is not None:
@@ -5432,32 +5483,17 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 lastest_update = datetime.now()
                 count = resp["count"]
                 for attr in resp["data"]:
-                    attr = normalize_info(attr, lastest_update=lastest_update)
-                    path = attr["path"] = joinpath(dirname, escape(attr["name"]))
-                    if path_to_id is not None:
-                        path_to_id[path] = attr["id"]
-                    if id_to_children is not None:
-                        try:
-                            id_to_children[attr["id"]].update(attr)
-                        except KeyError:
-                            id_to_children[attr["id"]] = {"attr": attr}
-                    yield attr
+                    yield normalize_attr(attr, dirname, lastest_update=lastest_update)
                 for offset in range(pagesize, count, 1 << 10):
                     resp = get_files(id, limit=pagesize, offset=offset)
                     lastest_update = datetime.now()
                     if resp["count"] != count:
                         raise RuntimeError(f"{id} detected count changes during iteration")
                     for attr in resp["data"]:
-                        attr = normalize_info(attr, lastest_update=lastest_update)
-                        path = attr["path"] = joinpath(dirname, escape(attr["name"]))
-                        if path_to_id is not None:
-                            path_to_id[path] = attr["id"]
-                        yield attr
+                        yield normalize_attr(attr, dirname, lastest_update=lastest_update)
             children = {a["id"]: a for a in iterdir()}
             if id_to_children is not None:
-                attrs = id_to_children[id] = {"attr": attr, "children": children}
-                if get_version is not None:
-                    attrs["version"] = version
+                attrs = id_to_children[id] = {"version": version, "attr": attr, "children": children}
         else:
             children = pid_attrs["children"]
         return iter(children.values())
@@ -5490,31 +5526,47 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         except OSError as e:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
         attr = normalize_info(data, lastest_update=datetime.now())
+        pid = attr["parent_id"]
+        attr_old = None
         if id_to_children is not None:
             if get_version is None:
                 version = None
             else:
                 version = get_version(attr)
-            if not attrs or "attr" not in attrs or version != attrs.get("version"):
-                pid = attr["parent_id"]
-                if pid:
-                    path = joins((*(a["name"] for a in self._dir_get_ancestors(pid)), attr["name"]))
-                else:
-                    path = "/" + escape(attr["name"])
-                path_to_id = self.path_to_id
-                if path_to_id is not None:
-                    path_to_id[path] = id
-                attr["path"] = path
+            if attrs is None or "attr" not in attrs:
                 if attrs is None:
                     id_to_children[id] = {"attr": attr}
-                    if pid not in id_to_children:
-                        id_to_children[pid] = {}
-                    id_to_children.setdefault(pid, {})[id] = attr
                 else:
-                    attrs.pop("version", None)
-                    attrs["attr"].update(attr)
+                    attrs["attr"] = attr
+                try:
+                    pid_attrs = id_to_children[pid]
+                except LookupError:
+                    pid_attrs = id_to_children[pid] = {}
+                try:
+                    children = pid_attrs["children"]
+                except LookupError:
+                    children = pid_attrs["children"] = {}
+                children[id] = attr
             else:
-                attrs["attr"].update(attr)
+                attr_old = attrs["attr"]
+                if version != attrs.get("version"):
+                    attrs.pop("version", None)
+                attr_old.update(attr)
+                attr = attr_old
+        if "path" not in attr:
+            if pid:
+                path = attr["path"] = joins(
+                    (*(a["name"] for a in self._dir_get_ancestors(pid)), attr["name"]))
+            else:
+                path = attr["path"] = "/" + escape(attr["name"])
+            path_to_id = self.path_to_id
+            if path_to_id is not None:
+                path_to_id[path] = id
+                if attr_old and path != attr_old["path"]:
+                    try:
+                        del path_to_id[attr_old["path"]]
+                    except LookupError:
+                        pass
         return attr
 
     def _attr_path(
@@ -6186,7 +6238,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 raise ValueError(f"no such id: {id_or_path!r}")
             return self.upload(BytesIO(), id_or_path, pid=pid)
 
-    # TODO: 增加功能，返回一个 Future 对象，可以获取上传进度，可随时取消
+    # TODO: 增加功能，返回一个 Task 对象，可以获取上传进度，可随时取消
     def upload(
         self, 
         /, 
@@ -6238,9 +6290,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         return self._upload(fio, name, pid)
 
     # TODO: 为了提升速度，之后会支持多线程上传，以及直接上传不做检查
-    # TODO: 增加功能，可以多线程上传或异步上传，返回 Future 对象，可以获取每个上传任务的进度，并且可以随时取消
-    # TODO: 增加断言，可以选择不上传某些文件
-    # TODO: 增加参数，as_task=False，将任务提交到上传队列，返回task对象，可以随时取消，也可以操作调度的 executor
+    # TODO: 返回上传任务的迭代器，包含进度相关信息，以及最终的响应信息
+    # TODO: 增加参数，onerror, predicate, submit 等
     def upload_tree(
         self, 
         /, 
@@ -6603,6 +6654,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         ))
 
 
+# TODO: 兼容 pathlib.Path 和 zipfile.Path 的接口
 class P115ZipPath(P115PathBase):
     fs: P115ZipFileSystem
     path: str
@@ -6741,7 +6793,7 @@ class ExtractProgress(Future):
         Thread(target=update_progress).start()
 
 
-# TODO: 参考zipfile的接口设计 namelist filelist
+# TODO: 参考 zipfile 模块的接口设计 namelist、filelist 等属性，以及其它的和 zipfile 兼容的接口
 # TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
 class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
     file_id: Optional[int]
@@ -7106,24 +7158,22 @@ class P115Offline:
         elif isinstance(torrent_or_magnet_or_sha1_or_fid, bytes):
             torrent = torrent_or_magnet_or_sha1_or_fid
         elif torrent_or_magnet_or_sha1_or_fid.startswith("magnet:?xt=urn:btih:"):
-            info_hash = torrent_or_magnet_or_sha1_or_fid[20:60]
-            url = f"https://itorrents.org/torrent/{info_hash}.torrent"
-            with Session() as session:
-                with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
-                    response.raise_for_status()
-                    torrent = response.content
+            m2t = Magnet2Torrent(torrent_or_magnet_or_sha1_or_fid)
+            torrent = run(m2t.retrieve_torrent())[1]
         else:
             sha = torrent_or_magnet_or_sha1_or_fid
         if torrent is None:
-            return check_response(self.client.offline_torrent_info(sha))
+            resp = check_response(self.client.offline_torrent_info(sha))
         else:
             sha = sha1(torrent).hexdigest()
             try:
-                return check_response(self.client.offline_torrent_info(sha))
+                resp = check_response(self.client.offline_torrent_info(sha))
             except:
-                name = f"{uuid4()}.torrent"
+                name = f"{sha}.torrent"
                 check_response(self.client.upload_file_sample(torrent, name, 0))
-                return check_response(self.client.offline_torrent_info(sha))
+                resp = check_response(self.client.offline_torrent_info(sha))
+        resp["sha1"] = sha
+        return resp
 
 
 class P115Recyclebin:
@@ -7339,8 +7389,3 @@ class P115Sharing:
 # TODO 115中多个文件可以在同一目录下同名，如何处理
 # TODO 上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
-# TODO 支持传入作为缓存的 MutableMapping
-# TODO 调用 getcwd 时需要获取最新的名字
-# TODO 支持 pickle 序列化和反序列化
-# TODO 支持上传、下载的 Future，可以 cancel、pause、resume 等
-

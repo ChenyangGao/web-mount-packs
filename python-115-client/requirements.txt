@@ -5,4 +5,5 @@ lz4
 pycryptodome
 qrcode
 requests
+magnet2torrent
 yarl

@@ -181,6 +181,8 @@ def get_filesize(file, /, dont_read: bool = True) -> int:
 
 from .urlopen import urlopen
 
+# TODO: 再尝试设计实现一个 HTTPFileWriter
+# TODO: 如果是 Range 请求，返回的状态码是 206，这也是一个明显的特征，是否能加以利用
 class HTTPFileReader(RawIOBase, BinaryIO):
     url: str | Callable[[], str]
     response: Any

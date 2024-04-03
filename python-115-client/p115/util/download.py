@@ -40,7 +40,7 @@ from requests import Response, Session
 if __name__ == "__main__":
     from sys import path
     path.insert(0, dirname(dirname(__file__)))
-    from util.concurrent import run_thread # type: ignore
+    from util.concurrent import run_as_thread # type: ignore
     from util.file import bio_skip_iter, SupportsRead, SupportsWrite # type: ignore
     from util.iter import cut_iter # type: ignore
     from util.response import get_filename, get_length, is_chunked, is_range_request # type: ignore
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     from util.urlopen import urlopen # type: ignore
     del path[0]
 else:
-    from .concurrent import run_thread
+    from .concurrent import run_as_thread
     from .file import bio_skip_iter, SupportsRead, SupportsWrite
     from .iter import cut_iter
     from .response import get_filename, get_length, is_chunked, is_range_request
@@ -69,10 +69,26 @@ class DownloadProgress(NamedTuple):
     last_incr: int = 0
     extra: Any = None
 
+    @property
+    def completed(self, /) -> int:
+        return self.downloaded + self.skipped
+
+    @property
+    def remaining(self, /) -> int:
+        return max(0, self.total - self.completed)
+
+    @property
+    def ratio(self, /) -> float:
+        return self.completed / self.total
+
+    @property
+    def task_done(self, /) -> bool:
+        return self.completed >= self.total
+
 
 class DownloadTask:
 
-    def __init__(self, /, gen, submit=run_thread):
+    def __init__(self, /, gen, submit=run_as_thread):
         if not callable(submit):
             submit = submit.submit
         self._submit = submit
@@ -88,7 +104,7 @@ class DownloadTask:
         cls, 
         /, 
         *args, 
-        submit=run_thread, 
+        submit=run_as_thread, 
         **kwargs, 
     ) -> Self:
         return cls(download_iter(*args, **kwargs), submit=submit)

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["thread_batch", "thread_pool_batch", "async_batch", "as_thread", "run_thread"]
+__all__ = ["thread_batch", "thread_pool_batch", "async_batch", "threaded", "run_as_thread"]
 
 from asyncio import CancelledError, Semaphore as AsyncSemaphore, TaskGroup
 from collections.abc import Callable, Coroutine, Iterable
@@ -142,14 +142,14 @@ async def async_batch(
             submit(task)
 
 
-def as_thread(
+def threaded(
     func: Optional[Callable] = None, 
     /, 
     lock = None, 
     **thread_init_kwds, 
 ):
     if func is None:
-        return partial(as_thread, **thread_init_kwds)
+        return partial(threaded, **thread_init_kwds)
     if isinstance(lock, int):
         lock = Semaphore(lock)
     def wrapper(*args, **kwds) -> Future[V]:
@@ -173,14 +173,14 @@ def as_thread(
     return update_wrapper(wrapper, func)
 
 
-def run_thread(
+def run_as_thread(
     func: Optional[Callable] = None, 
     /, 
     *args, 
     **kwargs, 
 ):
     if func is None:
-        f = as_thread(None, *args, **kwargs)
+        f = threaded(None, *args, **kwargs)
         return lambda func, *args, **kwargs: f(func)(*args, **kwargs)
-    return as_thread(func)(*args, **kwargs)
+    return threaded(func)(*args, **kwargs)
 
