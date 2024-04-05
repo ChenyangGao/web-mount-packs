@@ -11,7 +11,6 @@ parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux",
 args = parser.parse_args()
 
 try:
-    # pip install python-115
     from p115 import P115Client
 except ImportError:
     from sys import executable
