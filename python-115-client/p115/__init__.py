@@ -29,7 +29,9 @@ from functools import cached_property, partial, update_wrapper
 from hashlib import md5, sha1, file_digest
 from hmac import digest as hmac_digest
 from inspect import isawaitable, iscoroutinefunction
-from io import BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
+from io import (
+    BufferedReader, BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE, 
+)
 from itertools import count
 from json import dumps, loads
 from mimetypes import guess_type
@@ -42,8 +44,8 @@ from stat import S_IFDIR, S_IFREG
 from threading import Condition, Thread
 from time import sleep, time
 from typing import (
-    cast, overload, Any, ClassVar, Final, Generic, IO, Literal, Optional, Never, Self, TypeAlias, 
-    TypedDict, TypeVar, Unpack, 
+    cast, overload, Any, ClassVar, Final, Generic, IO, Literal, Never, Optional, Self, 
+    TypeAlias, TypeVar, Unpack, 
 )
 from types import MappingProxyType
 from urllib.parse import parse_qsl, quote, urlencode, urlparse
@@ -66,7 +68,10 @@ from .exception import AuthenticationError, LoginError
 from .util.args import argcount
 from .util.cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
 from .util.download import DownloadTask
-from .util.file import bio_chunk_iter, bio_skip_bytes, get_filesize, HTTPFileReader, RequestsFileReader, SupportsRead, SupportsWrite, SupportsGetUrl
+from .util.file import (
+    bio_chunk_iter, bio_skip_bytes, get_filesize, HTTPFileReader, 
+    RequestsFileReader, SupportsRead, SupportsWrite, SupportsGetUrl, 
+)
 from .util.iter import asyncify_iter
 from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 from .util.property import funcproperty
@@ -77,13 +82,13 @@ from .util.urlopen import urlopen
 
 filterwarnings("ignore", category=DeprecationWarning)
 
-IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str]
-M = TypeVar("M", bound=Mapping)
-T = TypeVar("T", dict, Callable)
+AttrDict: TypeAlias = dict # TODO: TypedDict with extra keys
+IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str] | AttrDict
+RequestVarT = TypeVar("RequestVarT", dict, Callable)
 P115FSType = TypeVar("P115FSType", bound="P115FileSystemBase")
 P115PathType = TypeVar("P115PathType", bound="P115PathBase")
 
-CRE_SHARE_LINK = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?")
+CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
@@ -92,7 +97,7 @@ if not hasattr(Response, "__del__"):
     Response.__del__ = Response.close # type: ignore
 
 
-def check_response(fn: T, /) -> T:
+def check_response(fn: RequestVarT, /) -> RequestVarT:
     if isinstance(fn, dict):
         resp = fn
         if not resp.get("state", True):
@@ -168,10 +173,6 @@ def normalize_info(
     if extra_data:
         info2.update(extra_data)
     return info2
-
-
-class HeadersKeyword(TypedDict):
-    headers: Optional[Mapping]
 
 
 class P115Client:
@@ -3472,12 +3473,18 @@ class P115Client:
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
         payload:
             - url: str
+            - sign: str = <default>
+            - time: int = <default>
             - savepath: str = <default>
             - wp_path_id: int | str = <default>
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_url"
         if isinstance(payload, str):
             payload = {"url": payload}
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_add_urls(
@@ -3493,6 +3500,8 @@ class P115Client:
             - url[0]: str
             - url[1]: str
             - ...
+            - sign: str = <default>
+            - time: int = <default>
             - savepath: str = <default>
             - wp_path_id: int | str = <default>
         """
@@ -3501,6 +3510,10 @@ class P115Client:
             payload = {f"url[{i}]": url for i, url in enumerate(payload)}
             if not payload:
                 raise ValueError("no `url` specified")
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_add_torrent(
@@ -3515,10 +3528,16 @@ class P115Client:
         payload:
             - info_hash: str
             - wanted: str
+            - sign: str = <default>
+            - time: int = <default>
             - savepath: str = <default>
             - wp_path_id: int | str = <default>
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_bt"
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_torrent_info(
@@ -3551,11 +3570,17 @@ class P115Client:
             - hash[0]: str
             - hash[1]: str
             - ...
+            - sign: str = <default>
+            - time: int = <default>
             - flag: 0 | 1 = <default> # 是否删除源文件
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_del"
         if isinstance(payload, str):
             payload = {"hash[0]": payload}
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def offline_list(
@@ -3684,6 +3709,86 @@ class P115Client:
             payload = {"rid[0]": payload}
         elif not isinstance(payload, dict):
             payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    ########## Captcha System API ##########
+
+    def captcha_sign(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取验证码的签名字符串
+        GET https://captchaapi.115.com/?ac=code&t=sign
+        """
+        api = "https://captchaapi.115.com/?ac=code&t=sign"
+        return self.request(api, async_=async_, **request_kwargs)
+
+    def captcha_code(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        """更新验证码，并获取图片数据（含 4 个汉字）
+        GET https://captchaapi.115.com/?ct=index&ac=code&ctype=0
+        """
+        api = "https://captchaapi.115.com/?ct=index&ac=code&ctype=0"
+        request_kwargs["parse"] = lambda _, content: content
+        return self.request(api, async_=async_, **request_kwargs)
+
+    def captcha_all(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        """返回一张包含 10 个汉字的图片，包含验证码中 4 个汉字（有相应的编号，从 0 到 9，计数按照从左到右，从上到下的顺序）
+        GET https://captchaapi.115.com/?ct=index&ac=code&t=all
+        """
+        api = "https://captchaapi.115.com/?ct=index&ac=code&t=all"
+        request_kwargs["parse"] = lambda _, content: content
+        return self.request(api, async_=async_, **request_kwargs)
+
+    def captcha_single(
+        self, 
+        id: int, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        """10 个汉字单独的图片，包含验证码中 4 个汉字，编号从 0 到 9
+        GET https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}
+        """
+        if not 0 <= id <= 9:
+            raise ValueError(f"expected integer between 0 and 9, got {id}")
+        api = f"https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}"
+        request_kwargs["parse"] = lambda _, content: content
+        return self.request(api, async_=async_, **request_kwargs)
+
+    def captcha_verify(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """提交验证码
+        POST https://webapi.115.com/user/captcha
+        payload:
+            - code: int | str # 从 0 到 9 中选取 4 个数字的一种排列
+            - sign: str = <default>
+            - ac: str = "security_code"
+            - type: str = "web"
+        """
+        if isinstance(payload, (int, str)):
+            payload = {"code": payload, "ac": "security_code", "type": "web"}
+        else:
+            payload = {"ac": "security_code", "type": "web", **payload}
+        if "sign" not in payload:
+            payload["sign"] = self.captcha_sign()["sign"]
+        api = "https://webapi.115.com/user/captcha"
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
@@ -3833,27 +3938,15 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     fs: P115FSType
     path: str
 
-    def __init__(
-        self, 
-        /, 
-        fs: P115FSType, 
-        path: str | PathLike[str], 
-        **attr, 
-    ):
-        attr.update(fs=fs, path=fs.abspath(path))
+    def __init__(self, /, attr: AttrDict):
         super().__setattr__("__dict__", attr)
 
     def __and__(self, path: str | PathLike[str], /) -> Self:
-        return type(self)(self.fs, commonpath((self.path, self.fs.abspath(path))))
+        return type(self)({"fs": self.fs, "path": commonpath((self.path, self.fs.abspath(path)))})
 
     def __call__(self, /) -> Self:
-        fs = self.fs
-        attr = fs.attr(self)
-        try:
-            if self.__dict__["path"] != attr["path"]:
-                raise KeyError
-            super().__setattr__("__dict__", {"fs": fs, **attr})
-        except KeyError:
+        attr = self.fs.attr(self)
+        if self.__dict__ is not attr:
             self.__dict__.update(attr)
         return self
 
@@ -3867,7 +3960,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.path
 
     def __getitem__(self, key, /):
-        if key not in self.__dict__ and not self.__dict__.get("lastest_update"):
+        if key not in self.__dict__ and not self.__dict__.get("last_update"):
             self()
         return self.__dict__[key]
 
@@ -3906,7 +3999,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         name = cls.__qualname__
         if module != "__main__":
             name = module + "." + name
-        return f"<{name}({', '.join(f'{k}={v!r}' for k, v in self.__dict__.items())})>"
+        return f"{name}({self.__dict__})"
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
@@ -3916,6 +4009,10 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     def __truediv__(self, path: str | PathLike[str], /) -> Self:
         return self.joinpath(path)
+
+    @property
+    def is_attr_loaded(self, /) -> bool:
+        return "last_update" in self.__dict__
 
     @cached_property
     def id(self, /) -> int:
@@ -4034,7 +4131,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def join(self, *names: str) -> Self:
         if not names:
             return self
-        return type(self)(self.fs, joinpath(self.path, joins(names)))
+        return type(self)({"fs": self.fs, "path": joinpath(self.path, joins(names))})
 
     def joinpath(self, *paths: str | PathLike[str]) -> Self:
         if not paths:
@@ -4043,7 +4140,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         path_new = normpath(joinpath(path, *paths))
         if path == path_new:
             return self
-        return type(self)(self.fs, path_new)
+        return type(self)({"fs": self.fs, "path": path_new})
 
     def listdir(self, /, **kwargs) -> list[str]:
         return self.fs.listdir(self, **kwargs)
@@ -4109,9 +4206,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             return self
         parent = dirname(path)
         try:
-            return type(self)(self.fs, parent, id=self.__dict__["parent_id"])
-        except:
-            return type(self)(self.fs, parent)
+            return type(self)({"id": self.__dict__["parent_id"], "fs": self.fs, "path": parent})
+        except KeyError:
+            return type(self)({"fs": self.fs, "path": parent})
 
     @cached_property
     def parents(self, /) -> tuple[Self, ...]:
@@ -4122,7 +4219,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         cls, fs = type(self), self.fs
         parent = dirname(path)
         while path != parent:
-            parents.append(cls(fs, parent))
+            parents.append(cls({"fs": fs, "path": parent}))
             path, parent = parent, dirname(parent)
         return tuple(parents)
 
@@ -4206,7 +4303,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     @cached_property
     def root(self, /) -> Self:
-        return type(self)(self.fs, "/", id=0)
+        return type(self)({"fs": self.fs, "path": "/", "id": 0})
 
     def samefile(self, path: str | PathLike[str], /) -> bool:
         if type(self) is type(path):
@@ -4285,7 +4382,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.parent.joinpath(self.stem + suffix)
 
 
-class P115FileSystemBase(Generic[M, P115PathType]):
+class P115FileSystemBase(Generic[P115PathType]):
     client: P115Client
     cid: int
     path: str
@@ -4307,13 +4404,21 @@ class P115FileSystemBase(Generic[M, P115PathType]):
     def __len__(self, /) -> int:
         return len(tuple(self.iterdir()))
 
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"<{name}(client={self.client!r}, cid={self.cid!r}, path={self.path!r}) at {hex(id(self))}>"
+
     @abstractmethod
     def attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> M:
+    )  -> AttrDict:
         ...
 
     @abstractmethod
@@ -4332,7 +4437,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> Iterator[M]:
+    ) -> Iterator[AttrDict]:
         ...
 
     def abspath(self, path: str | PathLike[str] = "", /) -> str:
@@ -4343,19 +4448,19 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-        fetch_attr: bool = False, 
     ) -> P115PathType:
         path_class = type(self).path_class
+        attr: AttrDict
         if isinstance(id_or_path, path_class):
-            path = id_or_path
-            if fetch_attr:
-                path()
-            return path
+            return id_or_path
+        elif isinstance(id_or_path, dict):
+            attr = cast(AttrDict, id_or_path)
         elif isinstance(id_or_path, int):
-            return path_class(self, **self.attr(id_or_path))
-        if fetch_attr:
-            return path_class(self, **self.attr(id_or_path, pid))
-        return path_class(self, self.get_path(id_or_path, pid))
+            attr = self.attr(id_or_path)
+        else:
+            attr = self.attr(id_or_path, pid)
+        attr["fs"] = self
+        return path_class(attr)
 
     def chdir(
         self, 
@@ -4363,9 +4468,14 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> int:
-        if isinstance(id_or_path, type(self).path_class):
-            self.__dict__.update(cid=id_or_path.id, path=id_or_path.path)
-            return id_or_path.id
+        path_class = type(self).path_class
+        if isinstance(id_or_path, path_class):
+            cid = id_or_path.id
+            self.__dict__.update(
+                cid  = cid, 
+                path = id_or_path["path"], 
+            )
+            return cid
         elif id_or_path in (0, "/"):
             self.__dict__.update(cid=0, path="/")
             return 0
@@ -4377,7 +4487,10 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         if self.cid == attr["id"]:
             return self.cid
         elif attr["is_directory"]:
-            self.__dict__.update(cid=attr["id"], path=self.get_path(id_or_path, pid))
+            self.__dict__.update(
+                cid  = attr["id"], 
+                path = self.get_path(id_or_path, pid), 
+            )
             return attr["id"]
         else:
             raise NotADirectoryError(
@@ -4433,14 +4546,17 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         if local_dir:
             makedirs(local_dir, exist_ok=True)
         attr = self.attr(id_or_path, pid)
+        pathes: Iterable[P115PathType]
         if attr["is_directory"]:
             if not no_root:
                 local_dir = ospath.join(local_dir, attr["name"])
                 if local_dir:
                     makedirs(local_dir, exist_ok=True)
-            pathes = self.listdir_path(attr["id"])
+            pathes = self.scandir(attr["id"])
         else:
-            pathes = [type(self).path_class(self, **attr)]
+            path_class = type(self).path_class
+            attr["fs"] = self
+            pathes = (path_class(attr),)
         for subpath in filter(predicate, pathes):
             if subpath["is_directory"]:
                 yield from self.download_tree(
@@ -4477,8 +4593,9 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
+        path_class = type(self).path_class
         try:
-            if isinstance(id_or_path, type(self).path_class):
+            if isinstance(id_or_path, path_class):
                 id_or_path()
             else:
                 self.attr(id_or_path, pid)
@@ -4500,9 +4617,10 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> int:
+        path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
             return self.cid
-        elif isinstance(id_or_path, type(self).path_class):
+        elif isinstance(id_or_path, path_class):
             return id_or_path.id
         elif isinstance(id_or_path, int):
             return id_or_path
@@ -4523,10 +4641,13 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> str:
+        path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
             return self.path
-        elif isinstance(id_or_path, type(self).path_class):
+        elif isinstance(id_or_path, path_class):
             return id_or_path.path
+        elif isinstance(id_or_path, dict):
+            return id_or_path["path"]
         elif isinstance(id_or_path, int):
             id = id_or_path
             if id == 0:
@@ -4555,10 +4676,13 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> list[str]:
+        path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
             return splits(self.path)[0]
-        elif isinstance(id_or_path, type(self).path_class):
+        elif isinstance(id_or_path, path_class):
             return splits(id_or_path.path)[0]
+        elif isinstance(id_or_path, dict):
+            return splits(id_or_path["path"])[0]
         elif isinstance(id_or_path, int):
             id = id_or_path
             if id == 0:
@@ -4606,9 +4730,12 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             except FileNotFoundError:
                 return iter(())
             else:
-                return iter((path_class(self, **attr),))
+                attr["fs"] = self
+                return iter((path_class(attr),))
         elif not pattern.lstrip("/"):
-            return iter((path_class(self, **self.attr(0)),))
+            attr = self.attr(0)
+            attr["fs"] = self
+            return iter((path_class(attr),))
         splitted_pats = tuple(posix_glob_translate_iter(
             pattern, allow_escaped_slash=allow_escaped_slash))
         dirname_as_id = isinstance(dirname, (int, path_class))
@@ -4648,7 +4775,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                 except FileNotFoundError:
                     return iter(())
                 else:
-                    return iter((path_class(self, **attr),))
+                    attr["fs"] = self
+                    return iter((path_class(attr),))
             elif typ == "dstar" and i + 1 == len(splitted_pats):
                 if dirname_as_id:
                     return self.iter(dir2, dirid, max_depth=-1)
@@ -4701,11 +4829,14 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                             yield subpath
                         elif subpath["is_directory"]:
                             yield from glob_step_match(subpath, j)
-        path = path_class(self, dir_)
         if dirname_as_id:
-            path.__dict__["id"] = self.get_id(dir2, dirid)
-        if not path["is_directory"]:
+            attr = self.attr(dir2, dirid)
+        else:
+            attr = self.attr(dir_)
+        if not attr["is_directory"]:
             return iter(())
+        attr["fs"] = self
+        path = path_class(attr)
         return glob_step_match(path, i)
 
     def isdir(
@@ -4714,7 +4845,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
-        if isinstance(id_or_path, type(self).path_class):
+        path_class = type(self).path_class
+        if isinstance(id_or_path, path_class):
             return id_or_path["is_directory"]
         try:
             return self.attr(id_or_path, pid)["is_directory"]
@@ -4727,13 +4859,15 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
     ) -> bool:
-        if isinstance(id_or_path, type(self).path_class):
+        path_class = type(self).path_class
+        if isinstance(id_or_path, path_class):
             return not id_or_path["is_directory"]
         try:
             return not self.attr(id_or_path, pid)["is_directory"]
         except FileNotFoundError:
             return False
 
+    # TODO: 支持宽度优先遍历
     def iter(
         self, 
         top: IDOrPathType = "", 
@@ -4754,8 +4888,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
             max_depth -= 1
         path_class = type(self).path_class
         try:
-            for path in self.listdir_path(top, pid, **kwargs):
-                path = cast(P115PathType, path)
+            for attr in self.iterdir(top, pid, **kwargs):
+                path = path_class(attr)
                 yield_me = min_depth <= 0
                 if yield_me and predicate:
                     pred = predicate(path)
@@ -4766,7 +4900,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                     yield path
                 if path["is_directory"]:
                     yield from self.iter(
-                        path.path, 
+                        path, 
                         topdown=topdown, 
                         min_depth=min_depth, 
                         max_depth=max_depth, 
@@ -4800,7 +4934,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
         **kwargs, 
-    ) -> list[M]:
+    ) -> list[AttrDict]:
         return list(self.iterdir(id_or_path, pid, **kwargs))
 
     def listdir_path(
@@ -4811,7 +4945,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         **kwargs, 
     ) -> list[P115PathType]:
         path_class = type(self).path_class
-        return [path_class(self, **attr) for attr in self.iterdir(id_or_path, pid, **kwargs)]
+        return [path_class(attr) for attr in self.iterdir(id_or_path, pid, **kwargs)]
 
     def dictdir(
         self, 
@@ -4832,7 +4966,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         /, 
         pid: Optional[int] = None, 
         **kwargs, 
-    ) -> dict[int, M]:
+    ) -> dict[int, AttrDict]:
         return {attr["id"]: attr for attr in self.iterdir(id_or_path, pid, **kwargs)}
 
     def dictdir_path(
@@ -4843,7 +4977,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         **kwargs, 
     ) -> dict[int, P115PathType]:
         path_class = type(self).path_class
-        return {attr["id"]: path_class(self, **attr) for attr in self.iterdir(id_or_path, pid, **kwargs)}
+        return {attr["id"]: path_class(attr) for attr in self.iterdir(id_or_path, pid, **kwargs)}
 
     def open(
         self, 
@@ -4949,7 +5083,7 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         pid: Optional[int] = None, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
-        return iter(self.listdir_path(id_or_path, pid, **kwargs))
+        return map(type(self).path_class, self.iterdir(id_or_path, pid, **kwargs))
 
     def stat(
         self, 
@@ -4985,8 +5119,8 @@ class P115FileSystemBase(Generic[M, P115PathType]):
                 _top = self.get_path(top, pid)
             dirs: list[str] = []
             files: list[str] = []
-            attrs: list[M] = []
-            for attr in self.listdir_attr(top, pid, **kwargs):
+            attrs: list[AttrDict] = []
+            for attr in self.iterdir(top, pid, **kwargs):
                 if attr["is_directory"]:
                     attrs.append(attr)
                     dirs.append(attr["name"])
@@ -5030,13 +5164,14 @@ class P115FileSystemBase(Generic[M, P115PathType]):
         if max_depth > 0:
             max_depth -= 1
         yield_me = min_depth <= 0
+        path_class = type(self).path_class
         try:
             if not _top:
                 _top = self.get_path(top, pid)
             dirs: list[P115PathType] = []
             files: list[P115PathType] = []
-            for path in self.listdir_path(top, pid, **kwargs):
-                (dirs if path["is_directory"] else files).append(path)
+            for attr in self.iterdir(top, pid, **kwargs):
+                (dirs if attr["is_directory"] else files).append(path_class(attr))
             if yield_me and topdown:
                 yield _top, dirs, files
             for path in dirs:
@@ -5082,7 +5217,7 @@ class P115Path(P115PathBase):
         )
         if attr is None:
             return None
-        return type(self)(self.fs, **attr)
+        return type(self)(attr)
 
     def mkdir(self, /, exist_ok: bool = True) -> Self:
         self.__dict__.update(self.fs.makedirs(self, exist_ok=exist_ok))
@@ -5097,7 +5232,7 @@ class P115Path(P115PathBase):
         attr = self.fs.move(self, dst_path, pid)
         if attr is None:
             return self
-        return type(self)(self.fs, **attr)
+        return type(self)(attr)
 
     def remove(self, /, recursive: bool = True) -> dict:
         return self.fs.remove(self, recursive=recursive)
@@ -5111,7 +5246,7 @@ class P115Path(P115PathBase):
         attr = self.fs.rename(self, dst_path, pid)
         if attr is None:
             return self
-        return type(self)(self.fs, **attr)
+        return type(self)(attr)
 
     def renames(
         self, 
@@ -5122,7 +5257,7 @@ class P115Path(P115PathBase):
         attr = self.fs.renames(self, dst_path, pid)
         if attr is None:
             return self
-        return type(self)(self.fs, **attr)
+        return type(self)(attr)
 
     def replace(
         self, 
@@ -5133,7 +5268,7 @@ class P115Path(P115PathBase):
         attr = self.fs.replace(self, dst_path, pid)
         if attr is None:
             return self
-        return type(self)(self.fs, **attr)
+        return type(self)(attr)
 
     def rmdir(self, /) -> dict:
         return self.fs.rmdir(self)
@@ -5170,8 +5305,8 @@ class P115Path(P115PathBase):
         return self
 
 
-class P115FileSystem(P115FileSystemBase[dict, P115Path]):
-    id_to_children: Optional[MutableMapping[int, dict]]
+class P115FileSystem(P115FileSystemBase[P115Path]):
+    attr_cache: Optional[MutableMapping[int, dict]]
     path_to_id: Optional[MutableMapping[str, int]]
     get_version: Optional[Callable]
     path_class = P115Path
@@ -5180,12 +5315,12 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         self, 
         /, 
         client: P115Client, 
-        id_to_children: Optional[MutableMapping[int, dict]] = None, 
+        attr_cache: Optional[MutableMapping[int, dict]] = None, 
         path_to_id: Optional[MutableMapping[str, int]] = None, 
         get_version: Optional[Callable] = lambda attr: attr.get("mtime", 0), 
     ):
-        if id_to_children is not None:
-            id_to_children = {}
+        if attr_cache is not None:
+            attr_cache = {}
         if type(path_to_id) is dict:
             path_to_id["/"] = 0
         elif path_to_id is not None:
@@ -5195,7 +5330,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             cid = 0, 
             path = "/", 
             path_to_id = path_to_id, 
-            id_to_children = id_to_children, 
+            attr_cache = attr_cache, 
             get_version = get_version, 
         )
 
@@ -5204,14 +5339,6 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def __len__(self, /) -> int:
         return self.get_directory_capacity(self.cid)
-
-    def __repr__(self, /) -> str:
-        cls = type(self)
-        module = cls.__module__
-        name = cls.__qualname__
-        if module != "__main__":
-            name = module + "." + name
-        return f"<{name}(client={self.client!r}, cid={self.cid!r}, path={self.path!r}) at {hex(id(self))}>"
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
@@ -5317,14 +5444,14 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             return self._attr(id)
 
     def _clear_cache(self, attr: dict, /):
-        id_to_children = self.id_to_children
-        if id_to_children is None:
+        attr_cache = self.attr_cache
+        if attr_cache is None:
             return
         id = attr["id"]
         pid = attr["parent_id"]
         if id:
             try:
-                id_to_children[pid]["children"].pop(id, None)
+                attr_cache[pid]["children"].pop(id, None)
             except:
                 pass
         if attr["is_directory"]:
@@ -5343,8 +5470,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             while dq:
                 cid = get()
                 try:
-                    cache = id_to_children[cid]
-                    del id_to_children[cid]
+                    cache = attr_cache[cid]
+                    del attr_cache[cid]
                 except KeyError:
                     pass
                 else:
@@ -5361,19 +5488,19 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                     pop_path(k)
 
     def _update_cache_path(self, attr: dict, new_attr: dict, /):
-        id_to_children = self.id_to_children
-        if id_to_children is None:
+        attr_cache = self.attr_cache
+        if attr_cache is None:
             return
         id = attr["id"]
         opid = attr["parent_id"]
         npid = new_attr["parent_id"]
         if id and opid != npid:
             try:
-                id_to_children[opid]["children"].pop(id, None)
+                attr_cache[opid]["children"].pop(id, None)
             except:
                 pass
             try:
-                id_to_children[npid]["children"][id] = new_attr
+                attr_cache[npid]["children"][id] = new_attr
             except:
                 pass
         if attr["is_directory"]:
@@ -5401,8 +5528,8 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             while dq:
                 cid = get()
                 try:
-                    cache = id_to_children[cid]
-                    del id_to_children[cid]
+                    cache = attr_cache[cid]
+                    del attr_cache[cid]
                 except KeyError:
                     pass
                 else:
@@ -5426,24 +5553,37 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         /, 
         pid: Optional[int] = None, 
         refresh: bool = False, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[AttrDict]:
         path_to_id = self.path_to_id
-        id_to_children = self.id_to_children
+        attr_cache = self.attr_cache
         get_version = self.get_version
         version = None
-        if id_to_children is None and isinstance(id_or_path, int):
+        if attr_cache is None and isinstance(id_or_path, int):
             id = id_or_path
         else:
-            attr = self.attr(id_or_path, pid)
+            attr = None
+            if not refresh:
+                path_class = type(self).path_class
+                if isinstance(id_or_path, dict):
+                    attr = id_or_path
+                elif isinstance(id_or_path, path_class):
+                    if id_or_path.is_attr_loaded:
+                        id_or_path()
+                    attr = id_or_path.__dict__
+            if attr is None:
+                attr = self.attr(id_or_path, pid)
             if not attr["is_directory"]:
-                raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
+                )
             id = attr["id"]
             if get_version is not None:
                 version = get_version(attr)
-        if id_to_children is None:
+        if attr_cache is None:
             pid_attrs = None
         else:
-            pid_attrs = id_to_children.get(id)
+            pid_attrs = attr_cache.get(id)
         if (
             refresh or 
             pid_attrs is None or 
@@ -5456,11 +5596,11 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                 if path_to_id is not None:
                     path_to_id[path] = attr["id"]
-                if id_to_children is not None:
+                if attr_cache is not None:
                     try:
-                        id_attrs = id_to_children[attr["id"]]
+                        id_attrs = attr_cache[attr["id"]]
                     except LookupError:
-                        id_to_children[attr["id"]] = {"attr": attr}
+                        attr_cache[attr["id"]] = {"attr": attr}
                     else:
                         try:
                             old_attr = id_attrs["attr"]
@@ -5480,68 +5620,69 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                 dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
                 if path_to_id is not None:
                     path_to_id[dirname] = id
-                lastest_update = datetime.now()
+                last_update = datetime.now()
                 count = resp["count"]
                 for attr in resp["data"]:
-                    yield normalize_attr(attr, dirname, lastest_update=lastest_update)
+                    yield normalize_attr(attr, dirname, fs=self, last_update=last_update)
                 for offset in range(pagesize, count, 1 << 10):
                     resp = get_files(id, limit=pagesize, offset=offset)
-                    lastest_update = datetime.now()
+                    last_update = datetime.now()
                     if resp["count"] != count:
                         raise RuntimeError(f"{id} detected count changes during iteration")
                     for attr in resp["data"]:
-                        yield normalize_attr(attr, dirname, lastest_update=lastest_update)
+                        yield normalize_attr(attr, dirname, fs=self, last_update=last_update)
             children = {a["id"]: a for a in iterdir()}
-            if id_to_children is not None:
-                attrs = id_to_children[id] = {"version": version, "attr": attr, "children": children}
+            if attr_cache is not None:
+                attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
         else:
             children = pid_attrs["children"]
         return iter(children.values())
 
-    def _attr(self, id: int, /) -> dict:
+    def _attr(self, id: int, /)  -> AttrDict:
         if id == 0:
-            lastest_update = datetime.now()
+            last_update = datetime.now()
             return {
                 "id": 0, 
                 "parent_id": 0, 
                 "name": "", 
                 "path": "/", 
                 "is_directory": True, 
-                "lastest_update": lastest_update, 
-                "etime": lastest_update, 
-                "utime": lastest_update, 
+                "etime": last_update, 
+                "utime": last_update, 
                 "ptime": datetime.fromtimestamp(0), 
-                "open_time": lastest_update, 
+                "open_time": last_update, 
+                "last_update": last_update, 
+                "fs": self, 
             }
-        id_to_children = self.id_to_children
+        attr_cache = self.attr_cache
         get_version = self.get_version
-        if id_to_children is None:
+        if attr_cache is None:
             attrs = None
         else:
-            attrs = id_to_children.get(id)
+            attrs = attr_cache.get(id)
         if attrs and "attr" in attrs and get_version is None:
             return attrs["attr"]
         try:
             data = self._info(id)["data"][0]
         except OSError as e:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
-        attr = normalize_info(data, lastest_update=datetime.now())
+        attr = normalize_info(data, fs=self, last_update=datetime.now())
         pid = attr["parent_id"]
         attr_old = None
-        if id_to_children is not None:
+        if attr_cache is not None:
             if get_version is None:
                 version = None
             else:
                 version = get_version(attr)
             if attrs is None or "attr" not in attrs:
                 if attrs is None:
-                    id_to_children[id] = {"attr": attr}
+                    attr_cache[id] = {"attr": attr}
                 else:
                     attrs["attr"] = attr
                 try:
-                    pid_attrs = id_to_children[pid]
+                    pid_attrs = attr_cache[pid]
                 except LookupError:
-                    pid_attrs = id_to_children[pid] = {}
+                    pid_attrs = attr_cache[pid] = {}
                 try:
                     children = pid_attrs["children"]
                 except LookupError:
@@ -5574,7 +5715,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: Optional[int] = None, 
-    ) -> dict:
+    )  -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
         if pid is None:
@@ -5601,7 +5742,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             if not attr["is_directory"]:
                 raise NotADirectoryError(
                     errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
-            for attr in self.listdir_attr(pid):
+            for attr in self.iterdir(pid):
                 if attr["name"] == name:
                     pid = cast(int, attr["id"])
                     break
@@ -5614,9 +5755,14 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> dict:
+    )  -> AttrDict:
         if isinstance(id_or_path, P115Path):
             return self._attr(id_or_path.id)
+        elif isinstance(id_or_path, dict):
+            attr = id_or_path
+            if "id" in attr:
+                return self._attr(attr["id"])
+            return self._attr_path(attr["path"])
         elif isinstance(id_or_path, int):
             return self._attr(id_or_path)
         else:
@@ -5791,7 +5937,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
                     errno.EEXIST, 
                     f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}", 
                 )
-        for attr in self.listdir_attr(src_id, **kwargs):
+        for attr in self.iterdir(src_id, **kwargs):
             if attr["is_directory"]:
                 self.copytree(
                     attr["id"], 
@@ -5868,12 +6014,14 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
 
     def makedirs(
         self, 
-        path: str | PathLike[str] | Sequence[str], 
+        path: str | PathLike[str] | Sequence[str] | AttrDict, 
         /, 
         pid: Optional[int] = None, 
         exist_ok: bool = False, 
     ) -> dict:
-        if isinstance(path, (str, PathLike)):
+        if isinstance(path, dict):
+            patht, parents = splits(path["path"])
+        elif isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
         else:
             patht = [p for p in path if p]
@@ -5986,7 +6134,7 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             if not recursive:
                 raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
             if id == 0:
-                for subattr in self.listdir_attr(0):
+                for subattr in self.iterdir(0):
                     cid = subattr["id"]
                     self._delete(cid)
                     clear_cache(subattr)
@@ -6172,7 +6320,6 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
         pid: Optional[int] = None, 
         page_size: int = 1_000, 
         offset: int = 0, 
-        as_path: bool = False, 
         **kwargs, 
     ) -> Iterator[P115Path]:
         assert page_size > 0
@@ -6183,23 +6330,21 @@ class P115FileSystem(P115FileSystemBase[dict, P115Path]):
             "offset": offset, 
             **kwargs, 
         }
-        if as_path:
-            def wrap(attr):
-                attr = normalize_info(attr, lastest_update=lastest_update)
-                return P115Path(self, **attr)
-        else:
-            def wrap(attr):
-                return normalize_info(attr, lastest_update=lastest_update)
+        def wrap(attr):
+            attr = normalize_info(attr, fs=self, last_update=last_update)
+            return P115Path(attr)
         search = self._search
         while True:
             resp = search(payload)
-            lastest_update = datetime.now()
+            last_update = datetime.now()
             if resp["offset"] != offset:
                 break
             data = resp["data"]
             if not data:
                 return
-            yield from map(wrap, resp["data"])
+            for attr in resp["data"]:
+                attr = normalize_info(attr, fs=self, last_update=last_update)
+                yield P115Path(attr)
             offset = payload["offset"] = offset + resp["page_size"]
             if offset >= resp["count"]:
                 break
@@ -6384,19 +6529,19 @@ class P115SharePath(P115PathBase):
     fs: P115ShareFileSystem
 
 
-class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
+class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     share_link: str
     share_code: str
     receive_code: str
     user_id: int
     path_to_id: MutableMapping[str, int]
-    id_to_attr: MutableMapping[int, MappingProxyType]
-    id_to_children: MutableMapping[int, tuple[MappingProxyType]]
+    id_to_attr: MutableMapping[int, AttrDict]
+    attr_cache: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
     path_class = P115SharePath
 
     def __init__(self, /, client: P115Client, share_link: str):
-        m = CRE_SHARE_LINK.search(share_link)
+        m = CRE_SHARE_LINK_search(share_link)
         if m is None:
             raise ValueError("not a valid 115 share link")
         self.__dict__.update(
@@ -6408,7 +6553,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             receive_code= m["receive_code"] or "", 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
-            id_to_children={}, 
+            attr_cache={}, 
             full_loaded=False, 
         )
         self.__dict__["user_id"] = int(self.sharedata["userinfo"]["user_id"])
@@ -6473,7 +6618,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
     def shareinfo(self, /) -> dict:
         return self.sharedata["shareinfo"]
 
-    def _attr(self, id: int = 0, /) -> MappingProxyType:
+    def _attr(self, id: int = 0, /) -> AttrDict:
         try:
             return self.id_to_attr[id]
         except KeyError:
@@ -6481,14 +6626,16 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         if self.full_loaded:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
         if id == 0:
-            attr = self.id_to_attr[0] = MappingProxyType({
+            attr = self.id_to_attr[0] = {
                 "id": 0, 
                 "parent_id": 0, 
                 "name": "", 
                 "path": "/", 
                 "is_directory": True, 
                 "time": self.create_time, 
-            })
+                "last_update": datetime.now(), 
+                "fs": self, 
+            }
             return attr
         dq = deque((0,))
         while dq:
@@ -6506,7 +6653,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: Optional[int] = None, 
-    ) -> MappingProxyType:
+    ) -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
         if pid is None:
@@ -6539,9 +6686,15 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> MappingProxyType:
-        if isinstance(id_or_path, P115SharePath):
+    ) -> AttrDict:
+        path_class = type(self).path_class
+        if isinstance(id_or_path, path_class):
             return self._attr(id_or_path["id"])
+        elif isinstance(id_or_path, dict):
+            attr = id_or_path
+            if "id" in attr:
+                return self._attr(attr["id"])
+            return self._attr_path(attr["path"])
         elif isinstance(id_or_path, int):
             return self._attr(id_or_path)
         else:
@@ -6554,7 +6707,8 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         pid: Optional[int] = None, 
         headers: Optional[Mapping] = None, 
     ) -> str:
-        if isinstance(id_or_path, (int, P115ZipPath)):
+        path_class = type(self).path_class
+        if isinstance(id_or_path, (int, path_class)):
             id = id_or_path if isinstance(id_or_path, int) else id_or_path.id
             if id in self.id_to_attr:
                 attr = self.id_to_attr[id]
@@ -6576,25 +6730,24 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> Iterator[MappingProxyType]:
-        if isinstance(id_or_path, (int, P115ZipPath)):
-            id = id_or_path if isinstance(id_or_path, int) else id_or_path.id
-            if id in self.id_to_attr:
-                attr = self.id_to_attr[id]
-                if not attr["is_directory"]:
-                    raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
-            else:
-                try:
-                    self.get_url(id)
-                except IsADirectoryError:
-                    pass
+    ) -> Iterator[AttrDict]:
+        path_class = type(self).path_class
+        if isinstance(id_or_path, int):
+            attr = self.attr(id_or_path)
+        elif isinstance(id_or_path, dict):
+            attr = id_or_path
+        elif isinstance(id_or_path, path_class):
+            attr = id_or_path.__dict__
         else:
             attr = self.attr(id_or_path, pid)
-            if not attr["is_directory"]:
-                raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
-            id = attr["id"]
+        if not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
+            )
+        id = attr["id"]
         try:
-            return iter(self.id_to_children[id])
+            return iter(self.attr_cache[id])
         except KeyError:
             dirname = attr["path"]
             def iterdir():
@@ -6602,17 +6755,23 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
                 get_files = self._files
                 path_to_id = self.path_to_id
                 data = get_files(id, page_size)["data"]
+                last_update = datetime.now()
                 for attr in map(normalize_info, data["list"]):
+                    attr["fs"] = self
+                    attr["last_update"] = last_update
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                     path_to_id[path] = attr["id"]
-                    yield MappingProxyType(attr)
+                    yield attr
                 for offset in range(page_size, data["count"], page_size):
                     data = get_files(id, page_size, offset)["data"]
+                    last_update = datetime.now()
                     for attr in map(normalize_info, data["list"]):
+                        attr["fs"] = self
+                        attr["last_update"] = last_update
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                         path_to_id[path] = attr["id"]
-                        yield MappingProxyType(attr)
-            t = self.id_to_children[id] = tuple(iterdir())
+                        yield attr
+            t = self.attr_cache[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in t)
             return iter(t)
 
@@ -6639,7 +6798,7 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
     ) -> stat_result:
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
-        lastest_update = attr.get("lastest_update") or datetime.now()
+        last_update = attr.get("last_update") or datetime.now()
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o444, 
             attr["id"], 
@@ -6648,9 +6807,9 @@ class P115ShareFileSystem(P115FileSystemBase[MappingProxyType, P115SharePath]):
             self.user_id, 
             1, 
             0 if is_dir else attr["size"], 
-            attr.get("time", lastest_update).timestamp(), 
-            attr.get("time", lastest_update).timestamp(), 
-            attr.get("time", lastest_update).timestamp(), 
+            attr.get("time", last_update).timestamp(), 
+            attr.get("time", last_update).timestamp(), 
+            attr.get("time", last_update).timestamp(), 
         ))
 
 
@@ -6795,12 +6954,12 @@ class ExtractProgress(Future):
 
 # TODO: 参考 zipfile 模块的接口设计 namelist、filelist 等属性，以及其它的和 zipfile 兼容的接口
 # TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
-class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
+class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     file_id: Optional[int]
     pick_code: str
     path_to_id: MutableMapping[str, int]
-    id_to_attr: MutableMapping[int, MappingProxyType]
-    id_to_children: MutableMapping[int, tuple[MappingProxyType]]
+    id_to_attr: MutableMapping[int, AttrDict]
+    attr_cache: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
     path_class = P115ZipPath
 
@@ -6828,7 +6987,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             file_id=file_id, 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
-            id_to_children={}, 
+            attr_cache={}, 
             full_loaded=False, 
             _nextid=count(1).__next__, 
         )
@@ -6866,7 +7025,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             return datetime.fromtimestamp(0)
         return self.client.fs.attr(self.file_id)["ptime"]
 
-    def _attr(self, id: int = 0, /) -> MappingProxyType:
+    def _attr(self, id: int = 0, /) -> AttrDict:
         try:
             return self.id_to_attr[id]
         except KeyError:
@@ -6874,7 +7033,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         if self.full_loaded:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
         if id == 0:
-            attr = self.id_to_attr[0] = MappingProxyType({
+            attr = self.id_to_attr[0] = {
                 "id": 0, 
                 "parent_id": 0, 
                 "file_category": 0, 
@@ -6884,7 +7043,9 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
                 "size": 0, 
                 "time": self.create_time, 
                 "timestamp": int(self.create_time.timestamp()), 
-            })
+                "last_update": datetime.now(), 
+                "fs": self, 
+            }
             return attr
         dq = deque((0,))
         while dq:
@@ -6902,7 +7063,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: Optional[int] = None, 
-    ) -> MappingProxyType:
+    ) -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
         if pid is None:
@@ -6935,9 +7096,15 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> MappingProxyType:
-        if isinstance(id_or_path, P115ZipPath):
+    ) -> AttrDict:
+        path_class = type(self).path_class
+        if isinstance(id_or_path, path_class):
             return self._attr(id_or_path["id"])
+        elif isinstance(id_or_path, dict):
+            attr = id_or_path
+            if "id" in attr:
+                return self._attr(attr["id"])
+            return self._attr_path(attr["path"])
         elif isinstance(id_or_path, int):
             return self._attr(id_or_path)
         else:
@@ -6969,7 +7136,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-    ) -> Iterator[MappingProxyType]:
+    ) -> Iterator[AttrDict]:
         def normalize_info(info):
             timestamp = info.get("time") or 0
             return {
@@ -6979,6 +7146,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
                 "size": info["size"], 
                 "time": datetime.fromtimestamp(timestamp), 
                 "timestamp": timestamp, 
+                "fs": self, 
             }
         attr = self.attr(id_or_path, pid)
         if not attr["is_directory"]:
@@ -6988,7 +7156,7 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
             )
         id = attr["id"]
         try:
-            return iter(self.id_to_children[id])
+            return iter(self.attr_cache[id])
         except KeyError:
             nextid = self.__dict__["_nextid"]
             dirname = attr["path"]
@@ -6996,27 +7164,34 @@ class P115ZipFileSystem(P115FileSystemBase[MappingProxyType, P115ZipPath]):
                 get_files = self._files
                 path_to_id = self.path_to_id
                 data = get_files(dirname)["data"]
+                last_update = datetime.now()
                 for attr in map(normalize_info, data["list"]):
+                    attr["last_update"] = last_update
                     path = joinpath(dirname, escape(attr["name"]))
                     attr.update(id=nextid(), parent_id=id, path=path)
                     path_to_id[path] = attr["id"]
-                    yield MappingProxyType(attr)
+                    yield attr
                 next_marker = data["next_marker"]
                 while next_marker:
                     data = get_files(dirname, next_marker)["data"]
+                    last_update = datetime.now()
                     for attr in map(normalize_info, data["list"]):
+                        attr["last_update"] = last_update
                         path = joinpath(dirname, escape(attr["name"]))
                         attr.update(id=nextid(), parent_id=id, path=path)
                         path_to_id[path] = attr["id"]
-                        yield MappingProxyType(attr)
+                        yield attr
                     next_marker = data["next_marker"]
-            t = self.id_to_children[id] = tuple(iterdir())
+            t = self.attr_cache[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in t)
             return iter(t)
 
 
 class P115Offline:
-    __slots__ = "client",
+    __slots__ = ("client", "_sign_time")
+
+    client: P115Client
+    _sign_time: MappingProxyType
 
     def __init__(self, /, client: P115Client):
         self.client = client
@@ -7039,6 +7214,26 @@ class P115Offline:
     def __len__(self, /) -> int:
         return check_response(self.client.offline_list())["count"]
 
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
+
+    @property
+    def sign_time(self, /) -> MappingProxyType:
+        try:
+            sign_time = self._sign_time
+            if time() - sign_time["time"] < 30 * 60:
+                return sign_time
+        except AttributeError:
+            pass
+        info = check_response(self.client.offline_info())
+        sign_time = self._sign_time = MappingProxyType({"sign": info["sign"], "time": info["time"]})
+        return sign_time
+
     def add(
         self, 
         urls: str | Iterable[str], 
@@ -7055,6 +7250,7 @@ class P115Offline:
             if not payload:
                 raise ValueError("no `url` specified")
             method = self.client.offline_add_urls
+        payload.update(self.sign_time)
         if pid is not None:
             payload["wp_path_id"] = pid
         if savepath:
@@ -7089,6 +7285,7 @@ class P115Offline:
         }
         if pid is not None:
             payload["wp_path_id"] = pid
+        payload.update(self.sign_time)
         return check_response(self.client.offline_add_torrent(payload))
 
     def clear(self, /, flag: int = 1) -> dict:
@@ -7147,6 +7344,7 @@ class P115Offline:
                 raise ValueError("no `hash` specified")
         if remove_files:
             payload["flag"] = "1"
+        payload.update(self.sign_time)
         return check_response(self.client.offline_remove(payload))
 
     def torrent_info(self, torrent_or_magnet_or_sha1_or_fid: int | bytes | str, /) -> dict:
@@ -7207,6 +7405,14 @@ class P115Recyclebin:
 
     def __len__(self, /) -> int:
         return int(check_response(self.client.recyclebin_list({"limit": 1}))["count"])
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
 
     @check_response
     def clear(self, /, password: None | int | str = None) -> dict:
@@ -7302,6 +7508,14 @@ class P115Sharing:
     def __len__(self, /) -> int:
         return check_response(self.client.share_list({"limit": 1}))["count"]
 
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
+
     @check_response
     def add(
         self, 
@@ -7387,5 +7601,5 @@ class P115Sharing:
 # TODO 能及时处理文件已不存在
 # TODO 为各个fs接口添加额外的请求参数
 # TODO 115中多个文件可以在同一目录下同名，如何处理
-# TODO 上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传了的话）
+# TODO 提供一个新的上传函数，上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传成功了的话）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
