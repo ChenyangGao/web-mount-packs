@@ -4170,8 +4170,8 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def iter(
         self, 
         /, 
-        topdown: bool = True, 
-        min_depth: int = 0, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[Self], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
@@ -4204,7 +4204,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def listdir(self, /, **kwargs) -> list[str]:
         return self.fs.listdir(self, **kwargs)
 
-    def listdir_attr(self, /, **kwargs) -> list[dict]:
+    def listdir_attr(self, /, **kwargs) -> list[AttrDict]:
         return self.fs.listdir_attr(self, **kwargs)
 
     def listdir_path(self, /, **kwargs) -> list[Self]:
@@ -4400,10 +4400,11 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def walk(
         self, 
         /, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
+        **kwargs, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         return self.fs.walk(
             self, 
@@ -4411,16 +4412,35 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             min_depth=min_depth, 
             max_depth=max_depth, 
             onerror=onerror, 
-            _top=self.path, 
+            **kwargs, 
+        )
+
+    def walk_attr(
+        self, 
+        /, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        return self.fs.walk_attr(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            **kwargs, 
         )
 
     def walk_path(
         self, 
         /, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
+        **kwargs, 
     ) -> Iterator[tuple[str, list[Self], list[Self]]]:
         return self.fs.walk_path(
             self, 
@@ -4428,7 +4448,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             min_depth=min_depth, 
             max_depth=max_depth, 
             onerror=onerror, 
-            _top=self.path, 
+            **kwargs, 
         )
 
     def with_name(self, name: str, /) -> Self:
@@ -4926,14 +4946,59 @@ class P115FileSystemBase(Generic[P115PathType]):
         except FileNotFoundError:
             return False
 
-    # TODO: 支持宽度优先遍历
-    def iter(
+    def _iter_bfs(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
+        onerror: Optional[bool] = None, 
+        **kwargs, 
+    ) -> Iterator[P115PathType]:
+        dq: deque[tuple[int, P115PathType]] = deque()
+        push, pop = dq.append, dq.popleft
+        path_class = type(self).path_class
+        path = self.as_path(top, pid)
+        if not path.is_attr_loaded:
+            path()
+        push((0, path))
+        while dq:
+            depth, path = pop()
+            if min_depth <= 0:
+                pred = predicate(path) if predicate else True
+                if pred is None:
+                    return
+                elif pred:
+                    yield path
+                min_depth = 1
+            if depth == 0 and (not path["is_directory"] or 0 <= max_depth <= depth):
+                return
+            depth += 1
+            try:
+                for attr in self.iterdir(path, **kwargs):
+                    path = path_class(attr)
+                    pred = predicate(path) if predicate else True
+                    if pred is None:
+                        continue
+                    elif pred and depth >= min_depth:
+                        yield path
+                    if path["is_directory"] and (max_depth < 0 or depth < max_depth):
+                        push((depth, path))
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
+
+    def _iter_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
         topdown: bool = True, 
-        min_depth: int = 0, 
+        min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
@@ -4941,15 +5006,29 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> Iterator[P115PathType]:
         if not max_depth:
             return
-        if min_depth > 0:
+        yield_me = True
+        if min_depth > 1:
+            yield_me = False
             min_depth -= 1
+        elif min_depth <= 0:
+            path = self.as_path(top, pid)
+            if not path.is_attr_loaded:
+                path()
+            pred = predicate(path) if predicate else True
+            if pred is None:
+                return
+            elif pred:
+                yield path
+            if path.is_file():
+                return
+            min_depth = 1
+            top = path.id
         if max_depth > 0:
             max_depth -= 1
         path_class = type(self).path_class
         try:
             for attr in self.iterdir(top, pid, **kwargs):
                 path = path_class(attr)
-                yield_me = min_depth <= 0
                 if yield_me and predicate:
                     pred = predicate(path)
                     if pred is None:
@@ -4958,7 +5037,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 if yield_me and topdown:
                     yield path
                 if path["is_directory"]:
-                    yield from self.iter(
+                    yield from self._iter_dfs(
                         path, 
                         topdown=topdown, 
                         min_depth=min_depth, 
@@ -4973,6 +5052,40 @@ class P115FileSystemBase(Generic[P115PathType]):
                 onerror(e)
             elif onerror:
                 raise
+
+    def iter(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
+        onerror: Optional[bool] = None, 
+        **kwargs, 
+    ) -> Iterator[P115PathType]:
+        if topdown is None:
+            return self._iter_bfs(
+                top, 
+                pid, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                predicate=predicate, 
+                onerror=onerror, 
+                **kwargs, 
+            )
+        else:
+            return self._iter_dfs(
+                top, 
+                pid, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                predicate=predicate, 
+                onerror=onerror, 
+                **kwargs, 
+            )
 
     def listdir(
         self, 
@@ -5154,7 +5267,46 @@ class P115FileSystemBase(Generic[P115PathType]):
             "`stat()` is currently not supported, use `attr()` instead."
         )
 
-    def walk(
+    def _walk_bfs(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        dq: deque[tuple[int, AttrDict]] = deque()
+        push, pop = dq.append, dq.popleft
+        push((0, self.attr(top, pid)))
+        while dq:
+            depth, parent = pop()
+            depth += 1
+            try:
+                push_me = max_depth < 0 or depth < max_depth
+                if min_depth <= 0 or depth >= min_depth:
+                    dirs: list[AttrDict] = []
+                    files: list[AttrDict] = []
+                    for attr in self.iterdir(parent, **kwargs):
+                        if attr["is_directory"]:
+                            dirs.append(attr)
+                            if push_me:
+                                push((depth, attr))
+                        else:
+                            files.append(attr)
+                    yield parent["path"], dirs, files
+                elif push_me:
+                    for attr in self.iterdir(parent, **kwargs):
+                        if attr["is_directory"]:
+                            push((depth, attr))
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
+
+    def _walk_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -5163,9 +5315,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
-        _top: str = "", 
         **kwargs, 
-    ) -> Iterator[tuple[str, list[str], list[str]]]:
+    ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         if not max_depth:
             return
         if min_depth > 0:
@@ -5174,81 +5325,106 @@ class P115FileSystemBase(Generic[P115PathType]):
             max_depth -= 1
         yield_me = min_depth <= 0
         try:
-            if not _top:
-                _top = self.get_path(top, pid)
-            dirs: list[str] = []
-            files: list[str] = []
-            attrs: list[AttrDict] = []
+            dirs: list[AttrDict] = []
+            files: list[AttrDict] = []
             for attr in self.iterdir(top, pid, **kwargs):
                 if attr["is_directory"]:
-                    attrs.append(attr)
-                    dirs.append(attr["name"])
+                    dirs.append(attr)
                 else:
-                    files.append(attr["name"])
+                    files.append(attr)
             if yield_me and topdown:
-                yield _top, dirs, files
-            for attr in attrs:
-                yield from self.walk(
-                    attr["id"], 
+                yield self.get_path(top, pid), dirs, files
+            for attr in dirs:
+                yield from self._walk_dfs(
+                    attr, 
                     topdown=topdown, 
                     min_depth=min_depth, 
                     max_depth=max_depth, 
                     onerror=onerror, 
-                    _top=joinpath(_top, escape(attr["name"])), 
                 )
             if yield_me and not topdown:
-                yield _top, dirs, files
+                yield self.get_path(top, pid), dirs, files
         except OSError as e:
             if callable(onerror):
                 onerror(e)
             elif onerror:
                 raise
 
+    def walk(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        for path, dirs, files in self.walk_attr(
+            top, 
+            pid, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            **kwargs, 
+        ):
+            yield path, [a["name"] for a in dirs], [a["name"] for a in files]
+
+    def walk_attr(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        if topdown is None:
+            return self._walk_bfs(
+                top, 
+                pid, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                **kwargs, 
+            )
+        else:
+            return self._walk_dfs(
+                top, 
+                pid, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                **kwargs, 
+            )
+
     def walk_path(
         self, 
         top: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
-        _top: str = "", 
         **kwargs, 
     ) -> Iterator[tuple[str, list[P115PathType], list[P115PathType]]]:
-        if not max_depth:
-            return
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
         path_class = type(self).path_class
-        try:
-            if not _top:
-                _top = self.get_path(top, pid)
-            dirs: list[P115PathType] = []
-            files: list[P115PathType] = []
-            for attr in self.iterdir(top, pid, **kwargs):
-                (dirs if attr["is_directory"] else files).append(path_class(attr))
-            if yield_me and topdown:
-                yield _top, dirs, files
-            for path in dirs:
-                yield from self.walk_path(
-                    path["id"], 
-                    topdown=topdown, 
-                    min_depth=min_depth, 
-                    max_depth=max_depth, 
-                    onerror=onerror, 
-                    _top=joinpath(_top, escape(path["name"])), 
-                )
-            if yield_me and not topdown:
-                yield _top, dirs, files
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
+        for path, dirs, files in self.walk_attr(
+            top, 
+            pid, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            **kwargs, 
+        ):
+            yield path, [path_class(a) for a in dirs], [path_class(a) for a in files]
 
     cd  = chdir
     pwd = getcwd
@@ -5626,7 +5802,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if isinstance(id_or_path, dict):
                     attr = id_or_path
                 elif isinstance(id_or_path, path_class):
-                    if id_or_path.is_attr_loaded:
+                    if not id_or_path.is_attr_loaded:
                         id_or_path()
                     attr = id_or_path.__dict__
             if attr is None:

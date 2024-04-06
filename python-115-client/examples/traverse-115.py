@@ -22,6 +22,9 @@ parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), defau
 - csv   输出一个 csv，第 1 行为表头，以后每行输出一条数据
 """)
 parser.add_argument("-o", "--output-file", help="保存到文件，此时命令行会输出进度条")
+parser.add_argument("-m", "--min-depth", default=0, type=int, help="最小深度，默认值 0，小于 0 时不限")
+parser.add_argument("-M", "--max-depth", default=-1, type=int, help="最大深度，默认值 -1，小于 0 时不限")
+parser.add_argument("-dfs", "--depth-first", action="store_true", help="使用深度优先搜索，否则使用广度优先")
 args = parser.parse_args()
 
 try:
@@ -68,7 +71,13 @@ if select:
 else:
     predicate = None
 
-path_it = fs.iter(fid, predicate=predicate, max_depth=-1)
+path_it = fs.iter(
+    fid, 
+    predicate=predicate, 
+    min_depth=args.min_depth, 
+    max_depth=args.max_depth, 
+    topdown=True if args.depth_first else None, 
+)
 
 output_file = args.output_file
 if output_file:

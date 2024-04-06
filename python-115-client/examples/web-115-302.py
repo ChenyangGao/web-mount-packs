@@ -106,7 +106,7 @@ def get_url_with_pickcode(pickcode):
     try:
         url = fs.get_url_from_pickcode(pickcode, detail=True, headers=headers)
         resp = redirect(url)
-        resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % quote(url["file_name"])
+        resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % quote(url["file_name"]) # type: ignore
         return resp
     except OSError:
         return "Not Found", 404
@@ -121,7 +121,7 @@ def index():
 def query(path):
     method = request.args.get("method", "url")
     pickcode = request.args.get("pickcode")
-    fid = request.args.get("id")
+    fid = request.args.get("id") # type: None | int | str
     if method == "attr":
         try:
             if pickcode:
