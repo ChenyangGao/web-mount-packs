@@ -4,14 +4,57 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 2)
 
-from argparse import ArgumentParser, RawTextHelpFormatter
+if __name__ == "__main__":
+    from argparse import ArgumentParser, RawTextHelpFormatter
 
-parser = ArgumentParser(description="获取 115 文件信息和下载链接", formatter_class=RawTextHelpFormatter, epilog="")
-parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
-parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
-parser.add_argument("-c", "--cookie", help="115 登录 cookie，如果缺失，则从 115-cookie.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
-parser.add_argument("-pc", "--use-path-cache", action="store_true", help="启用 path 到 id 的缓存")
-args = parser.parse_args()
+    parser = ArgumentParser(
+        formatter_class=RawTextHelpFormatter, 
+        description="获取 115 文件信息和下载链接", 
+        epilog="""
+---------- 使用说明 ----------
+
+你可以打开浏览器进行直接访问。
+
+1. 如果想要访问某个路径，可以通过查询接口
+
+    GET /{path}
+
+或者
+
+    GET /?&path={path}
+
+也可以通过 pickcode 查询
+
+    GET /?&pickcode={pickcode}
+
+也可以通过 id 查询
+
+    GET /?&id={id}
+
+2. 查询文件或文件夹的信息，需要返回 json，可以通过
+
+    GET /?method=attr
+
+3. 查询文件夹内所有文件和文件夹的信息，需要返回 json，可以通过
+
+    GET /?method=list
+
+4. 支持的查询参数
+
+ 参数    | 类型    | 必填 | 说明
+-------  | ------- | ---- | ----------
+pickcode | string  | 否   | 文件或文件夹的 pickcode，优先级高于 id
+id       | integer | 否   | 文件或文件夹的 id，优先级高于 path
+path     | string  | 否   | 文件或文件夹的路径，优先级高于 url 中的路径部分
+method   | string  | 否   | 1. 'url': 【默认值】，这个文件的下载链接
+         |         |      | 2. 'attr': 这个文件或文件夹的信息
+         |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息
+""")
+    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
+    parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
+    parser.add_argument("-c", "--cookie", help="115 登录 cookie，如果缺失，则从 115-cookie.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+    parser.add_argument("-pc", "--use-path-cache", action="store_true", help="启用 path 到 id 的缓存")
+    args = parser.parse_args()
 
 try:
     from p115 import P115FileSystem
@@ -25,10 +68,15 @@ except ImportError:
 
 from os.path import expanduser, dirname, join as joinpath
 from posixpath import dirname
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 
-cookie = args.cookie
+cookie = None
+path_cache = None # type: None | dict
+if __name__ == "__main__":
+    cookie = args.cookie
+    if args.use_path_cache:
+        path_cache = {}
 if not cookie:
     for dir_ in (".", expanduser("~"), dirname(__file__)):
         try:
@@ -38,16 +86,15 @@ if not cookie:
         except FileNotFoundError:
             pass
 
-path_cache = {} if args.use_path_cache else None
 fs = P115FileSystem.login(cookie, path_to_id=path_cache)
-if fs.client.cookie != cookie:
+if not cookie and fs.client.cookie != cookie:
     open("115-cookie.txt", "w").write(fs.client.cookie)
 
 KEYS = (
-    "id", "parent_id", "name", "path", "sha1", "pick_code", "is_directory", 
+    "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
     "size", "ctime", "mtime", "atime", "thumb", "star", 
 )
-app = Flask(__name__)
+application = Flask(__name__)
 
 
 def get_url_with_pickcode(pickcode):
@@ -57,23 +104,29 @@ def get_url_with_pickcode(pickcode):
             headers["User-Agent"] = val
             break
     try:
-        return redirect(fs.client.download_url(pickcode, headers=headers))
+        url = fs.get_url_from_pickcode(pickcode, detail=True, headers=headers)
+        resp = redirect(url)
+        resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % quote(url["file_name"])
+        return resp
     except OSError:
         return "Not Found", 404
 
 
-@app.get("/")
+@application.get("/")
 def index():
     return query("/")
 
 
-@app.get("/<path:path>")
+@application.get("/<path:path>")
 def query(path):
     method = request.args.get("method", "url")
+    pickcode = request.args.get("pickcode")
     fid = request.args.get("id")
     if method == "attr":
         try:
-            if fid:
+            if pickcode:
+                fid = fs.get_id_from_pickcode(pickcode)
+            if fid is not None:
                 attr = fs.attr(int(fid))
             else:
                 path = request.args.get("path") or path
@@ -83,7 +136,9 @@ def query(path):
         return jsonify({k: attr.get(k) for k in KEYS})
     elif method == "list":
         try:
-            if fid:
+            if pickcode:
+                fid = fs.get_id_from_pickcode(pickcode)
+            if fid is not None:
                 children = fs.listdir_attr(int(fid))
             else:
                 path = request.args.get("path") or path
@@ -92,12 +147,11 @@ def query(path):
             return "Not Found", 404
         except NotADirectoryError as exc:
             return f"Bad Request: {exc}", 400
-        return jsonify([{k: attr[k] for k in KEYS} for attr in children])
-    pickcode = request.args.get("pickcode")
+        return jsonify([{k: attr.get(k) for k in KEYS} for attr in children])
     if pickcode:
         return get_url_with_pickcode(pickcode)
     try:
-        if fid:
+        if fid is not None:
             attr = fs.attr(int(fid))
         else:
             path = request.args.get("path") or path
@@ -105,16 +159,22 @@ def query(path):
     except FileNotFoundError:
         return "Not Found", 404
     if not attr["is_directory"]:
-        return get_url_with_pickcode(attr["pick_code"])
+        return get_url_with_pickcode(attr["pickcode"])
+    try:
+        children = fs.listdir_attr(attr["id"])
+    except NotADirectoryError as exc:
+        return f"Bad Request: {exc}", 400
     url = unquote(request.url)
     try:
         origin = url[:url.index("/", 8)]
     except ValueError:
         origin = url
-    try:
-        children = fs.listdir_attr(attr["id"])
-    except NotADirectoryError as exc:
-        return f"Bad Request: {exc}", 400
+    for subattr in children:
+        subpath = quote(subattr["path"], safe=":/")
+        if subattr["is_directory"]:
+            subattr["url"] = f"{origin}{subpath}?id={subattr['id']}"
+        else:
+            subattr["url"] = f"{origin}{subpath}?pickcode={subattr['pickcode']}"
     return render_template_string(
         """\
 <!DOCTYPE html>
@@ -144,13 +204,12 @@ def query(path):
             {% for attr in children %}
             <tr>
                 {% set name = attr["name"] %}
+                {% set url = attr["url"] %}
+                <td><a href="{{ url }}">{{ name }}</a></td>
                 {% if attr["is_directory"] %}
-                <td><a href="/?id={{ attr["id"] }}">{{ name }}</a></td>
                 <td></td>
                 <td>--</td>
                 {% else %}
-                <td><a href="/?pickcode={{ attr["pick_code"] }}">{{ name }}</a></td>
-                {% set url = origin + "?pickcode=" + attr["pick_code"] %}
                 <td><a href="iina://weblink?url={{ url }}">iina</a>
                 <a href="potplayer://{{ url }}">potplayer</a>
                 <a href="vlc://{{ url }}">vlc</a></td>
@@ -169,5 +228,6 @@ def query(path):
     )
 
 
-app.run(host=args.host, port=args.port, threaded=True)
+if __name__ == "__main__":
+    application.run(host=args.host, port=args.port, threaded=True)
 

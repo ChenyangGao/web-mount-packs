@@ -109,12 +109,14 @@ def check_response(fn: RequestVarT, /) -> RequestVarT:
             if not resp.get("state", True):
                 raise OSError(errno.EIO, resp)
             return resp
-    else:
+    elif callable(fn):
         def wrapper(*args, **kwds):
             resp = fn(*args, **kwds)
             if not resp.get("state", True):
                 raise OSError(errno.EIO, resp)
             return resp
+    else:
+        raise TypeError
     return update_wrapper(wrapper, fn)
 
 
@@ -161,7 +163,7 @@ def normalize_info(
             except ValueError:
                 pass
     if "pc" in info:
-        info2["pick_code"] = info["pc"]
+        info2["pickcode"] = info["pc"]
     if "m" in info:
         info2["star"] = bool(info["m"])
     if "u" in info:
@@ -173,6 +175,30 @@ def normalize_info(
     if extra_data:
         info2.update(extra_data)
     return info2
+
+
+class UrlStr(str):
+
+    def __new__(cls, url="", /, *args, **kwds):
+        return super().__new__(cls, url)
+
+    def __init__(self, url="", /, *args, **kwds):
+        self.__dict__.update(*args, **kwds)
+
+    def __delattr__(self, attr, /) -> Never:
+        raise TypeError("can't delete attributes")
+
+    def __getitem__(self, key, /):
+        return self.__dict__[key]
+
+    def __setattr__(self, attr, val, /) -> Never:
+        raise TypeError("can't set attributes")
+
+    def __repr__(self, /) -> str:
+        return f"{type(self).__qualname__}({str(self)!r}, {self.__dict__})"
+
+    def geturl(self) -> str:
+        return str(self)
 
 
 class P115Client:
@@ -203,7 +229,7 @@ class P115Client:
         return hash((self.user_id, self.cookie))
 
     def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attribute")
+        raise TypeError("can't set attributes")
 
     @cached_property
     def async_session(self, /) -> ClientSession:
@@ -1662,6 +1688,8 @@ class P115Client:
         self, 
         payload: dict, 
         /, 
+        detail: bool = False, 
+        strict: bool = True, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> str:
@@ -1675,14 +1703,22 @@ class P115Client:
         """
         resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
         def get_url(resp: dict) -> str:
-            data = check_response(resp)["data"]
+            info = check_response(resp)["data"]
             file_id = payload.get("file_id")
-            if not data:
+            if not info:
                 raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}")
-            url = data["url"]
-            if not url:
-                raise IsADirectoryError(errno.EISDIR, f"this id refers to a directory: {file_id!r}")
-            return url["url"]
+            url = info["url"]
+            if strict and not url:
+                raise IsADirectoryError(errno.EISDIR, f"{file_id} is a directory")
+            if not detail:
+                return url["url"] if url else ""
+            return UrlStr(
+                url["url"] if url else "", 
+                id=int(info["fid"]), 
+                file_name=info["fn"], 
+                file_size=int(info["fs"]), 
+                is_directory=not url, 
+            )
         if async_:
             async def wrapper() -> str:
                 return get_url(await resp) # type: ignore
@@ -1739,17 +1775,37 @@ class P115Client:
 
     def download_url(
         self, 
-        pick_code: str, 
+        pickcode: str, 
         /, 
+        detail: bool = False, 
+        strict: bool = True, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> str:
         """获取文件的下载链接，此接口是对 `download_url_app` 的封装
         """
-        resp = self.download_url_app({"pickcode": pick_code}, async_=async_, **request_kwargs)
+        resp = self.download_url_app(
+            {"pickcode": pickcode}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
         def get_url(resp: dict) -> str:
             data = check_response(resp)["data"]
-            return next(iter(data.values()))["url"]["url"]
+            for fid, info in data.items():
+                url = info["url"]
+                if strict and not url:
+                    raise IsADirectoryError(errno.EISDIR, f"{fid} is a directory")
+                if not detail:
+                    return url["url"] if url else ""
+                return UrlStr(
+                    url["url"] if url else "", 
+                    id=int(fid), 
+                    pickcode=info["pick_code"], 
+                    file_name=info["file_name"], 
+                    file_size=int(info["file_size"]), 
+                    is_directory=not url,
+                )
+            raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
         if async_:
             async def wrapper() -> str:
                 return get_url(await resp)  # type: ignore
@@ -2760,7 +2816,7 @@ class P115Client:
             "file_size": filesize, 
             "sha1": file_sha1, 
             "cid": pid, 
-            "pick_code": resp["pickcode"], 
+            "pickcode": resp["pickcode"], 
         }
         return resp
 
@@ -2818,7 +2874,7 @@ class P115Client:
             "file_size": filesize, 
             "sha1": file_sha1, 
             "cid": pid, 
-            "pick_code": resp["pickcode"], 
+            "pickcode": resp["pickcode"], 
         }
         return resp
 
@@ -3228,7 +3284,7 @@ class P115Client:
     def extract_list(
         self, 
         /, 
-        pick_code: str, 
+        pickcode: str, 
         path: str = "", 
         next_marker: str = "", 
         page_count: int = 999, 
@@ -3240,7 +3296,7 @@ class P115Client:
         if not 1 <= page_count <= 999:
             page_count = 999
         payload = {
-            "pick_code": pick_code, 
+            "pick_code": pickcode, 
             "file_name": path.strip("/"), 
             "paths": "文件", 
             "next_marker": next_marker, 
@@ -3299,7 +3355,7 @@ class P115Client:
     def extract_file(
         self, 
         /, 
-        pick_code: str, 
+        pickcode: str, 
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
         to_pid: int | str = 0, 
@@ -3310,17 +3366,17 @@ class P115Client:
         dirname = dirname.strip("/")
         dir2 = f"文件/{dirname}" if dirname else "文件"
         data = [
-            ("pick_code", pick_code), 
+            ("pick_code", pickcode), 
             ("paths", dir2), 
             ("to_pid", to_pid), 
         ]
         if not paths:
-            resp = self.extract_list(pick_code, dirname)
+            resp = self.extract_list(pickcode, dirname)
             if not resp["state"]:
                 return resp
             paths = [p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"]]
             while (next_marker := resp["data"].get("next_marker")):
-                resp = self.extract_list(pick_code, dirname, next_marker)
+                resp = self.extract_list(pickcode, dirname, next_marker)
                 paths.extend(p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"])
         if isinstance(paths, str):
             data.append(("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/")))
@@ -3347,7 +3403,7 @@ class P115Client:
     def extract_download_url(
         self, 
         /, 
-        pick_code: str, 
+        pickcode: str, 
         path: str, 
         async_: bool = False, 
         **request_kwargs, 
@@ -3355,7 +3411,10 @@ class P115Client:
         """获取压缩包中文件的下载链接，此接口是对 `extract_download_url_web` 的封装
         """
         resp = self.extract_download_url_web(
-            {"pick_code": pick_code, "full_name": path.strip("/")}, 
+            {
+                "pick_code": pickcode, 
+                "full_name": path.strip("/"), 
+            }, 
             async_=async_, 
             **request_kwargs, 
         )
@@ -3371,23 +3430,23 @@ class P115Client:
     def extract_push_future(
         self, 
         /, 
-        pick_code: str, 
+        pickcode: str, 
         secret: str = "", 
         **request_kwargs, 
     ) -> Optional[PushExtractProgress]:
         """执行在线解压，如果早就已经完成，返回 None，否则新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_push(
-            {"pick_code": pick_code, "secret": secret}, **request_kwargs
+            {"pick_code": pickcode, "secret": secret}, **request_kwargs
         ))
         if resp["data"]["unzip_status"] == 4:
             return None
-        return PushExtractProgress(self, pick_code)
+        return PushExtractProgress(self, pickcode)
 
     def extract_file_future(
         self, 
         /, 
-        pick_code: str, 
+        pickcode: str, 
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
         to_pid: int | str = 0, 
@@ -3396,7 +3455,7 @@ class P115Client:
         """执行在线解压到目录，新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_file(
-            pick_code, paths, dirname, to_pid, **request_kwargs
+            pickcode, paths, dirname, to_pid, **request_kwargs
         ))
         return ExtractProgress(self, resp["data"]["extract_id"])
 
@@ -4002,7 +4061,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return f"{name}({self.__dict__})"
 
     def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attribute")
+        raise TypeError("can't set attributes")
 
     def __str__(self, /) -> str:
         return self.path
@@ -5341,7 +5400,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return self.get_directory_capacity(self.cid)
 
     def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attribute")
+        raise TypeError("can't set attributes")
 
     def __setitem__(
         self, 
@@ -5982,17 +6041,50 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> int:
         return self._files(self.get_id(id_or_path, pid), limit=1)["count"]
 
+    def get_id_from_pickcode(self, /, pickcode: str = "") -> int:
+        if not pickcode:
+            return 0
+        data = self.get_info_from_pickcode(pickcode)
+        for fid in data:
+            return int(fid)
+        raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}") 
+
+    def get_info_from_pickcode(
+        self, 
+        /, 
+        pickcode: str, 
+    ) -> dict:
+        return check_response(self.client.download_url_app(pickcode))["data"]
+
+    def get_pickcode(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> str:
+        return self.attr(id_or_path, pid).get("pickcode", "")
+
     def get_url(
         self, 
         id_or_path: IDOrPathType, 
         /, 
         pid: Optional[int] = None, 
         headers: Optional[Mapping] = None, 
+        detail: bool = False, 
     ) -> str:
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-        return self.client.download_url(attr["pick_code"], headers=headers)
+        return self.client.download_url(attr["pickcode"], detail=detail, headers=headers)
+
+    def get_url_from_pickcode(
+        self, 
+        /, 
+        pickcode: str, 
+        headers: Optional[Mapping] = None, 
+        detail: bool = False, 
+    ) -> str:
+        return self.client.download_url(pickcode, detail=detail, headers=headers)
 
     def is_empty(
         self, 
@@ -6567,7 +6659,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         return f"<{name}(client={self.client!r}, share_link={self.share_link!r}, cid={self.cid!r}, path={self.path!r}) at {hex(id(self))}>"
 
     def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attribute")
+        raise TypeError("can't set attributes")
 
     @classmethod
     def login(
@@ -6863,11 +6955,11 @@ class PushExtractProgress(Future):
     _condition: Condition
     _state: str
 
-    def __init__(self, /, client: P115Client, pick_code: str):
+    def __init__(self, /, client: P115Client, pickcode: str):
         super().__init__()
         self.progress = 0
         self.set_running_or_notify_cancel()
-        self._run_check(client, pick_code)
+        self._run_check(client, pickcode)
 
     def __del__(self, /):
         self.stop()
@@ -6881,9 +6973,9 @@ class PushExtractProgress(Future):
                 self._state = "CANCELLED"
                 self.set_exception(OSError(errno.ECANCELED, "canceled"))
 
-    def _run_check(self, client, pick_code: str, /):
+    def _run_check(self, client, pickcode: str, /):
         check = check_response(client.extract_push_progress)
-        payload = {"pick_code": pick_code}
+        payload = {"pick_code": pickcode}
         def update_progress():
             while self.running():
                 try:
@@ -6956,7 +7048,7 @@ class ExtractProgress(Future):
 # TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
 class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     file_id: Optional[int]
-    pick_code: str
+    pickcode: str
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, AttrDict]
     attr_cache: MutableMapping[int, tuple[AttrDict]]
@@ -6972,18 +7064,18 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         file_id: Optional[int]
         if isinstance(id_or_pickcode, int):
             file_id = id_or_pickcode
-            pick_code = client.fs.attr(file_id)["pick_code"]
+            pickcode = client.fs.attr(file_id)["pickcode"]
         else:
             file_id = None
-            pick_code = id_or_pickcode
-        resp = check_response(client.extract_push_progress(pick_code))
+            pickcode = id_or_pickcode
+        resp = check_response(client.extract_push_progress(pickcode))
         if resp["data"]["extract_status"]["unzip_status"] != 4:
             raise OSError(errno.EIO, "file was not decompressed")
         self.__dict__.update(
             client=client, 
             cid=0, 
             path="/", 
-            pick_code=pick_code, 
+            pickcode=pickcode, 
             file_id=file_id, 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
@@ -6995,7 +7087,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             self.__dict__["create_time"] = datetime.fromtimestamp(0)
 
     def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attribute")
+        raise TypeError("can't set attributes")
 
     @classmethod
     def login(
@@ -7016,7 +7108,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     ) -> dict:
         return self.client.extract_list(
             path=path, 
-            pick_code=self.pick_code, 
+            pickcode=self.pickcode, 
         )
 
     @cached_property
@@ -7117,7 +7209,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         dirname: str = "", 
         to_pid: int | str = 0, 
     ) -> ExtractProgress:
-        return self.client.extract_file_future(self.pick_code, paths, dirname, to_pid)
+        return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid)
 
     def get_url(
         self, 
@@ -7129,7 +7221,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-        return self.client.extract_download_url(self.pick_code, attr["path"], headers=headers)
+        return self.client.extract_download_url(self.pickcode, attr["path"], headers=headers)
 
     def iterdir(
         self, 
