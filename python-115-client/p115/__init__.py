@@ -820,7 +820,8 @@ class P115Client:
                 # - 应用: 6
         """
         api = "https://webapi.115.com/files"
-        payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
+        payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
+                   "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     def fs_files2(
@@ -873,7 +874,8 @@ class P115Client:
                 # - 应用: 6
         """
         api = "https://aps.115.com/natsort/files.php"
-        payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
+        payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
+                   "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     def fs_files_edit(
@@ -4973,7 +4975,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 elif pred:
                     yield path
                 min_depth = 1
-            if depth == 0 and (not path["is_directory"] or 0 <= max_depth <= depth):
+            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
                 return
             depth += 1
             try:
@@ -4984,7 +4986,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                         continue
                     elif pred and depth >= min_depth:
                         yield path
-                    if path["is_directory"] and (max_depth < 0 or depth < max_depth):
+                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
                         push((depth, path))
             except OSError as e:
                 if callable(onerror):
@@ -5006,9 +5008,9 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> Iterator[P115PathType]:
         if not max_depth:
             return
-        yield_me = True
+        global_yield_me = True
         if min_depth > 1:
-            yield_me = False
+            global_yield_me = False
             min_depth -= 1
         elif min_depth <= 0:
             path = self.as_path(top, pid)
@@ -5029,6 +5031,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         try:
             for attr in self.iterdir(top, pid, **kwargs):
                 path = path_class(attr)
+                yield_me = global_yield_me
                 if yield_me and predicate:
                     pred = predicate(path)
                     if pred is None:
@@ -5036,7 +5039,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     yield_me = pred 
                 if yield_me and topdown:
                     yield path
-                if path["is_directory"]:
+                if path.is_dir():
                     yield from self._iter_dfs(
                         path, 
                         topdown=topdown, 
@@ -6652,6 +6655,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return self.upload(BytesIO(), id_or_path, pid=pid)
 
     # TODO: 增加功能，返回一个 Task 对象，可以获取上传进度，可随时取消
+    # TODO: 支持一个参数，不计算 sha1 等信息，直接就进行上传（就像网页版那样）
     def upload(
         self, 
         /, 
@@ -7701,7 +7705,7 @@ class P115Recyclebin:
         count = 0
         while True:
             resp = check_response(self.client.recyclebin_list(payload))
-            if resp["offset"] != offset:
+            if resp["offset"] != payload["offset"]:
                 return
             if count == 0:
                 count = int(resp["count"])
@@ -7710,7 +7714,7 @@ class P115Recyclebin:
             yield from resp["data"]
             if len(resp["data"]) < resp["page_size"]:
                 return
-            payload["offset"] = offset + resp["page_size"]
+            payload["offset"] += resp["page_size"]
 
     def list(self, /, offset: int = 0, limit: int = 0) -> list[dict]:
         if limit <= 0:
@@ -7836,7 +7840,7 @@ class P115Sharing:
             yield from resp["list"]
             if len(resp["list"]) < page_size:
                 break
-            payload["offset"] = offset + page_size
+            payload["offset"] += page_size
 
     def list(self, /, offset: int = 0, limit: int = 0) -> list[dict]:
         if limit <= 0:
@@ -7871,3 +7875,4 @@ class P115Sharing:
 # TODO 115中多个文件可以在同一目录下同名，如何处理
 # TODO 提供一个新的上传函数，上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传成功了的话）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
+

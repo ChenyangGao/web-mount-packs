@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+"获取 115 文件信息和下载链接"
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 2)
 
@@ -54,7 +56,11 @@ method   | string  | 否   | 1. 'url': 【默认值】，这个文件的下载�
     parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
     parser.add_argument("-c", "--cookie", help="115 登录 cookie，如果缺失，则从 115-cookie.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
     parser.add_argument("-pc", "--use-path-cache", action="store_true", help="启用 path 到 id 的缓存")
+    parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     args = parser.parse_args()
+    if args.version:
+        print(".".join(map(str, __version__)))
+        raise SystemExit(0)
 
 try:
     from p115 import P115FileSystem
@@ -67,7 +73,7 @@ except ImportError:
     from flask import Flask, jsonify, request, redirect, render_template_string
 
 from os.path import expanduser, dirname, join as joinpath
-from posixpath import dirname
+from posixpath import dirname, realpath
 from urllib.parse import quote, unquote
 
 
@@ -78,7 +84,12 @@ if __name__ == "__main__":
     if args.use_path_cache:
         path_cache = {}
 if not cookie:
+    seen = set()
     for dir_ in (".", expanduser("~"), dirname(__file__)):
+        dir_ = realpath(dir_)
+        if dir_ in seen:
+            continue
+        seen.add(dir_)
         try:
             cookie = open(joinpath(dir_, "115-cookie.txt")).read()
             if cookie:

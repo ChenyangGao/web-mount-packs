@@ -199,13 +199,14 @@ def sftp_open(
     urlp = urlsplit(url)
     scheme = urlp.scheme
     if scheme != "sftp":
-        raise ValueError("Not a sftp link")
+        raise ValueError("not a sftp link")
     hostname = urlp.hostname or "127.0.0.1"
     port     = int(urlp.port or 22)
     username = urlp.username
     password = urlp.password
     path     = urlp.path
     sftp = open_sftp(hostname, port, username, password)
+    # TODO: 设计一个专门的包装函数
     if mode[0] == "x":
         try:
             sftp.stat(path)

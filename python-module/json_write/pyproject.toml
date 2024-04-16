@@ -1,16 +1,16 @@
 [tool.poetry]
-name = "python-dupan"
-version = "0.0.1.3.5"
-description = "Python wrapper for `baidu webdisk <https://pan.baidu.com>`."
+name = "json_write"
+version = "0.0.1"
+description = "JSON write tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-dupan-client"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-dupan-client"
-keywords = ["nas", "dupan", "百度网盘"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/json_write"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/json_write"
+keywords = ["json", "write"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -25,19 +25,9 @@ include = [
     "LICENSE",
 ]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-
-ddddocr = "*"
-lxml = "*"
-qrcode = "*"
-requests = "*"
-
-[tool.poetry.dev-dependencies]
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "dupan"
+include = "json_write.py"

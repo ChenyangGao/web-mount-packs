@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-"115 文件夹信息遍历导出"
+"alist 文件夹信息遍历导出"
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 1)
 
 KEYS = (
-    "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
-    "size", "ctime", "mtime", "atime", "thumb", "star", 
+    "name", "path", "is_dir", "size", "ctime", "mtime", "atime", "hash_info", 
+    "modified", "created", "sign", "thumb", "type", 
 )
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 
-parser = ArgumentParser(description="115 文件夹信息遍历导出", formatter_class=RawTextHelpFormatter)
-parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
-parser.add_argument("-c", "--cookie", help="115 登录 cookie，如果缺失，则从 115-cookie.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser = ArgumentParser(description="alist 文件夹信息遍历导出", formatter_class=RawTextHelpFormatter)
+parser.add_argument("path", nargs="?", default="/", help="文件夹路径，默认值 '/'，即根目录")
+parser.add_argument("-O", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
+parser.add_argument("-u", "--username", default="", help="用户名，默认为空")
+parser.add_argument("-p", "--password", default="", help="密码，默认为空")
+parser.add_argument("-dp", "--directory-password", default="", help="文件夹的密码，默认为空")
+parser.add_argument("-r", "--refresh", action="store_true", help="是否刷新（拉取最新而非使用缓存）")
 parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
-parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 p115.P115Path），用于对路径进行筛选")
+parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 alist.AlistPath），用于对路径进行筛选")
 parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""输出类型，默认为 json
 - log   每行输出一条数据，每条数据输出为一个 json 的 object
 - json  输出一个 json 的 list，每条数据输出为一个 json 的 object
@@ -34,39 +38,22 @@ if args.version:
     raise SystemExit(0)
 
 try:
-    from p115 import P115FileSystem
+    from alist import AlistFileSystem, __version__ as alist_version
+    if alist_version < (0, 0, 11):
+        raise ImportError
 except ImportError:
     from subprocess import run
     from sys import executable
-    run([executable, "-m", "pip", "install", "python-115"], check=True)
-    from p115 import P115FileSystem
+    run([executable, "-m", "pip", "install", "python-alist"], check=True)
+    from alist import AlistFileSystem
 
-from os.path import expanduser, dirname, join as joinpath
 from sys import stdout
+from typing import Callable
 
-cookie = args.cookie
-if not cookie:
-    for dir_ in (".", expanduser("~"), dirname(__file__)):
-        try:
-            cookie = open(joinpath(dir_, "115-cookie.txt")).read()
-            if cookie:
-                break
-        except FileNotFoundError:
-            pass
 
-fs = P115FileSystem.login(cookie)
-if fs.client.cookie != cookie:
-    open("115-cookie.txt", "w").write(fs.client.cookie)
-
+fs = AlistFileSystem.login(args.origin, args.username, args.password)
 keys = args.keys or KEYS
 output_type = args.output_type
-
-path = args.path
-if path.isdecimal():
-    fid = int(path)
-else:
-    attr = fs.attr(path)
-    fid = attr["id"]
 
 select = args.select
 if select:
@@ -78,11 +65,13 @@ else:
     predicate = None
 
 path_it = fs.iter(
-    fid, 
-    predicate=predicate, 
+    args.path, 
+    topdown=True if args.depth_first else None, 
     min_depth=args.min_depth, 
     max_depth=args.max_depth, 
-    topdown=True if args.depth_first else None, 
+    predicate=predicate, 
+    refresh=args.refresh, 
+    password=args.directory_password, 
 )
 
 output_file = args.output_file
@@ -101,8 +90,8 @@ if output_file:
         return f"{d}d{h:02.0f}:{m:02.0f}:{s:09.06f}"
 
     def progress(it):
-        write = stdout.buffer.raw.write
-        dq = deque(maxlen=10*60)
+        write = stdout.buffer.raw.write # type: ignore
+        dq: deque[tuple[int, float]] = deque(maxlen=10*60)
         push = dq.append
         total = 0
         ndirs = 0
@@ -133,16 +122,17 @@ else:
 
 records = ({k: p.get(k) for k in keys} for p in path_it)
 
+dumps: Callable[..., bytes]
 if output_type in ("log", "json"):
     try:
         from orjson import dumps
     except ImportError:
-        from json import dumps
-        dumps = lambda obj, _d=dumps: bytes(_d(obj, ensure_ascii=False), "utf-8")
+        from json import dumps as odumps
+        dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
     if output_file:
         write = file.buffer.write
     else:
-        write = file.buffer.raw.write
+        write = file.buffer.raw.write # type: ignore
 
 try:
     if output_type == "json":

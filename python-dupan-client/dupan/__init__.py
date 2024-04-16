@@ -929,7 +929,10 @@ class DuPanShareList:
         if path == "/share/link":
             shorturl = ""
         elif path == "/share/init":
-            shorturl = query["surl"]
+            try:
+                shorturl = query["surl"]
+            except KeyError:
+                shorturl = ""
         elif path.startswith("/s/1"):
             shorturl = path.removeprefix("/s/1")
             idx = shorturl.find("&")
@@ -992,7 +995,13 @@ class DuPanShareList:
 
     def verify(self, /, use_vcode: bool = False):
         api = "https://pan.baidu.com/share/verify"
-        params: dict[str, int | str] = {"surl": self.shorturl, "web": 1, "clienttype": 0}
+        params: dict[str, int | str]
+        if self.shorturl:
+            params = {"surl": self.shorturl, "web": 1, "clienttype": 0}
+        else:
+            params = {"web": 1, "clienttype": 0}
+            params.update(parse_qsl(urlparse(self.url).query))
+
         data = {"pwd": self.password}
         if use_vcode:
             data.update(cast(dict[str, str], decaptcha()))

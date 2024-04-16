@@ -5,8 +5,8 @@ description = "torrent tool."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/torrent_tool"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/torrent_tool"
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/torrent_tool"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/torrent_tool"
 keywords = ["torrent", "magnet"]
 classifiers = [
     "License :: OSI Approved :: MIT License",

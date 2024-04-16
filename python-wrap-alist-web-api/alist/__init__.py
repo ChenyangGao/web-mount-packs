@@ -13,7 +13,7 @@ which refer to `os`, `posixpath`, `pathlib.Path` and `shutil` modules.
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10, 5)
+__version__ = (0, 0, 11)
 __all__ = [
     "AlistClient", "AlistPath", "AlistFileSystem", "AlistCopyTaskList", "AlistOfflineDownloadTaskList", 
     "AlistOfflineDownloadTransferTaskList", "AlistUploadTaskList", "AlistAria2DownTaskList", 
@@ -23,6 +23,7 @@ __all__ = [
 import errno
 
 from asyncio import get_running_loop, run, TaskGroup
+from collections import deque
 from collections.abc import (
     AsyncIterator, Awaitable, Callable, Coroutine, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
 )
@@ -2519,7 +2520,7 @@ class AlistPath(Mapping, PathLike[str]):
         return self.path
 
     def __getitem__(self, key, /):
-        if key not in self.__dict__ and not self.__dict__.get("lastest_update"):
+        if key not in self.__dict__ and not self.__dict__.get("last_update"):
             self()
         return self.__dict__[key]
 
@@ -2568,6 +2569,10 @@ class AlistPath(Mapping, PathLike[str]):
 
     def __truediv__(self, path: str | PathLike[str], /) -> AlistPath:
         return self.joinpath(path)
+
+    @property
+    def is_attr_loaded(self, /) -> bool:
+        return "last_update" in self.__dict__
 
     def set_password(self, value, /):
         self.__dict__["password"] = str(value)
@@ -2676,8 +2681,8 @@ class AlistPath(Mapping, PathLike[str]):
     def iter(
         self, 
         /, 
-        topdown: bool = True, 
-        min_depth: int = 0, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
@@ -2992,7 +2997,7 @@ class AlistPath(Mapping, PathLike[str]):
     def walk(
         self, 
         /, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
@@ -3007,10 +3012,27 @@ class AlistPath(Mapping, PathLike[str]):
             refresh=refresh, 
         )
 
+    def walk_attr(
+        self, 
+        /, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        refresh: Optional[bool] = None, 
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        return self.fs.walk_attr(
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            refresh=refresh, 
+        )
+
     def walk_path(
         self, 
         /, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
@@ -3480,7 +3502,6 @@ class AlistFileSystem:
         /, 
         path: str | PathLike[str] = "", 
         password: str = "", 
-        fetch_attr: bool = False, 
         _check: bool = True, 
     ) -> AlistPath:
         if not isinstance(path, AlistPath):
@@ -3489,8 +3510,6 @@ class AlistFileSystem:
             path = AlistPath(self, path, password)
         elif password:
             path = AlistPath(self, path.path, password)
-        if fetch_attr:
-            path()
         return path
 
     def attr(
@@ -3508,12 +3527,13 @@ class AlistFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         attr = self.fs_get(path, password, _check=False)["data"]
-        lastest_update = time()
+        last_update = time()
+        attr["ctime"] = int(parse_as_timestamp(attr.get("created")))
+        attr["mtime"] = int(parse_as_timestamp(attr.get("modified")))
+        attr["atime"] = int(last_update)
         attr["path"] = path
-        attr["ctime"] = parse_as_timestamp(attr.get("created"))
-        attr["mtime"] = parse_as_timestamp(attr.get("modified"))
-        attr["atime"] = lastest_update
-        attr["lastest_update"] = lastest_update
+        attr["password"] = password
+        attr["last_update"] = last_update
         return attr
 
     def chdir(
@@ -4058,12 +4078,57 @@ class AlistFileSystem:
             except FileNotFoundError:
                 return False
 
-    def iter(
+    def _iter_bfs(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
+        onerror: Optional[bool] = None, 
+        refresh: Optional[bool] = None, 
+        password: str = "", 
+        _check: bool = True, 
+    ) -> Iterator[AlistPath]:
+        dq: deque[tuple[int, AlistPath]] = deque()
+        push, pop = dq.append, dq.popleft
+        path = self.as_path(top, password)
+        if not path.is_attr_loaded:
+            path()
+        push((0, path))
+        while dq:
+            depth, path = pop()
+            if min_depth <= 0:
+                pred = predicate(path) if predicate else True
+                if pred is None:
+                    return
+                elif pred:
+                    yield path
+                min_depth = 1
+            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
+                return
+            depth += 1
+            try:
+                for path in self.listdir_path(path, password, refresh=refresh, _check=False):
+                    pred = predicate(path) if predicate else True
+                    if pred is None:
+                        continue
+                    elif pred and depth >= min_depth:
+                        yield path
+                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
+                        push((depth, path))
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
+
+    def _iter_dfs(
         self, 
         /, 
         top: str | PathLike[str] = "", 
         topdown: bool = True, 
-        min_depth: int = 0, 
+        min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
         onerror: Optional[bool] = None, 
@@ -4073,16 +4138,24 @@ class AlistFileSystem:
     ) -> Iterator[AlistPath]:
         if not max_depth:
             return
-        if isinstance(top, AlistPath):
-            if not password:
-                password = top.password
-            top = top.path
-        elif _check:
-            top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
-        top = cast(str, top)
-        refresh = cast(bool, refresh)
+        global_yield_me = True
+        if min_depth > 1:
+            global_yield_me = False
+            min_depth -= 1
+        elif min_depth <= 0:
+            path = self.as_path(top, password)
+            if not path.is_attr_loaded:
+                path()
+            pred = predicate(path) if predicate else True
+            if pred is None:
+                return
+            elif pred:
+                yield path
+            if path.is_file():
+                return
+            min_depth = 1
+        if max_depth > 0:
+            max_depth -= 1
         try:
             ls = self.listdir_path(top, password, refresh=refresh, _check=False)
         except OSError as e:
@@ -4091,12 +4164,8 @@ class AlistFileSystem:
             elif onerror:
                 raise
             return
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
         for path in ls:
+            yield_me = global_yield_me
             if yield_me and predicate:
                 pred = predicate(path)
                 if pred is None:
@@ -4106,18 +4175,55 @@ class AlistFileSystem:
                 yield path
             if path.is_dir():
                 yield from self.iter(
-                    path.path, 
-                    password=password, 
-                    refresh=refresh, 
+                    path, 
                     topdown=topdown, 
                     min_depth=min_depth, 
                     max_depth=max_depth, 
                     predicate=predicate, 
                     onerror=onerror, 
+                    refresh=refresh, 
+                    password=password, 
                     _check=_check, 
                 )
             if yield_me and not topdown:
                 yield path
+
+    def iter(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
+        onerror: Optional[bool] = None, 
+        refresh: Optional[bool] = None, 
+        password: str = "", 
+        _check: bool = True, 
+    ) -> Iterator[AlistPath]:
+        if topdown is None:
+            return self._iter_bfs(
+                top, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                predicate=predicate, 
+                onerror=onerror, 
+                refresh=refresh, 
+                password=password, 
+                _check=_check, 
+            )
+        else:
+            return self._iter_dfs(
+                top, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                predicate=predicate, 
+                onerror=onerror, 
+                refresh=refresh, 
+                password=password, 
+                _check=_check, 
+            )
 
     def iterdir(
         self, 
@@ -4125,45 +4231,21 @@ class AlistFileSystem:
         path: str | PathLike[str] = "", 
         password: str = "", 
         refresh: Optional[bool] = None, 
+        page: int = 1, 
         per_page: int = 0, 
         _check: bool = True, 
     ) -> Iterator[dict]:
-        if isinstance(path, AlistPath):
-            if not password:
-                password = path.password
-            path = path.path
-        elif _check:
-            path = self.abspath(path)
-        if refresh is None:
-            refresh = self.refresh
-        path = cast(str, path)
-        refresh = cast(bool, refresh)
-        if not self.attr(path, password, _check=False)["is_dir"]:
-            raise NotADirectoryError(errno.ENOTDIR, path)
-        page = 1
-        total = 0
-        download_count = 0
-        while not total or download_count < total:
-            data = self.fs_list(path, password, refresh=refresh, page=page, per_page=per_page, _check=False)["data"]
-            lastest_update = time()
-            if total == 0:
-                total = data["total"]
-                if total == 0:
-                    return
-            elif data["total"] != total:
-                raise RuntimeError("detected directory (count) changes during iteration")
-            for attr in data["content"]:
-                attr["path"] = joinpath(path, attr["name"])
-                attr["ctime"] = parse_as_timestamp(attr.get("created"))
-                attr["mtime"] = parse_as_timestamp(attr.get("modified"))
-                attr["atime"] = lastest_update
-                attr["lastest_update"] = lastest_update
-                yield attr
-            download_count += len(data["content"])
-            page += 1
+        yield from self.listdir_attr(
+            path, 
+            password, 
+            refresh=refresh, 
+            page=page, 
+            per_page=per_page, 
+            _check=_check, 
+        )
 
     def list_storage(self, /) -> list[dict]:
-        return self.fs_list_storage()["data"]["content"]
+        return self.fs_list_storage()["data"]["content"] or []
 
     def listdir(
         self, 
@@ -4175,8 +4257,14 @@ class AlistFileSystem:
         per_page: int = 0, 
         _check: bool = True, 
     ) -> list[str]:
-        ls = self.listdir_attr(path, password, refresh, page, per_page, _check=_check)
-        return [item["name"] for item in ls]
+        return [item["name"] for item in self.listdir_attr(
+            path, 
+            password, 
+            refresh=refresh, 
+            page=page, 
+            per_page=per_page, 
+            _check=_check, 
+        )]
 
     def listdir_attr(
         self, 
@@ -4200,17 +4288,25 @@ class AlistFileSystem:
         refresh = cast(bool, refresh)
         if not self.attr(path, password, _check=False)["is_dir"]:
             raise NotADirectoryError(errno.ENOTDIR, path)
-        data = self.fs_list(path, password, refresh=refresh, page=page, per_page=per_page, _check=False)["data"]
-        if data["total"] == 0:
-            return []
-        lastest_update = time()
+        data = self.fs_list(
+            path, 
+            password, 
+            refresh=refresh, 
+            page=page, 
+            per_page=per_page, 
+            _check=False, 
+        )["data"]
+        last_update = time()
         content = data["content"]
+        if not content:
+            return []
         for attr in content:
+            attr["ctime"] = int(parse_as_timestamp(attr.get("created")))
+            attr["mtime"] = int(parse_as_timestamp(attr.get("modified")))
+            attr["atime"] = int(last_update)
             attr["path"] = joinpath(path, attr["name"])
-            attr["ctime"] = parse_as_timestamp(attr.get("created"))
-            attr["mtime"] = parse_as_timestamp(attr.get("modified"))
-            attr["atime"] = lastest_update
-            attr["lastest_update"] = lastest_update
+            attr["password"] = password
+            attr["last_update"] = last_update
         return content
 
     def listdir_path(
@@ -4224,8 +4320,15 @@ class AlistFileSystem:
         _check: bool = True, 
     ) -> list[AlistPath]:
         return [
-            AlistPath(self, password=password, **item)
-            for item in self.listdir_attr(path, password, refresh, page, per_page, _check=_check)
+            AlistPath(self, **item) 
+            for item in self.listdir_attr(
+                path, 
+                password, 
+                refresh=refresh, 
+                page=page, 
+                per_page=per_page, 
+                _check=_check, 
+            )
         ]
 
     def makedirs(
@@ -4265,9 +4368,15 @@ class AlistFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         if path == "/":
-            raise PermissionError(errno.EPERM, "create root directory is not allowed (because it has always existed)")
+            raise PermissionError(
+                errno.EPERM, 
+                "create root directory is not allowed (because it has always existed)", 
+            )
         if self.is_storage(path, password, _check=False):
-            raise PermissionError(errno.EPERM, f"can't directly create a storage by `mkdir`: {path!r}")
+            raise PermissionError(
+                errno.EPERM, 
+                f"can't directly create a storage by `mkdir`: {path!r}", 
+            )
         try:
             self.attr(path, password, _check=False)
         except FileNotFoundError as e:
@@ -4325,7 +4434,10 @@ class AlistFileSystem:
                 dst_filename = basename(src_path)
                 dst_filepath = joinpath(dst_path, dst_filename)
                 if self.exists(dst_filepath, dst_password, _check=False):
-                    raise FileExistsError(errno.EEXIST, f"destination path {dst_filepath!r} already exists")
+                    raise FileExistsError(
+                        errno.EEXIST, 
+                        f"destination path {dst_filepath!r} already exists", 
+                    )
                 self.fs_move(dirname(src_path), dst_path, [dst_filename], _check=False)
                 return dst_filepath
             raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists")
@@ -4719,7 +4831,13 @@ class AlistFileSystem:
         refresh: Optional[bool] = None, 
         _check: bool = True, 
     ) -> Iterator[AlistPath]:
-        return iter(self.listdir_path(path, password, refresh=refresh, _check=_check))
+        for item in self.listdir_attr(
+            path, 
+            password, 
+            refresh=refresh, 
+            _check=_check, 
+        ):
+            yield AlistPath(self, **item)
 
     def stat(
         self, 
@@ -4928,70 +5046,54 @@ class AlistFileSystem:
 
     unlink = remove
 
-    def walk(
+    def _walk_bfs(
         self, 
         /, 
         top: str | PathLike[str] = "", 
-        topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         password: str = "", 
         refresh: Optional[bool] = None, 
         _check: bool = True, 
-    ) -> Iterator[tuple[str, list[str], list[str]]]:
-        if not max_depth:
-            return
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        dq: deque[tuple[int, str]] = deque()
+        push, pop = dq.append, dq.popleft
         if isinstance(top, AlistPath):
             if not password:
                 password = top.password
             top = top.path
         elif _check:
             top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
         top = cast(str, top)
-        refresh = cast(bool, refresh)
-        try:
-            ls = self.listdir_attr(top, password, refresh=refresh, _check=False)
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
-            return
-        if not ls:
-            yield top, [], []
-            return
-        dirs: list[str] = []
-        files: list[str] = []
-        for attr in ls:
-            if attr["is_dir"]:
-                dirs.append(attr["name"])
-            else:
-                files.append(attr["name"])
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
-        if yield_me and topdown:
-            yield top, dirs, files
-        for dir_ in dirs:
-            yield from self.walk(
-                joinpath(top, dir_), 
-                topdown=topdown, 
-                min_depth=min_depth, 
-                max_depth=max_depth, 
-                onerror=onerror, 
-                password=password, 
-                refresh=refresh, 
-                _check=False, 
-            )
-        if yield_me and not topdown:
-            yield top, dirs, files
+        push((0, top))
+        while dq:
+            depth, parent = pop()
+            depth += 1
+            try:
+                push_me = max_depth < 0 or depth < max_depth
+                if min_depth <= 0 or depth >= min_depth:
+                    dirs: list[dict] = []
+                    files: list[dict] = []
+                    for attr in self.listdir_attr(parent, password, refresh=refresh, _check=False):
+                        if attr["is_dir"]:
+                            dirs.append(attr)
+                            if push_me:
+                                push((depth, attr["path"]))
+                        else:
+                            files.append(attr)
+                    yield parent, dirs, files
+                elif push_me:
+                    for attr in self.listdir_attr(parent, password, refresh=refresh, _check=False):
+                        if attr["is_dir"]:
+                            push((depth, attr["path"]))
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
 
-    def walk_attr(
+    def _walk_dfs(
         self, 
         /, 
         top: str | PathLike[str] = "", 
@@ -5005,16 +5107,18 @@ class AlistFileSystem:
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
         if not max_depth:
             return
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
         if isinstance(top, AlistPath):
             if not password:
                 password = top.password
             top = top.path
         elif _check:
             top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
         top = cast(str, top)
-        refresh = cast(bool, refresh)
         try:
             ls = self.listdir_attr(top, password, refresh=refresh, _check=False)
         except OSError as e:
@@ -5023,9 +5127,6 @@ class AlistFileSystem:
             elif onerror:
                 raise
             return
-        if not ls:
-            yield top, [], []
-            return
         dirs: list[dict] = []
         files: list[dict] = []
         for attr in ls:
@@ -5033,16 +5134,11 @@ class AlistFileSystem:
                 dirs.append(attr)
             else:
                 files.append(attr)
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
         if yield_me and topdown:
             yield top, dirs, files
-        for dir_ in dirs:
-            yield from self.walk_attr(
-                dir_["path"], 
+        for attr in dirs:
+            yield from self._walk_dfs(
+                attr["path"], 
                 topdown=topdown, 
                 min_depth=min_depth, 
                 max_depth=max_depth, 
@@ -5054,11 +5150,69 @@ class AlistFileSystem:
         if yield_me and not topdown:
             yield top, dirs, files
 
+    def walk(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        password: str = "", 
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        for path, dirs, files in self.walk_attr(
+            top, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            password=password, 
+            refresh=refresh, 
+            _check=_check, 
+        ):
+            yield path, [a["name"] for a in dirs], [a["name"] for a in files]
+
+    def walk_attr(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        password: str = "", 
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        if topdown is None:
+            return self._walk_bfs(
+                top, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                password=password, 
+                refresh=refresh, 
+                _check=_check, 
+            )
+        else:
+            return self._walk_dfs(
+                top, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                password=password, 
+                refresh=refresh, 
+                _check=_check, 
+            )
+
     def walk_path(
         self, 
         /, 
         top: str | PathLike[str] = "", 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
@@ -5066,56 +5220,21 @@ class AlistFileSystem:
         refresh: Optional[bool] = None, 
         _check: bool = True, 
     ) -> Iterator[tuple[str, list[AlistPath], list[AlistPath]]]:
-        if not max_depth:
-            return
-        if isinstance(top, AlistPath):
-            if not password:
-                password = top.password
-            top = top.path
-        elif _check:
-            top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
-        top = cast(str, top)
-        refresh = cast(bool, refresh)
-        try:
-            ls = self.listdir_path(top, password, refresh=refresh, _check=False)
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
-            return
-        if not ls:
-            yield top, [], []
-            return
-        dirs: list[AlistPath] = []
-        files: list[AlistPath] = []
-        for path in ls:
-            if path.is_dir():
-                dirs.append(path)
-            else:
-                files.append(path)
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
-        if yield_me and topdown:
-            yield top, dirs, files
-        for dir_ in dirs:
-            yield from self.walk_path(
-                dir_.path, 
-                topdown=topdown, 
-                min_depth=min_depth, 
-                max_depth=max_depth, 
-                onerror=onerror, 
-                password=password, 
-                refresh=refresh, 
-                _check=False, 
+        for path, dirs, files in self.walk_attr(
+            top, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            password=password, 
+            refresh=refresh, 
+            _check=_check, 
+        ):
+            yield (
+                path, 
+                [AlistPath(self, **a) for a in dirs], 
+                [AlistPath(self, **a) for a in files], 
             )
-        if yield_me and not topdown:
-            yield top, dirs, files
 
     def write_bytes(
         self, 
@@ -5128,7 +5247,14 @@ class AlistFileSystem:
     ):
         if isinstance(data, (bytes, bytearray, memoryview)):
             data = BytesIO(data)
-        return self.upload(data, path, password=password, as_task=as_task, overwrite_or_ignore=True, _check=_check)
+        return self.upload(
+            data, 
+            path, 
+            password=password, 
+            as_task=as_task, 
+            overwrite_or_ignore=True, 
+            _check=_check, 
+        )
 
     def write_text(
         self, 
