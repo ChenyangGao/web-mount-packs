@@ -2,13 +2,15 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["DirEntry", "iterdir"]
 
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from os import fspath, listdir, scandir, stat, DirEntry as _DirEntry, PathLike
-from os.path import abspath, basename, isfile, isdir, islink, join as joinpath
+from os.path import (
+    abspath, commonpath, basename, isfile, isdir, islink, join as joinpath, realpath, 
+)
 from pathlib import Path
 from typing import overload, Generic, Never, Optional, TypeVar
 
@@ -96,7 +98,7 @@ def _iterdir_bfs(
             elif pred:
                 yield path
             min_depth = 1
-        if depth == 0 and (not is_dir(path) or 0 <= max_depth <= depth):
+        if depth == 0 and (not isdir(path) or 0 <= max_depth <= depth):
             return
         depth += 1
         try:
@@ -233,7 +235,11 @@ def iterdir(
         top = DirEntry(".")
     is_dir: Callable[[bytes | str | PathLike], bool]
     if follow_symlinks:
-        is_dir = isdir
+        realtop = realpath(top)
+        is_dir = lambda p, /: (isdir(p) and (
+            not islink(p) or
+            commonpath(t := (realtop, realpath(p))) not in t # type: ignore
+        ))
     else:
         is_dir = lambda p, /: not islink(p) and isdir(p)
     iter_dir: Callable
@@ -245,9 +251,7 @@ def iterdir(
         top = fspath(top)
         if not top:
             top = abspath(top)
-        def iter_dir(path, /):
-            for name in listdir(path):
-                yield joinpath(path, name)
+        iter_dir = lambda path, /: (joinpath(path, name) for name in listdir(path))
     if topdown is None:
         return _iterdir_bfs(
             top, 

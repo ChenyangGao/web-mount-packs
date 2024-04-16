@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "torrent_tool"
-version = "0.0.3.1"
+version = "0.0.3.2"
 description = "torrent tool."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -30,4 +30,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "torrent_tool.py"
+include = "torrent_tool"

@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "json_write"
+name = "filerev"
 version = "0.0.1.2"
-description = "JSON write tools."
+description = "Reversed iterator for files."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/json_write"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/json_write"
-keywords = ["json", "write"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/filerev"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/filerev"
+keywords = ["file", "reverse", "iter"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -30,4 +30,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "json_write"
+include = "filerev"

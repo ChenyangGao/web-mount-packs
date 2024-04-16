@@ -279,7 +279,7 @@ def json_ensure_gen_write(
                 tpl = b",%s]"
             else:
                 tpl = b"[%s]"
-                not_first = False
+                not_first = True
             write(tpl % dumps(val))
     else:
         while True:
@@ -291,7 +291,7 @@ def json_ensure_gen_write(
                 tpl = b",%s:%s}"
             else:
                 tpl = b"{%s:%s}"
-                not_first = False
+                not_first = True
             write(tpl % (dumps(str(key(val))), dumps(val)))
 
 

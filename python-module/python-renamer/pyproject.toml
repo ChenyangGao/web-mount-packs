@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "json_write"
-version = "0.0.1.2"
-description = "JSON write tools."
+name = "python-renamer"
+version = "0.0.1"
+description = "Python batch renamer."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/json_write"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/json_write"
-keywords = ["json", "write"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-renamer"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-renamer"
+keywords = ["rename", "batch", "renamer"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -25,9 +25,17 @@ include = [
     "LICENSE",
 ]
 
+[tool.poetry.dependencies]
+python = "^3.10"
+filerev = "*"
+iterdir = "*"
+json_write = "*"
+
+[tool.poetry.dev-dependencies]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "json_write"
+include = "renamer"
