@@ -173,6 +173,7 @@ file.write("""\
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["Client"]
 
+from functools import cached_property
 from typing import Any, Iterator, Never, Optional
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
@@ -192,40 +193,25 @@ import CloudDrive_grpc # type: ignore
 
 class Client:
     "clouddrive client that encapsulates grpc APIs"
-    origin: str
+    origin: URL
     username: str
     password: str
-    channel: Channel
-    async_channel: AsyncChannel
-    stub: CloudDrive_pb2_grpc.CloudDriveFileSrvStub
-    async_stub: CloudDrive_grpc.CloudDriveFileSrvStub
     download_baseurl: str
     metadata: list[tuple[str, str]]
 
     def __init__(
         self, 
         /, 
-        origin: str = "http://localhost:19798", 
+        origin: str | URL = "http://localhost:19798", 
         username: str = "", 
         password: str = "", 
-        channel: Optional[Channel] = None, 
-        async_channel: Optional[AsyncChannel] = None, 
     ):
-        origin = origin.rstrip("/")
-        urlp = URL(origin)
-        if channel is None:
-            channel = insecure_channel(urlp.authority)
-        if async_channel is None:
-            async_channel = AsyncChannel(urlp.host, urlp.port)
+        origin = URL(str(origin).rstrip("/"))
         self.__dict__.update(
             origin = origin, 
-            download_baseurl = f"{origin}/static/http/{urlp.authority}/False/", 
+            download_baseurl = f"{origin}/static/http/{origin.authority}/False/", 
             username = username, 
             password = password, 
-            channel = channel, 
-            async_channel = async_channel, 
-            stub = CloudDrive_pb2_grpc.CloudDriveFileSrvStub(channel), 
-            async_stub = CloudDrive_grpc.CloudDriveFileSrvStub(async_channel), 
             metadata = [], 
         )
         if username:
@@ -246,17 +232,34 @@ class Client:
         name = cls.__qualname__
         if module != "__main__":
             name = module + "." + name
-        return f"{name}(origin={self.origin!r}, username={self.username!r}, password='******', channel={self.channel!r}, async_channel={self.async_channel})"
+        return f"{name}(origin={self.origin!r}, username={self.username!r}, password='******')"
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attribute")
 
+    @cached_property
+    def channel(self, /) -> Channel:
+        return insecure_channel(self.origin.authority)
+
+    @cached_property
+    def stub(self, /) -> CloudDrive_pb2_grpc.CloudDriveFileSrvStub:
+        return CloudDrive_pb2_grpc.CloudDriveFileSrvStub(self.channel)
+
+    @cached_property
+    def async_channel(self, /) -> AsyncChannel:
+        origin = self.origin
+        return AsyncChannel(origin.host, origin.port)
+
+    @cached_property
+    def async_stub(self, /) -> CloudDrive_grpc.CloudDriveFileSrvStub:
+        return CloudDrive_grpc.CloudDriveFileSrvStub(self.async_channel)
+
     def close(self, /):
-        try:
-            self.channel.close()
-            self.async_channel.close()
-        except AttributeError:
-            pass
+        ns = self.__dict__
+        if "channel" in ns:
+            ns["channel"].close()
+        if "async_channel" in ns:
+            ns["async_channel"].close()
 
     def set_password(self, value: str, /):
         self.__dict__["password"] = value

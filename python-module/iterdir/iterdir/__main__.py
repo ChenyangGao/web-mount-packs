@@ -1,77 +1,98 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-"alist 文件夹信息遍历导出"
-
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-
-KEYS = (
-    "name", "path", "is_dir", "size", "ctime", "mtime", "atime", "hash_info", 
-    "modified", "created", "sign", "thumb", "type", 
-)
 
 from argparse import ArgumentParser, RawTextHelpFormatter
+from iterdir import __version__, iterdir, DirEntry
 
-parser = ArgumentParser(description="alist 文件夹信息遍历导出", formatter_class=RawTextHelpFormatter)
-parser.add_argument("path", nargs="?", default="/", help="文件夹路径，默认值 '/'，即根目录")
-parser.add_argument("-O", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
-parser.add_argument("-u", "--username", default="", help="用户名，默认为空")
-parser.add_argument("-p", "--password", default="", help="密码，默认为空")
-parser.add_argument("-dp", "--directory-password", default="", help="文件夹的密码，默认为空")
-parser.add_argument("-r", "--refresh", action="store_true", help="是否刷新（拉取最新而非使用缓存）")
+KEYS = ("inode", "name", "path", "relpath", "isdir", "islink", "stat")
+
+parser = ArgumentParser(description="目录树信息遍历导出", formatter_class=RawTextHelpFormatter)
+parser.add_argument("path", nargs="?", default="", help="文件夹路径，默认为当前工作目录")
 parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
-parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 alist.AlistPath），用于对路径进行筛选")
+parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 pathlib.Path），用于对路径进行筛选")
 parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""输出类型，默认为 json
 - log   每行输出一条数据，每条数据输出为一个 json 的 object
 - json  输出一个 json 的 list，每条数据输出为一个 json 的 object
 - csv   输出一个 csv，第 1 行为表头，以后每行输出一条数据
 """)
 parser.add_argument("-o", "--output-file", help="保存到文件，此时命令行会输出进度条")
-parser.add_argument("-m", "--min-depth", default=0, type=int, help="最小深度，默认值 0，小于或等于 0 时不限")
+parser.add_argument("-m", "--min-depth", default=0, type=int, help="最小深度，默认值 0，小于 0 时不限")
 parser.add_argument("-M", "--max-depth", default=-1, type=int, help="最大深度，默认值 -1，小于 0 时不限")
 parser.add_argument("-dfs", "--depth-first", action="store_true", help="使用深度优先搜索，否则使用广度优先")
+parser.add_argument("-fl", "--follow-symlinks", action="store_true", help="是否跟进符号连接（如果为否，则会把符号链接视为文件，即使它指向目录）")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
     print(".".join(map(str, __version__)))
     raise SystemExit(0)
 
-try:
-    from alist import AlistFileSystem, __version__ as alist_version
-    if alist_version < (0, 0, 11):
-        raise ImportError
-except ImportError:
-    from subprocess import run
-    from sys import executable
-    run([executable, "-m", "pip", "install", "python-alist"], check=True)
-    from alist import AlistFileSystem
-
+from collections.abc import Callable, Iterator
+from os import fsdecode, lstat, stat, stat_result, PathLike
+from os.path import abspath, isdir, islink, relpath
+from operator import attrgetter
+from pathlib import Path
 from sys import stdout
-from typing import Callable
+from typing import Optional
 
+STAT_FIELDS = tuple(
+    f for f in dir(stat_result) 
+    if f.startswith("st_")
+)
 
-fs = AlistFileSystem.login(args.origin, args.username, args.password)
-keys = args.keys or KEYS
-output_type = args.output_type
+def stat_to_dict(
+    path: None | bytes | str | PathLike = None, 
+    /, 
+    follow_symlinks: bool = False, 
+) -> Optional[dict]:
+    getstat: Callable[[bytes | str | PathLike], stat_result]
+    if follow_symlinks:
+        getstat = stat
+    else:
+        getstat = lstat
+    try:
+        return dict(zip(
+            STAT_FIELDS, 
+            attrgetter(*STAT_FIELDS)(getstat(path or ".")), 
+        ))
+    except OSError:
+        return None
 
 select = args.select
+predicate: Optional[Callable[[DirEntry], Optional[bool]]]
 if select:
     if select.startswith("lambda "):
-        predicate = eval(select)
+        pred = eval(select)
     else:
-        predicate = eval("lambda path:" + select)
+        pred = eval("lambda path:" + select)
+    predicate = lambda e: pred(Path(fsdecode(e)))
 else:
     predicate = None
 
-path_it = fs.iter(
-    args.path, 
+path = args.path
+top = abspath(path)
+fmap: dict[str, Callable] = {
+    "inode": DirEntry.inode, 
+    "name": lambda e: e.name, 
+    "path": lambda e: e.path, 
+    "relpath": lambda e: relpath(abspath(e), top), 
+    "isdir": isdir, 
+    "islink": islink, 
+    "stat": stat_to_dict, 
+}
+
+keys = args.keys or KEYS
+if keys:
+    fmap = {k: fmap[k] for k in keys if k in fmap}
+
+path_it: Iterator[DirEntry] = iterdir(
+    DirEntry(path), 
     topdown=True if args.depth_first else None, 
     min_depth=args.min_depth, 
     max_depth=args.max_depth, 
     predicate=predicate, 
-    refresh=args.refresh, 
-    password=args.directory_password, 
+    follow_symlinks=args.follow_symlinks, 
 )
 
 output_file = args.output_file
@@ -120,15 +141,20 @@ if output_file:
 else:
     file = stdout # type: ignore
 
-records = ({k: p.get(k) for k in keys} for p in path_it)
+records = ({k: f(e) for k, f in fmap.items()} for e in path_it)
 
+output_type = args.output_type
 dumps: Callable[..., bytes]
 if output_type in ("log", "json"):
     try:
         from orjson import dumps
     except ImportError:
-        from json import dumps as odumps
-        dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+        odumps: Callable
+        try:
+            from ujson import dumps as odumps
+        except ImportError:
+            from json import dumps as odumps
+        dumps = lambda obj, /: bytes(odumps(obj, ensure_ascii=False), "utf-8")
     if output_file:
         write = file.buffer.write
     else:

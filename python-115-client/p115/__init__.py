@@ -400,8 +400,7 @@ class P115Client:
         if parse is None:
             async def request():
                 async with req as resp:
-                    pass
-            return request()
+                    return resp
         elif callable(parse):
             ac = argcount(parse)
             async def request():
@@ -413,7 +412,6 @@ class P115Client:
                     if isawaitable(ret):
                         ret = await ret
                     return ret
-            return request()
         elif parse:
             async def request():
                 async with req as resp:
@@ -425,8 +423,9 @@ class P115Client:
                     elif content_type.startswith("text/"):
                         return await resp.text()
                     return await resp.read()
-            return request()
-        return req
+        else:
+            return req
+        return request()
 
     def request(
         self, 
@@ -4176,7 +4175,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[Self], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[Self]:
         return self.fs.iter(
@@ -4956,7 +4955,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
         dq: deque[tuple[int, P115PathType]] = deque()
@@ -5003,7 +5002,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
         if not max_depth:
@@ -5065,7 +5064,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
         if topdown is None:

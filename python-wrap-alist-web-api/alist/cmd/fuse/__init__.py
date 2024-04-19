@@ -2,10 +2,8 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-
-from argparse import ArgumentParser, RawTextHelpFormatter
-
-parser = ArgumentParser(description="""\
+__all__: list[str] = []
+__doc__ = """\
     🌍 基于 alist 和 fuse 的只读文件系统，支持罗列 strm 🪩
 
 ⏰ 由于网盘对多线程访问的限制，请停用挂载目录的显示图标预览
@@ -13,10 +11,114 @@ parser = ArgumentParser(description="""\
 1. Linux 要安装 libfuse：  https://github.com/libfuse/libfuse
 2. MacOSX 要安装 MacFUSE： https://github.com/osxfuse/osxfuse
 3. Windows 要安装 WinFsp： https://github.com/winfsp/winfsp
+"""
 
-Source Code:  https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/alist_fuse
-MIT Licensed: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-cmdline/alist_fuse/LICENSE
-""", formatter_class=RawTextHelpFormatter)
+if __name__ == "__main__":
+    from argparse import ArgumentParser, RawTextHelpFormatter
+    from fuser import AlistFuseOperations # type: ignore
+    from util.log import logger # type: ignore
+    from util.predicate import make_predicate # type: ignore
+
+    parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
+else:
+    from ..init import subparsers
+    from .fuser import AlistFuseOperations
+    from .util.log import logger
+    from .util.predicate import make_predicate
+
+    parser = subparsers.add_parser("fuse", description=__doc__)
+
+
+def main(args):
+    if args.version:
+        from alist import __version__
+        print(".".join(map(str, __version__)))
+        raise SystemExit(0)
+
+    mount_point = args.mount_point
+    if not mount_point:
+        from uuid import uuid4
+        mount_point = str(uuid4())
+
+    import logging
+
+    log_level = args.log_level
+    if isinstance(log_level, str):
+        try:
+            log_level = int(log_level)
+        except ValueError:
+            log_level = getattr(logging, log_level.upper(), logging.NOTSET)
+    logger.setLevel(log_level)
+
+    import re
+
+    predicate = args.show_predicate
+    if predicate:
+        predicate = make_predicate(predicate, {"re": re}, type=args.show_predicate_type)
+
+    strm_predicate = args.strm_predicate
+    if strm_predicate:
+        strm_predicate = make_predicate(strm_predicate, {"re": re}, type=args.strm_predicate_type)
+
+    from re import compile as re_compile
+
+    CRE_PAT_IN_STR = re_compile(r"[^\\ ]*(?:\\(?s:.)[^\\ ]*)*")
+
+    cache = None
+    make_cache = args.make_cache
+    if make_cache:
+        from textwrap import dedent
+        code = dedent(make_cache)
+        ns = {} # type: dict
+        exec(code, ns)
+        cache = ns.get("cache")
+
+    direct_open_names = args.direct_open_names
+    if direct_open_names:
+        names = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(direct_open_names) if n}
+        if names:
+            direct_open_names = names.__contains__
+
+    direct_open_exes = args.direct_open_exes
+    if direct_open_exes:
+        exes = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(direct_open_exes) if n}
+        if names:
+            direct_open_exes = exes.__contains__
+
+    from os.path import exists, abspath
+
+    print(f"""
+        👋 Welcome to use alist fuse 👏
+
+    mounted at: {abspath(mount_point)!r}
+    """)
+
+    if not exists(mount_point):
+        import atexit
+        from os import removedirs
+        atexit.register(lambda: removedirs(mount_point))
+
+    # https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki
+    AlistFuseOperations(
+        args.origin, 
+        args.username, 
+        args.password, 
+        cache=cache, 
+        predicate=predicate, 
+        strm_predicate=strm_predicate, 
+        max_readdir_workers=args.max_readdir_workers, 
+        direct_open_names=direct_open_names, 
+        direct_open_exes=direct_open_exes, 
+    ).run(
+        mountpoint=mount_point, 
+        ro=True, 
+        allow_other=args.allow_other, 
+        foreground=not args.background, 
+        nothreads=args.nothreads, 
+        debug=args.debug, 
+    )
+
+
 parser.add_argument("mount_point", nargs="?", help="挂载路径")
 parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
 parser.add_argument("-u", "--username", default="", help="用户名，默认为空")
@@ -101,108 +203,10 @@ parser.add_argument("-b", "--background", action="store_true", help="后台运�
 parser.add_argument("-s", "--nothreads", action="store_true", help="不用多线程")
 parser.add_argument("--allow-other", action="store_true", help="允许 other 用户（也即不是 user 和 group）")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
-parser.add_argument("-li", "--license", action="store_true", help="输出 license")
-args = parser.parse_args()
+parser.set_defaults(func=main)
 
-if args.version:
-    from pkgutil import get_data
-    print(get_data("__main__", "VERSION").decode("ascii")) # type: ignore
-    raise SystemExit(0)
-if args.license:
-    from pkgutil import get_data
-    print(get_data("__main__", "LICENSE").decode("ascii")) # type: ignore
-    raise SystemExit(0)
 
-from sys import version_info
-
-if version_info < (3, 10):
-    print("python 版本过低，请升级到至少 3.10")
-    raise SystemExit(1)
-
-from __init__ import AlistFuseOperations # type: ignore
-
-mount_point = args.mount_point
-if not mount_point:
-    from uuid import uuid4
-    mount_point = str(uuid4())
-
-import logging
-from util.log import logger # type: ignore
-
-log_level = args.log_level
-if isinstance(log_level, str):
-    try:
-        log_level = int(log_level)
-    except ValueError:
-        log_level = getattr(logging, log_level.upper(), logging.NOTSET)
-logger.setLevel(log_level)
-
-import re
-from util.predicate import make_predicate # type: ignore
-
-predicate = args.show_predicate
-if predicate:
-    predicate = make_predicate(predicate, {"re": re}, type=args.show_predicate_type)
-
-strm_predicate = args.strm_predicate
-if strm_predicate:
-    strm_predicate = make_predicate(strm_predicate, {"re": re}, type=args.strm_predicate_type)
-
-from re import compile as re_compile
-
-CRE_PAT_IN_STR = re_compile(r"[^\\ ]*(?:\\(?s:.)[^\\ ]*)*")
-
-cache = None
-make_cache = args.make_cache
-if make_cache:
-    from textwrap import dedent
-    code = dedent(make_cache)
-    ns = {} # type: dict
-    exec(code, ns)
-    cache = ns.get("cache")
-
-direct_open_names = args.direct_open_names
-if direct_open_names:
-    names = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(direct_open_names) if n}
-    if names:
-        direct_open_names = names.__contains__
-
-direct_open_exes = args.direct_open_exes
-if direct_open_exes:
-    exes = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(direct_open_exes) if n}
-    if names:
-        direct_open_exes = exes.__contains__
-
-from os.path import exists, abspath
-
-print(f"""
-    👋 Welcome to use alist fuse 👏
-
-mounted at: {abspath(mount_point)!r}
-""")
-
-if not exists(mount_point):
-    import atexit
-    from os import removedirs
-    atexit.register(lambda: removedirs(mount_point))
-
-# https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki
-AlistFuseOperations(
-    args.origin, 
-    args.username, 
-    args.password, 
-    cache=cache, 
-    predicate=predicate, 
-    strm_predicate=strm_predicate, 
-    max_readdir_workers=args.max_readdir_workers, 
-    direct_open_names=direct_open_names, 
-    direct_open_exes=direct_open_exes, 
-).run(
-    mountpoint=mount_point, 
-    ro=True, 
-    allow_other=args.allow_other, 
-    foreground=not args.background, 
-    nothreads=args.nothreads, 
-    debug=args.debug, 
-)
+if __name__ == "__main__":
+    args = parser.parse_args()
+    main(args)
 

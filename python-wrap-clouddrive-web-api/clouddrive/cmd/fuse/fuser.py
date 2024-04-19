@@ -5,13 +5,7 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["CloudDriveFuseOperations"]
 
 try:
-    from clouddrive import __version__ as clouddrive_version
-    if clouddrive_version < (0, 0, 10):
-        __import__("sys").modules.pop("clouddrive")
-        raise ImportError
-    # pip install clouddrive
-    from clouddrive import CloudDriveFileSystem, CloudDrivePath
-    # pip install types-cachetools
+    # pip install cachetools
     from cachetools import TTLCache
     # pip install fusepy
     from fuse import FUSE, FuseOSError, Operations, fuse_get_context
@@ -20,9 +14,8 @@ try:
 except ImportError:
     from subprocess import run
     from sys import executable
-    run([executable, "-m", "pip", "install", "-U", "clouddrive>=0.0.10", "cachetools", "fusepy", "psutil"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "cachetools", "fusepy", "psutil"], check=True)
 
-    from clouddrive import CloudDriveFileSystem, CloudDrivePath
     from cachetools import TTLCache
     from fuse import FUSE, FuseOSError, Operations, fuse_get_context # type: ignore
     from psutil import Process # type: ignore
@@ -42,6 +35,8 @@ from threading import Event, Lock, Thread
 from time import sleep, time
 from typing import cast, BinaryIO, Final, Optional
 from unicodedata import normalize
+
+from clouddrive import CloudDriveFileSystem, CloudDrivePath
 
 try:
     from .util.log import logger

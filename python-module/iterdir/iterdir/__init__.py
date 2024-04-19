@@ -2,12 +2,15 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["DirEntry", "iterdir"]
 
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from os import fspath, listdir, scandir, stat, DirEntry as _DirEntry, PathLike
+from os import (
+    fspath, listdir, lstat, scandir, stat, stat_result, 
+    DirEntry as _DirEntry, PathLike, 
+)
 from os.path import (
     abspath, commonpath, basename, isfile, isdir, islink, join as joinpath, realpath, 
 )
@@ -33,14 +36,14 @@ class DirEntryMeta(type):
 
 
 class DirEntry(Generic[AnyStr], metaclass=DirEntryMeta):
-    __slots__ = "path",
+    __slots__ = ("name", "path")
 
+    name: AnyStr
     path: AnyStr
 
     def __init__(self, /, path: AnyStr | PathLike[AnyStr]):
-        path = fspath(path)
-        if not path:
-            path = abspath(path)
+        path = abspath(fspath(path))
+        super().__setattr__("name", basename(path))
         super().__setattr__("path", path)
 
     def __fspath__(self, /) -> AnyStr:
@@ -52,12 +55,8 @@ class DirEntry(Generic[AnyStr], metaclass=DirEntryMeta):
     def __setattr__(self, key, val, /) -> Never:
         raise AttributeError("can't set attributes")
 
-    @property
-    def name(self, /) -> AnyStr:
-        return basename(self.path)
-
     def inode(self, /) -> int:
-        return stat(self.path).st_ino
+        return lstat(self.path).st_ino
 
     def is_dir(self, /, *, follow_symlinks: bool = True) -> bool:
         if follow_symlinks:
@@ -72,7 +71,12 @@ class DirEntry(Generic[AnyStr], metaclass=DirEntryMeta):
             return islink(self.path) or isfile(self.path) 
 
     is_symlink = islink
-    stat = stat
+
+    def stat(self, /, *, follow_symlinks: bool = True) -> stat_result:
+        if follow_symlinks:
+            return stat(self.path)
+        else:
+            return lstat(self.path)
 
 
 def _iterdir_bfs(
@@ -83,7 +87,7 @@ def _iterdir_bfs(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[PathType], Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[PathType]:
     dq: deque[tuple[int, PathType]] = deque()
@@ -126,7 +130,7 @@ def _iterdir_dfs(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[PathType], Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[PathType]:
     if not max_depth:
@@ -185,7 +189,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[DirEntry[str]], Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry[str]]: ...
 @overload
@@ -196,7 +200,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[DirEntry[AnyStr]], Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry[AnyStr]]: ...
 @overload
@@ -207,7 +211,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[Path], Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[Path]: ...
 @overload
@@ -218,7 +222,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[AnyStr], Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[AnyStr]: ...
 def iterdir(
@@ -228,9 +232,24 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[..., Optional[bool]]] = None, 
-    onerror: Optional[bool] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator:
+    """遍历目录树
+
+    :param top: 根路径，默认为当前目录。
+    :param topdown: 如果是 True，自顶向下深度优先搜索；如果是 False，自底向上深度优先搜索；如果是 None，广度优先搜索。
+    :param min_depth: 最小深度，小于 0 时不限。参数 `top` 本身的深度为 0，它的直接跟随路径的深度是 1，以此类推。
+    :param max_depth: 最大深度，小于 0 时不限。
+    :param predicate: 调用以筛选遍历得到的路径。可接受的参数与参数 `top` 的类型一致，参见 `:return:` 部分。
+    :param onerror: 处理 OSError 异常。如果是 True，抛出异常；如果是 False，忽略异常；如果是调用，以异常为参数调用之。
+    :param follow_symlinks: 是否跟进符号连接（如果为否，则会把符号链接视为文件，即使它指向目录）。
+
+    :return: 遍历得到的路径的迭代器。参数 `top` 的类型：
+        - 如果是 iterdir.DirEntry，则是 iterdir.DirEntry 实例的迭代器
+        - 如果是 pathlib.Path，则是 pathlib.Path 实例的迭代器
+        - 否则，得到 `os.fspath(top)` 相同类型的实例的迭代器
+    """
     if top is None:
         top = DirEntry(".")
     is_dir: Callable[[bytes | str | PathLike], bool]

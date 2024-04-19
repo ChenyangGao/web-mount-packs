@@ -11,7 +11,7 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10, 2)
+__version__ = (0, 0, 11)
 __all__ = [
     "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
     "CloudDriveDownloadTaskList", "CloudDriveUploadTaskList", 
@@ -19,6 +19,7 @@ __all__ = [
 
 import errno
 
+from collections import deque
 from collections.abc import (
     AsyncIterator, Callable, Coroutine, ItemsView, Iterable, Iterator, KeysView, Mapping, Sequence, ValuesView
 )
@@ -233,7 +234,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return self.path
 
     def __getitem__(self, key, /):
-        if key not in self.__dict__ and not self.__dict__.get("lastest_update"):
+        if key not in self.__dict__ and not self.__dict__.get("last_update"):
             self()
         return self.__dict__[key]
 
@@ -282,6 +283,10 @@ class CloudDrivePath(Mapping, PathLike[str]):
 
     def __truediv__(self, path: str | PathLike[str], /) -> CloudDrivePath:
         return type(self).joinpath(self, path)
+
+    @property
+    def is_attr_loaded(self, /) -> bool:
+        return "last_update" in self.__dict__
 
     def keys(self, /) -> KeysView:
         return self.__dict__.keys()
@@ -386,11 +391,11 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def iter(
         self, 
         /, 
-        topdown: bool = True, 
-        min_depth: int = 0, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[CloudDrivePath], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         refresh: Optional[bool] = None, 
     ) -> Iterator[CloudDrivePath]:
         return self.fs.iter(
@@ -643,7 +648,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def walk(
         self, 
         /, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
@@ -658,10 +663,28 @@ class CloudDrivePath(Mapping, PathLike[str]):
             refresh=refresh, 
         )
 
+    def walk_attr(
+        self, 
+        /, 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        refresh: Optional[bool] = None, 
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        return self.fs.walk_attr(
+            self, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            refresh=refresh, 
+        )
+
     def walk_path(
         self, 
         /, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
@@ -784,9 +807,8 @@ class CloudDriveFileSystem:
         origin: str = "http://localhost:19798", 
         username: str = "", 
         password: str = "", 
-        channel = None, 
     ) -> CloudDriveFileSystem:
-        return cls(CloudDriveClient(origin, username, password, channel=channel))
+        return cls(CloudDriveClient(origin, username, password))
 
     def set_refresh(self, value: bool, /):
         self.__dict__["refresh"] = value
@@ -894,15 +916,12 @@ class CloudDriveFileSystem:
         self, 
         /, 
         path: str | PathLike[str] = "", 
-        fetch_attr: bool = False, 
         _check: bool = True, 
     ) -> CloudDrivePath:
         if not isinstance(path, CloudDrivePath):
             if _check:
                 path = self.abspath(path)
             path = CloudDrivePath(self, path)
-        if fetch_attr:
-            path()
         return path
 
     def attr(
@@ -917,12 +936,12 @@ class CloudDriveFileSystem:
             path = self.abspath(path)
         path = cast(str, path)
         attr = MessageToDict(self._attr(path))
-        lastest_update = time()
+        last_update = time()
         attr["path"] = attr.get("fullPathName") or path
         attr["ctime"] = parse_as_timestamp(attr.get("createTime"))
         attr["mtime"] = parse_as_timestamp(attr.get("writeTime"))
         attr["atime"] = parse_as_timestamp(attr.get("accessTime"))
-        attr["lastest_update"] = lastest_update
+        attr["last_update"] = last_update
         return attr
 
     def chdir(
@@ -1263,26 +1282,82 @@ class CloudDriveFileSystem:
         path = cast(str, path)
         return path == "/" or dirname(path) == path
 
-    def iter(
+    def _iter_bfs(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[CloudDrivePath], Optional[bool]]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[CloudDrivePath]:
+        dq: deque[tuple[int, CloudDrivePath]] = deque()
+        push, pop = dq.append, dq.popleft
+        path = self.as_path(top)
+        if not path.is_attr_loaded:
+            path()
+        push((0, path))
+        while dq:
+            depth, path = pop()
+            if min_depth <= 0:
+                pred = predicate(path) if predicate else True
+                if pred is None:
+                    return
+                elif pred:
+                    yield path
+                min_depth = 1
+            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
+                return
+            depth += 1
+            try:
+                for path in self.listdir_path(path, refresh=refresh, _check=False):
+                    pred = predicate(path) if predicate else True
+                    if pred is None:
+                        continue
+                    elif pred and depth >= min_depth:
+                        yield path
+                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
+                        push((depth, path))
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
+
+    def _iter_dfs(
         self, 
         /, 
         top: str | PathLike[str] = "", 
         topdown: bool = True, 
-        min_depth: int = 0, 
+        min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[CloudDrivePath], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         refresh: Optional[bool] = None, 
         _check: bool = True, 
     ) -> Iterator[CloudDrivePath]:
         if not max_depth:
             return
-        if _check:
-            top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
-        top = cast(str, top)
-        refresh = cast(bool, refresh)
+        global_yield_me = True
+        if min_depth > 1:
+            global_yield_me = False
+            min_depth -= 1
+        elif min_depth <= 0:
+            path = self.as_path(top)
+            if not path.is_attr_loaded:
+                path()
+            pred = predicate(path) if predicate else True
+            if pred is None:
+                return
+            elif pred:
+                yield path
+            if path.is_file():
+                return
+            min_depth = 1
+        if max_depth > 0:
+            max_depth -= 1
         try:
             ls = self.listdir_path(top, refresh=refresh, _check=False)
         except OSError as e:
@@ -1291,32 +1366,62 @@ class CloudDriveFileSystem:
             elif onerror:
                 raise
             return
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
         for path in ls:
+            yield_me = global_yield_me
             if yield_me and predicate:
                 pred = predicate(path)
                 if pred is None:
                     continue
-                yield_me = pred 
+                yield_me = pred
             if yield_me and topdown:
                 yield path
             if path.is_dir():
                 yield from self.iter(
-                    path.path, 
-                    refresh=refresh, 
+                    path, 
                     topdown=topdown, 
                     min_depth=min_depth, 
                     max_depth=max_depth, 
                     predicate=predicate, 
                     onerror=onerror, 
+                    refresh=refresh, 
                     _check=_check, 
                 )
             if yield_me and not topdown:
                 yield path
+
+    def iter(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[CloudDrivePath], Optional[bool]]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[CloudDrivePath]:
+        if topdown is None:
+            return self._iter_bfs(
+                top, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                predicate=predicate, 
+                onerror=onerror, 
+                refresh=refresh, 
+                _check=_check, 
+            )
+        else:
+            return self._iter_dfs(
+                top, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                predicate=predicate, 
+                onerror=onerror, 
+                refresh=refresh, 
+                _check=_check, 
+            )
 
     def iterdir(
         self, 
@@ -1333,13 +1438,13 @@ class CloudDriveFileSystem:
             refresh = self.refresh
         path = cast(str, path)
         refresh = cast(bool, refresh)
-        lastest_update = time()
+        last_update = time()
         for attr in map(MessageToDict, self._iterdir(path, refresh=refresh)):
             attr["path"] = attr.get("fullPathName") or joinpath(path, attr["name"])
             attr["ctime"] = parse_as_timestamp(attr.get("createTime"))
             attr["mtime"] = parse_as_timestamp(attr.get("writeTime"))
             attr["atime"] = parse_as_timestamp(attr.get("accessTime"))
-            attr["lastest_update"] = lastest_update
+            attr["last_update"] = last_update
             yield attr
 
     def list_storage(self, /) -> list[dict]:
@@ -1815,9 +1920,9 @@ class CloudDriveFileSystem:
             refresh = self.refresh
         path = cast(str, path)
         refresh = cast(bool, refresh)
-        lastest_update = time()
+        last_update = time()
         for attr in self._search_iter(path, search_for, refresh=refresh, fuzzy=fuzzy):
-            yield CloudDrivePath(self, path, lastest_update=lastest_update, **MessageToDict(attr))
+            yield CloudDrivePath(self, path, last_update=last_update, **MessageToDict(attr))
 
     def stat(
         self, 
@@ -1979,182 +2084,180 @@ class CloudDriveFileSystem:
 
     unlink = remove
 
-    def walk(
+    def _walk_bfs(
         self, 
         /, 
         top: str | PathLike[str] = "", 
-        refresh: Optional[bool] = None, 
-        topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
+        refresh: Optional[bool] = None, 
         _check: bool = True, 
-    ) -> Iterator[tuple[str, list[str], list[str]]]:
-        if not max_depth:
-            return
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        dq: deque[tuple[int, str]] = deque()
+        push, pop = dq.append, dq.popleft
         if isinstance(top, CloudDrivePath):
             top = top.path
         elif _check:
             top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
         top = cast(str, top)
-        refresh = cast(bool, refresh)
+        push((0, top))
+        while dq:
+            depth, parent = pop()
+            depth += 1
+            try:
+                push_me = max_depth < 0 or depth < max_depth
+                if min_depth <= 0 or depth >= min_depth:
+                    dirs: list[dict] = []
+                    files: list[dict] = []
+                    for attr in self.iterdir(parent, refresh=refresh, _check=False):
+                        if attr["isDirectory"]:
+                            dirs.append(attr)
+                            if push_me:
+                                push((depth, attr["path"]))
+                        else:
+                            files.append(attr)
+                    yield parent, dirs, files
+                elif push_me:
+                    for attr in self.iterdir(parent, refresh=refresh, _check=False):
+                        if attr["isDirectory"]:
+                            push((depth, attr["path"]))
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
+
+    def _walk_dfs(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None, 
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[tuple[str, list[dict], list[dict]]]:
+        if not max_depth:
+            return
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
+        if isinstance(top, CloudDrivePath):
+            top = top.path
+        elif _check:
+            top = self.abspath(top)
+        top = cast(str, top)
         try:
-            ls = self.listdir_attr(top, refresh=refresh, _check=False)
+            dirs: list[dict] = []
+            files: list[dict] = []
+            for attr in self.iterdir(top, refresh=refresh, _check=False):
+                if attr["isDirectory"]:
+                    dirs.append(attr)
+                else:
+                    files.append(attr)
+            if yield_me and topdown:
+                yield top, dirs, files
+            for attr in dirs:
+                yield from self._walk_dfs(
+                    attr["path"], 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    refresh=refresh, 
+                    _check=False, 
+                )
+            if yield_me and not topdown:
+                yield top, dirs, files
         except OSError as e:
             if callable(onerror):
                 onerror(e)
             elif onerror:
                 raise
             return
-        if not ls:
-            yield top, [], []
-            return
-        dirs: list[str] = []
-        files: list[str] = []
-        for attr in ls:
-            if attr["isDirectory"]:
-                dirs.append(attr["name"])
-            else:
-                files.append(attr["name"])
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
-        if yield_me and topdown:
-            yield top, dirs, files
-        for dir_ in dirs:
-            yield from self.walk(
-                joinpath(top, dir_), 
-                refresh=refresh, 
-                topdown=topdown, 
-                min_depth=min_depth, 
-                max_depth=max_depth, 
-                onerror=onerror, 
-                _check=False, 
-            )
-        if yield_me and topdown:
-            yield top, dirs, files
+
+    def walk(
+        self, 
+        /, 
+        top: str | PathLike[str] = "", 
+        topdown: Optional[bool] = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable = None,
+        refresh: Optional[bool] = None, 
+        _check: bool = True, 
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        for path, dirs, files in self.walk_attr(
+            top, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            refresh=refresh, 
+            _check=_check, 
+        ):
+            yield path, [a["name"] for a in dirs], [a["name"] for a in files]
 
     def walk_attr(
         self, 
         /, 
         top: str | PathLike[str] = "", 
-        refresh: Optional[bool] = None, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
+        refresh: Optional[bool] = None, 
         _check: bool = True, 
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
-        if not max_depth:
-            return
-        if isinstance(top, CloudDrivePath):
-            top = top.path
-        elif _check:
-            top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
-        top = cast(str, top)
-        refresh = cast(bool, refresh)
-        try:
-            ls = self.listdir_attr(top, refresh=refresh, _check=False)
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
-            return
-        if not ls:
-            yield top, [], []
-            return
-        dirs: list[dict] = []
-        files: list[dict] = []
-        for attr in ls:
-            if attr["isDirectory"]:
-                dirs.append(attr)
-            else:
-                files.append(attr)
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
-        if yield_me and topdown:
-            yield top, dirs, files
-        for dir_ in dirs:
-            yield from self.walk_attr(
-                dir_["path"], 
+        if topdown is None:
+            return self._walk_bfs(
+                top, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
                 refresh=refresh, 
+                _check=_check, 
+            )
+        else:
+            return self._walk_dfs(
+                top, 
                 topdown=topdown, 
                 min_depth=min_depth, 
                 max_depth=max_depth, 
                 onerror=onerror, 
-                _check=False, 
+                refresh=refresh, 
+                _check=_check, 
             )
-        if yield_me and topdown:
-            yield top, dirs, files
 
     def walk_path(
         self, 
         /, 
         top: str | PathLike[str] = "", 
-        refresh: Optional[bool] = None, 
-        topdown: bool = True, 
+        topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
+        refresh: Optional[bool] = None, 
         _check: bool = True, 
     ) -> Iterator[tuple[str, list[CloudDrivePath], list[CloudDrivePath]]]:
-        if not max_depth:
-            return
-        if isinstance(top, CloudDrivePath):
-            top = top.path
-        elif _check:
-            top = self.abspath(top)
-        if refresh is None:
-            refresh = self.refresh
-        top = cast(str, top)
-        refresh = cast(bool, refresh)
-        try:
-            ls = self.listdir_path(top, refresh=refresh, _check=False)
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
-            return
-        if not ls:
-            yield top, [], []
-            return
-        dirs: list[CloudDrivePath] = []
-        files: list[CloudDrivePath] = []
-        for path in ls:
-            if path.is_dir():
-                dirs.append(path)
-            else:
-                files.append(path)
-        if min_depth > 0:
-            min_depth -= 1
-        if max_depth > 0:
-            max_depth -= 1
-        yield_me = min_depth <= 0
-        if yield_me and topdown:
-            yield top, dirs, files
-        for dir_ in dirs:
-            yield from self.walk_path(
-                dir_.path, 
-                refresh=refresh, 
-                topdown=topdown, 
-                min_depth=min_depth, 
-                max_depth=max_depth, 
-                onerror=onerror, 
-                _check=False, 
+        for path, dirs, files in self.walk_attr(
+            top, 
+            topdown=topdown, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            refresh=refresh, 
+            _check=_check, 
+        ):
+            yield (
+                path, 
+                [CloudDrivePath(self, **a) for a in dirs], 
+                [CloudDrivePath(self, **a) for a in files], 
             )
-        if yield_me and not topdown:
-            yield top, dirs, files
 
     def write_bytes(
         self, 

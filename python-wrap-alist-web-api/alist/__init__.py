@@ -236,7 +236,6 @@ class AlistClient:
                     if isawaitable(ret):
                         ret = await ret
                     return ret
-            return request()
         elif parse:
             async def request():
                 async with req as resp:
@@ -248,8 +247,9 @@ class AlistClient:
                     elif content_type.startswith("text/"):
                         return await resp.text()
                     return await resp.read()
-            return request()
-        return req
+        else:
+            return req
+        return request()
 
     def request(
         self, 
@@ -2685,7 +2685,7 @@ class AlistPath(Mapping, PathLike[str]):
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         refresh: Optional[bool] = None, 
     ) -> Iterator[AlistPath]:
         return self.fs.iter(
@@ -3022,6 +3022,7 @@ class AlistPath(Mapping, PathLike[str]):
         refresh: Optional[bool] = None, 
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
         return self.fs.walk_attr(
+            self, 
             topdown=topdown, 
             min_depth=min_depth, 
             max_depth=max_depth, 
@@ -4085,7 +4086,7 @@ class AlistFileSystem:
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         refresh: Optional[bool] = None, 
         password: str = "", 
         _check: bool = True, 
@@ -4131,7 +4132,7 @@ class AlistFileSystem:
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         refresh: Optional[bool] = None, 
         password: str = "", 
         _check: bool = True, 
@@ -4196,7 +4197,7 @@ class AlistFileSystem:
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
-        onerror: Optional[bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
         refresh: Optional[bool] = None, 
         password: str = "", 
         _check: bool = True, 
