@@ -4,7 +4,7 @@
 "扫码获取 115 cookie"
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "AppEnum", "get_qrcode_token", "get_qrcode_status", "post_qrcode_result", 
     "get_qrcode", "login_with_qrcode", 
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     - https://pypi.org/project/qrcode/
 可以指定 -o 或 --open-qrcode 直接打开图片扫码
 """, formatter_class=RawTextHelpFormatter)
-    parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv"), default="web", help="选择一个 app 进行登录，注意：这会把已经登录的相同 app 踢下线")
+    parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv", "alipaymini", "wechatmini", "qandroid"), default="web", help="选择一个 app 进行登录，注意：这会把已经登录的相同 app 踢下线")
     parser.add_argument("-o", "--open-qrcode", action="store_true", help="打开二维码图片，而不是在命令行输出")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     args = parser.parse_args()
@@ -34,7 +34,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen, Request
 
 
-AppEnum = Enum("AppEnum", "web, android, ios, linux, mac, windows, tv")
+AppEnum = Enum("AppEnum", "web, android, ios, linux, mac, windows, tv, alipaymini, wechatmini, qandroid")
 
 
 def get_enum_name(val, cls):
@@ -76,14 +76,16 @@ def post_qrcode_result(uid, app="web"):
     :param uid: 二维码的 uid，取自 `login_qrcode_token` 接口响应
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
         app 目前发现的可用值：
-            - 1, "web",     AppEnum.web
-            - 2, "android", AppEnum.android
-            - 3, "ios",     AppEnum.ios
-            - 4, "linux",   AppEnum.linux
-            - 5, "mac",     AppEnum.mac
-            - 6, "windows", AppEnum.windows
-            - 7, "tv",      AppEnum.tv
-            - ipad（不可用）
+            - 1,  "web",        AppEnum.web
+            - 2,  "android",    AppEnum.android
+            - 3,  "ios",        AppEnum.ios
+            - 4,  "linux",      AppEnum.linux
+            - 5,  "mac",        AppEnum.mac
+            - 6,  "windows",    AppEnum.windows
+            - 7,  "tv",         AppEnum.tv
+            - 8,  "alipaymini", AppEnum.alipaymini
+            - 9,  "wechatmini", AppEnum.wechatmini
+            - 10, "qandroid",   AppEnum.qandroid
     :return: dict，包含 cookie
     """
     app = get_enum_name(app, AppEnum)
@@ -104,14 +106,16 @@ def login_with_qrcode(app="web", scan_in_console=True):
     """用二维码登录
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
         app 目前发现的可用值：
-            - 1, "web",     AppEnum.web
-            - 2, "android", AppEnum.android
-            - 3, "ios",     AppEnum.ios
-            - 4, "linux",   AppEnum.linux
-            - 5, "mac",     AppEnum.mac
-            - 6, "windows", AppEnum.windows
-            - 7, "tv",      AppEnum.tv
-            - ipad（不可用）
+            - 1,  "web",        AppEnum.web
+            - 2,  "android",    AppEnum.android
+            - 3,  "ios",        AppEnum.ios
+            - 4,  "linux",      AppEnum.linux
+            - 5,  "mac",        AppEnum.mac
+            - 6,  "windows",    AppEnum.windows
+            - 7,  "tv",         AppEnum.tv
+            - 8,  "alipaymini", AppEnum.alipaymini
+            - 9,  "wechatmini", AppEnum.wechatmini
+            - 10, "qandroid",   AppEnum.qandroid
     :return: dict，扫码登录结果
     """
     qrcode_token = get_qrcode_token()["data"]

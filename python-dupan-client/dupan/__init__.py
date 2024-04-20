@@ -909,13 +909,16 @@ class DuPanShareList:
         session.headers["Referer"] = url
 
     def __iter__(self, /) -> Iterator[dict]:
-        dq = deque("/")
+        dq: deque[tuple[str, str]] = deque()
         get, put = dq.popleft, dq.append
+        put(("", ""))
         while dq:
-            for file in self.iterdir(get()):
+            dir, dir_relpath = get()
+            for file in self.iterdir(dir):
+                relpath = file["relpath"] = joinpath(dir_relpath, file["server_filename"])
                 yield file
                 if file["isdir"]:
-                    put(file["path"])
+                    put((file["path"], relpath))
 
     @staticmethod
     def _extract_from_url(url: str, /) -> tuple[str, str]:
@@ -1018,21 +1021,18 @@ class DuPanShareList:
                 else:
                     raise OSError(json)
 
-    def iterdir(self, /, dir="/") -> Iterator[dict]:
+    def iterdir(self, /, dir: str = "/", page: int = 1, num: int = 0) -> Iterator[dict]:
         if dir in ("", "/"):
-            yield from self.list_index()
+            data = self.list_index()
+            if num <= 0 or page <= 0:
+                yield from data
+            else:
+                yield from data[(page-1)*num:page*num]
             return
         if not hasattr(self, "share_uk"):
             self.list_index()
         if not dir.startswith("/"):
             dir = self.root + "/" + dir
-            start_inx = len(dir) + 1
-        elif dir == self.root or dir.startswith(self.root + "/"):
-            start_inx = len(self.root) + 1
-        elif dir == self.root2 or dir.startswith(self.root2 + "/"):
-            start_inx = len(self.root2) + 1
-        else:
-            raise FileNotFoundError(errno.ENOENT, dir)
         api = "https://pan.baidu.com/share/list"
         params = {
             "uk": self.share_uk, 
@@ -1047,14 +1047,21 @@ class DuPanShareList:
             "dir": dir, 
         }
         get = self.session.get
-        while True:
-            ls = Error.check(get(api, params=params).json())["list"]
-            for file in ls:
-                file["relpath"] = file["path"][start_inx:]
-            yield from ls
-            if len(ls) < 100:
-                return
-            params["page"] += 1
+        if num <= 0 or page <= 0:
+            if num > 0:
+                params["num"] = num
+            else:
+                num = params["num"]
+            while True:
+                ls = Error.check(get(api, params=params).json())["list"]
+                yield from ls
+                if len(ls) < num:
+                    break
+                params["page"] += 1
+        else:
+            params["page"] = page
+            params["num"] = num
+            yield from Error.check(get(api, params=params).json())["list"]
 
     def list_index(self, /, try_times: int = 5) -> list[dict]:
         url = self.url
@@ -1099,60 +1106,11 @@ class DuPanShareList:
                     return file_list
         raise RuntimeError("too many attempts")
 
-    def listdir(self, /, dir="/", page=1, num=0) -> list[str]:
-        return [a["server_filename"] for a in self.listdir_attr(dir, page, num)]
+    def listdir(self, /, dir: str = "/", page: int = 1, num: int = 0) -> list[str]:
+        return [attr["server_filename"] for attr in self.iterdir(dir, page, num)]
 
-    def listdir_attr(self, /, dir="/", page=1, num=0) -> list[dict]:
-        if dir in ("", "/"):
-            data = self.list_index()
-            if num <= 0:
-                return data
-            if page < 1:
-                page = 1
-            return data[(page-1)*num:page*num]
-        if not hasattr(self, "share_uk"):
-            self.list_index()
-        if not dir.startswith("/"):
-            dir = self.root + "/" + dir
-            start_inx = len(dir) + 1
-        elif dir == self.root or dir.startswith(self.root + "/"):
-            start_inx = len(self.root) + 1
-        elif dir == self.root2 or dir.startswith(self.root2 + "/"):
-            start_inx = len(self.root2) + 1
-        else:
-            raise FileNotFoundError(errno.ENOENT, dir)
-        api = "https://pan.baidu.com/share/list"
-        params = {
-            "uk": self.share_uk, 
-            "shareid": self.share_id, 
-            "order": "other", 
-            "desc": 1, 
-            "showempty": 0, 
-            "clienttype": 0, 
-            "web": 1, 
-            "page": 1, 
-            "num": 100, 
-            "dir": dir, 
-        }
-        session = self.session
-        if num <= 0:
-            ls_all = []
-            while True:
-                ls = Error.check(session.get(api, params=params).json())["list"]
-                ls_all.extend(ls)
-                if len(ls) < 100:
-                    for file in ls_all:
-                        file["relpath"] = file["path"][start_inx:]
-                    return ls_all
-                params["page"] += 1
-        if page > 0:
-            params["page"] = page
-        if num < 100:
-            params["num"] = 100
-        ls = Error.check(session.get(api, params=params).json())["list"]
-        for file in ls:
-            file["relpath"] = file["path"][start_inx:]
-        return ls
+    def listdir_attr(self, /, dir: str = "/", page: int = 1, num: int = 0) -> list[dict]:
+        return list(self.iterdir(dir, page, num))
 
 
 class DuPanPath:

@@ -37,7 +37,7 @@ def main(args):
     print(client.cookie, file=file)
 
 
-parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv"), default="web", 
+parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv", "alipaymini", "wechatmini", "qandroid"), default="web", 
                     help="选择一个 app 进行登录，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-o", "--output-file", help="保存到文件，未指定时输出到 stdout")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")

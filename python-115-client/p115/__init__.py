@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
     "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin", "P115Sharing", 
@@ -98,23 +98,50 @@ if not hasattr(Response, "__del__"):
 
 
 def check_response(fn: RequestVarT, /) -> RequestVarT:
-    if isinstance(fn, dict):
-        resp = fn
-        if not resp.get("state", True):
+    def check(resp: dict):
+        if resp.get("state"):
+            return resp
+        if "errno" in resp:
+            match resp["errno"]:
+                # {'state': False, 'error': '该目录名称已存在。', 'errno': 20004, 'errtype': 'war'}
+                case 20004:
+                    raise FileExistsError(resp)
+                # {'state': False, 'error': '父目录不存在。', 'errno': 20009, 'errtype': 'war'}
+                case 20009:
+                    raise FileNotFoundError(resp)
+                # {'state': False, 'error': '不能将文件复制到自身或其子目录下。', 'errno': 91002, 'errtype': 'war'}
+                case 91002:
+                    raise OSError(errno.ENOTSUP, resp)
+                # {'state': False, 'error': '操作的文件(夹)数量超过5万个', 'errno': 91004, 'errtype': 'war'}
+                case 91004:
+                    raise OSError(errno.ENOTSUP, resp)
+                # {'state': False, 'error': '空间不足，复制失败。', 'errno': 91005, 'errtype': 'war'}
+                case 91005:
+                    raise OSError(errno.ENOSPC, resp)
+                # {'state': False, 'error': '文件（夹）不存在或已经删除。', 'errno': 90008, 'errtype': 'war'}
+                case 90008:
+                    raise FileNotFoundError(resp)
+                # {'state': False, 'error': '文件已删除，请勿重复操作', 'errno': 231011, 'errtype': 'war'}
+                case 231011:
+                    raise FileNotFoundError(resp)
+                # {'state': False, 'error': '删除[...]操作尚未执行完成，请稍后再试！', 'errno': 990009, 'errtype': 'war'}
+                # {'state': False, 'error': '还原[...]操作尚未执行完成，请稍后再试！', 'errno': 990009, 'errtype': 'war'}
+                # {'state': False, 'error': '复制[...]操作尚未执行完成，请稍后再试！', 'errno': 990009, 'errtype': 'war'}
+                # {'state': False, 'error': '移动[...]操作尚未执行完成，请稍后再试！', 'errno': 990009, 'errtype': 'war'}
+                case 990009:
+                    raise OSError(errno.EBUSY, resp)
+                # {'state': False, 'error': '操作的文件(夹)数量超过5万个', 'errno': 990023, 'errtype': ''}
+                case 990023:
+                    raise OSError(errno.ENOTSUP, resp)
             raise OSError(errno.EIO, resp)
-        return fn
+    if isinstance(fn, dict):
+        return check(fn)
     elif iscoroutinefunction(fn):
         async def wrapper(*args, **kwds):
-            resp = await fn(*args, **kwds)
-            if not resp.get("state", True):
-                raise OSError(errno.EIO, resp)
-            return resp
+            return check(await fn(*args, **kwds))
     elif callable(fn):
         def wrapper(*args, **kwds):
-            resp = fn(*args, **kwds)
-            if not resp.get("state", True):
-                raise OSError(errno.EIO, resp)
-            return resp
+            return check(fn(*args, **kwds))
     else:
         raise TypeError
     return update_wrapper(wrapper, fn)
@@ -212,7 +239,8 @@ class P115Client:
         session = ns["session"] = Session()
         session.headers["User-Agent"] = f"Mozilla/5.0 115disk/{APP_VERSION}"
         if not cookie:
-            cookie = self.login_with_qrcode(login_app)["data"]["cookie"]
+            resp = self.login_with_qrcode(login_app)
+            cookie = resp["data"]["cookie"]
         self.set_cookie(cookie)
         resp = self.upload_info
         if resp["errno"]:
@@ -305,7 +333,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict:
         """用二维码登录
-        app 目前发现的可用值：
+        app 共有 17 个可用值，目前找出 10 个：
             - web
             - android
             - ios
@@ -313,7 +341,9 @@ class P115Client:
             - mac
             - windows
             - tv
-            - ipad（不可用）
+            - alipaymini
+            - wechatmini
+            - qandroid
         """
         qrcode_token = self.login_qrcode_token(**request_kwargs)["data"]
         qrcode = qrcode_token.pop("qrcode")
@@ -649,8 +679,9 @@ class P115Client:
 
     def fs_batch_copy(
         self, 
-        payload: dict, 
+        payload: dict | Iterable[int | str], 
         /, 
+        pid: int = 0, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
@@ -663,11 +694,18 @@ class P115Client:
             - ...
         """
         api = "https://webapi.115.com/files/copy"
+        if isinstance(payload, dict):
+            payload = {"pid": pid, **payload}
+        else:
+            payload = {f"fid[{fid}]": fid for i, fid in enumerate(payload)}
+            if not payload:
+                return {"state": False, "message": "no op"}
+            payload["pid"] = pid
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def fs_batch_delete(
         self, 
-        payload: dict, 
+        payload: dict | Iterable[int | str], 
         /, 
         async_: bool = False, 
         **request_kwargs, 
@@ -680,12 +718,17 @@ class P115Client:
             - ...
         """
         api = "https://webapi.115.com/rb/delete"
+        if not isinstance(payload, dict):
+            payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
+        if not payload:
+            return {"state": False, "message": "no op"}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def fs_batch_move(
         self, 
-        payload: dict, 
+        payload: dict | Iterable[int | str], 
         /, 
+        pid: int = 0, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
@@ -698,11 +741,18 @@ class P115Client:
             - ...
         """
         api = "https://webapi.115.com/files/move"
+        if isinstance(payload, dict):
+            payload = {"pid": pid, **payload}
+        else:
+            payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
+            if not payload:
+                return {"state": False, "message": "no op"}
+            payload["pid"] = pid
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def fs_batch_rename(
         self, 
-        payload: dict, 
+        payload: dict | Iterable[tuple[int | str, str]], 
         /, 
         async_: bool = False, 
         **request_kwargs, 
@@ -713,30 +763,27 @@ class P115Client:
             - files_new_name[{file_id}]: str # 值为新的文件名（basename）
         """
         api = "https://webapi.115.com/files/batch_rename"
+        if not isinstance(payload, dict):
+            payload = {f"files_new_name[{fid}]": name for fid, name in payload}
+        if not payload:
+            return {"state": False, "message": "no op"}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def fs_copy(
         self, 
-        fids: int | str | Iterable[int | str], 
+        id: int | str, 
         /, 
-        pid: int, 
+        pid: int = 0, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
         """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
         """
-        if isinstance(fids, (int, str)):
-            payload = {"fid[0]": fids}
-        else:
-            payload = {f"fid[{fid}]": fid for i, fid in enumerate(fids)}
-            if not payload:
-                return {"state": False, "message": "no op"}
-        payload["pid"] = pid
-        return self.fs_batch_copy(payload, async_=async_, **request_kwargs)
+        return self.fs_batch_copy({"fid[0]": id, "pid": pid}, async_=async_, **request_kwargs)
 
     def fs_delete(
         self, 
-        fids: int | str | Iterable[int | str], 
+        id: int | str, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
@@ -744,13 +791,7 @@ class P115Client:
         """删除文件或文件夹，此接口是对 `fs_batch_delete` 的封装
         """
         api = "https://webapi.115.com/rb/delete"
-        if isinstance(fids, (int, str)):
-            payload = {"fid[0]": fids}
-        else:
-            payload = {f"fid[{i}]": fid for i, fid in enumerate(fids)}
-            if not payload:
-                return {"state": False, "message": "no op"}
-        return self.fs_batch_delete(payload, async_=async_, **request_kwargs)
+        return self.fs_batch_delete({"fid[0]": id}, async_=async_, **request_kwargs)
 
     def fs_file(
         self, 
@@ -1067,7 +1108,7 @@ class P115Client:
 
     def fs_move(
         self, 
-        fids: int | str | Iterable[int | str], 
+        id: int | str, 
         /, 
         pid: int = 0, 
         async_: bool = False, 
@@ -1075,26 +1116,19 @@ class P115Client:
     ) -> dict:
         """移动文件或文件夹，此接口是对 `fs_batch_move` 的封装
         """
-        if isinstance(fids, (int, str)):
-            payload = {"fid[0]": fids}
-        else:
-            payload = {f"fid[{i}]": fid for i, fid in enumerate(fids)}
-            if not payload:
-                return {"state": False, "message": "no op"}
-        payload["pid"] = pid
-        return self.fs_batch_move(payload, async_=async_, **request_kwargs)
+        return self.fs_batch_move({"fid[0]": id, "pid": pid}, async_=async_, **request_kwargs)
 
     def fs_rename(
         self, 
-        fid_name_pairs: Iterable[tuple[int | str, str]], 
+        id: int, 
+        name: str, 
         /, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
         """重命名文件或文件夹，此接口是对 `fs_batch_rename` 的封装
         """
-        payload = {f"files_new_name[{fid}]": name for fid, name in fid_name_pairs}
-        return self.fs_batch_rename(payload, async_=async_, **request_kwargs)
+        return self.fs_batch_rename({f"files_new_name[{id}]": name}, async_=async_, **request_kwargs)
 
     def fs_search(
         self, 
@@ -5610,14 +5644,74 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return cls(**kwargs)
 
     @check_response
-    def _copy(self, id: int, pid: int = 0, /) -> dict:
+    def fs_mkdir(self, name: str, /, pid: int = 0) -> dict:
+        return self.client.fs_mkdir({"cname": name, "pid": pid})
+
+    @check_response
+    def fs_copy(self, id: int, /, pid: int = 0) -> dict:
         return self.client.fs_copy(id, pid)
 
     @check_response
-    def _delete(self, id: int, /) -> dict:
+    def fs_delete(self, id: int, /) -> dict:
         return self.client.fs_delete(id)
 
-    def _files(
+    @check_response
+    def fs_move(self, id: int, /, pid: int = 0) -> dict:
+        return self.client.fs_move(id, pid)
+
+    @check_response
+    def fs_rename(self, id: int, name: str, /) -> dict:
+        return self.client.fs_rename(id, name)
+
+    @check_response
+    def fs_batch_copy(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+        pid: int = 0, 
+    ) -> dict:
+        return self.client.fs_batch_copy(payload, pid)
+
+    @check_response
+    def fs_batch_delete(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+    ) -> dict:
+        return self.client.fs_batch_delete(payload)
+
+    @check_response
+    def fs_batch_move(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+        pid: int = 0, 
+    ) -> dict:
+        return self.client.fs_batch_move(payload, pid)
+
+    @check_response
+    def fs_batch_rename(
+        self, 
+        payload: dict | Iterable[tuple[int | str, str]], 
+        /, 
+    ) -> dict:
+        return self.client.fs_batch_rename(payload)
+
+    def fs_info(self, id: int, /) -> dict:
+        result = self.client.fs_info({"file_id": id})
+        if result["state"]:
+            return result
+        match result["code"]:
+            # {'state': False, 'code': 20018, 'message': '文件不存在或已删除。'}
+            case 20018:
+                raise FileNotFoundError(result)
+            # {'state': False, 'code': 990002, 'message': '参数错误。'}
+            case 990002:
+                raise OSError(errno.EINVAL, result)
+            case _:
+                raise OSError(errno.EIO, result)
+
+    def fs_files(
         self, 
         /, 
         id: int = 0, 
@@ -5635,23 +5729,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return resp
 
     @check_response
-    def _info(self, id: int, /) -> dict:
-        return self.client.fs_info({"file_id": id})
-
-    @check_response
-    def _mkdir(self, name: str, pid: int = 0, /) -> dict:
-        return self.client.fs_mkdir({"cname": name, "pid": pid})
-
-    @check_response
-    def _move(self, id: int, pid: int = 0, /) -> dict:
-        return self.client.fs_move(id, pid)
-
-    @check_response
-    def _rename(self, id: int, name: str, /) -> dict:
-        return self.client.fs_rename([(id, name)])
-
-    @check_response
-    def _search(self, payload: dict, /) -> dict:
+    def fs_search(self, payload: str | dict, /) -> dict:
         return self.client.fs_search(payload)
 
     @check_response
@@ -5670,14 +5748,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 try:
                     return self._attr_path([name], pid)
                 except FileNotFoundError:
-                    self._files(pid, 1)
+                    self.fs_files(pid, 1)
                     return self._attr_path([name], pid)
         resp = check_response(self.client.upload_file_sample)(file, name, pid)
         id = int(resp["data"]["file_id"])
         try:
             return self._attr(id)
         except FileNotFoundError:
-            self._files(pid, 1)
+            self.fs_files(pid, 1)
             return self._attr(id)
 
     def _clear_cache(self, attr: dict, /):
@@ -5852,7 +5930,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             old_attr.update(attr)
                 return attr
             def iterdir():
-                get_files = self._files
+                get_files = self.fs_files
                 resp = get_files(id, limit=pagesize)
                 dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
                 if path_to_id is not None:
@@ -5900,7 +5978,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if attrs and "attr" in attrs and get_version is None:
             return attrs["attr"]
         try:
-            data = self._info(id)["data"][0]
+            data = self.fs_info(id)["data"][0]
         except OSError as e:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
         attr = normalize_info(data, fs=self, last_update=datetime.now())
@@ -6081,7 +6159,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 )
             elif not overwrite_or_ignore:
                 return None
-            self._delete(dst_attr["id"])
+            self.fs_delete(dst_attr["id"])
             dst_pid = dst_attr["parent_id"]
         src_id = src_attr["id"]
         if splitext(src_name)[1] != splitext(dst_name)[1]:
@@ -6094,19 +6172,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             )["data"]["file_name"]
             return self.attr([dst_name], dst_pid)
         elif src_name == dst_name:
-            self._copy(src_id, dst_pid)
+            self.fs_copy(src_id, dst_pid)
             return self.attr([src_name], dst_pid)
         else:
-            tempdir_id = int(self._mkdir(str(uuid4()))["cid"])
+            tempdir_id = int(self.fs_mkdir(str(uuid4()))["cid"])
             try:
-                self._copy(src_id, tempdir_id)
+                self.fs_copy(src_id, tempdir_id)
                 dst_id = self.attr([src_name], tempdir_id)["id"]
-                resp = self._rename(dst_id, dst_name)
+                resp = self.fs_rename(dst_id, dst_name)
                 if resp["data"]:
                     dst_name = resp["data"][str(dst_id)]
-                self._move(dst_id, dst_pid)
+                self.fs_move(dst_id, dst_pid)
             finally:
-                self._delete(tempdir_id)
+                self.fs_delete(tempdir_id)
             return self.attr(dst_id)
 
     def copytree(
@@ -6144,7 +6222,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 dst_attr = self.makedirs(dst_patht[:-1], exist_ok=True)
                 dst_id = dst_attr["id"]
                 if src_name == dst_patht[-1]:
-                    self._copy(src_id, dst_id)
+                    self.fs_copy(src_id, dst_id)
                     return self.attr([src_name], dst_id)
                 dst_attr = self.makedirs([src_name], dst_id, exist_ok=True)
                 dst_id = dst_attr["id"]
@@ -6196,7 +6274,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if id:
             ls.extend(
                 {"name": p["name"], "id": int(p["cid"]), "parent_id": int(p["pid"]), "is_directory": True} 
-                for p in self._files(id, limit=1)["path"][1:]
+                for p in self.fs_files(id, limit=1)["path"][1:]
             )
         return ls
 
@@ -6217,7 +6295,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: Optional[int] = None, 
     ) -> int:
-        return self._files(self.get_id(id_or_path, pid), limit=1)["count"]
+        return self.fs_files(self.get_id(id_or_path, pid), limit=1)["count"]
 
     def get_id_from_pickcode(self, /, pickcode: str = "") -> int:
         if not pickcode:
@@ -6313,7 +6391,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 attr = get_attr([name], pid)
             except FileNotFoundError:
                 exists = False
-                resp = self._mkdir(name, pid)
+                resp = self.fs_mkdir(name, pid)
                 pid = int(resp["cid"])
                 attr = get_attr(pid)
             else:
@@ -6358,7 +6436,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) already exists")
         if i < len(patht):
             raise FileNotFoundError(errno.ENOENT, f"{path!r} (in {pid!r}) missing superior directory")
-        resp = self._mkdir(name, pid)
+        resp = self.fs_mkdir(name, pid)
         return self.attr(int(resp["cid"]))
 
     def move(
@@ -6383,7 +6461,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             name = src_attr["name"]
             if self.exists([name], dst_id):
                 raise FileExistsError(errno.EEXIST, f"destination {name!r} (in {dst_id!r}) already exists")
-            self._move(src_id, dst_id)
+            self.fs_move(src_id, dst_id)
             new_attr = self.attr(src_id)
             self._update_cache_path(src_attr, new_attr)
             return new_attr
@@ -6406,10 +6484,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             if id == 0:
                 for subattr in self.iterdir(0):
                     cid = subattr["id"]
-                    self._delete(cid)
+                    self.fs_delete(cid)
                     clear_cache(subattr)
                 return attr
-        self._delete(id)
+        self.fs_delete(id)
         clear_cache(attr)
         return attr
 
@@ -6428,7 +6506,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         delid = 0
         pid = attr["id"]
         pattr = attr
-        get_files = self._files
+        get_files = self.fs_files
         while pid:
             files = get_files(pid, limit=1)
             if files["count"] > 1:
@@ -6443,7 +6521,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             }
         if delid == 0:
             return None
-        self._delete(delid)
+        self.fs_delete(delid)
         self._clear_cache(pattr)
         return attr
 
@@ -6483,7 +6561,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             dst_attr = self.attr(dst_path, pid)
         except FileNotFoundError:
             if src_dirt == dst_dirt and (src_attr["is_directory"] or src_ext == dst_ext):
-                return get_result(self._rename(src_id, dst_name))
+                return get_result(self.fs_rename(src_id, dst_name))
             destdir_attr = self.attr(dst_dirt)
             if not destdir_attr["is_directory"]:
                 raise NotADirectoryError(errno.ENOTDIR, f"parent path {joins(dst_dirt)!r} is not directory: {src_fullpath!r} -> {dst_fullpath!r}")
@@ -6498,7 +6576,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         raise NotADirectoryError(errno.ENOTDIR, f"source is directory, but destination is not a directory: {src_fullpath!r} -> {dst_fullpath!r}")
                 elif dst_attr["is_directory"]:
                     raise IsADirectoryError(errno.EISDIR, f"source is file, but destination is directory: {src_fullpath!r} -> {dst_fullpath!r}")
-                self._delete(dst_attr["id"])
+                self.fs_delete(dst_attr["id"])
             else:
                 raise FileExistsError(errno.EEXIST, f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}")
             dst_pid = dst_attr["parent_id"]
@@ -6510,28 +6588,28 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
                 pid=dst_pid, 
             )["data"]["file_name"]
-            self._delete(src_id)
+            self.fs_delete(src_id)
             new_attr = self._attr_path([name], dst_pid)
             self._update_cache_path(src_attr, new_attr)
             return new_attr
         if src_name == dst_name:
-            self._move(src_id, dst_pid)
+            self.fs_move(src_id, dst_pid)
             new_attr = self._attr(src_id)
             self._update_cache_path(src_attr, new_attr)
             return new_attr
         elif src_dirt == dst_dirt:
-            return get_result(self._rename(src_id, dst_name))
+            return get_result(self.fs_rename(src_id, dst_name))
         else:
-            self._rename(src_id, str(uuid4()))
+            self.fs_rename(src_id, str(uuid4()))
             try:
-                self._move(src_id, dst_pid)
+                self.fs_move(src_id, dst_pid)
                 try:
-                    return get_result(self._rename(src_id, dst_name))
+                    return get_result(self.fs_rename(src_id, dst_name))
                 except:
-                    self._move(src_id, src_attr["parent_id"])
+                    self.fs_move(src_id, src_attr["parent_id"])
                     raise
             except:
-                self._rename(src_id, src_name)
+                self.fs_rename(src_id, src_name)
                 raise
 
     def renames(
@@ -6568,9 +6646,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         elif not attr["is_directory"]:
             raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
-        elif self._files(id, limit=1)["count"]:
+        elif self.fs_files(id, limit=1)["count"]:
             raise OSError(errno.ENOTEMPTY, f"directory is not empty: {id_or_path!r} (in {pid!r})")
-        self._delete(id)
+        self.fs_delete(id)
         self._clear_cache(attr) 
         return attr
 
@@ -6603,7 +6681,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         def wrap(attr):
             attr = normalize_info(attr, fs=self, last_update=last_update)
             return P115Path(attr)
-        search = self._search
+        search = self.fs_search
         while True:
             resp = search(payload)
             last_update = datetime.now()
@@ -6702,7 +6780,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     raise IsADirectoryError(errno.EISDIR, f"{path!r} (in {pid!r}) is a directory")
                 elif not overwrite_or_ignore:
                     return attr
-                self._delete(attr["id"])
+                self.fs_delete(attr["id"])
         return self._upload(fio, name, pid)
 
     # TODO: 为了提升速度，之后会支持多线程上传，以及直接上传不做检查
@@ -6854,7 +6932,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         self.__dict__["receive_code"] = code
 
     @check_response
-    def _files(
+    def fs_files(
         self, 
         /, 
         id: int = 0, 
@@ -6883,7 +6961,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
 
     @property
     def sharedata(self, /) -> dict:
-        return self._files(limit=1)["data"]
+        return self.fs_files(limit=1)["data"]
 
     @property
     def shareinfo(self, /) -> dict:
@@ -7023,7 +7101,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             dirname = attr["path"]
             def iterdir():
                 page_size = 1 << 10
-                get_files = self._files
+                get_files = self.fs_files
                 path_to_id = self.path_to_id
                 data = get_files(id, page_size)["data"]
                 last_update = datetime.now()
@@ -7279,7 +7357,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         return cls(P115Client(cookie, login_app=app), id_or_pickcode)
 
     @check_response
-    def _files(
+    def fs_files(
         self, 
         /, 
         path: str = "", 
@@ -7432,7 +7510,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             nextid = self.__dict__["_nextid"]
             dirname = attr["path"]
             def iterdir():
-                get_files = self._files
+                get_files = self.fs_files
                 path_to_id = self.path_to_id
                 data = get_files(dirname)["data"]
                 last_update = datetime.now()
