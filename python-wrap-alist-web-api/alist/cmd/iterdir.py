@@ -153,7 +153,8 @@ parser.add_argument("-dp", "--directory-password", default="", help="文件夹�
 parser.add_argument("-r", "--refresh", action="store_true", help="是否刷新（拉取最新而非使用缓存）")
 parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 alist.AlistPath），用于对路径进行筛选")
-parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""输出类型，默认为 json
+parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""\
+输出类型，默认为 log
 - log   每行输出一条数据，每条数据输出为一个 json 的 object
 - json  输出一个 json 的 list，每条数据输出为一个 json 的 object
 - csv   输出一个 csv，第 1 行为表头，以后每行输出一条数据

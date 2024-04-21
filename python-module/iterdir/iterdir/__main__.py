@@ -12,7 +12,8 @@ parser = ArgumentParser(description="目录树信息遍历导出", formatter_cla
 parser.add_argument("path", nargs="?", default="", help="文件夹路径，默认为当前工作目录")
 parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 pathlib.Path），用于对路径进行筛选")
-parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""输出类型，默认为 json
+parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""\
+输出类型，默认为 log
 - log   每行输出一条数据，每条数据输出为一个 json 的 object
 - json  输出一个 json 的 list，每条数据输出为一个 json 的 object
 - csv   输出一个 csv，第 1 行为表头，以后每行输出一条数据

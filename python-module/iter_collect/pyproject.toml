@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "iterdir"
-version = "0.0.3.1"
-description = "iterdir."
+name = "iter_collect"
+version = "0.0.1"
+description = "iter_collect."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iterdir"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iterdir"
-keywords = ["iterdir", "traverse"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iter_collect"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iter_collect"
+keywords = ["iterate", "collect"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -33,4 +33,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterdir"
+include = "iter_collect"

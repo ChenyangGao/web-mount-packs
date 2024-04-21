@@ -527,6 +527,18 @@ class P115Client:
         api = "http://passportapi.115.com/app/1.0/web/1.0/check/sso/"
         return self.request(api, async_=async_, **request_kwargs)
 
+    def login_devices(
+        self, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取已登录设备的信息
+        GET https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices
+        """
+        api = "https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices"
+        return self.request(api, async_=async_, **request_kwargs)
+
     def login_qrcode_status(
         self, 
         payload: dict, 

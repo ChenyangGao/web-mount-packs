@@ -4,20 +4,10 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "bencode", "bdecode", "dump", "load", "torrent_files", "torrent_to_magnet", 
 ]
-
-if __name__ == "__main__":
-    from argparse import ArgumentParser
-
-    parser = ArgumentParser(description="torrent to magnet")
-    parser.add_argument("files", nargs="*", help="paths to torrent files")
-    parser.add_argument("-f", "--full", action="store_true", help="append more detailed queries")
-    args = parser.parse_args()
-    if not args.files:
-        parser.parse_args(["-h"])
 
 from base64 import b32encode
 from collections import UserString
@@ -240,28 +230,4 @@ def torrent_to_magnet(
         return "magnet:?" + urlencode([(k, v) for k, v in params.items() if v], safe=":/")
     else:
         return "magnet:?xt=" + urn
-
-
-if __name__ == "__main__":
-    from os import scandir
-    from os.path import isdir
-    from sys import stdout
-
-    write = stdout.buffer.raw.write
-    files = args.files
-    full = args.full
-    try:
-        for file in files:
-            if isdir(file):
-                files.extend(scandir(file))
-            else:
-                try:
-                    data = open(file, "rb").read()
-                    write(torrent_to_magnet(data, full=full).encode("utf-8"))
-                    write(b"\n")
-                except (ValueError, LookupError):
-                    pass
-    except BrokenPipeError:
-        from sys import stderr
-        stderr.close()
 

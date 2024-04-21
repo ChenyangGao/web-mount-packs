@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "torrent_tool"
-version = "0.0.3.2"
+version = "0.0.4"
 description = "torrent tool."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -24,6 +24,9 @@ classifiers = [
 include = [
     "LICENSE",
 ]
+
+[tool.poetry.dependencies]
+python = "^3.10"
 
 [build-system]
 requires = ["poetry-core"]

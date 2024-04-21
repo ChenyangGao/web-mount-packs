@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "filerev"
-version = "0.0.1.2"
+version = "0.0.2"
 description = "Reversed iterator for files."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -24,6 +24,9 @@ classifiers = [
 include = [
     "LICENSE",
 ]
+
+[tool.poetry.dependencies]
+python = "^3.10"
 
 [build-system]
 requires = ["poetry-core"]
