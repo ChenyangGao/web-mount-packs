@@ -11,5 +11,5 @@ pip install -U python-decorator
 ## Usage
 
 ```python
-import decorator
+import decorator0
 ```

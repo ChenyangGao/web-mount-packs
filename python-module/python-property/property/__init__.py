@@ -2,6 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 1)
 __all__ = ["funcproperty", "lazyproperty", "cacheproperty", "final_cacheproperty"]
 
 from collections.abc import Callable
@@ -67,5 +68,7 @@ class cacheproperty(funcproperty):
 class final_cacheproperty(cacheproperty):
 
     def __set__(self, instance, value, /):
-        raise TypeError(f"can't set property: {self.__name__!r}")
+        raise TypeError(f"can't set property: {getattr(self, '__name__', None):r}")
 
+    def __delete__(self, instance, /):
+        raise TypeError(f"can't delete attribute: {getattr(self, '__name__', None):r}")

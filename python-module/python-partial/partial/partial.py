@@ -24,7 +24,7 @@ class ppartial(partial):
             args = func.args + args
             kwargs = {**func.keywords, **kwargs}
             func = func.func
-        return super().__new__(cls, func, *args, **kwargs)
+        return update_wrapper(super().__new__(cls, func, *args, **kwargs), func)
 
     def __call__(self, /, *args, **kwargs):
         args_, kwargs_ = self.args, self.keywords

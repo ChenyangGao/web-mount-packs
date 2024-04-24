@@ -1,12 +1,12 @@
 [tool.poetry]
-name = "python-partial"
-version = "0.0.2.1"
-description = "Python partial types."
+name = "python-property"
+version = "0.0.1"
+description = "Python property discriptors"
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-partial"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-partial"
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-property"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-property"
 keywords = ["file", "reverse", "iter"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -27,6 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+python-partial = "*"
 python-undefined = "*"
 
 [build-system]
@@ -34,4 +35,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "partial"
+include = "property"

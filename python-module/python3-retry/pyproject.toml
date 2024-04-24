@@ -1,12 +1,12 @@
 [tool.poetry]
-name = "python-partial"
-version = "0.0.2.1"
-description = "Python partial types."
+name = "python3-retry"
+version = "0.0.1"
+description = "Python retry decorator."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-partial"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-partial"
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python3-retry"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python3-retry"
 keywords = ["file", "reverse", "iter"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -34,4 +34,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "partial"
+include = "retry0"

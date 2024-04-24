@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-# coding: utf-8
+# encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 1)
 __all__ = ["retry", "raise_for_value"]
 
 from collections.abc import Callable, Iterable
 from asyncio import sleep as asleep
-from functools import partial, update_wrapper
 from inspect import isawaitable, iscoroutinefunction
 from itertools import count
 from time import sleep
-from typing import Any, Optional, TypeVar
+from typing import Any, ParamSpec, TypeVar
+
+from decorator0 import optional
 
 
+Args = ParamSpec("Args")
 T = TypeVar("T")
 
 
@@ -23,14 +26,15 @@ async def ensure_awaitable(o, /):
     return o
 
 
+@optional
 def retry(
-    func: Optional[Callable] = None, 
+    func: Callable[Args, T], 
     /, 
     retry_times: int = 0, 
     suppress_exceptions: type[BaseException] | tuple[type[BaseException], ...] = Exception, 
     do_interval: None | Callable[[int], Any] | int | float = None, 
     mark_async: bool = False, 
-) -> Callable:
+) -> Callable[Args, T]:
     """Decorator to make a function retryable.
 
     :param func: The function to be decorated.
@@ -46,14 +50,6 @@ def retry(
     :return: If the `func` argument is provided, it returns a wrapper function that wraps the original function with retry logic. 
              If the `func` argument is not provided, it returns a partial function with the specified arguments for later use as a decorator. 
     """
-    if func is None:
-        return partial(
-            retry, 
-            retry_times=retry_times, 
-            suppress_exceptions=suppress_exceptions, 
-            do_interval=do_interval, 
-            mark_async=mark_async, 
-        )
     if retry_times == 0:
         return func
     if mark_async or iscoroutinefunction(func):
@@ -65,6 +61,7 @@ def retry(
             else:
                 add_exc = None
                 loops = count()
+            prev_exc = None
             for i in loops:
                 try:
                     if i and do_interval is not None:
@@ -77,6 +74,11 @@ def retry(
                     return await ensure_awaitable(func(*args, **kwds))
                 except suppress_exceptions as exc:
                     add_exc and add_exc(exc)
+                    setattr("exc", "__prev__", prev_exc)
+                    prev_exc = exc
+                except BaseException as exc:
+                    setattr("exc", "__prev__", prev_exc)
+                    raise
             raise BaseExceptionGroup("too many retries", tuple(excs))
     else:
         def wrapper(*args, **kwds):
@@ -87,6 +89,7 @@ def retry(
             else:
                 add_exc = None
                 loops = count()
+            prev_exc = None
             for i in loops:
                 try:
                     if i and do_interval is not None:
@@ -99,17 +102,23 @@ def retry(
                     return func(*args, **kwds)
                 except suppress_exceptions as exc:
                     add_exc and add_exc(exc)
+                    setattr("exc", "__prev__", prev_exc)
+                    prev_exc = exc
+                except BaseException as exc:
+                    setattr("exc", "__prev__", prev_exc)
+                    raise
             raise BaseExceptionGroup("too many retries", tuple(excs))
-    return update_wrapper(wrapper, func)
+    return wrapper
 
 
+@optional
 def raise_for_value(
-    func: Optional[Callable[..., T]] = None, 
+    func: Callable[Args, T], 
     /, 
     predicate: Callable[[T], bool] = lambda val: val is not None, 
     exception_factory: type[BaseException] | Callable[[T], BaseException] = ValueError, 
     mark_async: bool = False, 
-) -> Callable:
+) -> Callable[Args, T]:
     """Wrap a function and ensure that its return value satisfies a given predicate condition.
 
     :param func: The function to be wrapped. If not provided, return a partial function.
@@ -119,13 +128,6 @@ def raise_for_value(
 
     :return: The wrapped function.
     """
-    if func is None:
-        return partial(
-            raise_for_value, 
-            predicate=predicate, 
-            exception_factory=exception_factory, 
-            mark_async=mark_async, 
-        )
     def check(val: T) -> T:
         if predicate(val):
             return val
@@ -136,5 +138,5 @@ def raise_for_value(
     else: 
         def wrapper(*args, **kwds):
             return check(func(*args, **kwds))
-    return update_wrapper(wrapper, func)
+    return wrapper
 

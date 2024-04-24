@@ -187,7 +187,7 @@ def optional(
         return update_wrapper(f(g, *args, **kwargs), g)
     else:
         return ppartial(optional, f, undefined, g, *args, **kwargs)
-    
+
 
 @overload
 def optional_args(
