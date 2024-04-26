@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "iterdir"
-version = "0.0.3.1"
+version = "0.0.4.2"
 description = "iterdir."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

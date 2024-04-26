@@ -2,8 +2,8 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
-__all__ = ["DirEntry", "iterdir"]
+__version__ = (0, 0, 4)
+__all__ = ["DirEntry", "iterdir", "statsdir"]
 
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
@@ -15,7 +15,7 @@ from os.path import (
     abspath, commonpath, basename, isfile, isdir, islink, join as joinpath, realpath, 
 )
 from pathlib import Path
-from typing import overload, Generic, Never, Optional, TypeVar
+from typing import cast, overload, Generic, Never, Optional, TypeVar
 
 
 AnyStr = TypeVar("AnyStr", bytes, str)
@@ -292,4 +292,57 @@ def iterdir(
             predicate=predicate, 
             onerror=onerror, 
         )
+
+
+def format_bytes(
+    n: int, 
+    /, 
+    unit: str = "", 
+    precision: int = 6, 
+) -> str:
+    "scale bytes to its proper byte format"
+    if unit == "B" or not unit and n < 1024:
+        return f"{n} B"
+    b = 1
+    b2 = 1024
+    for u in ["K", "M", "G", "T", "P", "E", "Z", "Y"]:
+        b, b2 = b2, b2 << 10
+        if u == unit if unit else n < b2:
+            break
+    return f"%.{precision}f {u}B" % (n / b)
+
+
+def statsdir(
+    top=None, 
+    /, 
+    min_depth: int = 0, 
+    max_depth: int = -1, 
+    predicate: Optional[Callable[..., Optional[bool]]] = None, 
+    onerror: bool | Callable[[OSError], bool] = False, 
+    follow_symlinks: bool = False, 
+) -> dict:
+    files = 0
+    dirs = 0
+    size = 0
+    for path in iterdir(
+        top, 
+        min_depth=min_depth, 
+        max_depth=max_depth, 
+        predicate=predicate, 
+        onerror=onerror, 
+        follow_symlinks=follow_symlinks, 
+    ):
+        if isdir(path) and not islink(path):
+            dirs += 1
+        else:
+            files += 1
+            size += lstat(path).st_size
+    return {
+        "path": abspath(DirEntry(top or ".")), 
+        "total": files + dirs, 
+        "files": files, 
+        "dirs": dirs, 
+        "size": size, 
+        "fmt_size": format_bytes(size)
+    }
 
