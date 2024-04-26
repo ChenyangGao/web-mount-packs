@@ -186,7 +186,7 @@ def download_iter(
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
-    headers: None | dict[str, str] | Callable[[], dict[str, str]] = None, 
+    headers: Optional[dict[str, str]] = None, 
     urlopen: Callable = urlopen, 
 ) -> Iterator[DownloadProgress]:
     """
@@ -194,8 +194,6 @@ def download_iter(
     if not isinstance(url, str):
         url = url()
 
-    if callable(headers):
-        headers = headers()
     if headers:
         headers = {**headers, "Accept-Encoding": "identity"}
     else:
@@ -273,7 +271,7 @@ def download(
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
-    headers: None | dict[str, str] | Callable[[], dict[str, str]] = None, 
+    headers: Optional[dict[str, str]] = None, 
     urlopen: Callable = urlopen, 
     make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any] | Generator[int, Any, Any]]] = None, 
 ):

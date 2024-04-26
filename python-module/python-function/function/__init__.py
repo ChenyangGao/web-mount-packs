@@ -23,13 +23,16 @@ def foreach(
     iterable: Iterable, 
     /, 
     *iterables: Iterable, 
+    callback: None | Callable = None, 
 ):
     if iterables:
         for args in zip(iterable, *iterables):
-            func(*args)
+            r = func(*args)
+            callback and callback(r)
     else:
         for arg in iterable:
-            func(arg)
+            r = func(arg)
+            callback and callback(r)
 
 
 def callby(x: T, f: Callable[[T], R], /) -> R:

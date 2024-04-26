@@ -27,8 +27,6 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-partial = "*"
-python-undefined = "*"
 
 [build-system]
 requires = ["poetry-core"]

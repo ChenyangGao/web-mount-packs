@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python3-retry"
-version = "0.0.1"
+version = "0.0.1.1"
 description = "Python retry decorator."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-undefined = "*"
+python-decorator = "*"
 
 [build-system]
 requires = ["poetry-core"]

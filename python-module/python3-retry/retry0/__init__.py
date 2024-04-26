@@ -74,10 +74,10 @@ def retry(
                     return await ensure_awaitable(func(*args, **kwds))
                 except suppress_exceptions as exc:
                     add_exc and add_exc(exc)
-                    setattr("exc", "__prev__", prev_exc)
+                    setattr(exc, "__prev__", prev_exc)
                     prev_exc = exc
                 except BaseException as exc:
-                    setattr("exc", "__prev__", prev_exc)
+                    setattr(exc, "__prev__", prev_exc)
                     raise
             raise BaseExceptionGroup("too many retries", tuple(excs))
     else:
@@ -102,10 +102,10 @@ def retry(
                     return func(*args, **kwds)
                 except suppress_exceptions as exc:
                     add_exc and add_exc(exc)
-                    setattr("exc", "__prev__", prev_exc)
+                    setattr(exc, "__prev__", prev_exc)
                     prev_exc = exc
                 except BaseException as exc:
-                    setattr("exc", "__prev__", prev_exc)
+                    setattr(exc, "__prev__", prev_exc)
                     raise
             raise BaseExceptionGroup("too many retries", tuple(excs))
     return wrapper

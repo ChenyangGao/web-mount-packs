@@ -35,7 +35,7 @@ from io import (
 from itertools import count
 from json import dumps, loads
 from mimetypes import guess_type
-from os import fsdecode, fspath, fstat, makedirs, scandir, stat, stat_result, PathLike
+from os import fsdecode, fspath, fstat, lstat, makedirs, scandir, stat, stat_result, PathLike
 from os import path as ospath
 from posixpath import join as joinpath, splitext
 from re import compile as re_compile, escape as re_escape
@@ -193,10 +193,17 @@ def normalize_info(
         info2["pickcode"] = info["pc"]
     if "m" in info:
         info2["star"] = bool(info["m"])
+    if "fl" in info:
+        info2["labels"] = info["fl"]
+    if "fdes" in info:
+        info2["comment"] = info["fdes"]
+    if "score" in info:
+        info2["score"] = info["score"]
     if "u" in info:
         info2["thumb"] = info["u"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
+    info2["is_violation"] = bool(info.get("c", False))
     if keep_raw:
         info2["raw"] = info
     if extra_data:
@@ -1059,7 +1066,7 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """文件查重
+        """文件查重（罗列除此以外的 sha1 相同的文件）
         GET https://webapi.115.com/files/get_repeat_sha
         payload:
             file_id: int | str
@@ -1826,33 +1833,55 @@ class P115Client:
         /, 
         detail: bool = False, 
         strict: bool = True, 
+        use_web_api: bool = False, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> str:
         """获取文件的下载链接，此接口是对 `download_url_app` 的封装
         """
-        resp = self.download_url_app(
-            {"pickcode": pickcode}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-        def get_url(resp: dict) -> str:
-            data = check_response(resp)["data"]
-            for fid, info in data.items():
-                url = info["url"]
-                if strict and not url:
-                    raise IsADirectoryError(errno.EISDIR, f"{fid} is a directory")
-                if not detail:
-                    return url["url"] if url else ""
-                return UrlStr(
-                    url["url"] if url else "", 
-                    id=int(fid), 
-                    pickcode=info["pick_code"], 
-                    file_name=info["file_name"], 
-                    file_size=int(info["file_size"]), 
-                    is_directory=not url,
-                )
-            raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
+        if use_web_api:
+            resp = self.download_url_web(
+                {"pickcode": pickcode}, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+            def get_url(resp: dict) -> str:
+                if "pickcode" not in resp:
+                    raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
+                if detail:
+                    return UrlStr(
+                        resp.get("file_url", ""), 
+                        id=int(resp["file_id"]), 
+                        pickcode=resp["pickcode"], 
+                        file_name=resp["file_name"], 
+                        file_size=int(resp["file_size"]), 
+                        is_directory=not resp["state"], 
+                    )
+                return resp.get("file_url", "")
+        else:
+            resp = self.download_url_app(
+                {"pickcode": pickcode}, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+            def get_url(resp: dict) -> str:
+                if not resp["state"]:
+                    raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
+                for fid, info in resp["data"].items():
+                    url = info["url"]
+                    if strict and not url:
+                        raise IsADirectoryError(errno.EISDIR, f"{fid} is a directory")
+                    if not detail:
+                        return url["url"] if url else ""
+                    return UrlStr(
+                        url["url"] if url else "", 
+                        id=int(fid), 
+                        pickcode=info["pick_code"], 
+                        file_name=info["file_name"], 
+                        file_size=int(info["file_size"]), 
+                        is_directory=not url,
+                    )
+                raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
         if async_:
             async def wrapper() -> str:
                 return get_url(await resp)  # type: ignore
@@ -4148,16 +4177,20 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         local_dir: bytes | str | PathLike = "", 
-        pid: Optional[int] = None, 
-        no_root: bool = False, 
         write_mode: Literal["a", "w", "x", "i"] = "a", 
-    ):
+        submit: None | bool | Callable[[Callable], Any] = None, 
+        no_root: bool = False, 
+        predicate: Optional[Callable[[P115PathType], bool]] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = None, 
+    ) -> Iterator[tuple[P115PathType, str, DownloadTask]]:
         return self.fs.download_tree(
             self, 
             local_dir, 
-            pid=pid, 
-            no_root=no_root, 
             write_mode=write_mode, 
+            submit=submit, 
+            no_root=no_root, 
+            predicate=predicate, 
+            onerror=onerror, 
         )
 
     def exists(self, /) -> bool:
@@ -4629,7 +4662,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
         pid: Optional[int] = None, 
         write_mode: Literal["a", "w", "x", "i"] = "a", 
-        submit = None, 
+        submit: bool | Callable[[Callable], Any] = True, 
     ) -> Optional[DownloadTask]:
         if not hasattr(local_path_or_file, "write"):
             if not local_path_or_file:
@@ -4642,18 +4675,22 @@ class P115FileSystemBase(Generic[P115PathType]):
                     )
                 elif write_mode == "i":
                     return None
-        kwargs = {"resume": write_mode == "a", "headers": self.client.session.headers}
-        if submit is not None:
+        kwargs: dict = {"resume": write_mode == "a"}
+        if callable(submit):
             kwargs["submit"] = submit
         task = DownloadTask.create_task(
             lambda: self.get_url(id_or_path, pid), 
             local_path_or_file, 
+            headers=lambda: {
+                **self.client.session.headers, 
+                "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.session.cookies), 
+            }, 
             **kwargs, 
         )
-        if submit is None:
-            task.run_wait()
-        else:
+        if callable(submit):
             task.run()
+        elif submit:
+            task.run_wait()
         return task
 
     def download_tree(
@@ -4663,11 +4700,11 @@ class P115FileSystemBase(Generic[P115PathType]):
         local_dir: bytes | str | PathLike = "", 
         pid: Optional[int] = None, 
         write_mode: Literal["i", "x", "w", "a"] = "a", 
-        submit = None, 
+        submit: None | bool | Callable[[Callable], Any] = None, 
         no_root: bool = False, 
         predicate: Optional[Callable[[P115PathType], bool]] = None, 
         onerror: None | bool | Callable[[BaseException], Any] = None, 
-    ) -> Iterator[DownloadTask]:
+    ) -> Iterator[tuple[P115PathType, str, DownloadTask]]:
         local_dir = fsdecode(local_dir)
         if local_dir:
             makedirs(local_dir, exist_ok=True)
@@ -4683,24 +4720,36 @@ class P115FileSystemBase(Generic[P115PathType]):
             path_class = type(self).path_class
             attr["fs"] = self
             pathes = (path_class(attr),)
+        mode: Literal["i", "x", "w", "a"]
         for subpath in filter(predicate, pathes):
             if subpath["is_directory"]:
                 yield from self.download_tree(
                     subpath["id"], 
                     ospath.join(local_dir, subpath["name"]), 
                     write_mode=write_mode, 
-                    submit=submit, 
                     no_root=True, 
                     predicate=predicate, 
                     onerror=onerror, 
                 )
             else:
+                mode = write_mode
                 try:
+                    download_path = ospath.join(local_dir, subpath["name"])
+                    remote_size = subpath["size"]
+                    try:
+                        size = lstat(download_path).st_size
+                    except OSError:
+                        pass
+                    else:
+                        if remote_size == size:
+                            continue
+                        elif remote_size < size:
+                            mode = "w"
                     task = self.download(
                         subpath["id"], 
-                        ospath.join(local_dir, subpath["name"]), 
-                        write_mode=write_mode, 
-                        submit=submit, 
+                        download_path, 
+                        write_mode=mode, 
+                        submit=False if submit is None else submit, 
                     )
                 except KeyboardInterrupt:
                     raise
@@ -4711,7 +4760,9 @@ class P115FileSystemBase(Generic[P115PathType]):
                         onerror(exc)
                 else:
                     if task is not None:
-                        yield task
+                        yield subpath, download_path, task
+                        if submit is None:
+                            task.run_wait()
 
     def exists(
         self, 
@@ -6312,17 +6363,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def get_id_from_pickcode(self, /, pickcode: str = "") -> int:
         if not pickcode:
             return 0
-        data = self.get_info_from_pickcode(pickcode)
-        for fid in data:
-            return int(fid)
-        raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}") 
+        return self.get_info_from_pickcode(pickcode)["id"]
 
-    def get_info_from_pickcode(
-        self, 
-        /, 
-        pickcode: str, 
-    ) -> dict:
-        return check_response(self.client.download_url_app(pickcode))["data"]
+    def get_info_from_pickcode(self, /, pickcode: str) -> dict:
+        return self.client.download_url(pickcode, strict=False, detail=True).__dict__
 
     def get_pickcode(
         self, 
@@ -6343,7 +6387,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-        return self.client.download_url(attr["pickcode"], detail=detail, headers=headers)
+        return self.client.download_url(
+            attr["pickcode"], 
+            use_web_api=attr["is_violation"] and attr["size"] < 1024 * 1024 * 115, 
+            detail=detail, 
+            headers=headers, 
+        )
 
     def get_url_from_pickcode(
         self, 
@@ -6352,7 +6401,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: Optional[Mapping] = None, 
         detail: bool = False, 
     ) -> str:
-        return self.client.download_url(pickcode, detail=detail, headers=headers)
+        return self.client.download_url(
+            pickcode, 
+            detail=detail, 
+            headers=headers, 
+        )
 
     def is_empty(
         self, 
