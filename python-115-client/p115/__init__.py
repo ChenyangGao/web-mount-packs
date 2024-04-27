@@ -546,6 +546,61 @@ class P115Client:
         api = "https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices"
         return self.request(api, async_=async_, **request_kwargs)
 
+    def login_qrcode_scan(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """扫描二维码，payload 数据取自 `login_qrcode_token` 接口响应
+        GET https://qrcodeapi.115.com/api/2.0/prompt.php
+        payload:
+            - uid: str
+        """
+        api = "https://qrcodeapi.115.com/api/2.0/prompt.php"
+        if isinstance(payload, str):
+            payload = {"uid": payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    def login_qrcode_scan_confirm(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
+        GET https://hnqrcodeapi.115.com/api/2.0/slogin.php
+        payload:
+            - key: str
+            - uid: str
+            - client: int = 0
+        """
+        api = "https://hnqrcodeapi.115.com/api/2.0/slogin.php"
+        if isinstance(payload, str):
+            payload = {"key": payload, "uid": payload, "client": 0}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    def login_qrcode_scan_cancel(
+        self, 
+        payload: dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
+        GET https://hnqrcodeapi.115.com/api/2.0/cancel.php
+        payload:
+            - key: str
+            - uid: str
+            - client: int = 0
+        """
+        api = "https://hnqrcodeapi.115.com/api/2.0/cancel.php"
+        if isinstance(payload, str):
+            payload = {"key": payload, "uid": payload, "client": 0}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
     def login_qrcode_status(
         self, 
         payload: dict, 
