@@ -8,7 +8,7 @@ __version__ = (0, 0, 7)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
     "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin", "P115Sharing", 
-    "LabelList", 
+    "P115LabelList", 
 ]
 
 import errno
@@ -4056,10 +4056,10 @@ class P115Client:
         return P115ZipFileSystem(self, id_or_pickcode, *args, **kwargs)
 
     @cached_property
-    def label(self, /) -> LabelList:
+    def label(self, /) -> P115LabelList:
         """
         """
-        return LabelList(self)
+        return P115LabelList(self)
 
     @cached_property
     def offline(self, /) -> P115Offline:
@@ -8225,7 +8225,7 @@ class P115Sharing:
         return self.client.share_update({"share_code": share_code, **payload})
 
 
-class LabelList:
+class P115LabelList:
     __slots__ = "client",
 
     def __init__(self, client: P115Client, /):

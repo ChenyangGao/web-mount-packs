@@ -9,6 +9,6 @@ parser = ArgumentParser(
     description="alist 命令行工具集", 
     formatter_class=RawTextHelpFormatter, 
 )
-parser.set_defaults(sub="")
-subparsers = parser.add_subparsers(required=True)
+parser.set_defaults(func=None)
+subparsers = parser.add_subparsers()
 

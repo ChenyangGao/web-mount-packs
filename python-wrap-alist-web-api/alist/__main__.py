@@ -4,5 +4,8 @@
 from alist.cmd import parser
 
 args = parser.parse_args()
-args.func(args)
+if args.func:
+    args.func(args)
+else:
+    parser.parse_args(["-h"])
 

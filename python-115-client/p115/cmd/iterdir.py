@@ -46,6 +46,9 @@ def main(args):
     if fs.client.cookie != cookie:
         open("115-cookie.txt", "w").write(fs.client.cookie)
 
+    if args.password:
+        fs.hidden_switch(True, password=args.password)
+
     keys = args.keys or KEYS
     output_type = args.output_type
 
@@ -167,6 +170,7 @@ def main(args):
 
 parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
 parser.add_argument("-c", "--cookie", help="115 登录 cookie，如果缺失，则从 115-cookie.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument("-p", "--password", help="密码，用于进入隐藏模式，罗列隐藏文件")
 parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 p115.P115Path），用于对路径进行筛选")
 parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""

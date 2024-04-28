@@ -7,3 +7,4 @@ from .init import parser, subparsers
 
 from .iterdir import *
 from .fuse import *
+from .update_115_cookie import *

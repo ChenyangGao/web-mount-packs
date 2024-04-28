@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-alist"
-version = "0.0.11.4"
+version = "0.0.11.7"
 description = "Python wrapper for alist."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -26,14 +26,14 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 
 aiohttp = "*"
 requests = "*"
 python-dateutil = "*"
 
 [tool.poetry.dev-dependencies]
-python = "^3.11"
+python = "^3.10"
 
 aiohttp = "*"
 requests = "*"
