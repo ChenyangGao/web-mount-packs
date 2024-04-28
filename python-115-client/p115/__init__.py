@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "P115Client", "P115Path", "P115FileSystem", "P115SharePath", "P115ShareFileSystem", 
     "P115ZipPath", "P115ZipFileSystem", "P115Offline", "P115Recyclebin", "P115Sharing", 
+    "LabelList", 
 ]
 
 import errno
@@ -191,19 +192,24 @@ def normalize_info(
                 pass
     if "pc" in info:
         info2["pickcode"] = info["pc"]
-    if "m" in info:
-        info2["star"] = bool(info["m"])
     if "fl" in info:
         info2["labels"] = info["fl"]
-    if "fdes" in info:
-        info2["comment"] = info["fdes"]
     if "score" in info:
-        info2["score"] = info["score"]
+        info2["score"] = int(info["score"])
+    if "m" in info:
+        info2["star"] = bool(info["m"])
+    if "issct" in info:
+        info2["shortcut"] = bool(info["issct"])
+    if "hdf":
+        info2["hidden"] = bool(info["hdf"])
+    if "fdes" in info:
+        info2["described"] = bool(info["fdes"])
+    if "c" in info:
+        info2["violated"] = bool(info["c"])
     if "u" in info:
         info2["thumb"] = info["u"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
-    info2["is_violation"] = bool(info.get("c", False))
     if keep_raw:
         info2["raw"] = info
     if extra_data:
@@ -236,7 +242,6 @@ class UrlStr(str):
 
 
 class P115Client:
-    cookie: str
     session: Session
     user_id: int
     user_key: str
@@ -248,7 +253,7 @@ class P115Client:
         if not cookie:
             resp = self.login_with_qrcode(login_app)
             cookie = resp["data"]["cookie"]
-        self.set_cookie(cookie)
+        self.cookie = cookie
         resp = self.upload_info
         if resp["errno"]:
             raise AuthenticationError(resp)
@@ -262,9 +267,6 @@ class P115Client:
 
     def __hash__(self, /) -> int:
         return hash((self.user_id, self.cookie))
-
-    def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attributes")
 
     @cached_property
     def async_session(self, /) -> ClientSession:
@@ -290,7 +292,12 @@ class P115Client:
             else:
                 run_coroutine_threadsafe(ns["async_session"].close(), loop)
 
-    def set_cookie(self, cookie, /):
+    @property
+    def cookie(self, /) -> str:
+        return self.__dict__["cookie"]
+
+    @cookie.setter
+    def cookie(self, cookie, /):
         if isinstance(cookie, str):
             cookie = cookies_str_to_dict(cookie)
         cookiejar = self.session.cookies
@@ -386,7 +393,7 @@ class P115Client:
     ):
         if not self.is_login(**request_kwargs):
             cookie = self.login_with_qrcode(app, **request_kwargs)["data"]["cookie"]
-            self.set_cookie(cookie)
+            self.cookie = cookie
 
     def _request(
         self, 
@@ -921,7 +928,7 @@ class P115Client:
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
-            - star: 0 | 1 = <default>
+            - star: 0 | 1 = <default> # 是否星标文件
             - suffix: str = <default>
             - type: int | str = <default>
                 # 文件类型：
@@ -975,7 +982,7 @@ class P115Client:
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
-            - star: 0 | 1 = <default>
+            - star: 0 | 1 = <default> # 是否星标文件
             - suffix: str = <default>
             - type: int | str = <default>
                 # 文件类型：
@@ -1068,7 +1075,7 @@ class P115Client:
             - hidden: 0 | 1 = 1
         """
         api = "https://webapi.115.com/files/hiddenfiles"
-        if isinstance(payload, (int | str)):
+        if isinstance(payload, (int, str)):
             payload = {"hidden": 1, "fid[0]": payload}
         elif isinstance(payload, dict):
             payload = {"hidden": 1, **payload}
@@ -1081,7 +1088,7 @@ class P115Client:
 
     def fs_hidden_switch(
         self, 
-        payload: dict, 
+        payload: str | dict = "", 
         /, 
         async_: bool = False, 
         **request_kwargs, 
@@ -1089,11 +1096,16 @@ class P115Client:
         """切换隐藏模式
         POST https://115.com/?ct=hiddenfiles&ac=switching
         payload:
-            show: 0 | 1 = 1
-            safe_pwd: int | str = <default> # 密码，如果需要进入隐藏模式，请传递此参数
+            safe_pwd: str = "" # 密码，如果需要进入隐藏模式，请传递此参数
+            show: 0 | 1 = <default>
             valid_type: int = 1
         """
         api = "https://115.com/?ct=hiddenfiles&ac=switching"
+        if isinstance(payload, str):
+            if payload:
+                payload = {"valid_type": 1, "show": 1, "safe_pwd": payload}
+            else:
+                payload = {"valid_type": 1, "show": 0}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     def fs_statistic(
@@ -1255,79 +1267,6 @@ class P115Client:
             payload = {"aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, "show_dir": 1, **payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
-    def comment_get(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """获取文件或文件夹的备注
-        GET https://webapi.115.com/files/desc
-        payload:
-            - file_id: int | str
-            - format: str = "json"
-            - compat: 0 | 1 = 1
-            - new_html: 0 | 1 = 1
-        """
-        api = "https://webapi.115.com/files/desc"
-        if isinstance(payload, (int, str)):
-            payload = {"format": "json", "compat": 1, "new_html": 1, "file_id": payload}
-        else:
-            payload = {"format": "json", "compat": 1, "new_html": 1, **payload}
-        return self.request(api, params=payload, async_=async_, **request_kwargs)
-
-    def comment_set(
-        self, 
-        fids: int | str | Iterable[int | str], 
-        /, 
-        file_desc: str = "", 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """为文件或文件夹设置备注，此接口是对 `fs_files_edit` 的封装
-
-        :param fids: 单个或多个文件或文件夹 id
-        :param file_desc: 备注信息，可以用 html
-        """
-        if isinstance(fids, (int, str)):
-            payload = [("fid", fids)]
-        else:
-            payload = [("fid[]", fid) for fid in fids]
-            if not payload:
-                return {"state": False, "message": "no op"}
-        payload.append(("file_desc", file_desc))
-        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
-
-    def label_add(
-        self, 
-        /, 
-        *lables: str, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """添加标签（可以接受多个）
-        POST https://webapi.115.com/label/add_multi
-
-        可传入多个 label 描述，每个 label 的格式都是 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
-        """
-        api = "https://webapi.115.com/label/add_multi"
-        payload = [("name[]", label) for label in lables if label]
-        if not payload:
-            return {"state": False, "message": "no op"}
-        if (headers := request_kwargs.get("headers")):
-            headers = request_kwargs["headers"] = dict(headers)
-        else:
-            headers = request_kwargs["headers"] = {}
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        return self.request(
-            api, 
-            "POST", 
-            data=urlencode(payload), 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
     def fs_export_dir(
         self, 
         payload: int | str | dict, 
@@ -1380,7 +1319,20 @@ class P115Client:
         resp = check_response(self.fs_export_dir(payload, async_=async_, **request_kwargs))
         return ExportDirStatus(self, resp["data"]["export_id"])
 
-    def fs_shortcut(
+    def fs_shortcut_get(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """罗列所有的快捷入口
+        GET https://webapi.115.com/category/shortcut
+        """
+        api = "https://webapi.115.com/category/shortcut"
+        return self.request(api, async_=async_, **request_kwargs)
+
+    def fs_shortcut_set(
         self, 
         payload: int | str | dict, 
         /, 
@@ -1398,81 +1350,74 @@ class P115Client:
             payload = {"file_id": payload}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
-    def fs_shortcut_list(
+    def fs_cover(
         self, 
-        payload: int | str | dict, 
+        fids: int | str | Iterable[int | str], 
         /, 
+        fid_cover: int | str = 0, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """罗列所有的快捷入口
-        GET https://webapi.115.com/category/shortcut
-        """
-        api = "https://webapi.115.com/category/shortcut"
-        return self.request(api, async_=async_, **request_kwargs)
+        """设置目录的封面，此接口是对 `fs_files_edit` 的封装
 
-    # TODO: 还需要接口，获取单个标签 id 对应的信息，也就是通过 id 来获取
-
-    def label_del(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """删除标签
-        POST https://webapi.115.com/label/delete
-        payload:
-            - id: int | str # 标签 id
+        :param fids: 单个或多个文件或文件夹 id
+        :param file_label: 图片的 id，如果为 0 则是删除封面
         """
         api = "https://webapi.115.com/label/delete"
+        if isinstance(fids, (int, str)):
+            payload = [("fid", fids)]
+        else:
+            payload = [("fid[]", fid) for fid in fids]
+            if not payload:
+                return {"state": False, "message": "no op"}
+        payload.append(("fid_cover", fid_cover))
+        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
+
+    def fs_desc_get(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取文件或文件夹的备注
+        GET https://webapi.115.com/files/desc
+        payload:
+            - file_id: int | str
+            - format: str = "json"
+            - compat: 0 | 1 = 1
+            - new_html: 0 | 1 = 1
+        """
+        api = "https://webapi.115.com/files/desc"
         if isinstance(payload, (int, str)):
-            payload = {"id": payload}
-        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
-
-    def label_edit(
-        self, 
-        payload: dict, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """编辑标签
-        POST https://webapi.115.com/label/edit
-        payload:
-            - id: int | str # 标签 id
-            - name: str = <default>  # 标签名
-            - color: str = <default> # 标签颜色，支持 css 颜色语法
-        """
-        api = "https://webapi.115.com/label/edit"
-        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
-
-    def label_list(
-        self, 
-        payload: dict = {}, 
-        /, 
-        async_: bool = False, 
-        **request_kwargs, 
-    ) -> dict:
-        """罗列标签列表（如果要获取做了标签的文件列表，用 `fs_search` 接口）
-        GET https://webapi.115.com/label/list
-        payload:
-            - offset: int = 0 # 索引偏移，从 0 开始
-            - limit: int = 11500 # 一页大小
-            - keyword: str = <default> # 搜索关键词
-            - sort: "name" | "update_time" | "create_time" = <default>
-                # 排序字段：
-                # - 名称: "name"
-                # - 创建时间: "create_time"
-                # - 更新时间: "update_time"
-            - order: "asc" | "desc" = <default> # 排序顺序："asc"(升序), "desc"(降序)
-            - user_id: int | str = <default>
-        """
-        api = "https://webapi.115.com/label/list"
-        payload = {"offset": 0, "limit": 11500, **payload}
+            payload = {"format": "json", "compat": 1, "new_html": 1, "file_id": payload}
+        else:
+            payload = {"format": "json", "compat": 1, "new_html": 1, **payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
-    def label_set(
+    def fs_desc(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        file_desc: str = "", 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """为文件或文件夹设置备注，最多允许 65535 个字节 (64 KB 以内)，此接口是对 `fs_files_edit` 的封装
+
+        :param fids: 单个或多个文件或文件夹 id
+        :param file_desc: 备注信息，可以用 html
+        """
+        if isinstance(fids, (int, str)):
+            payload = [("fid", fids)]
+        else:
+            payload = [("fid[]", fid) for fid in fids]
+            if not payload:
+                return {"state": False, "message": "no op"}
+        payload.append(("file_desc", file_desc))
+        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
+
+    def fs_label(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -1494,7 +1439,7 @@ class P115Client:
         payload.append(("file_label", file_label))
         return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
-    def label_batch(
+    def fs_label_batch(
         self, 
         payload: dict, 
         /, 
@@ -1517,10 +1462,29 @@ class P115Client:
         api = "https://webapi.115.com/files/batch_label"
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
-    def star_set(
+    def fs_score(
         self, 
-        payload: int | str | dict, 
+        file_id: int | str, 
         /, 
+        score: int = 0, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """给文件或文件夹评分
+        POST https://webapi.115.com/files/score
+        payload:
+            - file_id: int | str # 文件或文件夹 id，如果有多个，用逗号 "," 隔开
+            - score: int = 0     # 0 为删除评分
+        """
+        api = "https://webapi.115.com/files/score"
+        payload = {"file_id": file_id, "score": score}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def fs_star(
+        self, 
+        file_id: int | str, 
+        /, 
+        star: bool = True, 
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1531,11 +1495,98 @@ class P115Client:
             - star: 0 | 1 = 1
         """
         api = "https://webapi.115.com/files/star"
-        if isinstance(payload, (int, str)):
-            payload = {"star": 1, "file_id": payload}
-        else:
-            payload = {"star": 1, **payload}
+        payload = {"file_id": file_id, "star": int(star)}
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    # TODO: 还需要接口，获取单个标签 id 对应的信息，也就是通过 id 来获取
+
+    def label_add(
+        self, 
+        /, 
+        *lables: str, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """添加标签（可以接受多个）
+        POST https://webapi.115.com/label/add_multi
+
+        可传入多个 label 描述，每个 label 的格式都是 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
+        """
+        api = "https://webapi.115.com/label/add_multi"
+        payload = [("name[]", label) for label in lables if label]
+        if not payload:
+            return {"state": False, "message": "no op"}
+        if (headers := request_kwargs.get("headers")):
+            headers = request_kwargs["headers"] = dict(headers)
+        else:
+            headers = request_kwargs["headers"] = {}
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        return self.request(
+            api, 
+            "POST", 
+            data=urlencode(payload), 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    def label_del(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """删除标签
+        POST https://webapi.115.com/label/delete
+        payload:
+            - id: int | str # 标签 id，如果有多个，用逗号 "," 隔开
+        """
+        api = "https://webapi.115.com/label/delete"
+        if isinstance(payload, (int, str)):
+            payload = {"id": payload}
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def label_edit(
+        self, 
+        payload: dict, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """编辑标签
+        POST https://webapi.115.com/label/edit
+        payload:
+            - id: int | str # 标签 id
+            - name: str = <default>  # 标签名
+            - color: str = <default> # 标签颜色，支持 css 颜色语法
+            - sort: int = <default> # 序号
+        """
+        api = "https://webapi.115.com/label/edit"
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    def label_list(
+        self, 
+        payload: dict = {}, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """罗列标签列表（如果要获取做了标签的文件列表，用 `fs_search` 接口）
+        GET https://webapi.115.com/label/list
+        payload:
+            - offset: int = 0 # 索引偏移，从 0 开始
+            - limit: int = 11500 # 一页大小
+            - keyword: str = <default> # 搜索关键词
+            - sort: "name" | "update_time" | "create_time" = <default>
+                # 排序字段:
+                # - 名称: "name"
+                # - 创建时间: "create_time"
+                # - 更新时间: "update_time"
+            - order: "asc" | "desc" = <default> # 排序顺序："asc"(升序), "desc"(降序)
+        """
+        api = "https://webapi.115.com/label/list"
+        payload = {"offset": 0, "limit": 11500, **payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     def life_list(
         self, 
@@ -4005,6 +4056,12 @@ class P115Client:
         return P115ZipFileSystem(self, id_or_pickcode, *args, **kwargs)
 
     @cached_property
+    def label(self, /) -> LabelList:
+        """
+        """
+        return LabelList(self)
+
+    @cached_property
     def offline(self, /) -> P115Offline:
         """
         """
@@ -4015,16 +4072,24 @@ class P115Client:
 
     @cached_property
     def recyclebin(self, /) -> P115Recyclebin:
+        """
+        """
         return P115Recyclebin(self)
 
     def get_recyclebin(self, /, *args, **kwargs) -> P115Recyclebin:
+        """
+        """
         return P115Recyclebin(self, *args, **kwargs)
 
     @cached_property
     def sharing(self, /) -> P115Sharing:
+        """
+        """
         return P115Sharing(self)
 
     def get_sharing(self, /, *args, **kwargs) -> P115Sharing:
+        """
+        """
         return P115Sharing(self, *args, **kwargs)
 
     def open(
@@ -5608,6 +5673,14 @@ class P115Path(P115PathBase):
             return None
         return type(self)(attr)
 
+    @property
+    def description(self, /):
+        return self.fs.desc(self)
+
+    @description.setter
+    def description(self, /, desc: str = ""):
+        return self.fs.desc(self, desc=desc)
+
     def mkdir(self, /, exist_ok: bool = True) -> Self:
         self.__dict__.update(self.fs.makedirs(self, exist_ok=exist_ok))
         return self
@@ -5704,6 +5777,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         /, 
         client: P115Client, 
+        password: str = "", 
         attr_cache: Optional[MutableMapping[int, dict]] = None, 
         path_to_id: Optional[MutableMapping[str, int]] = None, 
         get_version: Optional[Callable] = lambda attr: attr.get("mtime", 0), 
@@ -5718,6 +5792,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             client = client, 
             cid = 0, 
             path = "/", 
+            password = password, 
             path_to_id = path_to_id, 
             attr_cache = attr_cache, 
             get_version = get_version, 
@@ -5728,9 +5803,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def __len__(self, /) -> int:
         return self.get_directory_capacity(self.cid)
-
-    def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attributes")
 
     def __setitem__(
         self, 
@@ -5760,6 +5832,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> Self:
         kwargs["client"] = P115Client(cookie, login_app=app)
         return cls(**kwargs)
+
+    @property
+    def password(self, /) -> str:
+        return self.__dict__["password"]
+
+    @password.setter
+    def password(self, /, password: str = ""):
+        self.__dict__["password"] = password
 
     @check_response
     def fs_mkdir(self, name: str, /, pid: int = 0) -> dict:
@@ -6396,6 +6476,21 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             )
         return ls
 
+    def desc(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        desc: None | str = None, 
+    ) -> str:
+        fid = self.get_id(id_or_path, pid)
+        if fid == 0:
+            return ""
+        if desc is None:
+            return check_response(self.client.fs_desc_get(fid))["desc"]
+        else:
+            return check_response(self.client.fs_desc(fid, desc))["file_description"]
+
     def get_ancestors(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -6444,7 +6539,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
         return self.client.download_url(
             attr["pickcode"], 
-            use_web_api=attr["is_violation"] and attr["size"] < 1024 * 1024 * 115, 
+            use_web_api=attr.get("violated", False) and attr["size"] < 1024 * 1024 * 115, 
             detail=detail, 
             headers=headers, 
         )
@@ -6461,6 +6556,30 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             detail=detail, 
             headers=headers, 
         )
+
+    def hide(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        show: None | bool = None, 
+    ) -> bool:
+        if show is None:
+            return self.attr(id_or_path, pid)["hidden"]
+        else:
+            fid = self.get_id(id_or_path, pid)
+            if fid == 0:
+                return False
+            hidden = not show
+            check_response(self.client.fs_files_hidden({"hidden": int(hidden), "fid[0]": fid}))
+            return hidden
+
+    def hidden_switch(
+        self, 
+        show: bool = True, 
+        password: str = "", 
+    ):
+        check_response(self.client.fs_hidden_switch({"show": int(show), "safe_pwd": password or self.password}))
 
     def is_empty(
         self, 
@@ -6479,6 +6598,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if attr["is_directory"]:
             return self.get_directory_capacity(attr["id"]) > 0
         return attr["size"] == 0
+
+    def labels(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+    ) -> list[dict]:
+        return self.attr(id_or_path, pid)["labels"]
 
     def makedirs(
         self, 
@@ -6780,6 +6907,22 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> dict:
         return self.remove(id_or_path, pid, recursive=True)
 
+    def score(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        score: None | int = None, 
+    ) -> int:
+        if score is None:
+            return self.attr(id_or_path, pid).get("score", 0)
+        else:
+            fid = self.get_id(id_or_path, pid)
+            if fid == 0:
+                return 0
+            self.client.fs_score(fid, score)
+            return score
+
     def search(
         self, 
         search_value: str, 
@@ -6816,6 +6959,22 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             offset = payload["offset"] = offset + resp["page_size"]
             if offset >= resp["count"]:
                 break
+
+    def star(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: Optional[int] = None, 
+        star: None | bool = None, 
+    ) -> int:
+        if star is None:
+            return self.attr(id_or_path, pid).get("star", False)
+        else:
+            fid = self.get_id(id_or_path, pid)
+            if fid == 0:
+                return False
+            check_response(self.client.fs_star(fid, star))
+            return star
 
     def stat(
         self, 
@@ -8064,6 +8223,153 @@ class P115Sharing:
     @check_response
     def update(self, /, share_code: str, **payload) -> dict:
         return self.client.share_update({"share_code": share_code, **payload})
+
+
+class LabelList:
+    __slots__ = "client",
+
+    def __init__(self, client: P115Client, /):
+        self.client = client
+
+    def __contains__(self, id_or_name: int | str, /) -> bool:
+        if isinstance(id_or_name, int):
+            return self.client.label_edit({"id": id_or_name})["code"] != 21005
+        else:
+            name = id_or_name
+            return any(item["name"] == name for item in self.iter(keyword=name))
+
+    def __delitem__(self, id_or_name: int | str, /):
+        if isinstance(id_or_name, int):
+            id = id_or_name
+        else:
+            try:
+                item = self[id_or_name]
+            except LookupError:
+                return
+            id = item["id"]
+        self.client.label_del(id)
+
+    def __getitem__(self, id_or_name: int | str, /) -> dict:
+        if isinstance(id_or_name, int):
+            id = str(id_or_name)
+            for item in self.iter():
+                if item["id"] == id:
+                    return item
+        else:
+            name = id_or_name
+            for item in self.iter(keyword=name):
+                if item["name"] == name:
+                    return item
+        raise LookupError(f"no such id: {id!r}")
+
+    def __setitem__(self, id_or_name: int | str, value: str | dict, /):
+        if isinstance(id_or_name, int):
+            id = id_or_name
+        else:
+            item = self[id_or_name]
+            id = item["id"]
+        if isinstance(value, str):
+            payload = {"id": id, "name": value}
+        else:
+            payload = {**value, "id": id}
+        self.client.label_edit(payload)
+
+    def __iter__(self, /) -> Iterator[dict]:
+        return self.iter()
+
+    def __len__(self, /) -> int:
+        return check_response(self.client.label_list({"limit": 1}))["data"]["total"]
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        module = cls.__module__
+        name = cls.__qualname__
+        if module != "__main__":
+            name = module + "." + name
+        return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
+
+    def add(
+        self, 
+        /, 
+        *labels: str, 
+    ) -> list[dict]:
+        return check_response(self.client.label_add(*labels))["data"]
+
+    def clear(self, /):
+        self.client.label_del(",".join(item["id"] for item in self.iter()))
+
+    def get(self, id_or_name: int | str, /, default=None):
+        try:
+            return self[id_or_name]
+        except LookupError:
+            return default
+
+    def iter(
+        self, 
+        /, 
+        offset: int = 0, 
+        page_size: int = 11500, 
+        keyword: str = "", 
+        sort: Literal["", "name", "create_time", "update_time"] = "", 
+        order: Literal["", "asc", "desc"] = "", 
+    ) -> Iterator[dict]:
+        if offset < 0:
+            offset = 0
+        if page_size <= 0:
+            page_size = 11500
+        payload = {
+            "offset": offset, 
+            "limit": page_size, 
+            "keyword": keyword, 
+            "sort": sort, 
+            "order": order, 
+        }
+        count = 0
+        while True:
+            resp = check_response(self.client.label_list(payload))
+            total = resp["data"]["total"]
+            if count == 0:
+                count = total
+            elif count != total:
+                raise RuntimeError("detected count changes during iteration")
+            ls = resp["data"]["list"]
+            yield from ls
+            if len(ls) < page_size:
+                break
+            payload["offset"] += page_size # type: ignore
+
+    def iter_files(
+        self, 
+        id_or_name: int | str, 
+        /, 
+    ) -> Iterator[P115Path]:
+        if isinstance(id_or_name, int):
+            id = id_or_name
+        else:
+            id = self[id_or_name]["id"]
+        return self.client.fs.search("", 0, file_label=id)
+
+    def list(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        keyword: str = "", 
+        sort: Literal["", "name", "create_time", "update_time"] = "", 
+        order: Literal["", "asc", "desc"] = "", 
+    ) -> list[dict]:
+        if limit <= 0:
+            return list(self.iter(offset, keyword=keyword, sort=sort, order=order))
+        return check_response(self.client.label_list({
+            "offset": offset, 
+            "limit": limit, 
+            "keyword": keyword, 
+            "sort": sort, 
+            "order": order, 
+        }))["data"]["list"]
+
+    edit = __setitem__
+    remove = __delitem__
 
 
 # TODO upload_tree 多线程和进度条，并且为每一个上传返回一个 task，可重试

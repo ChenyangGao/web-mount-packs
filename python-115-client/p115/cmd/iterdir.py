@@ -7,7 +7,8 @@ __doc__ = "115 文件夹信息遍历导出"
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
-    "size", "ctime", "mtime", "atime", "thumb", "star", 
+    "size", "ctime", "mtime", "atime", "hidden", "violated", "play_long", 
+    "thumb", "star", "score", "labels", "description", 
 )
 
 if __name__ == "__main__":
@@ -118,7 +119,7 @@ def main(args):
     else:
         file = stdout # type: ignore
 
-    records = ({k: p.get(k) for k in keys} for p in path_it)
+    records = ({k: p.get(k) if k != "description" else p.description for k in keys} for p in path_it)
 
     dumps: Callable[..., bytes]
     if output_type in ("log", "json"):
