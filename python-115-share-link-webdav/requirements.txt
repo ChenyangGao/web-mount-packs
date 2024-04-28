@@ -1,7 +1,0 @@
-cheroot
-pycryptodome
-pyyaml
-qrcode
-requests
-watchdog
-WsgiDAV
