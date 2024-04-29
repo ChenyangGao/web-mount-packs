@@ -6231,6 +6231,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     )  -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
+        if isinstance(path, str):
+            if path.startswith("/"):
+                pid = 0
+        elif path and path[0] == "":
+            pid = 0
         if pid is None:
             pid = self.cid
         if not path or path == ".":
@@ -6251,7 +6256,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             except:
                 pass
         attr = self._attr(pid)
-        for name in patht[len(self.get_patht(pid)):]:
+        for name in patht[len(self.get_patht(attr["path"])):]:
             if not attr["is_directory"]:
                 raise NotADirectoryError(
                     errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
