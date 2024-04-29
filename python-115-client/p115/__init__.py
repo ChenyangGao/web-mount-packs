@@ -134,7 +134,7 @@ def check_response(fn: RequestVarT, /) -> RequestVarT:
                 # {'state': False, 'error': '操作的文件(夹)数量超过5万个', 'errno': 990023, 'errtype': ''}
                 case 990023:
                     raise OSError(errno.ENOTSUP, resp)
-            raise OSError(errno.EIO, resp)
+        raise OSError(errno.EIO, resp)
     if isinstance(fn, dict):
         return check(fn)
     elif iscoroutinefunction(fn):
@@ -929,7 +929,7 @@ class P115Client:
             - snap: 0 | 1 = <default>
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
-            - suffix: str = <default>
+            - suffix: str = <default> # 后缀名
             - type: int | str = <default>
                 # 文件类型：
                 # - 所有: 0
@@ -939,6 +939,7 @@ class P115Client:
                 # - 视频: 4
                 # - 压缩包: 5
                 # - 应用: 6
+                # - 书籍: 7
         """
         api = "https://webapi.115.com/files"
         payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
@@ -983,7 +984,7 @@ class P115Client:
             - snap: 0 | 1 = <default>
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
-            - suffix: str = <default>
+            - suffix: str = <default> # 后缀名
             - type: int | str = <default>
                 # 文件类型：
                 # - 所有: 0
@@ -993,10 +994,38 @@ class P115Client:
                 # - 视频: 4
                 # - 压缩包: 5
                 # - 应用: 6
+                # - 书籍: 7
         """
         api = "https://aps.115.com/natsort/files.php"
         payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
                    "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    def fs_files_type(
+        self, 
+        payload: Literal[1,2,3,4,5,6,7] | dict = 1, 
+        /, 
+        async_: bool = False, 
+        **request_kwargs, 
+    ) -> dict:
+        """获取文件夹中某个文件类型的扩展名的（去重）列表
+        GET https://webapi.115.com/files/get_second_type
+        payload:
+            - cid: int | str = 0 # 文件夹 id
+            - type: int = <default>
+                # 文件类型：
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
+                # - 书籍: 7
+            - file_label: int | str = <default>
+        """
+        api = "https://webapi.115.com/files/get_second_type"
+        if isinstance(payload, int):
+            payload = {"cid": 0, "type": payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     def fs_files_edit(
@@ -1133,14 +1162,20 @@ class P115Client:
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict:
-        """文件查重（罗列除此以外的 sha1 相同的文件）
+        """查找重复文件（罗列除此以外的 sha1 相同的文件）
         GET https://webapi.115.com/files/get_repeat_sha
         payload:
             file_id: int | str
+            offset: int = 0
+            limit: int = 1150
+            source: str = ""
+            format: str = "json"
         """
         api = "https://webapi.115.com/files/get_repeat_sha"
         if isinstance(payload, (int, str)):
-            payload = {"file_id": payload}
+            payload = {"offset": 0, "limit": 1150, "format": "json", "file_id": payload}
+        else:
+            payload = {"offset": 0, "limit": 1150, "format": "json", **payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     def fs_index_info(
@@ -1596,22 +1631,37 @@ class P115Client:
         **request_kwargs, 
     ) -> dict:
         """罗列登录和增删改操作记录（最新几条）
+        GET https://life.115.com/api/1.0/web/1.0/life/life_list
         payload:
-            - show_type: int | str = "1,2,3,4"
-            - tab_type: int | str = 0
             - start: int = 0
-            - show_note_cal: 0 | 1 = 0
+            - limit: int = 1000
+            - show_type: int | str = 0
+                # 筛选类型，有多个则用逗号 ',' 隔开:
+                # 0: all
+                # 1: upload_file
+                # 2: browse_document
+                # 3: <UNKNOWN>
+                # 4: account_security
+            - type: int | str = <default>
+            - tab_type: int | str = <default>
+            - file_behavior_type: int | str = <default>
+            - mode: str = <default>
+            - check_num: int = <default>
+            - total_count: int = <default>
+            - start_time: int = <default>
             - end_time: int = <default> # 默认为次日零点前一秒
+            - show_note_cal: 0 | 1 = <default>
+            - isShow: 0 | 1 = <default>
+            - isPullData: 'true' | 'false' = <default>
             - last_data: str = <default> # JSON object, e.g. {"last_time":1700000000,"last_count":1,"total_count":200}
         """
-        api = "https://life.115.com/api/1.0/android/99.99.99/life/life_list"
+        api = "https://life.115.com/api/1.0/web/1.0/life/life_list"
         now = datetime.now()
         datetime.combine(now.date(), now.time().max)
         payload = {
-            "show_type": "1,2,3,4", 
-            "tab_type": 0, 
             "start": 0, 
-            "show_note_cal": 0, 
+            "limit": 1000, 
+            "show_type": 0, 
             "end_time": int(datetime.combine(now.date(), now.time().max).timestamp()), 
             **payload, 
         }
@@ -4815,7 +4865,7 @@ class P115FileSystemBase(Generic[P115PathType]):
 
     def download_tree(
         self, 
-        id_or_path: IDOrPathType, 
+        id_or_path: IDOrPathType = "", 
         /, 
         local_dir: bytes | str | PathLike = "", 
         pid: Optional[int] = None, 
@@ -6579,11 +6629,18 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             check_response(self.client.fs_files_hidden({"hidden": int(hidden), "fid[0]": fid}))
             return hidden
 
+    @property
+    def hidden_mode(self, /) -> bool:
+        return self.client.user_setting()["data"]["show"] == "1"
+
     def hidden_switch(
         self, 
-        show: bool = True, 
+        /, 
+        show: None | bool = None, 
         password: str = "", 
     ):
+        if show is None:
+            show = not self.hidden_mode
         check_response(self.client.fs_hidden_switch({"show": int(show), "safe_pwd": password or self.password}))
 
     def is_empty(
@@ -6603,6 +6660,28 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if attr["is_directory"]:
             return self.get_directory_capacity(attr["id"]) > 0
         return attr["size"] == 0
+
+    def iter_repeat(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: Optional[int] = None, 
+        page_size: int = 1150, 
+    ) -> Iterator[dict]:
+        if page_size <= 0:
+            page_size = 1150
+        payload = {
+            "file_id": self.get_id(id_or_path, pid), 
+            "offset": 0, 
+            "limit": page_size, 
+            "format": "json", 
+        }
+        while True:
+            data = check_response(self.client.fs_get_repeat(payload))["data"]
+            yield from data
+            if len(data) < page_size:
+                break
+            payload["offset"] += page_size # type: ignore
 
     def labels(
         self, 
@@ -6930,17 +7009,26 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def search(
         self, 
-        search_value: str, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
+        search_value: str = "", 
         page_size: int = 1_000, 
         offset: int = 0, 
         **kwargs, 
     ) -> Iterator[P115Path]:
         assert page_size > 0
+        attr = self.attr(id_or_path, pid)
+        if attr["is_directory"]:
+            if not search_value:
+                return
+            cid = attr["id"]
+        else:
+            if not search_value:
+                search_value = attr["sha1"]
+            cid = 0
         payload = {
-            "cid": self.get_id(id_or_path, pid), 
+            "cid": cid, 
             "search_value": search_value, 
             "limit": page_size, 
             "offset": offset, 
@@ -8352,7 +8440,7 @@ class P115LabelList:
             id = id_or_name
         else:
             id = self[id_or_name]["id"]
-        return self.client.fs.search("", 0, file_label=id)
+        return self.client.fs.search(0, file_label=id)
 
     def list(
         self, 
