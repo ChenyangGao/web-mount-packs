@@ -1,4 +1,4 @@
-# Python iterdir
+# Python iterate over path tree.
 
 ## 安装
 
@@ -20,7 +20,7 @@ pip install -U iterdir
 
 Help on function iterdir in module iterdir:
 
-iterdir(top=None, /, topdown: Optional[bool] = True, min_depth: int = 1, max_depth: int = 1, predicate: Optional[collections.abc.Callable[..., Optional[bool]]] = None, onerror: bool | collections.abc.Callable = None, follow_symlinks: bool = False) -> collections.abc.Iterator
+iterdir(top=None, /, topdown: Optional[bool] = True, min_depth: int = 1, max_depth: int = 1, predicate: Optional[collections.abc.Callable[..., Optional[bool]]] = None, onerror: bool | collections.abc.Callable[[OSError], bool] = False, follow_symlinks: bool = False) -> collections.abc.Iterator
     遍历目录树
     
     :param top: 根路径，默认为当前目录。
@@ -43,9 +43,13 @@ iterdir(top=None, /, topdown: Optional[bool] = True, min_depth: int = 1, max_dep
 
 ```console
 $ python -m iterdir -h
-usage: __main__.py [-h] [-k [{inode,name,path,relpath,isdir,islink,stat} ...]] [-s SELECT] [-t {log,json,csv}] [-o OUTPUT_FILE] [-m MIN_DEPTH]
-                   [-M MAX_DEPTH] [-dfs] [-fl] [-v]
-                   [path]
+usage: __main__ [-h] [-m MIN_DEPTH] [-M MAX_DEPTH]
+                [-k [{inode,name,path,relpath,isdir,islink,stat} ...]]
+                [-t {log,json,csv}] [-d DUMP] [-de] [-s SELECT] [-se]
+                [-o OUTPUT_FILE]
+                [-hs [{sha256,sha3_512,sha1,sha512_256,md5,ripemd160,sha512,md5-sha1,sha3_256,sha384,sha3_384,sha512_224,sha224,sm3,shake_128,blake2s,sha3_224,blake2b,shake_256,crc32} ...]]
+                [-dfs] [-fl] [-v]
+                [path]
 
 目录树信息遍历导出
 
@@ -54,23 +58,34 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  -m MIN_DEPTH, --min-depth MIN_DEPTH
+                        最小深度，默认值 0，小于 0 时不限
+  -M MAX_DEPTH, --max-depth MAX_DEPTH
+                        最大深度，默认值 -1，小于 0 时不限
   -k [{inode,name,path,relpath,isdir,islink,stat} ...], --keys [{inode,name,path,relpath,isdir,islink,stat} ...]
                         选择输出的 key，默认输出所有可选值
-  -s SELECT, --select SELECT
-                        提供一个表达式（会注入一个变量 path，类型是 pathlib.Path），用于对路径进行筛选
   -t {log,json,csv}, --output-type {log,json,csv}
-                        输出类型，默认为 json
+                        输出类型，默认为 log
                         - log   每行输出一条数据，每条数据输出为一个 json 的 object
                         - json  输出一个 json 的 list，每条数据输出为一个 json 的 object
                         - csv   输出一个 csv，第 1 行为表头，以后每行输出一条数据
+  -d DUMP, --dump DUMP  (优先级高于 -k/--keys、-hs/--hashes、-t/--output-type) 调用以导出数据，如果有返回值则再行输出，尾部会添加一个 b'
+                        '。
+                        如果结果 result 是
+                            - None，跳过
+                            - bytes，输出
+                            - 其它，先调用 `bytes(str(result), 'utf-8')`，再输出
+                        提供一个表达式（会注入一个变量 path，类型是 pathlib.Path）或函数（会传入一个参数，类型是 pathlib.Path）    
+  -de, --dump-exec      对 -d/--dump 传入的代码用 exec 运行，其中必须存在名为 dump 的函数。否则，视为表达式或 lambda 函数
+  -s SELECT, --select SELECT
+                        对路径进行筛选，提供一个表达式（会注入一个变量 path，类型是 pathlib.Path）或函数（会传入一个参数，类型是 pathlib.Path）
+  -se, --select-exec    对 -s/--select 传入的代码用 exec 运行，其中必须存在名为 select 的函数。否则，视为表达式或 lambda 函数
   -o OUTPUT_FILE, --output-file OUTPUT_FILE
                         保存到文件，此时命令行会输出进度条
-  -m MIN_DEPTH, --min-depth MIN_DEPTH
-                        最小深度，默认值 0，小于或等于 0 时不限
-  -M MAX_DEPTH, --max-depth MAX_DEPTH
-                        最大深度，默认值 -1，小于 0 时不限
+  -hs [{sha256,sha3_512,sha1,sha512_256,md5,ripemd160,sha512,md5-sha1,sha3_256,sha384,sha3_384,sha512_224,sha224,sm3,shake_128,blake2s,sha3_224,blake2b,shake_256,crc32} ...], --hashes [{sha256,sha3_512,sha1,sha512_256,md5,ripemd160,sha512,md5-sha1,sha3_256,sha384,sha3_384,sha512_224,sha224,sm3,shake_128,blake2s,sha3_224,blake2b,shake_256,crc32} ...]
+                        计算文件的哈希值，可以选择多个算法
   -dfs, --depth-first   使用深度优先搜索，否则使用广度优先
   -fl, --follow-symlinks
-                        是否跟进符号连接（如果为否，则会把符号链接视为文件，即使它指向目录）
-  -v, --version         输出版本号
+                        跟进符号连接，否则会把符号链接视为文件，即使它指向目录
+  -v, --version         输出版本
 ```

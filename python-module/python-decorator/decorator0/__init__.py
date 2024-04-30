@@ -65,6 +65,7 @@ def decorated(
     return update_wrapper(lambda *a, **k: f(g, *a, **k), g)
 
 
+# TODO: better update wrapper infos
 @overload
 def optional(
     f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]], 
@@ -182,11 +183,11 @@ def optional(
         baz: end
     """
     if g is None:
-        return ppartial(optional, f, undefined, *args, **kwargs)
+        return update_wrapper(ppartial(optional, f, undefined, *args, **kwargs), f)
     elif callable(g):
         return update_wrapper(f(g, *args, **kwargs), g)
     else:
-        return ppartial(optional, f, undefined, g, *args, **kwargs)
+        return update_wrapper(ppartial(optional, f, undefined, g, *args, **kwargs), f)
 
 
 @overload

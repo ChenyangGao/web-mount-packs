@@ -25,6 +25,8 @@ if __name__ == "__main__":
 # NOTE https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Accept-Encoding
 # NOTE https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Encoding
 
+# TODO: 做一个 async_download，使用 aiohttp 和 aiofiles
+
 import errno
 
 from collections.abc import Callable, Generator, Iterator

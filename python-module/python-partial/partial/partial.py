@@ -5,8 +5,8 @@ __author__  = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["partial", "ppartial", "skippartial"]
 
 from collections.abc import Callable, Iterable, Sequence
-from functools import partial, update_wrapper
-from inspect import signature, BoundArguments
+from functools import cached_property, partial, update_wrapper
+from inspect import signature, BoundArguments, Signature
 from itertools import chain
 
 from undefined import undefined
@@ -53,6 +53,16 @@ class ppartial(partial):
                 return cls(func, *args, **kwargs)
             return func(*args, **kwargs)
         return update_wrapper(wrapper, func)
+
+    @cached_property
+    def __signature__(self, /) -> Signature:
+        bound_args = signature(self.func).bind_partial(*self.args, **self.keywords)
+        arguments = bound_args.arguments
+        return Signature([
+            param.replace(default=arguments[key]) 
+            if key in arguments else param 
+            for key, param in bound_args.signature.parameters.items()
+        ])
 
 
 class skippartial(partial):
