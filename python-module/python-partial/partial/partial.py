@@ -40,7 +40,20 @@ class ppartial(partial):
             return type(self)(self.func, *pargs, **kargs)
         return self.func(*pargs, **kargs)
 
-    @property
+    @cached_property
+    def __signature__(self, /) -> Signature:
+        bound_args = self.bound_args
+        arguments = bound_args.arguments
+        def param_new(param):
+            if param.kind is param.VAR_POSITIONAL or param.kind is param.VAR_KEYWORD:
+                return param
+            elif param.name in arguments:
+                return param.replace(default=arguments[param.name])
+            else:
+                return param.replace(default=_)
+        return Signature(map(param_new, bound_args.signature.parameters.values())) # type: ignore
+
+    @cached_property
     def bound_args(self, /) -> BoundArguments:
         bound_args = signature(self.func).bind_partial(*self.args, **self.keywords)
         bound_args.apply_defaults()
@@ -53,16 +66,6 @@ class ppartial(partial):
                 return cls(func, *args, **kwargs)
             return func(*args, **kwargs)
         return update_wrapper(wrapper, func)
-
-    @cached_property
-    def __signature__(self, /) -> Signature:
-        bound_args = signature(self.func).bind_partial(*self.args, **self.keywords)
-        arguments = bound_args.arguments
-        return Signature([
-            param.replace(default=arguments[key]) 
-            if key in arguments else param 
-            for key, param in bound_args.signature.parameters.items()
-        ])
 
 
 class skippartial(partial):

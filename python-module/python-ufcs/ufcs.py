@@ -114,7 +114,7 @@ class UFCSWrapper:
             try:
                 fn = globals_[attr]
                 if not callable(fn):
-                    raise ValueError(f'{fn} is not a callable')
+                    raise ValueError(f'{fn!r} is not a callable')
             except (KeyError, ValueError) as exc:
                 raise AttributeError(attr) from exc
             else:

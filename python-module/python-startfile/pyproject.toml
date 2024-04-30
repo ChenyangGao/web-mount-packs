@@ -1,20 +1,17 @@
 [tool.poetry]
-name = "iterdir"
-version = "0.0.5.2"
-description = "python iterate over path tree."
+name = "python-startfile"
+version = "0.0.1.1"
+description = "Python startfile."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iterdir"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iterdir"
-keywords = ["iterdir", "traverse"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-startfile"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-startfile"
+keywords = ["startfile"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Software Development",
@@ -25,12 +22,9 @@ include = [
     "LICENSE",
 ]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterdir"
+include = "startfile.py"

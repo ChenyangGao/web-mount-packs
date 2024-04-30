@@ -19,7 +19,7 @@ from typing import AsyncContextManager, ContextManager
 from types import FunctionType
 
 from .type import is_buffer
-from .undefined import undefined
+from undefined import undefined
 
 
 async def ensure_awaitable(o, /):

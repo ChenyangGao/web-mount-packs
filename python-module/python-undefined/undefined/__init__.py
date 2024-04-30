@@ -23,7 +23,7 @@ class Undefined:
             return inst
 
     def __init_subclass__(cls, /, **kwargs) -> Never:
-        raise TypeError("Subclassing is not allowed")
+        raise TypeError("'Undefined' is not an acceptable base class")
 
     __bool__ = staticmethod(lambda: False) # type: ignore
     __eq__ = lambda self, other, /: self is other

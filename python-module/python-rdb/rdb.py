@@ -26,6 +26,7 @@ def is_connection(con, /) -> bool:
     )
 
 
+# TODO add async version
 @contextmanager
 def ctx_con(
     con, 

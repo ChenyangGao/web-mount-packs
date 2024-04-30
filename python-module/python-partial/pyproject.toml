@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-partial"
-version = "0.0.3"
+version = "0.0.3.1"
 description = "Python partial types."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

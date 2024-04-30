@@ -143,7 +143,7 @@ def _iterdir_dfs(
             return
         elif pred:
             yield top
-        if not is_dir(top):
+        if not isdir(top):
             return
         min_depth = 1
     if max_depth > 0:

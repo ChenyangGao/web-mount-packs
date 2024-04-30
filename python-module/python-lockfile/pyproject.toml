@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "iterdir"
-version = "0.0.5.2"
-description = "python iterate over path tree."
+name = "python-lockfile"
+version = "0.0.1"
+description = ""
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iterdir"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/iterdir"
-keywords = ["iterdir", "traverse"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-lockfile"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-lockfile"
+keywords = ["lockfile"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,10 +27,16 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+aiofiles = "*"
+
+[tool.poetry.dev-dependencies]
+python = "^3.10"
+aiofiles = "*"
+types-aiofiles = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterdir"
+include = "lockfile"

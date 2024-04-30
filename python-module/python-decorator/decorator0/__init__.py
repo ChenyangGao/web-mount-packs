@@ -6,7 +6,7 @@ decorators, in order to simplify some boilerplate code.
 """
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["decorated", "optional", "optional_args", "currying", "partialize"]
 
 from collections.abc import Callable
@@ -23,25 +23,10 @@ Args0 = ParamSpec("Args0")
 R = TypeVar("R")
 
 
-@overload
 def decorated(
     f: Callable[Concatenate[Callable[Args, R], Args], R], 
-    g: None = None, 
     /, 
 ) -> Callable[[Callable[Args, R]], Callable[Args, R]]:
-    ...
-@overload
-def decorated(
-    f: Callable[Concatenate[Callable[Args, R], Args], R], 
-    g: Callable[Args, R], 
-    /, 
-) -> Callable[Args, R]:
-    ...
-def decorated(
-    f: Callable[Concatenate[Callable[Args, R], Args], R], 
-    g: None | Callable[Args, R] = None, 
-    /, 
-) -> Callable[Args, R] | Callable[[Callable[Args, R]], Callable[Args, R]]:
     """Transform the 2-layers decorator into 1-layer.
 
     @decorated
@@ -59,38 +44,13 @@ def decorated(
             return func(*args, **kwds)
         return functools.update_wrapper(wrapper, func)
     """
-    if g is None:
-        return cast(Callable[[Callable[Args, R]], Callable[Args, R]], partial(decorated, f))
-    # return partial(f, g)
-    return update_wrapper(lambda *a, **k: f(g, *a, **k), g)
+    return update_wrapper(lambda g, /: update_wrapper(lambda *a, **k: f(g, *a, **k), g), f)
 
 
-# TODO: better update wrapper infos
-@overload
 def optional(
     f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]], 
-    g: None = None, 
     /, 
-    *args: Args0.args, 
-    **kwargs: Args0.kwargs, 
-) -> Callable[Concatenate[Optional[Callable[Args, R]], Args0], Callable[Args, R]]:
-    ...
-@overload
-def optional(
-    f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]], 
-    g: Callable[Args, R], 
-    /, 
-    *args: Args0.args, 
-    **kwargs: Args0.kwargs, 
-) -> Callable[Args, R]:
-    ...
-def optional(
-    f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]], 
-    g: None | Callable[Args, R] = None, 
-    /, 
-    *args: Args0.args, 
-    **kwargs: Args0.kwargs, 
-) -> Callable[Args, R] | Callable[Concatenate[Optional[Callable[Args, R]], Args0], Callable[Args, R]]:
+) -> Callable[Concatenate[None, Args0], ppartial] | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]]:
     """This function decorates another decorator that with optional parameters.
     NOTE: Make sure that these optional parameters have default values.
 
@@ -182,45 +142,119 @@ def optional(
         baba4: process
         baz: end
     """
-    if g is None:
-        return update_wrapper(ppartial(optional, f, undefined, *args, **kwargs), f)
-    elif callable(g):
-        return update_wrapper(f(g, *args, **kwargs), g)
-    else:
-        return update_wrapper(ppartial(optional, f, undefined, g, *args, **kwargs), f)
+    def wrapped(func=None, /, *args, **kwds):
+        if func is None:
+            return ppartial(wrapped, undefined, *args, **kwds)
+        elif callable(func):
+            return update_wrapper(f(func, *args, **kwds), func)
+        else:
+            return ppartial(wrapped, undefined, func, *args, **kwds)
+    return update_wrapper(wrapped, f)
 
 
-@overload
 def optional_args(
     f: Callable[Args0, Callable[Concatenate[Callable[Args, R], Args], R]], 
-    g: None = None, 
-    /, 
-    *args: Args0.args, 
-    **kwargs: Args0.kwargs, 
-) -> Callable[[Callable[Args, R]], Callable[Args, R]] | Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, R]]]:
-    ...
-@overload
-def optional_args(
-    f: Callable[Args0, Callable[Concatenate[Callable[Args, R], Args], R]], 
-    g: Callable[Args, R], 
-    /, 
-    *args: Args0.args, 
-    **kwargs: Args0.kwargs, 
-) -> Callable[Args, R]:
-    ...
-def optional_args(
-    f: Callable[Args0, Callable[Concatenate[Callable[Args, R], Args], R]], 
-    g: None | Callable[Args, R] = None, 
     /,
-    *args: Args0.args, 
-    **kwargs: Args0.kwargs, 
-) -> Callable[Args, R] | Callable[[Callable[Args, R]], Callable[Args, R]] | Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, R]]]:
-    if g is None:
-        return decorated(f(*args, **kwargs))
-    elif callable(g):
-        return decorated(f(*args, **kwargs))(g)
-    else:
-        return decorated(f(g, *args, **kwargs))
+) -> Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, R]]] | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]]:
+    """This function decorates another decorator that with optional parameters.
+    NOTE: Make sure that these optional parameters have default values.
+
+    @optional
+    def decorator(func=None, /, *args, **kwds):
+        ...
+        def wrapper(*args1, **kwds1):
+            ...
+            return func(*args1, **kwds1)
+        return wrapper
+
+    Roughly equivalent to:
+
+    @optional_args
+    def decorator(*args, **kwds):
+        ...
+        def wrapped(func, /, *args1, **kwds1):
+            ...
+            return func(*args1, **kwds1)
+        return wrapped
+
+    Roughly equivalent to:
+
+    import functools
+
+    def decorator(func=None, /, *args, **kwds):
+        if func is None:
+            return lambda func, /: decorator(func, *args, **kwds)
+        ...
+        def wrapper(*args1, **kwds1):
+            ...
+            return func(*args1, **kwds1)
+        return functools.update_wrapper(wrapper, func)
+
+    Supposing there is such a decorator:
+
+    >>> @optional_args
+    ... def foo(bar="bar", /, baz="baz"):
+    ...     def wrapper(func, /, *args, **kwds):
+    ...         print(bar)
+    ...         r = func(*args, **kwds)
+    ...         print(baz)
+    ...         return r
+    ...     return wrapper
+    ... 
+
+    example 1::
+
+        >>> @foo 
+        ... def baba1(): 
+        ...     print("baba1") 
+        ... 
+        >>> baba1()
+        bar
+        baba1
+        baz
+
+    example 2::
+
+        >>> @foo()
+        ... def baba2(): 
+        ...     print("baba2") 
+        ... 
+        >>> baba2()
+        bar
+        baba2
+        baz
+
+    example 3::
+
+        >>> @foo("bar: begin", baz="baz: end") 
+        ... def baba3(): 
+        ...     print("baba3: process")
+        ... 
+        >>> baba3()
+        bar: begin
+        baba3: process
+        baz: end
+
+    example 4::
+
+        >>> bar = type("", (), {"__str__": lambda self: "bar: call"})()
+        >>> @foo(None, bar, baz='baz: end') 
+        ... def baba4(): 
+        ...    print("baba4: process")
+        ... 
+        >>> baba4()
+        bar: call
+        baba4: process
+        baz: end
+    """
+    def wrapped(func=None, /, *args, **kwds):
+        if func is None:
+            return decorated(f(*args, **kwds))
+        elif callable(func):
+            return decorated(f(*args, **kwds))(func)
+        else:
+            return decorated(f(func, *args, **kwds))
+    return update_wrapper(wrapped, f)
 
 
 def currying(
