@@ -13,6 +13,39 @@ __doc__ = """\
 3. Windows 要安装 WinFsp： https://github.com/winfsp/winfsp
 """
 
+epilog = """\
+1. 隐藏所有 *.mkv 文件
+
+.. code: console
+
+    python -m alist fuse --show-predicate '*.mkv'
+
+
+2. 只显示所有文件夹和 *.mkv 文件
+
+.. code: console
+
+    python -m alist fuse --show-predicate '* !/**/ !*.mkv'
+
+3. 把所有视频、音频、图片显示为 STRM 文件
+
+.. code: console
+
+    python -m alist fuse \\
+        --show-predicate-type expr \\
+        --show-predicate 'path.is_dir() or path.media_type.startswith(("video/", "audio/", "image/")) or path.suffix in (".nfo", ".ass", ".ssa", ".srt", ".idx", ".sub", ".vtt", ".smi")' \
+        --strm-predicate-type expr \\
+        --strm-predicate 'path.media_type.startswith(("video/", "audio/")) and path.suffix != ".ass"'
+
+4. 把缓存保存到本地的 dbm 文件
+
+.. code: console
+
+    python -m alist fuse '
+    import shelve
+    cache = shelve.open("cache")'
+"""
+
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
     from fuser import AlistFuseOperations # type: ignore

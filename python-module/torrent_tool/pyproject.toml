@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "torrent_tool"
-version = "0.0.4"
+version = "0.0.4.2"
 description = "torrent tool."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

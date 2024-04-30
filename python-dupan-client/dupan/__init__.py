@@ -2259,9 +2259,16 @@ class DuPanFileSystem:
         path = cast(str, path)
         if path == "/":
             return "/"
-        if not exist_ok and self.exists(path, _check=False):
-            raise FileExistsError(errno.EEXIST, path)
-        Error.check(self.client.makedir(path))
+        try:
+            attr = self.attr(path, _check=False)
+        except FileNotFoundError:
+            if exist_ok:
+                if not attr["isdir"]:
+                    raise NotADirectoryError(errno.ENOTDIR, path)
+            else:
+                raise FileExistsError(errno.EEXIST, path)
+        else:
+            return Error.check(self.client.makedir(path))["path"]
         return path
 
     def mkdir(
@@ -2642,6 +2649,39 @@ class DuPanFileSystem:
                 raise NotADirectoryError(errno.ENOTDIR, f"parent path {dir_!r} is not a directory: {path!r}")
             return self.upload(BytesIO(), path, _check=False)
         return path
+
+    # TODO: 如果文件特别多，需要分多次进行转存，但要保持目录结构
+    def transfer(
+        self, 
+        /, 
+        url: str, 
+        password: str = "", 
+        fsidlist: None | list[int] = None, 
+        save_dir: str = "/", 
+    ) -> dict:
+        """转存文件到百度网盘
+
+        :param url: 分享链接
+        :param password: 密码（如果链接中包含密码，可以不传）
+        :param fsidlist: 待转存的文件 id 列表
+        :param save_dir: 存储到这个文件夹，默认是 /，也就是网盘根目录
+
+        :return: 转存接口返回到 JSON 信息
+        """
+        self.makedirs(save_dir, exist_ok=True)
+        share_list = DuPanShareList(url, password)
+        if not fsidlist:
+            fsidlist = [f["fs_id"] for f in share_list.list_index()]
+        return Error.check(self.client.transfer(
+            share_list.url, 
+            params={
+                "shareid": share_list.share_id, 
+                "from": share_list.share_uk, 
+                "sekey": share_list.randsk, 
+                "ondup": "overwrite", 
+            }, 
+            data = {"fsidlist": fsidlist, "path": save_dir}, 
+        ))
 
     def upload(
         self, 
