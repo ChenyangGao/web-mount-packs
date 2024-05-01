@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "collect_as_mapping", "group", "uniq", "dups", "iter_dups", "iter_keyed_dups", 
 ]
@@ -149,7 +149,7 @@ def dups(
     it: Iterable[V], 
     /, 
     key: None = None, 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> MutableMapping[V, list[V]]:
     ...
 @overload
@@ -157,7 +157,7 @@ def dups(
     it: Iterable[tuple[K, V]], 
     /, 
     key: Literal[True] = True, 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> MutableMapping[K, list[V]]:
     ...
 @overload
@@ -165,14 +165,14 @@ def dups(
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> MutableMapping[K, list[V]]:
     ...
 def dups(
     it: Iterable, 
     /, 
     key: None | Literal[True] | Callable = None, 
-    keep_first: bool | Callable[..., SupportsLT] = True, 
+    keep_first: None | bool | Callable[..., SupportsLT] = True, 
 ) -> dict[Any, list]:
     return collect_as_mapping(iter_keyed_dups(it, key, keep_first=keep_first))
 
@@ -182,7 +182,7 @@ def iter_dups(
     it: Iterable[V], 
     /, 
     key: None = None, 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> Iterator[V]:
     ...
 @overload
@@ -190,7 +190,7 @@ def iter_dups(
     it: Iterable[tuple[K, V]], 
     /, 
     key: Literal[True] = True, 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> Iterator[V]:
     ...
 @overload
@@ -198,14 +198,14 @@ def iter_dups(
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> Iterator[V]:
     ...
 def iter_dups(
     it: Iterable, 
     /, 
     key: None | Literal[True] | Callable = None, 
-    keep_first: bool | Callable[..., SupportsLT] = True, 
+    keep_first: None | bool | Callable[..., SupportsLT] = True, 
 ) -> Iterator:
     items: Iterable[tuple[Any, Any]]
     if key is None:
@@ -214,8 +214,21 @@ def iter_dups(
         items = it
     else:
         items = ((key(e), e) for e in it)
-    if keep_first is True:
+    if keep_first is None:
         s: set = set()
+        cached: dict = {}
+        add = s.add
+        for k, v in items:
+            if k in s:
+                yield v
+            elif k in cached:
+                yield cached.pop(k)
+                yield v
+                add(k)
+            else:
+                cached[k] = v
+    elif keep_first is True:
+        s = set()
         add = s.add
         for k, v in items:
             if k in s:
@@ -247,7 +260,7 @@ def iter_keyed_dups(
     it: Iterable[V], 
     /, 
     key: None = None, 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> Iterator[tuple[Any, V]]:
     ...
 @overload
@@ -255,7 +268,7 @@ def iter_keyed_dups(
     it: Iterable[tuple[K, V]], 
     /, 
     key: Literal[True] = True, 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> Iterator[tuple[Any, V]]:
     ...
 @overload
@@ -263,14 +276,14 @@ def iter_keyed_dups(
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
-    keep_first: bool | Callable[[V], SupportsLT] = True, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = True, 
 ) -> Iterator[tuple[Any, V]]:
     ...
 def iter_keyed_dups(
     it: Iterable, 
     /, 
     key: None | Literal[True] | Callable = None, 
-    keep_first: bool | Callable[..., SupportsLT] = True, 
+    keep_first: None | bool | Callable[..., SupportsLT] = True, 
 ) -> Iterator:
     items: Iterable[tuple[Any, Any]]
     if key is None:
@@ -279,8 +292,21 @@ def iter_keyed_dups(
         items = it
     else:
         items = ((key(e), e) for e in it)
-    if keep_first is True:
+    if keep_first is None:
         s: set = set()
+        cached: dict = {}
+        add = s.add
+        for k, v in items:
+            if k in s:
+                yield k, v
+            elif k in cached:
+                yield k, cached.pop(k)
+                yield k, v
+                add(k)
+            else:
+                cached[k] = v
+    elif keep_first is True:
+        s = set()
         add = s.add
         for k, v in items:
             if k in s:
