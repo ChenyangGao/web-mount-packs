@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "python-function"
-version = "0.0.1"
-description = "Python another functools."
+version = "0.0.2"
+description = "Python yet another functools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"

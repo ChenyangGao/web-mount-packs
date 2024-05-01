@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-partial"
-version = "0.0.3.1"
-description = "Python partial types."
+version = "0.0.4"
+description = "Python partial."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-partial"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-partial"
-keywords = ["file", "reverse", "iter"]
+keywords = ["partial", "currying", "placeholder"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",

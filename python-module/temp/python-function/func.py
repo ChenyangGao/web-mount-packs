@@ -9,28 +9,8 @@ __all__ = []
 from function import reduce
 
 
-def call(f, x, /):
-    return f(x)
-
-
-def callby(x, f, /):
-    return f(x)
-
-
-def call_if(f, x, /, predicate=bool):
-    return f(x) if predicate(x) else x
-
-
-def call_if_possible(f, x, /):
-    return f(x) if callable(f) else x
-
-
 def call_each(x, /, *fs):
     return (f(x) for f in fs)
-
-
-def f_swap(f, /):
-    return lambda y, x, /: f(x, y)
 
 
 def f_inverse(f, /):
@@ -123,27 +103,4 @@ def f_insert_place(f, *index_arg_pairs, out_of_index_range="raise"):
             yield from args[last_idx:]
     return lambda *args, **kwds: f(*merge_args(args), **kwds)
 
-
-def f_and(f, g):
-    return lambda *args, **kwds: f(*args, **kwds) and g(*args, **kwds)
-
-
-def f_all(*fs):
-    return lambda *args, **kwds: all(f(*args, **kwds) for f in fs)
-
-
-def f_or(f, g):
-    return lambda *args, **kwds: f(*args, **kwds) or g(*args, **kwds)
-
-
-def f_any(*fs):
-    return lambda *args, **kwds: any(f(*args, **kwds) for f in fs)
-
-
-def f_not(f):
-    return lambda *args, **kwds: not f(*args, **kwds)
-
-
-def chain(f, *fs):
-    return lambda *args, **kwds: reduce(callby, fs, f(*args, **kwds))
 

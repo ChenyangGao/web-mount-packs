@@ -1,4 +1,4 @@
-# Python partial types.
+# Python partial.
 
 ## Installation
 
@@ -11,5 +11,6 @@ pip install -U python-partial
 ## Usage
 
 ```python
-from partial import ppartial
+from partial import ppartial, currying
 ```
+

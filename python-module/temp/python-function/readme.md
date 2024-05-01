@@ -1,4 +1,4 @@
-# Python another functools.
+# Python yet another functools.
 
 ## Installation
 

@@ -2,43 +2,38 @@
 # coding: utf-8
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["partial", "ppartial", "skippartial"]
+__all__ = ["partial", "ppartial", "currying"]
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cached_property, partial, update_wrapper
-from inspect import signature, BoundArguments, Signature
-from itertools import chain
+from inspect import _empty, signature, BoundArguments, Signature
+from itertools import chain, repeat
 
-from undefined import undefined
 from .placeholder import _
-
-
-def _exist_placeholder(args: Iterable) -> bool:
-    return any(a is _ or a is undefined for a in args)
 
 
 class ppartial(partial):
 
-    def __new__(cls, func: Callable, /, *args, **kwargs):
+    def __new__(cls, func: Callable, /, *args, **kwds):
         if isinstance(func, partial):
             args = func.args + args
-            kwargs = {**func.keywords, **kwargs}
+            kwds = {**func.keywords, **kwds}
             func = func.func
-        return update_wrapper(super().__new__(cls, func, *args, **kwargs), func)
+        return update_wrapper(super().__new__(cls, func, *args, **kwds), func)
 
     def __call__(self, /, *args, **kwargs):
-        args_, kwargs_ = self.args, self.keywords
+        func, args0, kwargs0 = self.func, self.args, self.keywords
 
-        if _exist_placeholder(args_):
+        if any(a == _ for a in args0):
             args_it = iter(args)
-            pargs = (*(next(args_it, _) if v is _ or v is undefined else v for v in args_), *args_it)
+            pargs = (*(next(args_it, _) if v == _ else v for v in args0), *args_it)
         else:
-            pargs = args_ + args
-        kargs = {**kwargs_, **kwargs}
+            pargs = args0 + args
+        kargs = {**kwargs0, **kwargs}
 
-        if _exist_placeholder(pargs) or _exist_placeholder(kargs.values()):
-            return type(self)(self.func, *pargs, **kargs)
-        return self.func(*pargs, **kargs)
+        if any(a == _ for a in chain(pargs, kargs.values())):
+            return type(self)(func, *pargs, **kargs)
+        return func(*pargs, **kargs)
 
     @cached_property
     def __signature__(self, /) -> Signature:
@@ -60,102 +55,60 @@ class ppartial(partial):
         return bound_args
 
     @classmethod
-    def wrap(cls, func: Callable, /) -> Callable:
-        def wrapper(*args, **kwargs):
-            if _exist_placeholder(args) or _exist_placeholder(kwargs.values()):
-                return cls(func, *args, **kwargs)
-            return func(*args, **kwargs)
-        return update_wrapper(wrapper, func)
+    def skip(cls, func: Callable, /, skip: int = 0, skip_keys=()):
+        return cls(func, *repeat(_, skip), **dict(zip(skip_keys, repeat(_))))
 
-
-class skippartial(partial):
-    skip: int | Sequence[int]
-
-    def __new__(
+    @classmethod
+    def wrap(
         cls, 
-        skip: int | Iterable[int], 
-        func: Callable, 
+        func: None | Callable = None, 
         /, 
-        *args, 
-        **kwargs, 
-    ):
-        if isinstance(func, partial):
-            if isinstance(func, skippartial):
-                if isinstance(func, cls):
-                    old_skip = func.skip
-                    if isinstance(old_skip, int):
-                        old_skip = range(old_skip)
-                    if isinstance(skip, int):
-                        skip = range(skip)
-                    skip = chain(old_skip, skip)
-            args = func.args + args
-            kwargs = {**func.keywords, **kwargs}
-            func = func.func
+        keyword_first: bool = False, 
+    ) -> Callable:
+        if func is None:
+            return partial(cls.wrap, keyword_first=keyword_first)
+        def coalesce(value):
+            return _ if value is _empty else value
+        sig = signature(func)
+        pargs = []
+        kargs = {}
+        for param in sig.parameters.values():
+            match param.kind:
+                case param.POSITIONAL_ONLY:
+                    pargs.append(coalesce(param.default))
+                case param.KEYWORD_ONLY:
+                    kargs[param.name] = coalesce(param.default)
+                case param.POSITIONAL_OR_KEYWORD:
+                    if param.default is _empty:
+                        if keyword_first:
+                            kargs[param.name] = _
+                        else:
+                            pargs.append(_)
+        return cls(func, *pargs, **kargs)
 
-        self = super().__new__(cls, func, *args, **kwargs)
 
-        if isinstance(skip, int):
-            if skip < 0:
-                raise ValueError(f"bad skip {skip!r}: cannot be negative")
-            self.skip = skip
-        else:
-            if isinstance(skip, range):
-                if skip.step < 0:
-                    skip = skip[::-1]
-            else:
-                skip = sorted(set(skip))
-            if not skip:
-                self.skip = 0
-            elif skip[0] < 0:
-                raise ValueError(f"bad skip {skip!r}: negative numbers are not allowed")
-            else:
-                self.skip = skip
-
-        return self
+class currying(ppartial):
 
     def __call__(self, /, *args, **kwargs):
-        skip = self.skip
-        if skip == 0:
-            return self.func(
-                *self.args, *args, 
-                **{**self.keywords, **kwargs}
-            )
-        elif isinstance(skip, int):
-            lack = skip - len(args)
-            if lack > 0:
-                raise TypeError("Cannot fully fill the skipped positions, "
-                                "lacks %s positional arguments" % lack)
-            return self.func(
-                *args[:skip], *self.args, *args[skip:], 
-                **{**self.keywords, **kwargs}
-            )
-        else:
-            lack = skip[-1] - len(args) - len(self.args) + 1
-            if lack > 0:
-                raise TypeError("Cannot fully fill the skipped positions, "
-                                "lacks %s positional arguments" % lack)
-            args_ = self.args
-            args_it = iter(args)
-            args_l: list = []
-            lp = -1
-            for i, (p, a) in enumerate(zip(skip, args_it)):
-                if p - lp > 1:
-                    if lp < 0:
-                        args_l.extend(args_[0:p])
-                    else:
-                        args_l.extend(args_[lp:p-i])
-                args_l.append(a)
-                lp = p - i
-            args_l.extend(args_[lp:])
-            args_l.extend(args_it)
-            return self.func(
-                *args_l, **{**self.keywords, **kwargs})
+        func, args0, kwargs0 = self.func, self.args, self.keywords
 
-    def __repr__(self, /):
-        args = ", ".join(chain(
-            (str(self.skip), repr(self.func)), 
-            map(repr, self.args), 
-            ("%s=%r" % item for item in self.keywords.items())
-        ))
-        return f"{type(self).__qualname__}({args})"
+        if any(a == _ for a in args0):
+            args_it = iter(args)
+            pargs = (*(next(args_it, _) if v == _ else v for v in args0), *args_it)
+        else:
+            pargs = args0 + args
+        kargs = {**kwargs0, **kwargs}
+
+        if any(a == _ for a in chain(pargs, kargs.values())):
+            return type(self)(func, *pargs, **kargs)
+        try:
+            signature(func).bind(*pargs, **kargs)
+        except TypeError as exc:
+            if (exc.args 
+                and isinstance(exc.args[0], str)
+                and exc.args[0].startswith("missing a required")
+            ):
+                return type(self)(func, *pargs, **kargs)
+            raise
+        return func(*pargs, **kargs)
 

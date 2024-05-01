@@ -8,6 +8,8 @@ __all__ = ["Placeholder", "_"]
 
 from typing import final, Never
 
+from undefined import undefined
+
 
 @final
 class Placeholder:
@@ -25,7 +27,7 @@ class Placeholder:
         raise TypeError("Subclassing is not allowed")
 
     __bool__ = staticmethod(lambda: False)
-    __eq__ = lambda self, other, /: self is other
+    __eq__ = lambda self, other, /: self is other or other is undefined
     __hash__ = staticmethod(lambda: 0) # type: ignore
     __repr__ = staticmethod(lambda: "_") # type: ignore
 

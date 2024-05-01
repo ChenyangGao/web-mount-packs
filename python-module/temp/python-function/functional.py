@@ -15,50 +15,6 @@ T = TypeVar('T')
 S = TypeVar('S')
 
 
-def as_is(x: T) -> T:
-    return x
-
-
-def is_or_eq(x: Any, y: Any) -> bool:
-    return x is y or x == y
-
-
-def f_not(f):
-    return lambda *a, **k: not(f(*a, **k))
-
-
-def f_and(f, g):
-    return lambda *a, **k: f(*a, **k) and g(*a, **k)
-
-
-def f_or(f, g):
-    return lambda *a, **k: f(*a, **k) or g(*a, **k)
-
-
-def f_all(*fs):
-    return lambda *a, **k: all(f(*a, **k) for f in fs)
-
-
-def f_any(*preds):
-    return lambda *a, **k: any(f(*a, **k) for f in fs)
-
-
-def apply(
-    f: Callable[..., T], 
-    args: tuple = (), 
-    kwargs: dict = {}, 
-) -> T:
-    return f(*args, **kwargs)
-
-
-def call(f: Callable[[T], S], x: T) -> S:
-    return f(x)
-
-
-def callby(x: T, f: Callable[[T], S]) -> S:
-    return f(x)
-
-
 def callby_if(
     x: T, 
     f: Callable[[T], T], 
