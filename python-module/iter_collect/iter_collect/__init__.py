@@ -54,27 +54,31 @@ def group(
     it: Iterable[V], 
     /, 
     key: None = None, 
-) -> dict[V, list[V]]:
+    mapping: Optional[MutableMapping[K, list[V]]] = None, 
+) -> MutableMapping[V, list[V]]:
     ...
 @overload
 def group(
     it: Iterable[tuple[K, V]], 
     /, 
     key: Literal[True] = True, 
-) -> dict[K, list[V]]:
+    mapping: Optional[MutableMapping[K, list[V]]] = None, 
+) -> MutableMapping[K, list[V]]:
     ...
 @overload
 def group(
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
-) -> dict[K, list[V]]:
+    mapping: Optional[MutableMapping[K, list[V]]] = None, 
+) -> MutableMapping[K, list[V]]:
     ...
 def group(
     it: Iterable, 
     /, 
     key: None | Literal[True] | Callable = None, 
-) -> dict[Any, list]:
+    mapping: Optional[MutableMapping[K, list[V]]] = None, 
+) -> MutableMapping[Any, list]:
     items: Iterable[tuple[Any, Any]]
     if key is None:
         items = ((e, e) for e in it)
@@ -82,7 +86,9 @@ def group(
         items = it
     else:
         items = ((key(e), e) for e in it)
-    return collect_as_mapping(items)
+    if mapping is None:
+        mapping = {}
+    return collect_as_mapping(items, mapping)
 
 
 @overload
