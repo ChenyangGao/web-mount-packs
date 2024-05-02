@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-decorator"
-version = "0.0.2"
-description = "Python argument type."
+version = "0.0.2.2"
+description = "Python decorator."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-decorator"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-decorator"
-keywords = ["file", "reverse", "iter"]
+keywords = ["decorator"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,7 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-partial = "*"
+python-partial = "^0.0.4"
 python-undefined = "*"
 
 [build-system]

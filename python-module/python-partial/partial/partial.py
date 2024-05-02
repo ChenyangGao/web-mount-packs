@@ -55,7 +55,16 @@ class ppartial(partial):
         return bound_args
 
     @classmethod
-    def skip(cls, func: Callable, /, skip: int = 0, skip_keys=()):
+    def skip(
+        cls, 
+        func: None | Callable = None, 
+        /, 
+        *, 
+        skip: int = 0, 
+        skip_keys=(), 
+    ):
+        if func is None:
+            return partial(cls.skip, skip=skip, skip_keys=skip_keys)
         return cls(func, *repeat(_, skip), **dict(zip(skip_keys, repeat(_))))
 
     @classmethod
@@ -63,10 +72,11 @@ class ppartial(partial):
         cls, 
         func: None | Callable = None, 
         /, 
-        keyword_first: bool = False, 
+        *, 
+        prefer_keyword: bool = False, 
     ) -> Callable:
         if func is None:
-            return partial(cls.wrap, keyword_first=keyword_first)
+            return partial(cls.wrap, prefer_keyword=prefer_keyword)
         def coalesce(value):
             return _ if value is _empty else value
         sig = signature(func)
@@ -80,7 +90,7 @@ class ppartial(partial):
                     kargs[param.name] = coalesce(param.default)
                 case param.POSITIONAL_OR_KEYWORD:
                     if param.default is _empty:
-                        if keyword_first:
+                        if prefer_keyword:
                             kargs[param.name] = _
                         else:
                             pargs.append(_)

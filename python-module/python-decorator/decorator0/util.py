@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["suppressed", "threaded", "timethis", "with_lock"]
+__all__ = ["callback", "suppressed", "threaded", "timethis", "with_cm", "with_lock"]
 
 from _thread import start_new_thread
 from asyncio import Lock as AsyncLock
@@ -10,9 +10,46 @@ from concurrent.futures import Future
 from inspect import isawaitable, iscoroutinefunction
 from threading import Lock
 from time import perf_counter
+from typing import ContextManager, AsyncContextManager
 
 from undefined import undefined
 from . import decorated, optional
+
+
+async def callasync(func, /, *args, **kwds):
+    r = func(*args, **kwds)
+    if isawaitable(r):
+        r = await r
+    return r
+
+
+@optional
+def callback(func, /, callok=None, callfail=None):
+    good_callok = callable(callok)
+    good_callfail = callable(callfail)
+    if not (good_callok or good_callfail):
+        return func
+    if iscoroutinefunction(func):
+        async def wrapper(*args, **kwds):
+            try:
+                r = await func(*args, **kwds)
+            except BaseException as e:
+                good_callfail and callasync(callfail, e)
+                raise
+            else:
+                good_callok and callasync(callok, r)
+                return r
+    else:
+        def wrapper(*args, **kwds):
+            try:
+                r = func(*args, **kwds)
+            except BaseException as e:
+                good_callfail and callfail(e)
+                raise
+            else:
+                good_callok and callok(r)
+                return r
+    return wrapper
 
 
 @optional
@@ -61,9 +98,7 @@ def timethis(func, /, output=lambda t: print(f"cost time: {t} s")):
         async def wrapper(*args, **kwds):
             start = perf_counter()
             result = await func(*args, **kwds)
-            resp = output(perf_counter() - start)
-            if isawaitable(resp):
-                await resp
+            callasync(output, perf_counter() - start)
             return result
     else:
         def wrapper(*args, **kwds):
@@ -71,6 +106,33 @@ def timethis(func, /, output=lambda t: print(f"cost time: {t} s")):
             result = func(*args, **kwds)
             output(perf_counter() - start)
             return result
+    return wrapper
+
+
+@optional
+def with_cm(func, /, cm=None):
+    if cm is None:
+        return func
+    if iscoroutinefunction(func):
+        async def wrapper(*args, **kwds):
+            if isinstance(cm, (ContextManager, AsyncContextManager)):
+                ctx = cm
+            else:
+                ctx = cm(*args, **kwds)
+            if isinstance(ctx, AsyncContextManager):
+                async with ctx:
+                    return await func(*args, **kwds)
+            else:
+                with ctx:
+                    return await func(*args, **kwds)
+    else:
+        def wrapper(*args, **kwds):
+            if isinstance(cm, ContextManager):
+                ctx = cm
+            else:
+                ctx = cm(*args, **kwds)
+            with ctx:
+                return func(*args, **kwds)
     return wrapper
 
 
@@ -85,7 +147,7 @@ def with_lock(func, /, lock=None):
     else:
         if lock is None:
             lock = Lock()
-        async def wrapper(*args, **kwds):
+        def wrapper(*args, **kwds):
             with lock:
                 return func(*args, **kwds)
     return wrapper

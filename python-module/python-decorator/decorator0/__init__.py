@@ -10,7 +10,7 @@ __version__ = (0, 0, 2)
 __all__ = ["decorated", "optional", "optional_args", "currying", "partialize"]
 
 from collections.abc import Callable
-from functools import partial, reduce, update_wrapper
+from functools import partial, reduce, update_wrapper as _update_wrapper
 from inspect import signature
 from typing import cast, overload, Any, Concatenate, Optional, ParamSpec, TypeVar
 
@@ -21,6 +21,13 @@ from undefined import undefined
 Args = ParamSpec("Args")
 Args0 = ParamSpec("Args0")
 R = TypeVar("R")
+
+
+def update_wrapper(f, g, /, *args, **kwds):
+    if f is g:
+        return f
+    else:
+        return _update_wrapper(f, g, *args, **kwds)
 
 
 def decorated(
