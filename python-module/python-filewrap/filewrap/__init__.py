@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+# encoding: utf-8
+
+__author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 3)
+__all__ = [
+    "SupportsRead", "SupportsWrite", "bio_chunk_iter", "bio_chunk_async_iter", 
+    "bio_skip_iter", "bio_skip_async_iter", "bio_skip_bytes", "bio_skip_bytes_async", 
+    "bytes_iter_to_reader", "bytes_iter_to_reader_async", 
+]
+
+from asyncio import to_thread
+from collections.abc import Awaitable, AsyncIterable, Iterable
+from functools import update_wrapper
+from inspect import isawaitable, iscoroutinefunction
+from collections.abc import AsyncIterator, Callable, Iterator
+from shutil import COPY_BUFSIZE # type: ignore
+from typing import Any, Protocol, TypeVar
+
+
+_T_co = TypeVar("_T_co", covariant=True)
+_T_contra = TypeVar("_T_contra", contravariant=True)
+
+
+class SupportsRead(Protocol[_T_co]):
+    def read(self, __length: int = ...) -> _T_co: ...
+
+
+class SupportsWrite(Protocol[_T_contra]):
+    def write(self, __s: _T_contra) -> object: ...
+
+
+def ensure_async(func, /):
+    if iscoroutinefunction(func):
+        return func
+    async def wrapper(*args, **kwds):
+        ret = to_thread(func, *args, **kwds)
+        if isawaitable(ret):
+            ret = await ret
+        return ret
+    return update_wrapper(wrapper, func)
+
+
+def bio_chunk_iter(
+    bio: SupportsRead[bytes] | Callable[[int], bytes], 
+    /, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: None | Callable[[int], Any] = None, 
+) -> Iterator[bytes]:
+    if callable(bio):
+        read = bio
+    else:
+        read = bio.read
+    if not callable(callback):
+        callback = None
+    if size > 0:
+        while size:
+            readsize = min(chunksize, size)
+            chunk = read(readsize)
+            length = len(chunk)
+            if callback:
+                callback(length)
+            yield chunk
+            if length < readsize:
+                break
+            size -= readsize
+    elif size < 0:
+        while (chunk := read(chunksize)):
+            if callback:
+                callback(len(chunk))
+            yield chunk
+
+
+async def bio_chunk_async_iter(
+    bio: SupportsRead[bytes] | Callable[[int], bytes | Awaitable[bytes]], 
+    /, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: None | Callable[[int], Any] = None, 
+) -> AsyncIterator[bytes]:
+    if callable(bio):
+        read = ensure_async(bio)
+    else:
+        read = ensure_async(bio.read)
+    callback = ensure_async(callback) if callable(callback) else None
+    if size > 0:
+        while size:
+            readsize = min(chunksize, size)
+            chunk = await read(readsize)
+            length = len(chunk)
+            if callback:
+                await callback(length)
+            yield chunk
+            if length < readsize:
+                break
+            size -= readsize
+    elif size < 0:
+        while (chunk := (await read(chunksize))):
+            if callback:
+                await callback(len(chunk))
+            yield chunk
+
+
+def bio_skip_iter(
+    bio: SupportsRead[bytes] | Callable[[int], bytes], 
+    /, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: None | Callable[[int], Any] = None, 
+) -> Iterator[int]:
+    if size == 0:
+        return
+    if not callable(callback):
+        callback = None
+    try:
+        seek = getattr(bio, "seek")
+        curpos = seek(0, 1)
+        if size > 0:
+            length = seek(size, 1) - curpos
+        else:
+            length = seek(0, 2) - curpos
+    except Exception:
+        if chunksize <= 0:
+            chunksize = COPY_BUFSIZE
+        if callable(bio):
+            read = bio
+        elif hasattr(bio, "readinto"):
+            readinto = bio.readinto
+            buf = bytearray(chunksize)
+            if size > 0:
+                while size >= chunksize:
+                    length = readinto(buf)
+                    if callback:
+                        callback(length)
+                    yield length
+                    if length < chunksize:
+                        break
+                    size -= chunksize
+                else:
+                    if size:
+                        del buf[size:]
+                        length = readinto(buf)
+                        if callback:
+                            callback(length)
+                        yield length
+            else:
+                while (length := readinto(buf)):
+                    if callback:
+                        callback(length)
+                    yield length
+            return
+        else:
+            read = bio.read
+        if size > 0:
+            while size:
+                readsize = min(chunksize, size)
+                length = len(read(readsize))
+                if callback:
+                    callback(length)
+                yield length
+                if length < readsize:
+                    break
+                size -= readsize
+        else:
+            while (length := len(read(chunksize))):
+                if callback:
+                    callback(length)
+                yield length
+    else:
+        if callback:
+            callback(length)
+        yield length
+
+
+async def bio_skip_async_iter(
+    bio: SupportsRead[bytes] | Callable[[int], bytes | Awaitable[bytes]], 
+    /, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: None | Callable[[int], Any] = None, 
+) -> AsyncIterator[int]:
+    if size == 0:
+        return
+    callback = ensure_async(callback) if callable(callback) else None
+    try:
+        seek = ensure_async(getattr(bio, "seek"))
+        curpos = await seek(0, 1)
+        if size > 0:
+            length = (await seek(size, 1)) - curpos
+        else:
+            length = (await seek(0, 2)) - curpos
+    except Exception:
+        if chunksize <= 0:
+            chunksize = COPY_BUFSIZE
+        if callable(bio):
+            read = ensure_async(bio)
+        elif hasattr(bio, "readinto"):
+            readinto = ensure_async(bio.readinto)
+            buf = bytearray(chunksize)
+            if size > 0:
+                while size >= chunksize:
+                    length = await readinto(buf)
+                    if callback:
+                        await callback(length)
+                    yield length
+                    if length < chunksize:
+                        break
+                    size -= chunksize
+                else:
+                    if size:
+                        del buf[size:]
+                        length = await readinto(buf)
+                        if callback:
+                            await callback(length)
+                        yield length
+            else:
+                while (length := (await readinto(buf))):
+                    if callback:
+                        await callback(length)
+                    yield length
+        else:
+            read = ensure_async(bio.read)
+        if size > 0:
+            while size:
+                readsize = min(chunksize, size)
+                length = len(await read(readsize))
+                if callback:
+                    await callback(length)
+                yield length
+                if length < readsize:
+                    break
+                size -= readsize
+        else:
+            while (length := len(await read(chunksize))):
+                if callback:
+                    await callback(length)
+                yield length
+    else:
+        if callback:
+            await callback(length)
+        yield length
+
+
+def bio_skip_bytes(
+    bio: SupportsRead[bytes] | Callable[[int], bytes], 
+    /, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: None | Callable[[int], Any] = None, 
+):
+    for _ in bio_skip_iter(bio, size, chunksize, callback=callback):
+        pass
+
+
+async def bio_skip_bytes_async(
+    bio: SupportsRead[bytes] | Callable[[int], bytes | Awaitable[bytes]], 
+    /, 
+    size: int = -1, 
+    chunksize: int = COPY_BUFSIZE, 
+    callback: None | Callable[[int], Any] = None, 
+):
+    async for _ in bio_skip_async_iter(bio, size, chunksize, callback=callback):
+        pass
+
+
+def bytes_iter_to_reader(it: Iterable[bytes | bytearray], /) -> SupportsRead[bytes]:
+    get_next = iter(it).__next__
+    at_eof = False
+    unconsumed: bytearray = bytearray(b"")
+    def read(n=-1):
+        nonlocal at_eof, unconsumed
+        if at_eof or n == 0:
+            return b""
+        try:
+            if n < 0:
+                while True:
+                    unconsumed += get_next()
+            else:
+                while n > len(unconsumed):
+                    unconsumed += get_next()
+                b, unconsumed = unconsumed[:n], unconsumed[n:]
+                return bytes(b)
+        except StopIteration:
+            at_eof = True
+            return bytes(unconsumed)
+    reprs = f"<reader for {it!r}>"
+    return type("reader", (), {"read": staticmethod(read), "__repr__": staticmethod(lambda: reprs)})()
+
+
+def bytes_iter_to_reader_async(it: Iterable[bytes | bytearray] | AsyncIterable[bytes | bytearray], /) -> SupportsRead[bytes]:
+    if isinstance(it, AsyncIterable):
+        get_next = aiter(it).__anext__
+    else:
+        sync_next = iter(it).__next__
+        get_next = lambda: to_thread(sync_next)
+    at_eof = False
+    unconsumed: bytearray = bytearray(b"")
+    async def read(n=-1):
+        nonlocal at_eof, unconsumed
+        if at_eof or n == 0:
+            return b""
+        try:
+            if n < 0:
+                while True:
+                    unconsumed += await get_next()
+            else:
+                while n > len(unconsumed):
+                    unconsumed += await get_next()
+                b, unconsumed = unconsumed[:n], unconsumed[n:]
+                return bytes(b)
+        except StopIteration:
+            at_eof = True
+            return bytes(unconsumed)
+    reprs = f"<reader for {it!r}>"
+    return type("reader", (), {"read": staticmethod(read), "__repr__": staticmethod(lambda: reprs)})()
+

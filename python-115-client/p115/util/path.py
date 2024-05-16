@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+# TODO 改名为 patht，作为公共模块使用
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "escape", "unescape", "joins", "splits", "normpath", "normpatht", 
@@ -180,8 +182,5 @@ def commonpatht(pathtit: Iterable[Sequence[str]], /) -> list[str]:
 # TODO
 # commonprefix
 # splitext
-# samefile
-# sameopenfile
-# samestat
-# stat
-# 另外参考 posixpath
+# relpath
+# 主要参考 posixpath，实现一些必要的接口

@@ -30,7 +30,10 @@ def get_filename(response, /, default: str = "") -> str:
         elif filename.startswith(" "):
             filename = filename[1:]
         return unquote(filename)
-    urlp = urlsplit(response.url)
+    url = response.url
+    if not isinstance(url, (bytearray, bytes, str)):
+        url = str(url)
+    urlp = urlsplit(url)
     filename = basename(unquote(urlp.path)) or default
     if filename:
         if guess_type(filename)[0]:

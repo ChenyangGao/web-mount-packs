@@ -127,14 +127,21 @@ class AlistClient:
     username: str
     password: str
 
-    def __init__(self, /, origin: str = "http://localhost:5244", username: str = "", password: str = ""):
+    def __init__(
+        self, 
+        /, 
+        origin: str = "http://localhost:5244", 
+        username: str = "", 
+        password: str = "", 
+        otp_code: int | str = "", 
+    ):
         self.__dict__.update(
             origin=complete_base_url(origin), 
             username=username, 
             password=password, 
         )
         if username:
-            self.login()
+            self.login(otp_code=otp_code)
 
     def __del__(self, /):
         self.close()
@@ -268,6 +275,7 @@ class AlistClient:
         /, 
         username: str = "", 
         password: str = "", 
+        otp_code: int | str = "", 
         **request_kwargs, 
     ):
         ns = self.__dict__
@@ -282,7 +290,7 @@ class AlistClient:
         if username:
             request_kwargs["async_"] = False
             resp = self.auth_login(
-                {"username": username, "password": password}, 
+                {"username": username, "password": password, "otp_code": otp_code}, 
                 **request_kwargs, 
             )
             if not 200 <= resp["code"] < 300:

@@ -12,7 +12,7 @@ from alist import AlistClient
 def alist_update_115_cookie(
     client: AlistClient, 
     cookie: str, 
-    only_not_work: bool = True, 
+    only_not_work: bool = False, 
 ):
     """更新 alist 中有关 115 的存储的 cookie
     """

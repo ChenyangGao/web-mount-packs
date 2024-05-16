@@ -40,6 +40,7 @@ def login_scan_cookie(
     return "; ".join(f"{k}={v}" for k, v in data["data"]["cookie"].items())
 
 
+# TODO: 多线程下载图片，以加速破解
 def crack_captcha(
     client: str | P115Client, 
     sample_count: int = 16, 
@@ -69,14 +70,14 @@ def crack_captcha(
             except ImportError:
                 from subprocess import run
                 from sys import executable
-                run([executable, "-m", "pip", "install", "-U", "ddddocr"], check=True)
+                run([executable, "-m", "pip", "install", "-U", "ddddocr==1.4.11"], check=True)
                 from ddddocr import DdddOcr # type: ignore
             crack = CAPTCHA_CRACK = cast(Callable[[bytes], str], DdddOcr(show_ad=False).classification)
     if isinstance(client, str):
         client = P115Client(client)
     while True:
         captcha = crack(client.captcha_code())
-        if len(captcha) == 4:
+        if len(captcha) == 4 and all("\u4E00" <= char <= "\u9FFF" for char in captcha):
             break
     l: list[str] = []
     for i in range(10):
@@ -84,7 +85,7 @@ def crack_captcha(
         for _ in range(sample_count):
             while True:
                 char = crack(client.captcha_single(i))
-                if len(char) == 1:
+                if len(char) == 1 and "\u4E00" <= char <= "\u9FFF":
                     break
             try:
                 d[char] += 1

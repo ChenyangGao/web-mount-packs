@@ -7,7 +7,7 @@ license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-property"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-property"
-keywords = ["file", "reverse", "iter"]
+keywords = ["property"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",

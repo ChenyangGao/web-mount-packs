@@ -91,6 +91,7 @@ P115PathType = TypeVar("P115PathType", bound="P115PathBase")
 
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
+# TODO 这个所依赖的模块放到 component 里
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 
@@ -98,6 +99,7 @@ if not hasattr(Response, "__del__"):
     Response.__del__ = Response.close # type: ignore
 
 
+# TODO 这个函数放到公用函数里面
 def check_response(fn: RequestVarT, /) -> RequestVarT:
     def check(resp: dict):
         if resp.get("state"):
@@ -536,9 +538,9 @@ class P115Client:
         **request_kwargs, 
     ) -> dict:
         """检查当前用户的登录状态
-        GET http://passportapi.115.com/app/1.0/web/1.0/check/sso/
+        GET https://passportapi.115.com/app/1.0/web/1.0/check/sso
         """
-        api = "http://passportapi.115.com/app/1.0/web/1.0/check/sso/"
+        api = "https://passportapi.115.com/app/1.0/web/1.0/check/sso"
         return self.request(api, async_=async_, **request_kwargs)
 
     def login_devices(
@@ -2814,6 +2816,7 @@ class P115Client:
 
     # TODO: 以后或许可以接受使用 httpx 进行同步和异步请求
     # TODO: 支持读取 aiofiles 打开的文件
+    # TODO 允许接受任何可读对象和可迭代对象
     @overload
     def upload_file_sample(
         self, 
@@ -7540,139 +7543,6 @@ class P115ZipPath(P115PathBase):
     path: str
 
 
-class ExportDirStatus(Future):
-    _condition: Condition
-    _state: str
-
-    def __init__(self, /, client: P115Client, export_id: int | str):
-        super().__init__()
-        self.status = 0
-        self.set_running_or_notify_cancel()
-        self._run_check(client, export_id)
-
-    def __bool__(self, /) -> bool:
-        return self.status == 1
-
-    def __del__(self, /):
-        self.stop()
-
-    def stop(self, /):
-        with self._condition:
-            if self._state in ["RUNNING", "PENDING"]:
-                self._state = "CANCELLED"
-                self.set_exception(OSError(errno.ECANCELED, "canceled"))
-
-    def _run_check(self, client, export_id: int | str, /):
-        check = check_response(client.fs_export_dir_status)
-        payload = {"export_id": export_id}
-        def update_progress():
-            while self.running():
-                try:
-                    data = check(payload)["data"]
-                    if data:
-                        self.status = 1
-                        self.set_result(data)
-                        return
-                except BaseException as e:
-                    self.set_exception(e)
-                    return
-                sleep(1)
-        Thread(target=update_progress).start()
-
-
-class PushExtractProgress(Future):
-    _condition: Condition
-    _state: str
-
-    def __init__(self, /, client: P115Client, pickcode: str):
-        super().__init__()
-        self.progress = 0
-        self.set_running_or_notify_cancel()
-        self._run_check(client, pickcode)
-
-    def __del__(self, /):
-        self.stop()
-
-    def __bool__(self, /) -> bool:
-        return self.progress == 100
-
-    def stop(self, /):
-        with self._condition:
-            if self._state in ["RUNNING", "PENDING"]:
-                self._state = "CANCELLED"
-                self.set_exception(OSError(errno.ECANCELED, "canceled"))
-
-    def _run_check(self, client, pickcode: str, /):
-        check = check_response(client.extract_push_progress)
-        payload = {"pick_code": pickcode}
-        def update_progress():
-            while self.running():
-                try:
-                    data = check(payload)["data"]
-                    extract_status = data["extract_status"]
-                    progress = extract_status["progress"]
-                    if progress == 100:
-                        self.set_result(data)
-                        return
-                    match extract_status["unzip_status"]:
-                        case 1 | 2 | 4:
-                            self.progress = progress
-                        case 0:
-                            raise OSError(errno.EIO, f"bad file format: {data!r}")
-                        case 6:
-                            raise OSError(errno.EINVAL, f"wrong password/secret: {data!r}")
-                        case _:
-                            raise OSError(errno.EIO, f"undefined error: {data!r}")
-                except BaseException as e:
-                    self.set_exception(e)
-                    return
-                sleep(1)
-        Thread(target=update_progress).start()
-
-
-class ExtractProgress(Future):
-    _condition: Condition
-    _state: str
-
-    def __init__(self, /, client: P115Client, extract_id: int | str):
-        super().__init__()
-        self.progress = 0
-        self.set_running_or_notify_cancel()
-        self._run_check(client, extract_id)
-
-    def __del__(self, /):
-        self.stop()
-
-    def __bool__(self, /) -> bool:
-        return self.progress == 100
-
-    def stop(self, /):
-        with self._condition:
-            if self._state in ["RUNNING", "PENDING"]:
-                self._state = "CANCELLED"
-                self.set_exception(OSError(errno.ECANCELED, "canceled"))
-
-    def _run_check(self, client, extract_id: int | str, /):
-        check = check_response(client.extract_progress)
-        payload = {"extract_id": extract_id}
-        def update_progress():
-            while self.running():
-                try:
-                    data = check(payload)["data"]
-                    if not data:
-                        raise OSError(errno.EINVAL, f"no such extract_id: {extract_id}")
-                    progress = data["percent"]
-                    self.progress = progress
-                    if progress == 100:
-                        self.set_result(data)
-                        return
-                except BaseException as e:
-                    self.set_exception(e)
-                    return
-                sleep(1)
-        Thread(target=update_progress).start()
-
-
 # TODO: 参考 zipfile 模块的接口设计 namelist、filelist 等属性，以及其它的和 zipfile 兼容的接口
 # TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
 class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
@@ -8009,6 +7879,7 @@ class P115Offline:
         payload.update(self.sign_time)
         return check_response(self.client.offline_add_torrent(payload))
 
+    # TOOD: 使用 enum
     def clear(self, /, flag: int = 1) -> dict:
         """清空离线任务列表
 
@@ -8471,4 +8342,6 @@ class P115LabelList:
 # TODO 115中多个文件可以在同一目录下同名，如何处理
 # TODO 提供一个新的上传函数，上传如果失败，因为名字问题，则尝试用uuid名字，上传成功后，再进行改名，如果成功，删除原来的文件，不成功，则删掉上传的文件（如果上传成功了的话）
 # TODO 如果压缩包尚未解压，则使用 zipfile 之类的模块，去模拟文件系统
+# TODO 这个模块实在有些巨大，应该拆分一下
+# TODO util 包尽量移除掉，以后就通过多个公共包进行合辑
 

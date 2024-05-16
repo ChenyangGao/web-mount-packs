@@ -4,9 +4,9 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __doc__ = "(torrent) file to (magnet) link"
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawTextHelpFormatter
 
-parser = ArgumentParser(description=__doc__)
+parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 parser.add_argument("paths", nargs="*", metavar="path", help="paths to torrent files, use stdin as default")
 parser.add_argument("-i", "--ignore-suffix", action="store_true", help="regardless of the suffix (extension), otherwise only files with the .torrent suffix will be processed")
 parser.add_argument("-f", "--full", action="store_true", help="more detailed query string")

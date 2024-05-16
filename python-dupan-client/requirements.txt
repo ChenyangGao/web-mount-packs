@@ -1,4 +1,4 @@
-ddddocr
+ddddocr==1.4.11
 lxml
 qrcode
 requests

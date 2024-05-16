@@ -2,6 +2,7 @@ aiohttp
 cachetools
 ecdsa
 lz4
+multidict
 pycryptodome
 qrcode
 requests
