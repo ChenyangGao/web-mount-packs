@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "integer_tool"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python functions for integer."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/integer_tool"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/integer_tool"
-keywords = ["file", "reverse", "iter"]
+keywords = ["integer"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",

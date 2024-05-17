@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-iterutils"
-version = "0.0.2.2"
-description = "Python another itertools."
+name = "python-asynctools"
+version = "0.0.3.1"
+description = "Python asynchronous tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-keywords = ["iterable", "iterutils"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-asynctools"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-asynctools"
+keywords = ["asynchronous", "tools"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,11 +27,12 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-asynctools = "*"
+python-decotools = "*"
+python-undefined = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterutils"
+include = "asynctools"

@@ -11,7 +11,9 @@ import errno
 from asyncio import to_thread
 from base64 import b64encode
 from binascii import b2a_hex
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence, 
+)
 from concurrent.futures import Future
 from datetime import date, datetime
 from email.utils import formatdate
@@ -37,13 +39,15 @@ from xml.etree.ElementTree import fromstring
 
 from cookietools import cookies_str_to_dict, create_cookie
 from filewrap import (
-    bio_chunk_iter, bio_chunk_async_iter, bio_skip_bytes, bio_skip_bytes_async, 
-    bytes_iter_to_reader, SupportsRead, 
+    bio_chunk_iter, bio_chunk_async_iter, bio_skip_iter, bio_skip_async_iter, 
+    bytes_iter_to_async_reader, bytes_iter_to_reader_async, SupportsRead
 )
+from http_request import encode_multipart_data, encode_multipart_data_async
 from http_response import get_content_length, get_filename, is_range_request
 from httpfile import RequestsFileReader # TODO: use urllib3 instead
 from httpx import AsyncClient, Client, Cookies, TimeoutException
 from httpx_request import request
+from iterutils import foreach, async_foreach
 from multidict import CIMultiDict
 from qrcode import QRCode
 from startfile import startfile, startfile_async
@@ -2500,7 +2504,13 @@ class P115Client:
                     "x-oss-callback-var": to_base64(callback["callback_var"]), 
                 }
                 # TODO: 应该可以支持同步或异步的文件、同步或异步的迭代器，而不需要由我来进行分块（参考 aiohttp）
-                request_kwargs["data"] = bio_chunk_async_iter(file, 1 << 16)
+                if isinstance(file, (bytes, bytearray, memoryview)):
+                    file = bytes(file)
+                elif hasattr(file, "read"):
+                    request_kwargs["data"] = bio_chunk_async_iter(file, chunksize = 1 << 16)
+                else:
+                    file = ensure_aiter(file)
+                request_kwargs["data"] = file
                 return await self._oss_upload_request(
                     bucket_name, 
                     key, 
@@ -2517,6 +2527,10 @@ class P115Client:
                 "x-oss-callback": to_base64(callback["callback"]), 
                 "x-oss-callback-var": to_base64(callback["callback_var"]), 
             }
+            if isinstance(file, (bytes, bytearray, memoryview)):
+                file = bytes(file)
+            elif hasattr(file, "read"):
+                file = bio_chunk_iter(file, chunksize = 1 << 16)
             request_kwargs["data"] = file
             return self._oss_upload_request(
                 bucket_name, 
@@ -2563,7 +2577,7 @@ class P115Client:
                             if isawaitable(ret):
                                 await ret
                         except (AttributeError, TypeError, UnsupportedOperation):
-                            await bio_skip_bytes_async(file, skipsize)
+                            await async_foreach(bio_skip_async_iter(file, skipsize))
                 else:
                     upload_id = await self._oss_multipart_upload_init(
                         bucket_name, key, url, token, **request_kwargs)
@@ -2601,7 +2615,7 @@ class P115Client:
                     try:
                         file.seek(skipsize) # type: ignore
                     except (AttributeError, TypeError, UnsupportedOperation):
-                        bio_skip_bytes(file, skipsize)
+                        foreach(bio_skip_iter(file, skipsize))
             else:
                 upload_id = self._oss_multipart_upload_init(
                     bucket_name, key, url, token, **request_kwargs)
@@ -2666,7 +2680,7 @@ class P115Client:
         request_kwargs.pop("parse", None)
         return request(api, **request_kwargs)
 
-    def upload_sample_init(
+    def upload_file_sample_init(
         self, 
         /, 
         filename: str, 
@@ -2684,7 +2698,7 @@ class P115Client:
     def upload_file_sample(
         self, 
         /, 
-        file, 
+        file: bytes | bytearray | memoryview | str | PathLike | SupportsRead[bytes] | Iterable[bytes] | AsyncIterable[bytes], 
         filename: Optional[str] = None, 
         pid: int = 0, 
         **request_kwargs, 
@@ -2692,14 +2706,19 @@ class P115Client:
         """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
         """
         async_ = request_kwargs.get("async_", False)
+        file_will_open: None | tuple[str, Any] = None
         if isinstance(file, (bytes, bytearray, memoryview)):
-            file = bytes(file)
+            pass
         elif isinstance(file, (str, PathLike)):
             if not filename:
                 filename = ospath.basename(fsdecode(file))
-            # TODO: 异步模式下，文件用 aiofiles 打开
-            file = open(file, "rb")
+            if async_:
+                file_will_open = ("path", file)
+            else:
+                file = open(file, "rb")
         elif hasattr(file, "read"):
+            if not async_ and iscoroutinefunction(file.read):
+                async_ = request_kwargs["async_"] = True
             if not filename:
                 try:
                     filename = ospath.basename(fsdecode(file.name))
@@ -2710,19 +2729,24 @@ class P115Client:
                 url = str(file)
             else:
                 url = file.geturl()
-            # TODO: 异步模式下，用 aiohttp 打开
-            file = urlopen(url)
-            if not filename:
-                filename = get_filename(file)
+            if async_:
+                file_will_open = ("url", url)
+            else:
+                file = urlopen(url)
+                if not filename:
+                    filename = get_filename(file)
+        elif isinstance(file, AsyncIterable):
+            if not async_:
+                async_ = request_kwargs["async_"] = True
         else:
             file = bytes_iter_to_reader(file)
-        if not filename:
-            filename = str(uuid4())
         if async_:
-            async def async_request():
-                resp = await self.upload_sample_init(filename, pid, **request_kwargs)
+            async def do_request(file, filename):
+                if not filename:
+                    filename = str(uuid4())
+                resp = await self.upload_file_sample_init(filename, pid, **request_kwargs)
                 api = resp["host"]
-                request_kwargs["data"] = {
+                data = {
                     "name": filename, 
                     "key": resp["object"], 
                     "policy": resp["policy"], 
@@ -2731,14 +2755,41 @@ class P115Client:
                     "callback": resp["callback"], 
                     "signature": resp["signature"], 
                 }
-                # TODO: 应该允许 file 是同步或异步的文件或迭代器
-                request_kwargs["files"] = {"file": file}
+                files = {"file": file}
+                headers, request_kwargs["data"] = encode_multipart_data_async(data, files)
+                request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
                 return await self.request(api, "POST", **request_kwargs)
+            async def async_request():
+                if file_will_open:
+                    type, path = file_will_open
+                    if type == "path":
+                        try:
+                            from aiofile import async_open
+                        except ImportError:
+                            with open(path, "rb") as f:
+                                return await do_request(f, filename)
+                        else:
+                            async with async_open(path, "rb") as f:
+                                return await do_request(f, filename)
+                    elif type == "url":
+                        try:
+                            from aiohttp import request
+                        except ImportError:
+                            with (await to_thread(urlopen, url)) as resp:
+                                return await do_request(resp, filename or get_filename(resp))
+                        else:
+                            async with request("GET", url) as resp:
+                                return await do_request(resp, filename or get_filename(resp))
+                    else:
+                        raise ValueError
+                return await do_request(file, filename)
             return async_request()
         else:
-            resp = self.upload_sample_init(filename, pid, **request_kwargs)
+            if not filename:
+                filename = str(uuid4())
+            resp = self.upload_file_sample_init(filename, pid, **request_kwargs)
             api = resp["host"]
-            request_kwargs["data"] = {
+            data = {
                 "name": filename, 
                 "key": resp["object"], 
                 "policy": resp["policy"], 
@@ -2747,7 +2798,9 @@ class P115Client:
                 "callback": resp["callback"], 
                 "signature": resp["signature"], 
             }
-            request_kwargs["files"] = {"file": file}
+            files = {"file": file}
+            headers, request_kwargs["data"] = encode_multipart_data(data, files)
+            request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
             return self.request(api, "POST", **request_kwargs)
 
     def upload_init(
@@ -3016,7 +3069,7 @@ class P115Client:
                 else:
                     start, end = map(int, sign_check.split("-"))
                     with urlopen(url) as resp:
-                        bio_skip_bytes(resp, start)
+                        foreach(bio_skip_iter(resp, start))
                         data = resp.read(end - start + 1)
                 return sha1(data).hexdigest()
         else:

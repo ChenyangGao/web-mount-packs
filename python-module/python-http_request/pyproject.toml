@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-iterutils"
-version = "0.0.2.2"
-description = "Python another itertools."
+name = "python-http_request"
+version = "0.0.1"
+description = "Python http response utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-keywords = ["iterable", "iterutils"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-http_request"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-http_request"
+keywords = ["http", "request"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -28,10 +28,12 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.10"
 python-asynctools = "*"
+python-filewrap = "*"
+integer_tool = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterutils"
+include = "http_request"

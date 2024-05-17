@@ -2,16 +2,19 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["iterable", "async_iterable", "acc_step", "cut_iter", "asyncify_iter"]
+__version__ = (0, 0, 2)
+__all__ = [
+    "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
+    "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", 
+]
 
-from asyncio import to_thread
-from collections.abc import AsyncGenerator, AsyncIterable, Generator, Iterable, Iterator
-from typing import overload, Any, Optional, TypeVar
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
+from typing import Any, TypeVar
+
+from asynctools import async_zip, ensure_async, ensure_aiter
 
 
-TI = TypeVar("TI")
-TO = TypeVar("TO")
+T = TypeVar("T")
 
 
 def iterable(it, /) -> bool:
@@ -28,9 +31,77 @@ def async_iterable(it, /) -> bool:
         return False
 
 
+def foreach(func: Callable, iterable, /, *iterables):
+    if iterables:
+        for args in zip(iterable, *iterables):
+            func(*args)
+    else:
+        for arg in iterable:
+            func(arg)
+
+
+async def async_foreach(func: Callable, iterable, /, *iterables, threaded: bool = True):
+    func = ensure_async(func, threaded=threaded)
+    if iterables:
+        async for args in async_zip(iterable, *iterables, threaded=threaded):
+            await func(*args)
+    else:
+        async for arg in ensure_aiter(iterable, threaded=threaded):
+            await func(arg)
+
+
+def through(it: Iterable, /):
+    for _ in it:
+        pass
+
+
+async def async_through(
+    it: Iterable | AsyncIterable, 
+    /, 
+    threaded: bool = True, 
+):
+    async for _ in ensure_aiter(it, threaded=threaded):
+        pass
+
+
+def wrap_iter(
+    it: Iterable[T], 
+    /, 
+    callprev: None | Callable[[T], Any] = None, 
+    callnext: None | Callable[[T], Any] = None,  
+) -> Iterator[T]:
+    if not callable(callprev):
+        callprev = None
+    if not callable(callnext):
+        callnext = None
+    for e in it:
+        if callprev:
+            callprev(e)
+        yield e
+        if callnext:
+            callnext(e)
+
+
+async def wrap_aiter(
+    it: Iterable[T] | AsyncIterable[T], 
+    /, 
+    callprev: None | Callable[[T], Any] = None, 
+    callnext: None | Callable[[T], Any] = None,  
+    threaded: bool = True, 
+) -> AsyncIterator[T]:
+    callprev = ensure_async(callprev) if callable(callprev) else None
+    callnext = ensure_async(callnext) if callable(callnext) else None
+    async for e in ensure_aiter(it, threaded=threaded):
+        if callprev:
+            await callprev(e)
+        yield e
+        if callnext:
+            await callnext(e)
+
+
 def acc_step(
     start: int, 
-    stop: Optional[int] = None, 
+    stop: None | int = None, 
     step: int = 1, 
 ) -> Iterator[tuple[int, int, int]]:
     if stop is None:
@@ -43,7 +114,7 @@ def acc_step(
 
 def cut_iter(
     start: int, 
-    stop: Optional[int] = None, 
+    stop: None | int = None, 
     step: int = 1, 
 ) -> Iterator[tuple[int, int]]:
     if stop is None:
@@ -52,58 +123,4 @@ def cut_iter(
         yield start, step
     if start != stop:
         yield stop, stop - start
-
-
-@overload
-async def _asyncify_iter(it: Generator[TI, TO, Any], /, wait_for_thread: bool) -> AsyncGenerator[TI, TO]: ...
-@overload
-async def _asyncify_iter(it: Iterable[TO], /, wait_for_thread: bool) -> AsyncGenerator[Any, TO]: ...
-async def _asyncify_iter(it, /, wait_for_thread: bool = False):
-    if wait_for_thread:
-        if isinstance(it, Generator):
-            send = it.send
-            def nextval(val):
-                try:
-                    return send(val), None
-                except BaseException as e:
-                    return None, e
-        else:
-            getnext = iter(it).__next__
-            def nextval(val):
-                try:
-                    return getnext(), None
-                except BaseException as e:
-                    return None, e
-        val = None
-        while True:
-            yield_val, exc = await to_thread(nextval, val)
-            if exc is None:
-                yield yield_val
-            elif isinstance(exc, StopIteration):
-                break
-            else:
-                raise exc
-    elif isinstance(it, Generator):
-        send = it.send
-        val = None
-        try:
-            while True:
-                val = yield send(val)
-        except StopIteration:
-            pass
-    else:
-        for val in it:
-            yield val
-
-
-@overload
-def asyncify_iter(it: AsyncIterable[TO], /, wait_for_thread: bool) -> AsyncIterable[TO]: ...
-@overload
-def asyncify_iter(it: Generator[TI, TO, Any], /, wait_for_thread: bool) -> AsyncGenerator[TI, TO]: ...
-@overload
-def asyncify_iter(it: Iterable[TO], /, wait_for_thread: bool) -> AsyncGenerator[Any, TO]: ...
-def asyncify_iter(it, /, wait_for_thread: bool = False):
-    if isinstance(it, AsyncIterable):
-        return it
-    return _asyncify_iter(it, wait_for_thread=wait_for_thread)
 

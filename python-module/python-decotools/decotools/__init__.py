@@ -21,6 +21,7 @@ from undefined import undefined
 Args = ParamSpec("Args")
 Args0 = ParamSpec("Args0")
 R = TypeVar("R")
+T = TypeVar("T")
 
 
 def update_wrapper(f, g, /, *args, **kwds):
@@ -31,9 +32,9 @@ def update_wrapper(f, g, /, *args, **kwds):
 
 
 def decorated(
-    f: Callable[Concatenate[Callable[Args, R], Args], R], 
+    f: Callable[Concatenate[Callable[Args, R], Args], T], 
     /, 
-) -> Callable[[Callable[Args, R]], Callable[Args, R]]:
+) -> Callable[[Callable[Args, R]], Callable[Args, T]]:
     """Transform the 2-layers decorator into 1-layer.
 
     @decorated
@@ -55,9 +56,10 @@ def decorated(
 
 
 def optional(
-    f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]], 
+    f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]], 
     /, 
-) -> Callable[Concatenate[None, Args0], ppartial] | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]]:
+) -> Callable[Concatenate[None, Args0], Callable[[Callable[Args, R]], Callable[Args, T]]] \
+    | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]]:
     """This function decorates another decorator that with optional parameters.
     NOTE: Make sure that these optional parameters have default values.
 
@@ -160,9 +162,9 @@ def optional(
 
 
 def optional_args(
-    f: Callable[Args0, Callable[Concatenate[Callable[Args, R], Args], R]], 
+    f: Callable[Args0, Callable[Concatenate[Callable[Args, R], Args], T]], 
     /,
-) -> Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, R]]] | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, R]]:
+) -> Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, T]]] | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]]:
     """This function decorates another decorator that with optional parameters.
     NOTE: Make sure that these optional parameters have default values.
 

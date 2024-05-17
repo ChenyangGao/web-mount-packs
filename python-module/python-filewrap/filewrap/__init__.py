@@ -2,20 +2,24 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
-    "SupportsRead", "SupportsWrite", "bio_chunk_iter", "bio_chunk_async_iter", 
-    "bio_skip_iter", "bio_skip_async_iter", "bio_skip_bytes", "bio_skip_bytes_async", 
-    "bytes_iter_to_reader", "bytes_iter_to_reader_async", 
+    "SupportsRead", "SupportsWrite", 
+    "bio_chunk_iter", "bio_chunk_async_iter", 
+    "bio_skip_iter", "bio_skip_async_iter", 
+    "bytes_iter_to_reader", "bytes_iter_to_async_reader", 
 ]
 
-from asyncio import to_thread
+from asyncio import to_thread, Lock as AsyncLock
 from collections.abc import Awaitable, AsyncIterable, Iterable
 from functools import update_wrapper
 from inspect import isawaitable, iscoroutinefunction
 from collections.abc import AsyncIterator, Callable, Iterator
 from shutil import COPY_BUFSIZE # type: ignore
+from threading import Lock
 from typing import Any, Protocol, TypeVar
+
+from asynctools import ensure_async
 
 
 _T_co = TypeVar("_T_co", covariant=True)
@@ -28,17 +32,6 @@ class SupportsRead(Protocol[_T_co]):
 
 class SupportsWrite(Protocol[_T_contra]):
     def write(self, __s: _T_contra) -> object: ...
-
-
-def ensure_async(func, /):
-    if iscoroutinefunction(func):
-        return func
-    async def wrapper(*args, **kwds):
-        ret = to_thread(func, *args, **kwds)
-        if isawaitable(ret):
-            ret = await ret
-        return ret
-    return update_wrapper(wrapper, func)
 
 
 def bio_chunk_iter(
@@ -242,76 +235,182 @@ async def bio_skip_async_iter(
         yield length
 
 
-def bio_skip_bytes(
-    bio: SupportsRead[bytes] | Callable[[int], bytes], 
+def bytes_iter_to_reader(
+    it: Iterable[bytes | bytearray], 
     /, 
-    size: int = -1, 
-    chunksize: int = COPY_BUFSIZE, 
-    callback: None | Callable[[int], Any] = None, 
-):
-    for _ in bio_skip_iter(bio, size, chunksize, callback=callback):
-        pass
-
-
-async def bio_skip_bytes_async(
-    bio: SupportsRead[bytes] | Callable[[int], bytes | Awaitable[bytes]], 
-    /, 
-    size: int = -1, 
-    chunksize: int = COPY_BUFSIZE, 
-    callback: None | Callable[[int], Any] = None, 
-):
-    async for _ in bio_skip_async_iter(bio, size, chunksize, callback=callback):
-        pass
-
-
-def bytes_iter_to_reader(it: Iterable[bytes | bytearray], /) -> SupportsRead[bytes]:
-    get_next = iter(it).__next__
-    at_eof = False
-    unconsumed: bytearray = bytearray(b"")
-    def read(n=-1):
-        nonlocal at_eof, unconsumed
-        if at_eof or n == 0:
-            return b""
-        try:
-            if n < 0:
+) -> SupportsRead[bytearray]:
+    getnext = iter(it).__next__
+    at_end = False
+    unconsumed: bytearray = bytearray()
+    lock = Lock()
+    def read(n=-1, /) -> bytearray:
+        nonlocal at_end, unconsumed
+        if at_end or n == 0:
+            return bytearray()
+        with lock:
+            try:
+                if n is None or n < 0:
+                    while True:
+                        unconsumed += getnext()
+                else:
+                    while n > len(unconsumed):
+                        unconsumed += getnext()
+                    b, unconsumed = unconsumed[:n], unconsumed[n:]
+                    return b
+            except StopIteration:
+                at_end = True
+                return unconsumed
+    def readinto(buf, /) -> int:
+        nonlocal at_end, unconsumed
+        if at_end or not (bufsize := len(buf)):
+            return 0
+        with lock:
+            if bufsize <= len(unconsumed):
+                buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
+                return bufsize
+            n = len(unconsumed)
+            buf[:n] = unconsumed
+            del unconsumed[:]
+            try:
                 while True:
-                    unconsumed += get_next()
-            else:
-                while n > len(unconsumed):
-                    unconsumed += get_next()
-                b, unconsumed = unconsumed[:n], unconsumed[n:]
-                return bytes(b)
+                    b = getnext()
+                    if not b:
+                        continue
+                    m = n + len(b)
+                    if m >= bufsize:
+                        buf[n:] = b[:bufsize-n]
+                        unconsumed += b[m-bufsize:]
+                        return bufsize
+                    else:
+                        buf[n:m] = b
+                        n = m
+            except StopIteration:
+                at_end = True
+                return n
+    def __next__() -> bytearray:
+        nonlocal unconsumed, at_end
+        if at_end:
+            raise StopIteration
+        if unconsumed:
+            # search for b"\n"
+            if (idx := unconsumed.find(49)) > -1:
+                idx += 1
+                b, unconsumed = unconsumed[:idx], unconsumed[idx:]
+                return b
+        try:
+            while True:
+                r = getnext()
+                if not r:
+                    continue
+                if (idx := r.find(49)) > -1:
+                    idx += 1
+                    unconsumed += r[:idx]
+                    b, unconsumed = unconsumed, bytearray(r[idx:])
+                    return b
+                unconsumed += r
         except StopIteration:
-            at_eof = True
-            return bytes(unconsumed)
+            at_end = True
+            if unconsumed:
+                return unconsumed
+            raise
     reprs = f"<reader for {it!r}>"
-    return type("reader", (), {"read": staticmethod(read), "__repr__": staticmethod(lambda: reprs)})()
+    return type("reader", (), {
+        "read": staticmethod(read), 
+        "readinto": staticmethod(readinto), 
+        "__iter__": lambda self, /: self, 
+        "__next__": staticmethod(__next__), 
+        "__repr__": staticmethod(lambda: reprs), 
+    })()
 
 
-def bytes_iter_to_reader_async(it: Iterable[bytes | bytearray] | AsyncIterable[bytes | bytearray], /) -> SupportsRead[bytes]:
+def bytes_iter_to_async_reader(
+    it: Iterable[bytes | bytearray] | AsyncIterable[bytes | bytearray], 
+    /, 
+    threaded: bool = True, 
+) -> SupportsRead[bytearray]:
     if isinstance(it, AsyncIterable):
-        get_next = aiter(it).__anext__
+        getnext = aiter(it).__anext__
     else:
-        sync_next = iter(it).__next__
-        get_next = lambda: to_thread(sync_next)
-    at_eof = False
-    unconsumed: bytearray = bytearray(b"")
-    async def read(n=-1):
-        nonlocal at_eof, unconsumed
-        if at_eof or n == 0:
-            return b""
-        try:
-            if n < 0:
+        getnext = ensure_async(iter(it).__next__, threaded=threaded)
+    at_end = False
+    unconsumed: bytearray = bytearray()
+    lock = AsyncLock()
+    async def read(n=-1, /) -> bytearray:
+        nonlocal at_end, unconsumed
+        if at_end or n == 0:
+            return bytearray()
+        async with lock:
+            try:
+                if n is None or n < 0:
+                    while True:
+                        unconsumed += await getnext()
+                else:
+                    while n > len(unconsumed):
+                        unconsumed += await getnext()
+                    b, unconsumed = unconsumed[:n], unconsumed[n:]
+                    return b
+            except StopAsyncIteration:
+                at_end = True
+                return unconsumed
+    async def readinto(buf, /) -> int:
+        nonlocal at_end, unconsumed
+        if at_end or not (bufsize := len(buf)):
+            return 0
+        async with lock:
+            if bufsize <= len(unconsumed):
+                buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
+                return bufsize
+            n = len(unconsumed)
+            buf[:n] = unconsumed
+            del unconsumed[:]
+            try:
                 while True:
-                    unconsumed += await get_next()
-            else:
-                while n > len(unconsumed):
-                    unconsumed += await get_next()
-                b, unconsumed = unconsumed[:n], unconsumed[n:]
-                return bytes(b)
+                    b = await getnext()
+                    if not b:
+                        continue
+                    m = n + len(b)
+                    if m >= bufsize:
+                        buf[n:] = b[:bufsize-n]
+                        unconsumed += b[m-bufsize:]
+                        return bufsize
+                    else:
+                        buf[n:m] = b
+                        n = m
+            except StopAsyncIteration:
+                at_end = True
+                return n
+    async def __next__() -> bytearray:
+        nonlocal unconsumed, at_end
+        if at_end:
+            raise StopIteration
+        if unconsumed:
+            # search for b"\n"
+            if (idx := unconsumed.find(49)) > -1:
+                idx += 1
+                b, unconsumed = unconsumed[:idx], unconsumed[idx:]
+                return b
+        try:
+            while True:
+                r = await getnext()
+                if not r:
+                    continue
+                if (idx := r.find(49)) > -1:
+                    idx += 1
+                    unconsumed += r[:idx]
+                    b, unconsumed = unconsumed, bytearray(r[idx:])
+                    return b
+                unconsumed += r
         except StopIteration:
-            at_eof = True
-            return bytes(unconsumed)
+            at_end = True
+            if unconsumed:
+                return unconsumed
+            raise
     reprs = f"<reader for {it!r}>"
-    return type("reader", (), {"read": staticmethod(read), "__repr__": staticmethod(lambda: reprs)})()
+    return type("reader", (), {
+        "read": staticmethod(read), 
+        "readinto": staticmethod(readinto), 
+        "__iter__": lambda self, /: self, 
+        "__next__": staticmethod(__next__), 
+        "__repr__": staticmethod(lambda: reprs), 
+    })()
 
