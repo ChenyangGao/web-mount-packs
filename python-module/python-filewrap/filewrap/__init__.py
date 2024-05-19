@@ -2,24 +2,33 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 7)
 __all__ = [
     "SupportsRead", "SupportsWrite", 
     "bio_chunk_iter", "bio_chunk_async_iter", 
     "bio_skip_iter", "bio_skip_async_iter", 
+    "bytes_iter_skip", "bytes_async_iter_skip", 
     "bytes_iter_to_reader", "bytes_iter_to_async_reader", 
+    "bytes_to_chunk_iter", "bytes_to_chunk_async_iter", 
+    "bytes_ensure_part_iter", "bytes_ensure_part_async_iter", 
 ]
 
 from asyncio import to_thread, Lock as AsyncLock
 from collections.abc import Awaitable, AsyncIterable, Iterable
 from functools import update_wrapper
 from inspect import isawaitable, iscoroutinefunction
+from itertools import chain
 from collections.abc import AsyncIterator, Callable, Iterator
 from shutil import COPY_BUFSIZE # type: ignore
 from threading import Lock
 from typing import Any, Protocol, TypeVar
 
-from asynctools import ensure_async
+try:
+    from collections.abc import Buffer # type: ignore
+except ImportError:
+    Buffer = Any
+
+from asynctools import async_chain, ensure_async, ensure_aiter
 
 
 _T_co = TypeVar("_T_co", covariant=True)
@@ -35,12 +44,12 @@ class SupportsWrite(Protocol[_T_contra]):
 
 
 def bio_chunk_iter(
-    bio: SupportsRead[bytes] | Callable[[int], bytes], 
+    bio: SupportsRead[Buffer] | Callable[[int], Buffer], 
     /, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
     callback: None | Callable[[int], Any] = None, 
-) -> Iterator[bytes]:
+) -> Iterator[Buffer]:
     if callable(bio):
         read = bio
     else:
@@ -66,12 +75,12 @@ def bio_chunk_iter(
 
 
 async def bio_chunk_async_iter(
-    bio: SupportsRead[bytes] | Callable[[int], bytes | Awaitable[bytes]], 
+    bio: SupportsRead[Buffer] | Callable[[int], Buffer | Awaitable[Buffer]], 
     /, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
     callback: None | Callable[[int], Any] = None, 
-) -> AsyncIterator[bytes]:
+) -> AsyncIterator[Buffer]:
     if callable(bio):
         read = ensure_async(bio)
     else:
@@ -96,7 +105,7 @@ async def bio_chunk_async_iter(
 
 
 def bio_skip_iter(
-    bio: SupportsRead[bytes] | Callable[[int], bytes], 
+    bio: SupportsRead[Buffer] | Callable[[int], Buffer], 
     /, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
@@ -167,7 +176,7 @@ def bio_skip_iter(
 
 
 async def bio_skip_async_iter(
-    bio: SupportsRead[bytes] | Callable[[int], bytes | Awaitable[bytes]], 
+    bio: SupportsRead[Buffer] | Callable[[int], Buffer | Awaitable[Buffer]], 
     /, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
@@ -235,8 +244,59 @@ async def bio_skip_async_iter(
         yield length
 
 
+def bytes_iter_skip(
+    it: Iterable[Buffer], 
+    /, 
+    size: int = -1, 
+    callback: None | Callable[[int], Any] = None, 
+) -> Iterator[memoryview | Buffer]:
+    it = iter(it)
+    if size == 0:
+        return it
+    if not callable(callback):
+        callback = None
+    for m in map(memoryview, it):
+        l = len(m)
+        if callback:
+            callback(min(l, size))
+        if l == size:
+            return it
+        elif l > size:
+            return chain((m[size:],), it)
+        else:
+            size -= l
+    return iter(())
+
+
+async def bytes_async_iter_skip(
+    it: Iterable[Buffer] | AsyncIterator[Buffer], 
+    /, 
+    size: int = -1, 
+    callback: None | Callable[[int], Any] = None, 
+) -> AsyncIterator[memoryview | Buffer]:
+    it = aiter(ensure_aiter(it))
+    if size == 0:
+        return it
+    callback = ensure_async(callback) if callable(callback) else None
+    async for b in it:
+        m = memoryview(b)
+        l = len(m)
+        if callback:
+            await callback(min(l, size))
+        if l == size:
+            return it
+        elif l > size:
+            return async_chain((m[size:],), it)
+        else:
+            size -= l
+    async def make_iter():
+        if False:
+            yield
+    return make_iter()
+
+
 def bytes_iter_to_reader(
-    it: Iterable[bytes | bytearray], 
+    it: Iterable[Buffer], 
     /, 
 ) -> SupportsRead[bytearray]:
     getnext = iter(it).__next__
@@ -324,7 +384,7 @@ def bytes_iter_to_reader(
 
 
 def bytes_iter_to_async_reader(
-    it: Iterable[bytes | bytearray] | AsyncIterable[bytes | bytearray], 
+    it: Iterable[Buffer] | AsyncIterable[Buffer], 
     /, 
     threaded: bool = True, 
 ) -> SupportsRead[bytearray]:
@@ -413,4 +473,80 @@ def bytes_iter_to_async_reader(
         "__next__": staticmethod(__next__), 
         "__repr__": staticmethod(lambda: reprs), 
     })()
+
+
+def bytes_to_chunk_iter(
+    b: Buffer, 
+    /, 
+    chunksize: int = COPY_BUFSIZE, 
+) -> Iterator[memoryview]:
+    m = memoryview(b)
+    for i in range(0, len(m), chunksize):
+        yield m[i:i+chunksize]
+
+
+async def bytes_to_chunk_async_iter(
+    b: Buffer, 
+    /, 
+    chunksize: int = COPY_BUFSIZE, 
+) -> AsyncIterator[memoryview]:
+    m = memoryview(b)
+    for i in range(0, len(m), chunksize):
+        yield m[i:i+chunksize]
+
+
+def bytes_ensure_part_iter(
+    it: Iterable[Buffer], 
+    /, 
+    partsize: int = COPY_BUFSIZE, 
+) -> Iterator[Buffer | memoryview]:
+    n = partsize
+    for b in it:
+        m = memoryview(b)
+        l = len(m)
+        if l <= n:
+            yield b
+            if l == n:
+                n = partsize
+            else:
+                n -= l
+        else:
+            yield m[:n]
+            m = m[n:]
+            while len(m) >= partsize:
+                yield m[:partsize]
+                m = m[partsize:]
+            if m:
+                yield m
+                n = partsize - len(m)
+            else:
+                n = partsize
+
+
+async def bytes_ensure_part_async_iter(
+    it: Iterable[Buffer] | AsyncIterable[Buffer], 
+    /, 
+    partsize: int = COPY_BUFSIZE, 
+) -> AsyncIterator[Buffer | memoryview]:
+    n = partsize
+    async for b in ensure_aiter(it):
+        m = memoryview(b)
+        l = len(m)
+        if l <= n:
+            yield b
+            if l == n:
+                n = partsize
+            else:
+                n -= l
+        else:
+            yield m[:n]
+            m = m[n:]
+            while len(m) >= partsize:
+                yield m[:partsize]
+                m = m[partsize:]
+            if m:
+                yield m
+                n = partsize - len(m)
+            else:
+                n = partsize
 

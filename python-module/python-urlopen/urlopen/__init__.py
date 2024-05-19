@@ -22,7 +22,6 @@ from urllib.request import build_opener, HTTPSHandler, OpenerDirector, Request
 
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
-from iterutils import foreach
 
 
 if "__del__" not in HTTPResponse.__dict__:
@@ -196,7 +195,8 @@ def download(
                 if reporthook:
                     reporthook(filesize)
             elif resume:
-                foreach(bio_skip_iter(resp, filesize, callback=reporthook))
+                for _ in bio_skip_iter(resp, filesize, callback=reporthook):
+                    pass
 
         fsrc_read = resp.read 
         fdst_write = fdst.write

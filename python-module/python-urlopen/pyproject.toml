@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-urlopen"
-version = "0.0.1.1"
+version = "0.0.1.2"
 description = "Python urlopen wrapper."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,7 +29,6 @@ include = [
 python = "^3.10"
 http_response = "*"
 python-filewrap = "*"
-python-iterutils = "*"
 
 [build-system]
 requires = ["poetry-core"]

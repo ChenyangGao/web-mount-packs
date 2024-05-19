@@ -2,18 +2,25 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["encode_multipart_data", "encode_multipart_data_async"]
+__version__ = (0, 0, 2)
+__all__ = ["SupportsGeturl", "encode_multipart_data", "encode_multipart_data_async"]
 
 from itertools import chain
 from collections.abc import AsyncIterable, AsyncIterator, ItemsView, Iterable, Iterator, Mapping
-from typing import Any
+from typing import Any, Protocol, TypeVar
 from urllib.parse import quote
 from uuid import uuid4
 
 from asynctools import ensure_aiter, async_chain
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from integer_tool import int_to_bytes
+
+
+AnyStr = TypeVar("AnyStr", bytes, str, covariant=True)
+
+
+class SupportsGeturl(Protocol[AnyStr]):
+    def geturl(self) -> AnyStr: ...
 
 
 def ensure_bytes(s, /) -> bytes | bytearray | memoryview:
@@ -31,14 +38,16 @@ def ensure_bytes(s, /) -> bytes | bytearray | memoryview:
 
 def encode_multipart_data(
     data: Mapping[str, Any], 
-    files: Mapping[str, bytes | bytearray | memoryview | SupportsRead[bytes] | Iterable[bytes]], 
+    files: Mapping[str, bytes | bytearray | memoryview | 
+                        SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                        Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview]], 
     boundary: None | str = None, 
-) -> tuple[dict, Iterator[bytes]]:
+) -> tuple[dict, Iterator[bytes | bytearray | memoryview]]:
     if not boundary:
         boundary = uuid4().bytes.hex()
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
-    def encode_data(data) -> Iterator[bytes]:
+    def encode_data(data) -> Iterator[bytes | bytearray | memoryview]:
         if isinstance(data, Mapping):
             data = ItemsView(data)
         for name, value in data:
@@ -47,7 +56,7 @@ def encode_multipart_data(
             yield ensure_bytes(value)
             yield b"\r\n"
 
-    def encode_files(files) -> Iterator[bytes]:
+    def encode_files(files) -> Iterator[bytes | bytearray | memoryview]:
         if isinstance(files, Mapping):
             files = ItemsView(files)
         for name, file in files:
@@ -67,14 +76,17 @@ def encode_multipart_data(
 
 def encode_multipart_data_async(
     data: Mapping[str, Any], 
-    files: Mapping[str, bytes | bytearray | memoryview | SupportsRead[bytes] | Iterable[bytes] | AsyncIterable[bytes]], 
+    files: Mapping[str, bytes | bytearray | memoryview | 
+                        SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                        Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                        AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview]], 
     boundary: None | str = None, 
-) -> tuple[dict, AsyncIterator[bytes]]:
+) -> tuple[dict, AsyncIterator[bytes | bytearray | memoryview]]:
     if not boundary:
         boundary = uuid4().bytes.hex()
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
-    async def encode_data(data) -> AsyncIterator[bytes]:
+    async def encode_data(data) -> AsyncIterator[bytes | bytearray | memoryview]:
         if isinstance(data, Mapping):
             data = ItemsView(data)
         for name, value in data:
@@ -83,7 +95,7 @@ def encode_multipart_data_async(
             yield ensure_bytes(value)
             yield b"\r\n"
 
-    async def encode_files(files) -> AsyncIterator[bytes]:
+    async def encode_files(files) -> AsyncIterator[bytes | bytearray | memoryview]:
         if isinstance(files, Mapping):
             files = ItemsView(files)
         for name, file in files:

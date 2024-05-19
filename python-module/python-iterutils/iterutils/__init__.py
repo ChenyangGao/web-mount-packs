@@ -76,10 +76,16 @@ def wrap_iter(
         callnext = None
     for e in it:
         if callprev:
-            callprev(e)
+            try:
+                callprev(e)
+            except (StopIteration, GeneratorExit):
+                break
         yield e
         if callnext:
-            callnext(e)
+            try:
+                callnext(e)
+            except (StopIteration, GeneratorExit):
+                break
 
 
 async def wrap_aiter(
@@ -93,10 +99,16 @@ async def wrap_aiter(
     callnext = ensure_async(callnext) if callable(callnext) else None
     async for e in ensure_aiter(it, threaded=threaded):
         if callprev:
-            await callprev(e)
+            try:
+                await callprev(e)
+            except (StopAsyncIteration, GeneratorExit):
+                break
         yield e
         if callnext:
-            await callnext(e)
+            try:
+                await callnext(e)
+            except (StopAsyncIteration, GeneratorExit):
+                break
 
 
 def acc_step(

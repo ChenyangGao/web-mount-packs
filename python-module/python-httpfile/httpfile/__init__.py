@@ -22,7 +22,6 @@ from warnings import warn
 from aiohttp import ClientSession
 from filewrap import bio_skip_iter
 from http_response import get_filename, get_length, get_range, get_total_length, is_chunked, is_range_request
-from iterutils import foreach
 from property import funcproperty
 from requests import Session
 from urlopen import urlopen
@@ -294,7 +293,8 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             if old_pos == pos:
                 return pos
             if pos > old_pos and pos - old_pos <= self.seek_threshold:
-                foreach(bio_skip_iter(self, pos - old_pos))
+                for _ in bio_skip_iter(self, pos - old_pos):
+                    pass
             else:
                 self.reconnect(pos)
             return pos
