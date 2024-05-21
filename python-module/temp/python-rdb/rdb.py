@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-"""这个模块提供了一些与 RDBMS (关系数据库管理系统) 有关的工具函数
-See: https://peps.python.org/pep-0249/
-"""
-
 __author__ = "ChenyangGao <https://chenyanggao.github.io/>"
-__version__ = (0, 0, 0)
-__all__ = ["is_connection", "ctx_con", "execute", "get_fields", "dict_iter"]
+__version__ = (0, 0, 1)
+__all__ = ["is_connection", "ctx_con", "execute", "get_fields", "tuple_iter", "dict_iter", "dataclass_iter"]
 
 
-from contextlib import contextmanager
-from typing import Iterator, Optional
+from collections import namedtuple
+from collections.abc import AsyncIterable, Iterable, AsyncIterator, Iterator 
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
+from typing import overload
 
-from .args import Args
+from argtools import Args
 
 
 def is_connection(con, /) -> bool:
@@ -42,7 +41,7 @@ def ctx_con(
             con = con()
             do_close = True
         else:
-            raise TypeError("Cant't get database connection from `con`")
+            raise TypeError("cant't get database connection from `con`")
     try:
         if cursor_args is None:
             yield con
@@ -88,22 +87,82 @@ def execute(
                 callback(r, cur)
 
 
-def get_fields(cursor) -> Optional[tuple[str, ...]]:
-    "从一个执行了查询语句的游标上获取数据的所有字段"
+def get_fields(cursor) -> None | tuple[str, ...]:
     if cursor.description is None:
         return
     return tuple(f[0] for f in cursor.description)
 
 
-def dict_iter(
+@overload
+def tuple_iter(
+    cursor: AsyncIterable, 
+    fields: None | tuple[str, ...] = None, 
+) -> AsyncIterator[tuple]: ...
+@overload
+def tuple_iter(
+    cursor: Iterable, 
+    fields: None | tuple[str, ...] = None, 
+) -> Iterator[tuple]: ...
+def tuple_iter(
     cursor, 
-    fields: Optional[tuple[str, ...]] = None, 
-) -> Iterator[dict]:
-    "在一个执行了查询语句的游标上迭代：每次提供字段和数据组合成的字典"
+    fields: None | tuple[str, ...] = None, 
+):
     if not fields:
         fields = get_fields(cursor)
     if not fields:
-        raise RuntimeError("No field specified")
-    for row in cursor:
-        yield dict(zip(fields, row))
+        raise RuntimeError("no field specified")
+    cls = namedtuple("Record", fields)
+    if hasattr(cursor.__aiter__):
+        return (cls(*row) async for row in cursor)
+    else:
+        return (cls(*row) for row in cursor)
+
+
+@overload
+def dict_iter(
+    cursor: AsyncIterable, 
+    fields: None | tuple[str, ...] = None, 
+) -> AsyncIterator[dict]: ...
+@overload
+def dict_iter(
+    cursor: Iterable, 
+    fields: None | tuple[str, ...] = None, 
+) -> Iterator[dict]: ...
+def dict_iter(
+    cursor, 
+    fields: None | tuple[str, ...] = None, 
+):
+    if not fields:
+        fields = get_fields(cursor)
+    if not fields:
+        raise RuntimeError("no field specified")
+    if hasattr(cursor.__aiter__):
+        return (dict(zip(fields, row)) async for row in cursor)
+    else:
+        return (dict(zip(fields, row)) for row in cursor)
+
+
+@overload
+def dataclass_iter(
+    cursor: AsyncIterable, 
+    fields: None | tuple[str, ...] = None, 
+) -> AsyncIterator: ...
+@overload
+def dataclass_iter(
+    cursor: Iterable, 
+    fields: None | tuple[str, ...] = None, 
+) -> Iterator: ...
+def dataclass_iter(
+    cursor, 
+    fields: None | tuple[str, ...] = None, 
+):
+    if not fields:
+        fields = get_fields(cursor)
+    if not fields:
+        raise RuntimeError("no field specified")
+    cls = dataclass(type("Record", (), {"__annotations__": {f: object for f in fields}}), unsafe_hash=True, slots=True)
+    if hasattr(cursor.__aiter__):
+        return (cls(*row) async for row in cursor)
+    else:
+        return (cls(*row) for row in cursor)
 

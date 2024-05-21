@@ -2262,13 +2262,13 @@ class DuPanFileSystem:
         try:
             attr = self.attr(path, _check=False)
         except FileNotFoundError:
+            return Error.check(self.client.makedir(path))["path"]
+        else:
             if exist_ok:
                 if not attr["isdir"]:
                     raise NotADirectoryError(errno.ENOTDIR, path)
             else:
                 raise FileExistsError(errno.EEXIST, path)
-        else:
-            return Error.check(self.client.makedir(path))["path"]
         return path
 
     def mkdir(

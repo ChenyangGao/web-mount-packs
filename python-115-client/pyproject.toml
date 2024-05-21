@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.7.4"
+version = "0.0.8"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
-keywords = ["nas", "115"]
+keywords = ["115", "client"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",
@@ -27,21 +27,24 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
-aiohttp = "*"
 cachetools = "*"
 ecdsa = "*"
 http_response = "*"
+httpx = "*"
+httpx_request = "*"
 lz4 = "*"
+magnet2torrent = "*"
 multidict = "*"
 pycryptodome = "*"
-python-argtools = "*"
+python-asynctools = "*"
 python-cookietools = "*"
 python-filewrap = "*"
+python-httpfile = "*"
+python-http_request = "*"
 python-iterutils = "*"
+python-startfile = "*"
+python-urlopen = "*"
 qrcode = "*"
-requests = "*"
-startfile = "*"
-magnet2torrent = "*"
 yarl = "*"
 
 [build-system]
