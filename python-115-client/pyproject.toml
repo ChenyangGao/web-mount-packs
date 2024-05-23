@@ -49,6 +49,10 @@ python-urlopen = "*"
 qrcode = "*"
 yarl = "*"
 
+[tool.poetry.scripts]
+python-115 = "p115.__main__:main"
+p115 = "p115.__main__:main"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
