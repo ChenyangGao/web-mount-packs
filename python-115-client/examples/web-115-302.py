@@ -98,8 +98,8 @@ if not cookie:
             pass
 
 fs = P115FileSystem.login(cookie, path_to_id=path_cache)
-if not cookie and fs.client.cookie != cookie:
-    open("115-cookie.txt", "w").write(fs.client.cookie)
+if not cookie and fs.client.cookies != cookie:
+    open("115-cookie.txt", "w").write(fs.client.cookies)
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 

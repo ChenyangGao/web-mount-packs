@@ -2,6 +2,7 @@
 # encoding: utf-8
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 1)
 __all__ = ["escape", "translate", "parse", "read_file", "read_str", "predicate"]
 
 from enum import Enum
@@ -14,7 +15,7 @@ from posixpath import basename, splitext
 from re import compile as re_compile, escape as re_escape, IGNORECASE
 from typing import Callable, Final, Iterable, Optional, TextIO
 
-from .text import posix_glob_translate_iter
+from glob_pattern import translate_iter
 
 
 CRE_PAT_IN_STR: Final = re_compile(r"[^\\ ]*(?:\\(?s:.)[^\\ ]*)*")
@@ -33,7 +34,7 @@ def ensure_enum(val, cls, /):
 
 
 def translate(pattern: str, /) -> str:
-    s = "".join(t[0] for t in posix_glob_translate_iter(pattern))
+    s = "".join(t[0] for t in translate_iter(pattern))
     use_basename = "/" not in pattern[:-1]
     s = (("(?:^|/)" if use_basename else "^/?")) + s
     if pattern.endswith("/"):

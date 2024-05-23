@@ -122,7 +122,7 @@ def login_with_qrcode(app="web", scan_in_console=True):
     qrcode = qrcode_token.pop("qrcode")
     if scan_in_console:
         try:
-            from qrcode import QRCode
+            from qrcode import QRCode # type: ignore 
         except ModuleNotFoundError:
             from sys import executable
             from subprocess import run

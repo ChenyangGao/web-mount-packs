@@ -94,3 +94,5 @@ def translate(
 ) -> str:
     return "/".join(part for part, *_ in translate_iter(pattern, allow_escaped_slash))
 
+
+# TODO: support for ntpath, etc.
