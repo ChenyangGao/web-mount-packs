@@ -31,13 +31,14 @@ from typing import (
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
 
-from filewrap import HTTPFileReader, SupportsWrite
+from download import DownloadTask
+from filewrap import SupportsWrite
+from httpfile import HTTPFileReader
+from glob_pattern import translate_iter
+from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 
 from .client import check_response, P115Client
 
-from .util.download import DownloadTask
-from .util.path import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
-from .util.text import posix_glob_translate_iter
 
 AttrDict: TypeAlias = dict # TODO: TypedDict with extra keys
 IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str] | AttrDict
@@ -45,7 +46,7 @@ P115FSType = TypeVar("P115FSType", bound="P115FileSystemBase")
 P115PathType = TypeVar("P115PathType", bound="P115PathBase")
 
 
-class P115PathBase(ABC, Generic[P115FSType], Mapping, PathLike[str]):
+class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     id: int
     path: str
     fs: P115FSType
@@ -265,9 +266,9 @@ class P115PathBase(ABC, Generic[P115FSType], Mapping, PathLike[str]):
         return type(self)(attr)
 
     @property
-    def length(self, /):
+    def length(self, /) -> int:
         if self.is_dir():
-            return len(tuple(self.iterdir()))
+            return len(tuple(self.fs.iterdir()))
         return self["size"]
 
     def listdir(self, /, **kwargs) -> list[str]:
@@ -287,7 +288,7 @@ class P115PathBase(ABC, Generic[P115FSType], Mapping, PathLike[str]):
         allow_escaped_slash: bool = True, 
     ) -> bool:
         pattern = "/" + "/".join(
-            t[0] for t in posix_glob_translate_iter(
+            t[0] for t in translate_iter(
                 path_pattern, allow_escaped_slash=allow_escaped_slash))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
@@ -339,7 +340,7 @@ class P115PathBase(ABC, Generic[P115FSType], Mapping, PathLike[str]):
         cls = type(self)
         path = self
         while path.id != 0:
-            path = cls(self.attr(path["parent_id"]))
+            path = cls(self.fs.attr(path["parent_id"]))
             parents.append(path)
         return tuple(parents)
 
@@ -525,7 +526,7 @@ class P115PathBase(ABC, Generic[P115FSType], Mapping, PathLike[str]):
     dict = dictdir_path
 
 
-class P115FileSystemBase(ABC, Generic[P115PathType]):
+class P115FileSystemBase(Generic[P115PathType]):
     client: P115Client
     id: int
     path: str
@@ -699,8 +700,8 @@ class P115FileSystemBase(ABC, Generic[P115PathType]):
             lambda: self.get_url(id_or_path, pid), 
             local_path_or_file, 
             headers=lambda: {
-                **self.client.session.headers, 
-                "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.session.cookies), 
+                **self.client.headers, 
+                "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.__dict__["cookies"].items()), 
             }, 
             **kwargs, 
         )
@@ -930,7 +931,7 @@ class P115FileSystemBase(ABC, Generic[P115PathType]):
             attr = self.attr(0)
             attr["fs"] = self
             return iter((path_class(attr),))
-        splitted_pats = tuple(posix_glob_translate_iter(
+        splitted_pats = tuple(translate_iter(
             pattern, allow_escaped_slash=allow_escaped_slash))
         dirname_as_id = isinstance(dirname, (int, path_class))
         dirid: int

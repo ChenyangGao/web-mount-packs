@@ -2,6 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 1)
 __all__ = ["thread_batch", "thread_pool_batch", "async_batch", "threaded", "run_as_thread"]
 
 from asyncio import CancelledError, Semaphore as AsyncSemaphore, TaskGroup
@@ -11,11 +12,13 @@ from functools import partial, update_wrapper
 from inspect import isawaitable
 from queue import Queue
 from threading import Event, Lock, Semaphore, Thread
-from typing import cast, Any, Optional, TypeVar
+from typing import cast, Any, ContextManager, Optional, ParamSpec, TypeVar
 
-from .args import argcount
+from argtools import argcount
+from decotools import optional
 
 
+Args = ParamSpec("Args")
 T = TypeVar("T")
 V = TypeVar("V")
 
@@ -142,14 +145,13 @@ async def async_batch(
             submit(task)
 
 
+@optional
 def threaded(
-    func: Optional[Callable] = None, 
+    func: Callable[Args, Any], 
     /, 
-    lock = None, 
+    lock: None | int | ContextManager = None, 
     **thread_init_kwds, 
-):
-    if func is None:
-        return partial(threaded, **thread_init_kwds)
+) -> Callable[Args, Future]:
     if isinstance(lock, int):
         lock = Semaphore(lock)
     def wrapper(*args, **kwds) -> Future[V]:
@@ -174,13 +176,10 @@ def threaded(
 
 
 def run_as_thread(
-    func: Optional[Callable] = None, 
+    func: Callable, 
     /, 
     *args, 
     **kwargs, 
-):
-    if func is None:
-        f = threaded(None, *args, **kwargs)
-        return lambda func, *args, **kwargs: f(func)(*args, **kwargs)
+) -> Future:
     return threaded(func)(*args, **kwargs)
 

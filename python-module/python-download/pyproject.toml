@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-texttools"
+name = "python-download"
 version = "0.0.1"
-description = "Python texttools."
+description = "Python functions for download."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-texttools"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-texttools"
-keywords = ["http", "response"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-download"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-download"
+keywords = ["python-download", "posixpath"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,11 +26,24 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
+aiohttp_client_request = "*"
+http_response = "*"
+python-asynctools = "*"
+python-concurrenttools = "*"
+python-filewrap = "*"
+python-iterutils = "*"
+python-http_request = "*"
+python-urlopen = "*"
+requests_request = "*"
+
+[tool.poetry.scripts]
+python-download = "download.__main__:main"
+download = "download.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "python-texttools"
+include = "download"

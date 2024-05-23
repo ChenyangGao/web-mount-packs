@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-filewrap"
-version = "0.0.8"
-description = "Python file wrappers."
+name = "python-hashtools"
+version = "0.0.1"
+description = "Python hash tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-filewrap"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-filewrap"
-keywords = ["file", "wrapper"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-hashtools"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-hashtools"
+keywords = ["file", "hash", "hashtools"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,11 +27,16 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-asynctools = "*"
+python-filewrap = "*"
+iterdir = "*"
+
+[tool.poetry.scripts]
+python-hashtools = "hashtools.__main__:main"
+hashtools = "hashtools.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "filewrap"
+include = "hashtools"

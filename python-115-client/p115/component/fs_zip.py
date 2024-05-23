@@ -16,11 +16,11 @@ from itertools import count
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
-from typing import cast, Never, Optional, Self
+from typing import cast, Never, Self
 
-from patht import escape, joins
+from posixpatht import escape, joins
 
-from .client import check_response, P115Client
+from .client import check_response, P115Client, ExtractProgress
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -48,7 +48,7 @@ class P115ZipPath(P115PathBase):
 # TODO: 参考 zipfile 模块的接口设计 namelist、filelist 等属性，以及其它的和 zipfile 兼容的接口
 # TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
 class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
-    file_id: Optional[int]
+    file_id: None | int
     pickcode: str
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, AttrDict]
@@ -59,10 +59,12 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     def __init__(
         self, 
         /, 
-        client: P115Client, 
+        client: str | P115Client, 
         id_or_pickcode: int | str, 
     ):
-        file_id: Optional[int]
+        file_id: None | int
+        if isinstance(client, str):
+            client = P115Client(client)
         if isinstance(id_or_pickcode, int):
             file_id = id_or_pickcode
             pickcode = client.fs.attr(file_id)["pickcode"]
@@ -74,7 +76,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             raise OSError(errno.EIO, "file was not decompressed")
         self.__dict__.update(
             client=client, 
-            cid=0, 
+            id=0, 
             path="/", 
             pickcode=pickcode, 
             file_id=file_id, 
@@ -98,7 +100,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         cookie = None, 
         app: str = "web", 
     ) -> Self:
-        return cls(P115Client(cookie, login_app=app), id_or_pickcode)
+        return cls(P115Client(cookie, app=app), id_or_pickcode)
 
     @check_response
     def fs_files(
@@ -106,10 +108,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         path: str = "", 
         next_marker: str = "", 
+        page_count: int = 999, 
     ) -> dict:
         return self.client.extract_list(
-            path=path, 
             pickcode=self.pickcode, 
+            path=path, 
+            next_marker=next_marker, 
+            page_count=page_count, 
         )
 
     @cached_property
@@ -154,12 +159,12 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         self, 
         path: str | PathLike[str] | Sequence[str], 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
         if pid is None:
-            pid = self.cid
+            pid = self.id
         if not path or path == ".":
             return self._attr(pid)
         patht = self.get_patht(path, pid)
@@ -187,7 +192,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> AttrDict:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
@@ -215,8 +220,8 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
     ) -> str:
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
@@ -227,7 +232,8 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
+        **kwargs, 
     ) -> Iterator[AttrDict]:
         attr = self.attr(id_or_path, pid)
         if not attr["is_directory"]:
@@ -244,7 +250,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             def iterdir():
                 get_files = self.fs_files
                 path_to_id = self.path_to_id
-                data = get_files(dirname)["data"]
+                data = get_files(dirname, **kwargs)["data"]
                 for info in data["list"]:
                     attr = normalize_info(info, fs=self)
                     path = joinpath(dirname, escape(attr["name"]))
@@ -253,7 +259,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     yield attr
                 next_marker = data["next_marker"]
                 while next_marker:
-                    data = get_files(dirname, next_marker)["data"]
+                    data = get_files(dirname, next_marker, **kwargs)["data"]
                     for info in data["list"]:
                         attr = normalize_info(info, fs=self)
                         path = joinpath(dirname, escape(attr["name"]))
@@ -269,19 +275,19 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> stat_result:
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
-        timestamp = attr["timestamp"], 
+        timestamp: float = attr["timestamp"]
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o444, 
-            attr["id"], 
-            attr["parent_id"], 
+            cast(int, attr["id"]), 
+            cast(int, attr["parent_id"]), 
             1, 
-            self.user_id, 
+            self.client.user_id, 
             1, 
-            0 if is_dir else attr["size"], 
+            cast(int, 0 if is_dir else attr["size"]), 
             timestamp, 
             timestamp, 
             timestamp, 

@@ -23,7 +23,7 @@ from typing import cast, Literal, Optional, Self
 from uuid import uuid4
 
 from filewrap import SupportsRead
-from patht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
+from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 
 from .client import check_response, P115Client
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
@@ -294,7 +294,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         app: str = "web", 
         **kwargs, 
     ) -> Self:
-        kwargs["client"] = P115Client(cookie, login_app=app)
+        kwargs["client"] = P115Client(cookie, app=app)
         return cls(**kwargs)
 
     @property
@@ -381,7 +381,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         offset: int = 0, 
     ) -> dict:
         resp = check_response(self.client.fs_files({
-            "id": id, 
+            "cid": id, 
             "limit": limit, 
             "offset": offset, 
             "show_dir": 1, 
@@ -530,6 +530,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: Optional[int] = None, 
         refresh: bool = False, 
+        **kwargs, 
     ) -> Iterator[AttrDict]:
         path_to_id = self.path_to_id
         attr_cache = self.attr_cache
@@ -544,8 +545,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if isinstance(id_or_path, dict):
                     attr = id_or_path
                 elif isinstance(id_or_path, path_class):
-                    if not id_or_path.is_attr_loaded:
-                        id_or_path()
                     attr = id_or_path.__dict__
             if attr is None:
                 attr = self.attr(id_or_path, pid)
@@ -593,7 +592,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 return attr
             def iterdir():
                 get_files = self.fs_files
-                resp = get_files(id, limit=pagesize)
+                kwargs["limit"] = pagesize
+                resp = get_files(id, **kwargs)
                 dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
                 if path_to_id is not None:
                     path_to_id[dirname] = id
@@ -601,7 +601,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 for attr in resp["data"]:
                     yield normalize_attr(attr, dirname, fs=self)
                 for offset in range(pagesize, count, 1 << 10):
-                    resp = get_files(id, limit=pagesize, offset=offset)
+                    kwargs["offset"] = offset
+                    resp = get_files(id, **kwargs)
                     if resp["count"] != count:
                         raise RuntimeError(f"{id} detected count changes during iteration")
                     for attr in resp["data"]:
@@ -1437,7 +1438,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 search_value = attr["sha1"]
             id = 0
         payload = {
-            "id": id, 
+            "cid": id, 
             "search_value": search_value, 
             "limit": page_size, 
             "offset": offset, 
@@ -1487,15 +1488,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         is_dir = attr["is_directory"]
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
-            attr["id"], # ino
-            attr["parent_id"], # dev
+            cast(int, attr["id"]), # ino
+            cast(int, attr["parent_id"]), # dev
             1, # nlink
             self.client.user_id, # uid
             1, # gid
             0 if is_dir else attr["size"], # size
-            attr.get("atime", 0), # atime
-            attr.get("mtime", 0), # mtime
-            attr.get("ctime", 0), # ctime
+            cast(float, attr.get("atime", 0)), # atime
+            cast(float, attr.get("mtime", 0)), # mtime
+            cast(float, attr.get("ctime", 0)), # ctime
         ))
 
     def touch(

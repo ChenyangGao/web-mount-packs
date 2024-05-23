@@ -14,10 +14,12 @@ class P115Recyclebin:
 
     def __init__(
         self, 
-        client: P115Client, 
+        client: str | P115Client, 
         /, 
         password: int | str = "", 
     ):
+        if isinstance(client, str):
+            client = P115Client(client)
         self.client = client
         self.password = password
 

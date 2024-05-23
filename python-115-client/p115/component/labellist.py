@@ -8,12 +8,15 @@ from collections.abc import Iterator
 from typing import Literal
 
 from .client import check_response, P115Client
+from .fs import P115Path
 
 
 class P115LabelList:
     __slots__ = "client",
 
-    def __init__(self, client: P115Client, /):
+    def __init__(self, client: str | P115Client, /):
+        if isinstance(client, str):
+            client = P115Client(client)
         self.client = client
 
     def __contains__(self, id_or_name: int | str, /) -> bool:

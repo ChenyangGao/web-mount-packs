@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-# TODO 为 text_before、text_after、text_between 各增加一个 _iter 版本，且支持参数 reverse=True
-# TODO 为 text_finditer 增加参数 reverse=True
-
-__author__  = "ChenyangGao <https://chenyanggao.github.io/>"
-__version__ = (0, 0, 0)
-__all__ = ["Span", "text_find", "text_finditer", "text_before", "text_after", "text_between"]
+__author__  = "ChenyangGao <https://chenyanggao.github.io>"
+__all__ = [
+    "Span", "text_find", "text_finditer", "text_before", "text_after", "text_between", 
+]
 
 from itertools import islice
 from collections import deque
@@ -23,9 +21,10 @@ def text_find(
     pattern, 
     /, 
     index: int = 0, 
-    begin: Optional[int] = None, 
+    start: Optional[int] = None, 
+    stop: Optional[int] = None, 
 ) -> Span:
-    """
+    """find substring.
 
     DOCTEST & EXAMPLES::
         >>> text_find("<a>0</a><a>1</a>@", "<a>")
@@ -40,7 +39,7 @@ def text_find(
         Span(start=0, stop=3)
         >>> text_find("<a>0</a><a>1</a>@", "<a>", -3)
         Span(start=0, stop=0)
-        >>> text_find("<a>0</a><a>1</a>@", "<a>", begin=1)
+        >>> text_find("<a>0</a><a>1</a>@", "<a>", start=1)
         Span(start=8, stop=11)
         >>> text_find(b"<a>0</a><a>1</a>@", b"<a>")
         Span(start=0, stop=3)
@@ -54,7 +53,7 @@ def text_find(
         Span(start=0, stop=3)
         >>> text_find(b"<a>0</a><a>1</a>@", b"<a>", -3)
         Span(start=0, stop=0)
-        >>> text_find(b"<a>0</a><a>1</a>@", b"<a>", begin=1)
+        >>> text_find(b"<a>0</a><a>1</a>@", b"<a>", start=1)
         Span(start=8, stop=11)
         >>> import re
         >>> text_find("<a>0</a><a>1</a>@", re.compile("<a>"))
@@ -69,7 +68,7 @@ def text_find(
         Span(start=0, stop=3)
         >>> text_find("<a>0</a><a>1</a>@", re.compile("<a>"), -3)
         Span(start=0, stop=0)
-        >>> text_find("<a>0</a><a>1</a>@", re.compile("<a>"), begin=1)
+        >>> text_find("<a>0</a><a>1</a>@", re.compile("<a>"), start=1)
         Span(start=8, stop=11)
         >>> text_find(b"<a>0</a><a>1</a>@", re.compile(b"<a>"))
         Span(start=0, stop=3)
@@ -83,84 +82,115 @@ def text_find(
         Span(start=0, stop=3)
         >>> text_find(b"<a>0</a><a>1</a>@", re.compile(b"<a>"), -3)
         Span(start=0, stop=0)
-        >>> text_find(b"<a>0</a><a>1</a>@", re.compile(b"<a>"), begin=1)
+        >>> text_find(b"<a>0</a><a>1</a>@", re.compile(b"<a>"), start=1)
         Span(start=8, stop=11)
     """
     text_len = len(text)
-    if begin is None:
-        begin = 0 if index >= 0 else text_len
-    elif begin < 0:
-        begin += text_len
-    if begin < 0:
-        begin = 0
-    elif begin > text_len:
-        begin = text_len
     if text_len == 0:
         return Span(0, 0)
-    elif index < 0 and begin == 0 or index >= 0 and begin == text_len:
-        return Span(begin, begin)
+    if start is None:
+        start = 0
+    elif start < 0:
+        start += text_len
+    if start < 0:
+        start = 0
+    elif start > text_len:
+        start = text_len
+    if stop is None:
+        stop = text_len
+    elif stop < 0:
+        stop += text_len
+    if stop < 0:
+        stop = 0
+    elif stop > text_len:
+        stop = text_len
+    if start >= stop:
+        if index >= 0:
+            return Span(start, start)
+        else:
+            return Span(stop, stop)
     if isinstance(pattern, (bytes, str)):
         pattern = cast(AnyStr, pattern)
         patn_len = len(pattern)
         if patn_len == 0:
             if index >= 0:
-                index = min(begin+index, text_len)
+                index = min(start+index, text_len)
             else:
-                index = max(begin+1+index, 0)
+                index = max(start+1+index, 0)
             return Span(index, index)
         if index >= 0:
             find = text.find
-            start = begin
             for _ in range(-1, index):
-                i = find(pattern, start)
+                i = find(pattern, start, stop)
                 if i == -1:
-                    return Span(text_len, text_len)
+                    return Span(stop, stop)
                 start = i + patn_len
             return Span(start-patn_len, start)
         else:
             rfind = text.rfind
-            stop = begin
             for _ in range(-index):
-                i = rfind(pattern, 0, stop)
+                i = rfind(pattern, start, stop)
                 if i < 0:
-                    return Span(0, 0)
+                    return Span(start, start)
                 stop = i
             return Span(stop, stop+patn_len)
     elif index >= 0:
         try:
-            start, stop = next(islice(pattern.finditer(text[begin:]), index, None)).span()
-            return Span(start + begin, stop + begin)
+            match = next(islice(pattern.finditer(text, start, stop), index, None))
+            return Span(*match.span())
         except StopIteration:
-            return Span(text_len, text_len)
+            return Span(stop, stop)
     else:
-        dq = deque(pattern.finditer(text[:begin]), maxlen=-index)
+        dq = deque(pattern.finditer(text, start, stop), maxlen=-index)
         if len(dq) == -index:
             return Span(*dq[0].span())
         else:
-            return Span(0, 0)
+            return Span(start, start)
 
 
 def text_finditer(
     text: AnyStr, 
     pattern, 
     /, 
+    start: Optional[int] = None, 
+    stop: Optional[int] = None, 
 ) -> Iterator[Span]:
-    """
+    """find and iterate over substrings.
 
     DOCTEST & EXAMPLES::
         >>> tuple(text_finditer("<a>0</a><a>1</a>@", "<a>"))
         (Span(start=0, stop=3), Span(start=8, stop=11))
         >>> tuple(text_finditer(b"<a>0</a><a>1</a>@", b"<a>"))
         (Span(start=0, stop=3), Span(start=8, stop=11))
+        >>> tuple(text_finditer("<a>0</a><a>1</a>@", "<a>", 1))
+        (Span(start=8, stop=11),)
+        >>> tuple(text_finditer(b"<a>0</a><a>1</a>@", b"<a>", 1))
+        (Span(start=8, stop=11),)
         >>> import re
         >>> tuple(text_finditer("<a>0</a><a>1</a>@", re.compile("<a>")))
         (Span(start=0, stop=3), Span(start=8, stop=11))
         >>> tuple(text_finditer(b"<a>0</a><a>1</a>@", re.compile(b"<a>")))
         (Span(start=0, stop=3), Span(start=8, stop=11))
     """
+    text_len = len(text)
+    if start is None:
+        start = 0
+    elif start < 0:
+        start += text_len
+    if start < 0:
+        start = 0
+    elif start > text_len:
+        start = text_len
+    if stop is None:
+        stop = text_len
+    elif stop < 0:
+        stop += text_len
+    if stop < 0:
+        stop = 0
+    elif stop > text_len:
+        stop = text_len
     if isinstance(pattern, (bytes, str)):
         pattern = cast(AnyStr, pattern)
-        text_len = len(text)
         patn_len = len(pattern)
         if text_len == 0:
             if patn_len == 0:
@@ -171,14 +201,13 @@ def text_finditer(
                 yield Span(i, i)
             return
         find = text.find
-        start = 0
         while True:
-            i = find(pattern, start)
+            i = find(pattern, start, stop)
             if i == -1:
                 return
             yield Span(i, (start := i + patn_len))
     else:
-        for match in pattern.finditer(text):
+        for match in pattern.finditer(text, start, stop):
             yield Span(*match.span())
 
 
@@ -187,9 +216,11 @@ def text_before(
     prefix, 
     /, 
     index: int = 0, 
+    start: Optional[int] = None, 
+    stop: Optional[int] = None, 
     with_match: bool = False, 
 ) -> AnyStr:
-    """
+    """find substring with prefix.
 
     DOCTEST & EXAMPLES::
         >>> text_before("<a>0</a><a>1</a>@", "<a>")
@@ -244,7 +275,7 @@ def text_before(
         >>> text_before("<a>0</a><a>1</a>@", "<a>", -2, with_match=True)
         '<a>'
     """
-    return text[:text_find(text, prefix, index)[with_match]]
+    return text[:text_find(text, prefix, index, start, stop)[with_match]]
 
 
 def text_after(
@@ -252,9 +283,11 @@ def text_after(
     suffix, 
     /, 
     index: int = 0, 
+    start: Optional[int] = None, 
+    stop: Optional[int] = None, 
     with_match: bool = False, 
 ) -> AnyStr:
-    """
+    """find substring with suffix.
 
     DOCTEST & EXAMPLES::
         >>> text_after("<a>0</a><a>1</a>@", "<a>")
@@ -299,7 +332,7 @@ def text_after(
         >>> text_after("<a>0</a><a>1</a>@", "<a>", -2, with_match=True)
         '<a>0</a><a>1</a>@'
     """
-    return text[text_find(text, suffix, index)[not with_match]:]
+    return text[text_find(text, suffix, index, start, stop)[not with_match]:]
 
 
 def text_between(
@@ -308,9 +341,11 @@ def text_between(
     suffix, 
     /, 
     index: int = 0, 
+    start: Optional[int] = None, 
+    stop: Optional[int] = None, 
     with_match: bool = False, 
 ) -> AnyStr:
-    """
+    """find substring with prefix and suffix.
 
     DOCTEST & EXAMPLES::
         >>> text_between("<a>0</a><a>1</a>@", "<a>", "</a>")
@@ -365,24 +400,45 @@ def text_between(
         >>> text_between("<a>0</a><a>1</a>@", "<a>", "</a>", -2, with_match=True)
         '<a>0</a>'
     """
+    text_len = len(text)
+    if text_len == 0:
+        return text[:0]
+    if start is None:
+        start = 0
+    elif start < 0:
+        start += text_len
+    if start < 0:
+        start = 0
+    elif start > text_len:
+        start = text_len
+    if stop is None:
+        stop = text_len
+    elif stop < 0:
+        stop += text_len
+    if stop < 0:
+        stop = 0
+    elif stop > text_len:
+        stop = text_len
+    if start >= stop:
+        return text[:0]
     if index >= 0:
-        stop0 = 0
+        stop0 = start
         for _ in range(-1, index):
-            start0, start1 = text_find(text, prefix, begin=stop0)
-            stop1,  stop0  = text_find(text, suffix, begin=start1)
+            start0, start1 = text_find(text, prefix, 0, stop0, stop)
+            stop1,  stop0  = text_find(text, suffix, 0, start1, stop)
             if start0 == stop0:
                 break
     elif isinstance(prefix, (bytes, str)) and isinstance(suffix, (bytes, str)):
-        start0 = len(text)
+        start0 = stop
         for _ in range(-index):
-            stop1,  stop0  = text_find(text, suffix, -1, begin=start0)
-            start0, start1 = text_find(text, prefix, -1, begin=stop1)
+            stop1,  stop0  = text_find(text, suffix, -1, start, start0)
+            start0, start1 = text_find(text, prefix, -1, start, stop1)
             if start0 == stop0:
                 break
     else:
-        prefix_rit = reversed(tuple(text_finditer(text, prefix)))
-        suffix_rit = reversed(tuple(text_finditer(text, suffix)))
-        start0 = len(text)
+        prefix_rit = reversed(tuple(text_finditer(text, prefix, start, stop)))
+        suffix_rit = reversed(tuple(text_finditer(text, suffix, start, stop)))
+        start0 = stop
         try:
             for _ in range(-index):
                 while True:

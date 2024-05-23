@@ -2,25 +2,75 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
-__all__ = ["SupportsGeturl", "encode_multipart_data", "encode_multipart_data_async"]
+__version__ = (0, 0, 4)
+__all__ = [
+    "SupportsGeturl", "url_origin", "complete_url", "cookies_str_to_dict", "headers_str_to_dict", 
+    "encode_multipart_data", "encode_multipart_data_async", 
+]
 
 from itertools import chain
 from collections.abc import AsyncIterable, AsyncIterator, ItemsView, Iterable, Iterator, Mapping
-from typing import Any, Protocol, TypeVar
-from urllib.parse import quote
+from re import compile as re_compile, Pattern
+from typing import runtime_checkable, Any, Final, Protocol, TypeVar
+from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from asynctools import ensure_aiter, async_chain
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from integer_tool import int_to_bytes
+from texttools import text_to_dict
 
 
 AnyStr = TypeVar("AnyStr", bytes, str, covariant=True)
 
+CRE_URL_SCHEME: Final = re_compile(r"^(?i:[a-z][a-z0-9.+-]*)://")
 
+
+@runtime_checkable
 class SupportsGeturl(Protocol[AnyStr]):
     def geturl(self) -> AnyStr: ...
+
+
+def url_origin(url: str, /) -> str:
+    if url.startswith("://"):
+        url = "http" + url
+    elif CRE_URL_SCHEME.match(url) is None:
+        url = "http://" + url
+    urlp = urlsplit(url)
+    scheme, netloc = urlp.scheme, urlp.netloc
+    if not netloc:
+        netloc = "localhost"
+    return f"{scheme}://{netloc}"
+
+
+def complete_url(url: str, /) -> str:
+    if url.startswith("://"):
+        url = "http" + url
+    elif CRE_URL_SCHEME.match(url) is None:
+        url = "http://" + url
+    urlp = urlsplit(url)
+    repl = {"query": "", "fragment": ""}
+    if not urlp.netloc:
+        repl["path"] = "localhost"
+    return urlunsplit(urlp._replace(**repl)).rstrip("/")
+
+
+def cookies_str_to_dict(
+    cookies: str, 
+    /, 
+    kv_sep: str | Pattern[str] = re_compile(r"\s*=\s*"), 
+    entry_sep: str | Pattern[str] = re_compile(r"\s*;\s*"), 
+) -> dict[str, str]:
+    return text_to_dict(cookies.strip(), kv_sep, entry_sep)
+
+
+def headers_str_to_dict(
+    headers: str, 
+    /, 
+    kv_sep: str | Pattern[str] = re_compile(r":\s+"), 
+    entry_sep: str | Pattern[str] = re_compile("\n+"), 
+) -> dict[str, str]:
+    return text_to_dict(headers.strip(), kv_sep, entry_sep)
 
 
 def ensure_bytes(s, /) -> bytes | bytearray | memoryview:

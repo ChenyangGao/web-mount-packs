@@ -13,7 +13,9 @@ from .client import check_response, P115Client
 class P115Sharing:
     __slots__ = "client",
 
-    def __init__(self, client: P115Client, /):
+    def __init__(self, client: str | P115Client, /):
+        if isinstance(client, str):
+            client = P115Client(client)
         self.client = client
 
     def __contains__(self, code_or_id: int | str, /) -> bool:

@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["urlopen", "download"]
 
 import errno
@@ -33,7 +33,7 @@ def urlopen(
     params: Optional[str | Mapping | Sequence[tuple[Any, Any]]] = None, 
     data: Optional[bytes | str | Mapping | Sequence[tuple[Any, Any]]] = None, 
     json: Any = None, 
-    headers: dict[str, str] = {"User-agent": ""}, 
+    headers: Optional[dict[str, str]] = {"User-agent": ""}, 
     method: str = "GET", 
     timeout: Optional[int | float] = None, 
     proxy: Optional[tuple[str, str]] = None, 

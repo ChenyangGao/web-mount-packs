@@ -4,7 +4,10 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Offline"]
 
+from asyncio import run
 from collections.abc import Callable, Iterable, Iterator
+from hashlib import sha1
+from time import time
 from types import MappingProxyType
 
 from magnet2torrent import Magnet2Torrent # type: ignore
@@ -18,7 +21,9 @@ class P115Offline:
     client: P115Client
     _sign_time: MappingProxyType
 
-    def __init__(self, /, client: P115Client):
+    def __init__(self, /, client: str | P115Client):
+        if isinstance(client, str):
+            client = P115Client(client)
         self.client = client
 
     def __contains__(self, hash: str, /) -> bool:

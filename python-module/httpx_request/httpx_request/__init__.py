@@ -2,16 +2,18 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["request"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from json import loads
+from typing import cast, overload, Any, Literal, TypeVar
 
 from argtools import argcount
 from httpx._types import AuthTypes, SyncByteStream, URLTypes
 from httpx._client import AsyncClient, Client, Response, UseClientDefault, USE_CLIENT_DEFAULT
+
 
 if "__del__" not in Client.__dict__:
     setattr(Client, "__del__", Client.close)
@@ -144,24 +146,53 @@ async def request_async(
             return parse(resp, await resp.aread())
 
 
+@overload
 def request(
     url: URLTypes, 
     method: str = "GET", 
     parse: None | bool | Callable = None, 
     raise_for_status: bool = False, 
     session: None | Client | AsyncClient = None, 
-    async_: bool = False, 
+    async_: Literal[False] = False, 
+    **request_kwargs, 
+) -> Any:
+    ...
+@overload
+def request(
+    url: URLTypes, 
+    method: str, 
+    parse: None | bool | Callable, 
+    raise_for_status: bool, 
+    session: None | AsyncClient, 
+    async_: Literal[True], 
+    **request_kwargs, 
+) -> Awaitable[Any]:
+    ...
+def request(
+    url: URLTypes, 
+    method: str = "GET", 
+    parse: None | bool | Callable = None, 
+    raise_for_status: bool = False, 
+    session: None | Client | AsyncClient = None, 
+    async_: Literal[False, True] = False, 
     **request_kwargs, 
 ):
-    if session is not None:
-        async_ = isinstance(session, AsyncClient)
-    request = request_async if async_ else request_sync
-    return request( # type: ignore
-        url, 
-        method, 
-        parse=parse, 
-        raise_for_status=raise_for_status, 
-        session=session, 
-        **request_kwargs, 
-    )
+    if async_:
+        return request_async(
+            url, 
+            method=method, 
+            parse=parse, 
+            raise_for_status=raise_for_status, 
+            session=cast(None | AsyncClient, session), 
+            **request_kwargs, 
+        )
+    else:
+        return request_sync(
+            url, 
+            method=method, 
+            parse=parse, 
+            raise_for_status=raise_for_status, 
+            session=cast(None | Client, session), 
+            **request_kwargs, 
+        )
 

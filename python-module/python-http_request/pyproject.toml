@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-http_request"
-version = "0.0.2"
+version = "0.0.4"
 description = "Python http response utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

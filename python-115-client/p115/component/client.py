@@ -15,11 +15,11 @@ from collections.abc import (
     AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import date, datetime
 from email.utils import formatdate
 from functools import cached_property, partial, update_wrapper
-from hashlib import md5, sha1, file_digest
+from hashlib import md5, sha1
 from hmac import digest as hmac_digest
 from http.cookiejar import Cookie
 from http.cookies import Morsel
@@ -30,7 +30,8 @@ from json import dumps, loads
 from os import fsdecode, fstat, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
-from time import strftime, strptime, time
+from threading import Condition, Thread
+from time import sleep, strftime, strptime, time
 from typing import (
     cast, overload, Any, Final, Literal, Never, Optional, Self, TypeVar, 
 )
@@ -38,7 +39,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
 from xml.etree.ElementTree import fromstring
 
-from asynctools import as_thread
+from asynctools import as_thread, ensure_aiter, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
 from filewrap import (
     SupportsRead, 
@@ -48,6 +49,7 @@ from filewrap import (
     bytes_to_chunk_iter, bytes_to_chunk_async_iter, 
     bytes_ensure_part_iter, bytes_ensure_part_async_iter, 
 )
+from hashtools import file_digest, file_digest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_range_request
 from httpfile import RequestsFileReader # TODO: use urllib3 instead
@@ -55,8 +57,8 @@ from httpx import AsyncClient, Client, Cookies, TimeoutException
 from httpx_request import request
 from iterutils import through, async_through, wrap_iter, wrap_aiter
 from multidict import CIMultiDict
-from qrcode import QRCode
-from startfile import startfile, startfile_async
+from qrcode import QRCode # type: ignore
+from startfile import startfile, startfile_async # type: ignore
 from urlopen import urlopen
 from yarl import URL
 
@@ -69,9 +71,6 @@ RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
-
-
-request = partial(request, parse=lambda _, content: loads(content))
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -222,7 +221,7 @@ class P115Client:
             resp = self.login_with_qrcode(app, open_qrcode_on_console=open_qrcode_on_console)
             cookies = resp["data"]["cookie"]
         if cookies:
-            self.cookies = cookies
+            setattr(self, "cookies", cookies)
             upload_info = self.upload_info
             if not upload_info["state"]:
                 raise AuthenticationError(upload_info)
@@ -307,29 +306,45 @@ class P115Client:
         /, 
         url: str, 
         method: str = "GET", 
-        async_: bool = False, 
-        session = None, 
+        parse: None | bool | Callable = lambda _, content: loads(content), 
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ):
         """帮助函数：可执行同步和异步的网络请求
         """
-        if session is None:
-            session = self.async_session if async_ else self.session
         return request(
             url, 
-            method, 
+            method=method, 
+            parse=parse, 
             async_=async_, 
-            session=session, 
+            session=self.async_session if async_ else self.session, # type: ignore
             **request_kwargs, 
         )
 
     ########## Login API ##########
 
+    @overload
     def login_status(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bool:
+        ...
+    @overload
+    def login_status(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bool]:
+        ...
+    def login_status(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bool | Awaitable[bool]:
         """检查是否已登录
         GET https://my.115.com/?ct=guide&ac=status
         """
@@ -340,25 +355,59 @@ class P115Client:
             except:
                 return False
         request_kwargs["parse"] = parse
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def login_check(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def login_check(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def login_check(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """检查当前用户的登录状态
         GET https://passportapi.115.com/app/1.0/web/1.0/check/sso
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/check/sso"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def login_device(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> None | dict:
+        ...
+    @overload
+    def login_device(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[None | dict]:
+        ...
+    def login_device(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> None | dict | Awaitable[None | dict]:
         """获取当前的登录设备的信息，如果为 None，则说明登录失效
         """
         def parse(resp, content: bytes) -> None | dict:
@@ -367,27 +416,65 @@ class P115Client:
                 return None
             return next(d for d in login_devices["data"]["list"] if d["is_current"])
         request_kwargs["parse"] = parse
-        return self.login_devices(**request_kwargs)
+        return self.login_devices(async_=async_, **request_kwargs)
 
+    @overload
     def login_devices(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def login_devices(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def login_devices(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取所有的已登录设备的信息，不过当前必须未登录失效
         GET https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices
         """
         api = "https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
+    def login(
+        self, 
+        /, 
+        app: str, 
+        open_qrcode_on_console: bool,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Self:
+        ...
+    @overload
+    def login(
+        self, 
+        /, 
+        app: str, 
+        open_qrcode_on_console: bool,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[Self]:
+        ...
     def login(
         self, 
         /, 
         app: str = "web", 
-        open_qrcode_on_console: bool = True, 
+        open_qrcode_on_console: bool = True,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ):
+    ) -> Self | Awaitable[Self]:
         """扫码二维码登录，如果已登录则忽略
         app 共有 17 个可用值，目前找出 10 个：
             - web
@@ -423,30 +510,60 @@ class P115Client:
         |     16 | R1      | wechatmini | 115生活(微信小程序)    |
         |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
-                if not (await self.login_status(**request_kwargs)):
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
+                if not (await self.login_status(async_=async_, **request_kwargs)):
                     self.cookies = (await self.login_with_qrcode(
                         app, 
                         open_qrcode_on_console=open_qrcode_on_console, 
+                        async_=async_, 
                         **request_kwargs, 
                     ))["data"]["cookie"]
+                return self
             return async_request()
         else:
             if not self.login_status(**request_kwargs):
                 self.cookies = self.login_with_qrcode(
-                    app, open_qrcode_on_console=open_qrcode_on_console, **request_kwargs, 
+                    app, 
+                    open_qrcode_on_console=open_qrcode_on_console, 
+                    async_=async_, 
+                    **request_kwargs, 
                 )["data"]["cookie"]
+            return self
 
+    @overload
+    @classmethod
+    def login_with_qrcode(
+        cls, 
+        /, 
+        app: str, 
+        open_qrcode_on_console: bool,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    @classmethod
+    def login_with_qrcode(
+        cls, 
+        /, 
+        app: str, 
+        open_qrcode_on_console: bool,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     @classmethod
     def login_with_qrcode(
         cls, 
         /, 
         app: str = "web", 
-        open_qrcode_on_console: bool = True, 
+        open_qrcode_on_console: bool = True,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """扫码二维码登录，获取响应（如果需要更新此 client 的 cookies，请直接用 login 方法）
         app 共有 17 个可用值，目前找出 10 个：
             - web
@@ -482,10 +599,11 @@ class P115Client:
         |     16 | R1      | wechatmini | 115生活(微信小程序)    |
         |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
-                qrcode_token = (await cls.login_qrcode_token(**request_kwargs))["data"]
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
+                qrcode_token = (await cls.login_qrcode_token(async_=async_, **request_kwargs))["data"]
                 qrcode = qrcode_token.pop("qrcode")
                 if open_qrcode_on_console:
                     qr = QRCode(border=1)
@@ -495,7 +613,8 @@ class P115Client:
                     await startfile_async("https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode?uid=" + qrcode_token["uid"])
                 while True:
                     try:
-                        resp = await cls.login_qrcode_status(qrcode_token, **request_kwargs)
+                        resp = await cls.login_qrcode_status(
+                            qrcode_token, async_=async_, **request_kwargs)
                     except TimeoutException:
                         continue
                     status = resp["data"].get("status")
@@ -512,10 +631,14 @@ class P115Client:
                         raise LoginError("[status=-2] qrcode: canceled")
                     else:
                         raise LoginError(f"qrcode: aborted with {resp!r}")
-                return await cls.login_qrcode_result({"account": qrcode_token["uid"], "app": app}, **request_kwargs)
+                return await cls.login_qrcode_result(
+                    {"account": qrcode_token["uid"], "app": app}, 
+                    async_=async_, 
+                    **request_kwargs, 
+                )
             return async_request()
         else:
-            qrcode_token = cls.login_qrcode_token(**request_kwargs)["data"]
+            qrcode_token = cls.login_qrcode_token(async_=async_, **request_kwargs)["data"]
             qrcode = qrcode_token.pop("qrcode")
             if open_qrcode_on_console:
                 qr = QRCode(border=1)
@@ -525,7 +648,8 @@ class P115Client:
                 startfile("https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode?uid=" + qrcode_token["uid"])
             while True:
                 try:
-                    resp = cls.login_qrcode_status(qrcode_token, **request_kwargs)
+                    resp = cls.login_qrcode_status(
+                        qrcode_token, async_=async_, **request_kwargs)
                 except TimeoutException:
                     continue
                 status = resp["data"].get("status")
@@ -542,15 +666,40 @@ class P115Client:
                     raise LoginError("[status=-2] qrcode: canceled")
                 else:
                     raise LoginError(f"qrcode: aborted with {resp!r}")
-            return cls.login_qrcode_result({"account": qrcode_token["uid"], "app": app}, **request_kwargs)
+            return cls.login_qrcode_result(
+                {"account": qrcode_token["uid"], "app": app}, 
+                async_=async_, 
+                **request_kwargs, 
+            )
 
+    @overload
+    def login_another_app(
+        self, 
+        /, 
+        app: str, 
+        replace: bool,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Self:
+        ...
+    @overload
+    def login_another_app(
+        self, 
+        /, 
+        app: str, 
+        replace: bool,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[Self]:
+        ...
     def login_another_app(
         self, 
         /, 
         app: str = "web", 
-        replace: bool = False, 
+        replace: bool = False,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> Self:
+    ) -> Self | Awaitable[Self]:
         """登录某个设备（同一个设备最多同时一个在线，即最近登录的那个）
         :param app: 要登录的 app
         :param replace: 替换当前 client 对象的 cookie，否则返回新的 client 对象
@@ -577,13 +726,22 @@ class P115Client:
         |     16 | R1      | wechatmini | 115生活(微信小程序)    |
         |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
-                uid = check_response(await self.login_qrcode_token(**request_kwargs))["data"]["uid"]
-                check_response(await self.login_qrcode_scan(uid, **request_kwargs))
-                check_response(await self.login_qrcode_scan_confirm(uid, **request_kwargs))
-                data = check_response(await self.login_qrcode_result({"account": uid, "app": app}, **request_kwargs))
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
+                uid = check_response(await self.login_qrcode_token(
+                    async_=async_, **request_kwargs, 
+                ))["data"]["uid"]
+                check_response(await self.login_qrcode_scan(
+                    uid, async_=async_, **request_kwargs))
+                check_response(await self.login_qrcode_scan_confirm(
+                    uid, async_=async_, **request_kwargs))
+                data = check_response(await self.login_qrcode_result(
+                    {"account": uid, "app": app}, 
+                    async_=async_, 
+                    **request_kwargs, 
+                ))
                 if replace:
                     self.cookies = data["data"]["cookie"]
                     return self
@@ -591,22 +749,49 @@ class P115Client:
                     return type(self)(data["data"]["cookie"])
             return async_request()
         else:
-            uid = check_response(self.login_qrcode_token(**request_kwargs))["data"]["uid"]
-            check_response(self.login_qrcode_scan(uid, **request_kwargs))
-            check_response(self.login_qrcode_scan_confirm(uid, **request_kwargs))
-            data = check_response(self.login_qrcode_result({"account": uid, "app": app}, **request_kwargs))
+            uid = check_response(self.login_qrcode_token(
+                async_=async_, **request_kwargs, 
+            ))["data"]["uid"]
+            check_response(self.login_qrcode_scan(
+                uid, async_=async_, **request_kwargs))
+            check_response(self.login_qrcode_scan_confirm(
+                uid, async_=async_, **request_kwargs))
+            data = check_response(self.login_qrcode_result(
+                {"account": uid, "app": app}, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
             if replace:
                 self.cookies = data["data"]["cookie"]
                 return self
             else:
                 return type(self)(data["data"]["cookie"])
 
+    @overload
     @staticmethod
     def login_qrcode_scan(
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode_scan(
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def login_qrcode_scan(
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """扫描二维码，payload 数据取自 `login_qrcode_token` 接口响应
         GET https://qrcodeapi.115.com/api/2.0/prompt.php
         payload:
@@ -616,14 +801,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"uid": payload}
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, **request_kwargs)
+        return request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
     def login_qrcode_scan_confirm(
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode_scan_confirm(
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def login_qrcode_scan_confirm(
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
         GET https://hnqrcodeapi.115.com/api/2.0/slogin.php
         payload:
@@ -635,14 +839,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"key": payload, "uid": payload, "client": 0}
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, **request_kwargs)
+        return request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
     def login_qrcode_scan_cancel(
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode_scan_cancel(
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def login_qrcode_scan_cancel(
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
         GET https://hnqrcodeapi.115.com/api/2.0/cancel.php
         payload:
@@ -654,14 +877,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"key": payload, "uid": payload, "client": 0}
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, **request_kwargs)
+        return request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
     def login_qrcode_status(
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode_status(
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def login_qrcode_status(
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取二维码的状态（未扫描、已扫描、已登录、已取消、已过期等），payload 数据取自 `login_qrcode_token` 接口响应
         GET https://qrcodeapi.115.com/get/status/
         payload:
@@ -671,14 +913,33 @@ class P115Client:
         """
         api = "https://qrcodeapi.115.com/get/status/"
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, **request_kwargs)
+        return request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
     def login_qrcode_result(
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode_result(
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def login_qrcode_result(
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取扫码登录的结果，包含 cookie
         POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
         payload:
@@ -691,59 +952,139 @@ class P115Client:
             payload = {"app": "web", **payload}
         api = f"https://passportapi.115.com/app/1.0/{payload['app']}/1.0/login/qrcode/"
         request_kwargs.pop("parse", None)
-        return request(api, "POST", data=payload, **request_kwargs)
+        return request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
-    def login_qrcode_token(**request_kwargs) -> dict:
+    def login_qrcode_token(
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode_token(
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def login_qrcode_token(
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取登录二维码，扫码可用
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/token/
         """
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
         request_kwargs.pop("parse", None)
-        return request(api, **request_kwargs)
+        return request(api, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
     def login_qrcode(
-        uid: str, 
+        uid: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
-        """下载登录二维码图片（PNG）
+        ...
+    @overload
+    @staticmethod
+    def login_qrcode(
+        uid: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    @staticmethod
+    def login_qrcode(
+        uid: str,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
+        """下载登录二维码图片
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode
         :params uid: 二维码的 uid
-        :return: `requests.Response` 或 `aiohttp.ClientResponse`
+        :return: 图片的二进制数据（PNG 图片）
         """
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode"
         request_kwargs["params"] = {"uid": uid}
         request_kwargs["parse"] = False
-        return request(api, **request_kwargs)
+        return request(api, async_=async_, **request_kwargs)
 
+    @overload
     def logout(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
-    ):
+    ) -> None:
+        ...
+    @overload
+    def logout(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[None]:
+        ...
+    def logout(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> None | Awaitable[None]:
         """退出当前设备的登录状态
         """
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
-                login_devices = await self.login_devices(**request_kwargs)
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
+                login_devices = await self.login_devices(async_=async_, **request_kwargs)
                 if login_devices["state"]:
                     current_device = next(d for d in login_devices["data"]["list"] if d["is_current"])
-                    await self.logout_by_ssoent(current_device["ssoent"], **request_kwargs)
+                    await self.logout_by_ssoent(
+                        current_device["ssoent"], 
+                        async_=async_, 
+                        **request_kwargs, 
+                    )
             return async_request()
         else:
-            login_devices = self.login_devices(**request_kwargs)
+            login_devices = self.login_devices(async_=async_, **request_kwargs)
             if login_devices["state"]:
                 current_device = next(d for d in login_devices["data"]["list"] if d["is_current"])
-                self.logout_by_ssoent(current_device["ssoent"], **request_kwargs)
+                self.logout_by_ssoent(
+                    current_device["ssoent"], 
+                    async_=async_, 
+                    **request_kwargs, 
+                )
+            return None
 
+    @overload
     def logout_by_app(
         self, 
         /, 
-        app: str,  
+        app: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
-    ):
+    ) -> None:
+        ...
+    @overload
+    def logout_by_app(
+        self, 
+        /, 
+        app: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[None]:
+        ...
+    def logout_by_app(
+        self, 
+        /, 
+        app: str,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> None | Awaitable[None]:
         """退出登录状态（可以把某个客户端下线，所有已登录设备可从 `login_devices` 获取）
         GET https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout
 
@@ -773,15 +1114,34 @@ class P115Client:
         """
         api = f"https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout"
         request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Cookie": self.cookies}
-        request_kwargs.setdefault("parse", None)
-        return request(api, **request_kwargs)
+        request_kwargs.setdefault("parse", lambda _: None)
+        return request(api, async_=async_, **request_kwargs)
 
+    @overload
     def logout_by_ssoent(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def logout_by_ssoent(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def logout_by_ssoent(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """退出登录状态（可以把某个客户端下线，所有已登录设备可从 `login_devices` 获取）
         GET https://passportapi.115.com/app/1.0/web/1.0/logout/mange
         payload:
@@ -813,79 +1173,187 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"ssoent": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Account API ##########
 
+    @overload
     def user_info(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def user_info(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_info(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取此用户信息
         GET https://my.115.com/?ct=ajax&ac=nav
         """
         api = "https://my.115.com/?ct=ajax&ac=nav"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def user_info2(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def user_info2(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_info2(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取此用户信息（更全）
         GET https://my.115.com/?ct=ajax&ac=get_user_aq
         """
         api = "https://my.115.com/?ct=ajax&ac=get_user_aq"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def user_setting(
         self, 
         payload: dict = {}, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def user_setting(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_setting(
+        self, 
+        payload: dict = {}, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
         POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
         api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## App API ##########
 
+    @overload
     @staticmethod
-    def app_version_list(**request_kwargs) -> dict:
+    def app_version_list(
+        async_: Literal[False] = False, 
+        **request_kwargs
+    ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def app_version_list(
+        async_: Literal[True], 
+        **request_kwargs
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def app_version_list(
+        async_: Literal[False, True] = False, 
+        **request_kwargs
+    ) -> dict | Awaitable[dict]:
         """获取当前各平台最新版 115 app 下载链接
         GET https://appversion.115.com/1/web/1.0/api/chrome
         """
         api = "https://appversion.115.com/1/web/1.0/api/chrome"
         request_kwargs.pop("parse", None)
-        return request(api, **request_kwargs)
+        return request(api, async_=async_, **request_kwargs)
 
     ########## File System API ##########
 
+    @overload
     def fs_space_summury(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_space_summury(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_space_summury(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取数据报告
         POST https://webapi.115.com/user/space_summury
         """
         api = "https://webapi.115.com/user/space_summury"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", **request_kwargs)
+        return self.request(api, "POST", async_=async_, **request_kwargs)
 
+    @overload
     def fs_batch_copy(
         self, 
         payload: dict | Iterable[int | str], 
         /, 
-        pid: int = 0, 
+        pid: int,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_batch_copy(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+        pid: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_batch_copy(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+        pid: int = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """复制文件或文件夹
         POST https://webapi.115.com/files/copy
         payload:
@@ -903,14 +1371,33 @@ class P115Client:
                 return {"state": False, "message": "no op"}
             payload["pid"] = pid
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_batch_delete(
         self, 
         payload: dict | Iterable[int | str], 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_batch_delete(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_batch_delete(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """删除文件或文件夹
         POST https://webapi.115.com/rb/delete
         payload:
@@ -924,15 +1411,36 @@ class P115Client:
         if not payload:
             return {"state": False, "message": "no op"}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_batch_move(
         self, 
         payload: dict | Iterable[int | str], 
         /, 
-        pid: int = 0, 
+        pid: int,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_batch_move(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+        pid: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_batch_move(
+        self, 
+        payload: dict | Iterable[int | str], 
+        /, 
+        pid: int = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """移动文件或文件夹
         POST https://webapi.115.com/files/move
         payload:
@@ -950,14 +1458,33 @@ class P115Client:
                 return {"state": False, "message": "no op"}
             payload["pid"] = pid
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_batch_rename(
         self, 
         payload: dict | Iterable[tuple[int | str, str]], 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_batch_rename(
+        self, 
+        payload: dict | Iterable[tuple[int | str, str]], 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_batch_rename(
+        self, 
+        payload: dict | Iterable[tuple[int | str, str]], 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """重命名文件或文件夹
         POST https://webapi.115.com/files/batch_rename
         payload:
@@ -969,35 +1496,102 @@ class P115Client:
         if not payload:
             return {"state": False, "message": "no op"}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_copy(
         self, 
         id: int | str, 
         /, 
-        pid: int = 0, 
+        pid: int,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
-        """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
-        """
-        return self.fs_batch_copy({"fid[0]": id, "pid": pid}, **request_kwargs)
-
-    def fs_delete(
+        ...
+    @overload
+    def fs_copy(
         self, 
         id: int | str, 
         /, 
+        pid: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_copy(
+        self, 
+        id: int | str, 
+        /, 
+        pid: int = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
+        """
+        return self.fs_batch_copy(
+            {"fid[0]": id, "pid": pid}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def fs_delete(
+        self, 
+        id: int | str, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_delete(
+        self, 
+        id: int | str, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_delete(
+        self, 
+        id: int | str, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """删除文件或文件夹，此接口是对 `fs_batch_delete` 的封装
         """
-        return self.fs_batch_delete({"fid[0]": id}, **request_kwargs)
+        return self.fs_batch_delete(
+            {"fid[0]": id}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
 
+    @overload
     def fs_file(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_file(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_file(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取文件或文件夹的简略信息
         GET https://webapi.115.com/files/file
         payload:
@@ -1007,14 +1601,33 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def fs_files(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def fs_files(
         self, 
         payload: dict = {}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """获取文件夹的中的文件列表和基本信息
         GET https://webapi.115.com/files
         payload:
@@ -1059,17 +1672,38 @@ class P115Client:
                 # - 书籍: 7
         """
         api = "https://webapi.115.com/files"
-        payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
-                   "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
+        payload = {
+            "aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
+            "offset": 0, "record_open_time": 1, "show_dir": 1, **payload, 
+        }
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def fs_files2(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files2(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def fs_files2(
         self, 
         payload: dict = {}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """获取文件夹的中的文件列表和基本信息
         GET https://aps.115.com/natsort/files.php
         payload:
@@ -1114,17 +1748,38 @@ class P115Client:
                 # - 书籍: 7
         """
         api = "https://aps.115.com/natsort/files.php"
-        payload = {"aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
-                   "offset": 0, "record_open_time": 1, "show_dir": 1, **payload}
+        payload = {
+            "aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
+            "offset": 0, "record_open_time": 1, "show_dir": 1, **payload, 
+        }
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def fs_files_type(
+        self, 
+        payload: Literal[1,2,3,4,5,6,7] | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_type(
+        self, 
+        payload: Literal[1,2,3,4,5,6,7] | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def fs_files_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict = 1, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """获取文件夹中某个文件类型的扩展名的（去重）列表
         GET https://webapi.115.com/files/get_second_type
         payload:
@@ -1144,14 +1799,33 @@ class P115Client:
         if isinstance(payload, int):
             payload = {"cid": 0, "type": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_files_edit(
         self, 
         payload: list | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_files_edit(
+        self, 
+        payload: list | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_edit(
+        self, 
+        payload: list | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """设置文件或文件夹（备注、标签等）
         POST https://webapi.115.com/files/edit
         payload:
@@ -1177,15 +1851,35 @@ class P115Client:
             api, 
             "POST", 
             data=urlencode(payload), 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def fs_files_batch_edit(
         self, 
         payload: list | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_files_batch_edit(
+        self, 
+        payload: list | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_batch_edit(
+        self, 
+        payload: list | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """批量设置文件或文件夹（显示时长等）
         payload:
             - show_play_long[{fid}]: 0 | 1 = 1 # 设置或取消显示时长
@@ -1201,15 +1895,35 @@ class P115Client:
             api, 
             "POST", 
             data=urlencode(payload), 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def fs_files_hidden(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_files_hidden(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_hidden(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """隐藏或者取消隐藏文件或文件夹
         POST https://webapi.115.com/files/hiddenfiles
         payload:
@@ -1229,14 +1943,33 @@ class P115Client:
                 return {"state": False, "message": "no op"}
             payload["hidden"] = 1
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def fs_hidden_switch(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_hidden_switch(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def fs_hidden_switch(
         self, 
         payload: str | dict = "", 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """切换隐藏模式
         POST https://115.com/?ct=hiddenfiles&ac=switching
         payload:
@@ -1251,14 +1984,33 @@ class P115Client:
             else:
                 payload = {"valid_type": 1, "show": 0}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_statistic(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_statistic(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_statistic(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取文件或文件夹的统计信息（提示：但得不到根目录的统计信息，所以 cid 为 0 时无意义）
         GET https://webapi.115.com/category/get
         payload:
@@ -1269,14 +2021,33 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"cid": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_get_repeat(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_get_repeat(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_get_repeat(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """查找重复文件（罗列除此以外的 sha1 相同的文件）
         GET https://webapi.115.com/files/get_repeat_sha
         payload:
@@ -1292,26 +2063,62 @@ class P115Client:
         else:
             payload = {"offset": 0, "limit": 1150, "format": "json", **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_index_info(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_index_info(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_index_info(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取当前已用空间、可用空间、登录设备等信息
         GET https://webapi.115.com/files/index_info
         """
         api = "https://webapi.115.com/files/index_info"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def fs_info(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_info(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_info(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取文件或文件夹的基本信息
         GET https://webapi.115.com/files/get_info
         payload:
@@ -1321,14 +2128,33 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_mkdir(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_mkdir(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_mkdir(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """新建文件夹
         POST https://webapi.115.com/files/add
         payload:
@@ -1341,36 +2167,105 @@ class P115Client:
         else:
             payload = {"pid": 0, **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_move(
         self, 
         id: int | str, 
         /, 
-        pid: int = 0, 
+        pid: int,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_move(
+        self, 
+        id: int | str, 
+        /, 
+        pid: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_move(
+        self, 
+        id: int | str, 
+        /, 
+        pid: int = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """移动文件或文件夹，此接口是对 `fs_batch_move` 的封装
         """
-        return self.fs_batch_move({"fid[0]": id, "pid": pid}, **request_kwargs)
+        return self.fs_batch_move(
+            {"fid[0]": id, "pid": pid}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
 
+    @overload
     def fs_rename(
         self, 
         id: int, 
         name: str, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_rename(
+        self, 
+        id: int, 
+        name: str, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_rename(
+        self, 
+        id: int, 
+        name: str, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """重命名文件或文件夹，此接口是对 `fs_batch_rename` 的封装
         """
-        return self.fs_batch_rename({f"files_new_name[{id}]": name}, **request_kwargs)
+        return self.fs_batch_rename(
+            {f"files_new_name[{id}]": name}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
 
+    @overload
     def fs_search(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_search(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_search(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """搜索文件或文件夹（提示：好像最多只能罗列前 10,000 条数据，也就是 limit + offset <= 10_000）
         GET https://webapi.115.com/files/search
         payload:
@@ -1410,18 +2305,43 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/search"
         if isinstance(payload, str):
-            payload = {"aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, "show_dir": 1, "search_value": payload}
+            payload = {
+                "aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, 
+                "show_dir": 1, "search_value": payload, 
+            }
         else:
-            payload = {"aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, "show_dir": 1, **payload}
+            payload = {
+                "aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, 
+                "show_dir": 1, **payload, 
+            }
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_export_dir(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_export_dir(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_export_dir(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """导出目录树
         POST https://webapi.115.com/files/export_dir
         payload:
@@ -1433,14 +2353,33 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"file_ids": payload, "target": "U_1_0"}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_export_dir_status(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_export_dir_status(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_export_dir_status(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取导出目录树的完成情况
         GET https://webapi.115.com/files/export_dir
         payload:
@@ -1450,14 +2389,34 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"export_id": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    # TODO 支持异步
+    @overload
     def fs_export_dir_future(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> ExportDirStatus:
+        ...
+    @overload
+    def fs_export_dir_future(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[ExportDirStatus]:
+        ...
+    def fs_export_dir_future(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> ExportDirStatus | Awaitable[ExportDirStatus]:
         """执行导出目录树，新开启一个线程，用于检查完成状态
         payload:
             file_ids: int | str   # 有多个时，用逗号 "," 隔开
@@ -1467,25 +2426,63 @@ class P115Client:
         resp = check_response(self.fs_export_dir(payload, **request_kwargs))
         return ExportDirStatus(self, resp["data"]["export_id"])
 
+    @overload
     def fs_shortcut_get(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_shortcut_get(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_shortcut_get(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """罗列所有的快捷入口
         GET https://webapi.115.com/category/shortcut
         """
         api = "https://webapi.115.com/category/shortcut"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def fs_shortcut_set(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_shortcut_set(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_shortcut_set(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """把一个目录设置或取消为快捷入口
         POST https://webapi.115.com/category/shortcut
         payload:
@@ -1496,15 +2493,36 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_cover(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
-        fid_cover: int | str = 0, 
+        fid_cover: int | str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_cover(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        fid_cover: int | str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_cover(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        fid_cover: int | str = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """设置目录的封面，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -1519,14 +2537,33 @@ class P115Client:
                 return {"state": False, "message": "no op"}
         payload.append(("fid_cover", fid_cover))
         request_kwargs.pop("parse", None)
-        return self.fs_files_edit(payload, **request_kwargs)
+        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_desc_get(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_desc_get(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_desc_get(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取文件或文件夹的备注
         GET https://webapi.115.com/files/desc
         payload:
@@ -1541,15 +2578,36 @@ class P115Client:
         else:
             payload = {"format": "json", "compat": 1, "new_html": 1, **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_desc(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
-        file_desc: str = "", 
+        file_desc: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_desc(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        file_desc: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_desc(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        file_desc: str = "",
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """为文件或文件夹设置备注，最多允许 65535 个字节 (64 KB 以内)，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -1563,15 +2621,36 @@ class P115Client:
                 return {"state": False, "message": "no op"}
         payload.append(("file_desc", file_desc))
         request_kwargs.pop("parse", None)
-        return self.fs_files_edit(payload, **request_kwargs)
+        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_label(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
-        file_label: int | str = "", 
+        file_label: int | str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_label(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        file_label: int | str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_label(
+        self, 
+        fids: int | str | Iterable[int | str], 
+        /, 
+        file_label: int | str = "",
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """为文件或文件夹设置标签，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -1585,14 +2664,33 @@ class P115Client:
                 return {"state": False, "message": "no op"}
         payload.append(("file_label", file_label))
         request_kwargs.pop("parse", None)
-        return self.fs_files_edit(payload, **request_kwargs)
+        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_label_batch(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_label_batch(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_label_batch(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """批量设置标签
         POST https://webapi.115.com/files/batch_label
         payload:
@@ -1608,15 +2706,36 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/batch_label"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_score(
         self, 
         file_id: int | str, 
         /, 
-        score: int = 0, 
+        score: int,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_score(
+        self, 
+        file_id: int | str, 
+        /, 
+        score: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_score(
+        self, 
+        file_id: int | str, 
+        /, 
+        score: int = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """给文件或文件夹评分
         POST https://webapi.115.com/files/score
         payload:
@@ -1626,15 +2745,36 @@ class P115Client:
         api = "https://webapi.115.com/files/score"
         payload = {"file_id": file_id, "score": score}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def fs_star(
         self, 
         file_id: int | str, 
         /, 
-        star: bool = True, 
+        star: bool,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def fs_star(
+        self, 
+        file_id: int | str, 
+        /, 
+        star: bool,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_star(
+        self, 
+        file_id: int | str, 
+        /, 
+        star: bool = True,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """为文件或文件夹设置或取消星标
         POST https://webapi.115.com/files/star
         payload:
@@ -1644,14 +2784,33 @@ class P115Client:
         api = "https://webapi.115.com/files/star"
         payload = {"file_id": file_id, "star": int(star)}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def label_add(
         self, 
         /, 
-        *lables: str, 
+        *lables: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def label_add(
+        self, 
+        /, 
+        *lables: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def label_add(
+        self, 
+        /, 
+        *lables: str,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """添加标签（可以接受多个）
         POST https://webapi.115.com/label/add_multi
 
@@ -1671,15 +2830,35 @@ class P115Client:
             api, 
             "POST", 
             data=urlencode(payload), 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def label_del(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def label_del(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def label_del(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """删除标签
         POST https://webapi.115.com/label/delete
         payload:
@@ -1689,14 +2868,33 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def label_edit(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def label_edit(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def label_edit(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """编辑标签
         POST https://webapi.115.com/label/edit
         payload:
@@ -1707,14 +2905,33 @@ class P115Client:
         """
         api = "https://webapi.115.com/label/edit"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def label_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def label_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def label_list(
         self, 
         payload: dict = {}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """罗列标签列表（如果要获取做了标签的文件列表，用 `fs_search` 接口）
         GET https://webapi.115.com/label/list
         payload:
@@ -1731,14 +2948,33 @@ class P115Client:
         api = "https://webapi.115.com/label/list"
         payload = {"offset": 0, "limit": 11500, **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def life_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def life_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def life_list(
         self, 
         payload: dict = {}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """罗列登录和增删改操作记录（最新几条）
         GET https://life.115.com/api/1.0/web/1.0/life/life_list
         payload:
@@ -1775,14 +3011,33 @@ class P115Client:
             **payload, 
         }
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def behavior_detail(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def behavior_detail(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def behavior_detail(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取增删改操作记录明细
         payload:
             - type: str
@@ -1805,16 +3060,35 @@ class P115Client:
         else:
             payload = {"limit": 32, "offset": 0, "date": str(date.today()), **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     ########## Share API ##########
 
+    @overload
     def share_send(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_send(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_send(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """创建（自己的）分享
         POST https://webapi.115.com/share/send
         payload:
@@ -1837,14 +3111,33 @@ class P115Client:
         else:
             payload = {"ignore_warn": 1, "is_asc": 1, "order": "file_name", **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def share_info(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取（自己的）分享信息
         GET https://webapi.115.com/share/shareinfo
         payload:
@@ -1854,14 +3147,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"share_code": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def share_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def share_list(
         self, 
         payload: dict = {}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """罗列（自己的）分享信息列表
         GET https://webapi.115.com/share/slist
         payload:
@@ -1872,14 +3184,33 @@ class P115Client:
         api = "https://webapi.115.com/share/slist"
         payload = {"offset": 0, "limit": 32, **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def share_update(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_update(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_update(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """变更（自己的）分享的配置（例如改访问密码，取消分享）
         POST https://webapi.115.com/share/updateshare
         payload:
@@ -1893,14 +3224,33 @@ class P115Client:
         """
         api = "https://webapi.115.com/share/updateshare"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     @staticmethod
     def share_snap(
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def share_snap(
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def share_snap(
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
         GET https://webapi.115.com/share/snap
         payload:
@@ -1922,14 +3272,33 @@ class P115Client:
         api = "https://webapi.115.com/share/snap"
         payload = {"cid": 0, "limit": 32, "offset": 0, **payload}
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, **request_kwargs)
+        return request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def share_downlist(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_downlist(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_downlist(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         GET https://proapi.115.com/app/share/downlist
         payload:
@@ -1939,14 +3308,33 @@ class P115Client:
         """
         api = "https://proapi.115.com/app/share/downlist"
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def share_receive(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_receive(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_receive(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """接收分享链接的某些文件或文件夹
         POST https://webapi.115.com/share/receive
         payload:
@@ -1959,14 +3347,33 @@ class P115Client:
         api = "https://webapi.115.com/share/receive"
         payload = {"cid": 0, **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def share_download_url_web(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_download_url_web(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_download_url_web(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取分享链接中某个文件的下载链接（网页版接口，不推荐使用）
         GET https://webapi.115.com/share/downurl
         payload:
@@ -1977,14 +3384,33 @@ class P115Client:
         """
         api = "https://webapi.115.com/share/downurl"
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def share_download_url_app(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def share_download_url_app(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def share_download_url_app(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取分享链接中某个文件的下载链接
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -2001,16 +3427,39 @@ class P115Client:
             return resp
         request_kwargs["parse"] = parse
         data = RSA_ENCODER.encode(dumps(payload))
-        return self.request(api, "POST", data={"data": data}, **request_kwargs)
+        return self.request(api, "POST", data={"data": data}, async_=async_, **request_kwargs)
 
+    @overload
     def share_download_url(
         self, 
         payload: dict, 
         /, 
         detail: bool = False, 
-        strict: bool = True, 
+        strict: bool = True,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> str:
+        ...
+    @overload
+    def share_download_url(
+        self, 
+        payload: dict, 
+        /, 
+        detail: bool, 
+        strict: bool,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[str]:
+        ...
+    def share_download_url(
+        self, 
+        payload: dict, 
+        /, 
+        detail: bool = False, 
+        strict: bool = True,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> str | Awaitable[str]:
         """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -2020,8 +3469,7 @@ class P115Client:
             - user_id: int | str = <default>
         """
         file_id = payload["file_id"]
-        async_ = request_kwargs.get("async_", False)
-        resp = self.share_download_url_app(payload, **request_kwargs)
+        resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
         def get_url(resp: dict) -> str:
             info = check_response(resp)["data"]
             if not info:
@@ -2040,19 +3488,38 @@ class P115Client:
             )
         if async_:
             async def async_request() -> str:
-                return get_url(await resp)
+                return get_url(await cast(Awaitable[dict], resp)) 
             return async_request()
         else:
-            return get_url(resp)
+            return get_url(cast(dict, resp))
 
     ########## Download API ##########
 
+    @overload
     def download_url_web(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def download_url_web(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def download_url_web(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取文件的下载链接（网页版接口，不推荐使用）
         GET https://webapi.115.com/files/download
         payload:
@@ -2062,14 +3529,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"pickcode": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def download_url_app(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def download_url_app(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def download_url_app(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取文件的下载链接
         POST https://proapi.115.com/app/chrome/downurl
         payload:
@@ -2088,24 +3574,50 @@ class P115Client:
             api, 
             "POST", 
             data={"data": RSA_ENCODER.encode(dumps(payload))}, 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def download_url(
         self, 
         pickcode: str, 
         /, 
         detail: bool = False, 
         strict: bool = True, 
-        use_web_api: bool = False, 
+        use_web_api: bool = False,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> str:
+        ...
+    @overload
+    def download_url(
+        self, 
+        pickcode: str, 
+        /, 
+        detail: bool, 
+        strict: bool, 
+        use_web_api: bool,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[str]:
+        ...
+    def download_url(
+        self, 
+        pickcode: str, 
+        /, 
+        detail: bool = False, 
+        strict: bool = True, 
+        use_web_api: bool = False,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> str | Awaitable[str]:
         """获取文件的下载链接，此接口是对 `download_url_app` 的封装
         """
-        async_ = request_kwargs.get("async_", False)
         if use_web_api:
             resp = self.download_url_web(
                 {"pickcode": pickcode}, 
+                async_=async_, 
                 **request_kwargs, 
             )
             def get_url(resp: dict) -> str:
@@ -2124,6 +3636,7 @@ class P115Client:
         else:
             resp = self.download_url_app(
                 {"pickcode": pickcode}, 
+                async_=async_, 
                 **request_kwargs, 
             )
             def get_url(resp: dict) -> str:
@@ -2146,10 +3659,10 @@ class P115Client:
                 raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
         if async_:
             async def async_request() -> str:
-                return get_url(await resp) 
+                return get_url(await cast(Awaitable[dict], resp)) 
             return async_request()
         else:
-            return get_url(resp)
+            return get_url(cast(dict, resp))
 
     ########## Upload API ##########
 
@@ -2225,7 +3738,8 @@ class P115Client:
         token: dict, 
         method: str = "PUT", 
         params: None | str | dict | list[tuple] = None, 
-        headers: None | dict = None, 
+        headers: None | dict = None,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ):
         """帮助函数：请求阿里云 OSS （115 目前所使用的阿里云的对象存储）的公用函数
@@ -2246,19 +3760,45 @@ class P115Client:
             params=params, 
             headers=headers2, 
             method=method, 
+            async_=async_, 
             **request_kwargs, 
         )
 
     # NOTE: https://github.com/aliyun/aliyun-oss-python-sdk/blob/master/oss2/api.py#L1359-L1595
+    @overload
     def _oss_multipart_upload_init(
         self, 
         /, 
         bucket: str, 
         object: str, 
         url: str, 
-        token: dict, 
+        token: dict,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> str:
+        ...
+    @overload
+    def _oss_multipart_upload_init(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[str]:
+        ...
+    def _oss_multipart_upload_init(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> str | Awaitable[str]:
         """帮助函数：分片上传的初始化，获取 upload_id
         """
         request_kwargs["parse"] = lambda resp, content, /: getattr(fromstring(content).find("UploadId"), "text")
@@ -2270,9 +3810,48 @@ class P115Client:
             object, 
             url, 
             token, 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
+    def _oss_multipart_upload_part(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str, 
+        part_number: int, 
+        part_size: int, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _oss_multipart_upload_part(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str, 
+        part_number: int, 
+        part_size: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def _oss_multipart_upload_part(
         self, 
         /, 
@@ -2287,8 +3866,9 @@ class P115Client:
         upload_id: str, 
         part_number: int, 
         part_size: int = 10 * 1 << 20, # default to: 10 MB
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """帮助函数：上传一个分片，返回一个字典，包含如下字段：
 
             {
@@ -2299,7 +3879,6 @@ class P115Client:
                 "Size": int,          # 分片大小
             }
         """
-        async_ = request_kwargs.get("async_", False)
         def parse(resp, /) -> dict:
             headers = resp.headers
             return {
@@ -2315,45 +3894,45 @@ class P115Client:
         if isinstance(file, (bytes, bytearray, memoryview)):
             count_in_bytes = len(file)
             if async_:
-                async def make_iter(file):
+                async def make_iter():
                     yield file
-                file = make_iter(file)
+                dataiter = make_iter()
             else:
-                file = iter((file,))
-        elif hasattr(file, "read"):
+                dataiter = iter((file,))
+        elif isinstance(file, SupportsRead):
+            if not async_ and iscoroutinefunction(file.read):
+                raise TypeError(f"{file!r} with async read in non-async mode")
             count_in_bytes = 0
             def acc(length):
                 nonlocal count_in_bytes
                 count_in_bytes += length
-            if not async_ and iscoroutinefunction(file.read):
-                async_ = request_kwargs["async_"] = True
             if async_:
-                file = bio_chunk_async_iter(file, part_size, callback=acc)
+                dataiter = bio_chunk_async_iter(file, part_size, callback=acc)
             else:
-                file = bio_chunk_iter(file, part_size, callback=acc)
+                dataiter = bio_chunk_iter(file, part_size, callback=acc)
         else:
             def acc(chunk):
                 nonlocal count_in_bytes
                 count_in_bytes += len(chunk)
                 if count_in_bytes >= part_size:
                     raise StopIteration
-            if async_ or isinstance(file, AsyncIterable):
-                if async_:
-                    file = ensure_aiter(file)
-                else:
-                    async_ = request_kwargs["async_"] = True
-                file = wrap_aiter(file, callnext=acc)
+            if not async_ and isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
+            if async_:
+                dataiter = wrap_aiter(file, callnext=acc)
             else:
-                file = wrap_iter(file, callnext=acc)
-        request_kwargs["data"] = file
+                dataiter = wrap_iter(cast(Iterable, file), callnext=acc)
+        request_kwargs["data"] = dataiter
         return self._oss_upload_request(
             bucket, 
             object, 
             url, 
             token, 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def _oss_multipart_upload_complete(
         self, 
         /, 
@@ -2363,9 +3942,39 @@ class P115Client:
         url: str, 
         token: dict, 
         upload_id: str, 
-        parts: list[dict], 
+        parts: list[dict],
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def _oss_multipart_upload_complete(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        callback: dict, 
+        url: str, 
+        token: dict, 
+        upload_id: str, 
+        parts: list[dict],
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def _oss_multipart_upload_complete(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        callback: dict, 
+        url: str, 
+        token: dict, 
+        upload_id: str, 
+        parts: list[dict],
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """帮助函数：完成分片上传，会执行回调然后 115 上就能看到文件
         """
         request_kwargs["method"] = "POST"
@@ -2385,9 +3994,11 @@ class P115Client:
             object, 
             url, 
             token, 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def _oss_multipart_upload_cancel(
         self, 
         /, 
@@ -2395,9 +4006,35 @@ class P115Client:
         object: str, 
         url: str, 
         token: dict, 
-        upload_id: str, 
+        upload_id: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bool:
+        ...
+    @overload
+    def _oss_multipart_upload_cancel(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bool]:
+        ...
+    def _oss_multipart_upload_cancel(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bool | Awaitable[bool]:
         """帮助函数：取消分片上传
         """
         request_kwargs["parse"] = lambda resp: 200 <= resp.status_code < 300 or resp.status_code == 404
@@ -2409,9 +4046,48 @@ class P115Client:
             object, 
             url, 
             token, 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
+    def _oss_multipart_upload_part_iter(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str, 
+        part_number_start, 
+        part_size: int, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Iterator[dict]:
+        ...
+    @overload
+    def _oss_multipart_upload_part_iter(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str, 
+        part_number_start: int, 
+        part_size: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> AsyncIterator[dict]:
+        ...
     def _oss_multipart_upload_part_iter(
         self, 
         /, 
@@ -2426,30 +4102,30 @@ class P115Client:
         upload_id: str, 
         part_number_start: int = 1, 
         part_size: int = 10 * 1 << 20, # default to: 10 MB
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[dict] | AsyncIterator[dict]:
         """帮助函数：迭代器，迭代一次上传一个分片
         """
-        async_ = request_kwargs.get("async_", False)
         if isinstance(file, (bytes, bytearray, memoryview)):
             if async_:
                 file = bytes_to_chunk_async_iter(file, part_size)
             else:
                 file = bytes_to_chunk_iter(file, part_size)
-        elif not hasattr(file, "read"):
+        elif isinstance(file, SupportsRead):
             if not async_ and iscoroutinefunction(file.read):
-                async_ = request_kwargs["async_"] = True
+                raise TypeError(f"{file!r} with async read in non-async mode")
+        else:
+            if not async_ and isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
             if async_:
                 file = bytes_ensure_part_async_iter(file, part_size)
             else:
-                file = bytes_ensure_part_iter(file, part_size)
-        elif isinstance(file, AsyncIterable):
-            if not async_:
-                async_ = request_kwargs["async_"] = True
-        elif async_:
-            file = ensure_aiter(file)
+                file = bytes_ensure_part_iter(cast(Iterable, file), part_size)
         if async_:
             async def async_request():
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
                 for part_number in count(part_number_start):
                     part = await self._oss_multipart_upload_part(
                         file, 
@@ -2460,6 +4136,7 @@ class P115Client:
                         upload_id, 
                         part_number=part_number, 
                         part_size=part_size, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                     yield part
@@ -2478,6 +4155,7 @@ class P115Client:
                         upload_id, 
                         part_number=part_number, 
                         part_size=part_size, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                     yield part
@@ -2485,6 +4163,7 @@ class P115Client:
                         break
             return request()
 
+    @overload
     def _oss_multipart_part_iter(
         self, 
         /, 
@@ -2492,9 +4171,35 @@ class P115Client:
         object: str, 
         url: str, 
         token: dict, 
-        upload_id: str, 
+        upload_id: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> Iterator[dict]:
+        ...
+    @overload
+    def _oss_multipart_part_iter(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> AsyncIterator[dict]:
+        ...
+    def _oss_multipart_part_iter(
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+        url: str, 
+        token: dict, 
+        upload_id: str,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> Iterator[dict] | AsyncIterator[dict]:
         """帮助函数：上传文件到阿里云 OSS，罗列已经上传的分块
         """
         to_num = lambda s: int(s) if isinstance(s, str) and s.isnumeric() else s
@@ -2502,15 +4207,17 @@ class P115Client:
         request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
         request_kwargs["params"] = params = {"uploadId": upload_id}
         request_kwargs["parse"] = lambda resp, content, /: fromstring(content)
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
                 while True:
                     etree = await self._oss_upload_request(
                         bucket, 
                         object, 
                         url, 
                         token, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                     for el in etree.iterfind("Part"):
@@ -2527,6 +4234,7 @@ class P115Client:
                         object, 
                         url, 
                         token, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                     for el in etree.iterfind("Part"):
@@ -2536,6 +4244,38 @@ class P115Client:
                     params["part-number-marker"] = etree.find("NextPartNumberMarker").text
             return request()
 
+    @overload
+    def _oss_upload(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        callback: dict, 
+        token: Optional[dict], 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _oss_upload(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        callback: dict, 
+        token: Optional[dict], 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def _oss_upload(
         self, 
         /, 
@@ -2547,37 +4287,40 @@ class P115Client:
         object: str, 
         callback: dict, 
         token: Optional[dict] = None, 
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """帮助函数：上传文件到阿里云 OSS，一次上传全部（即不进行分片）
         """
         url = self.upload_endpoint_url(bucket, object)
-        async_ = request_kwargs.get("async_", False)
         if isinstance(file, (bytes, bytearray, memoryview)):
             if async_:
                 async def make_iter(file):
                     yield file
-                file = make_iter(file)
+                dataiter = make_iter(file)
             else:
-                file = iter((file,))
-        elif hasattr(file, "read"):
+                dataiter = iter((file,))
+        elif isinstance(file, SupportsRead):
             if not async_ and iscoroutinefunction(file.read):
-                async_ = request_kwargs["async_"] = True
+                raise TypeError(f"{file!r} with async read in non-async mode")
             if async_:
-                file = bio_chunk_async_iter(file)
+                dataiter = bio_chunk_async_iter(file)
             else:
-                file = bio_chunk_iter(file)
-        elif isinstance(file, AsyncIterable):
-            if not async_:
-                async_ = request_kwargs["async_"] = True
-        elif async_:
-            file = ensure_aiter(file)
-        request_kwargs["data"] = file
+                dataiter = bio_chunk_iter(file)
+        else:
+            if not async_ and isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
+            if async_:
+                dataiter = ensure_aiter(file)
+            else:
+                dataiter = cast(Iterable, file)
+        request_kwargs["data"] = dataiter
         if async_:
             async def async_request():
-                nonlocal token
+                nonlocal async_, token
+                async_ = cast(Literal[True], async_)
                 if not token:
-                    token = await self.upload_token(async_=True)
+                    token = await self.upload_token(async_=async_)
                 request_kwargs["headers"] = {
                     "x-oss-security-token": token["SecurityToken"], 
                     "x-oss-callback": to_base64(callback["callback"]), 
@@ -2588,12 +4331,13 @@ class P115Client:
                     object, 
                     url, 
                     token, 
+                    async_=async_, 
                     **request_kwargs, 
                 )
             return async_request()
         else:
             if not token:
-                token = self.upload_token()
+                token = self.upload_token(async_=async_)
             request_kwargs["headers"] = {
                 "x-oss-security-token": token["SecurityToken"], 
                 "x-oss-callback": to_base64(callback["callback"]), 
@@ -2604,12 +4348,49 @@ class P115Client:
                 object, 
                 url, 
                 token, 
+                async_=async_, 
                 **request_kwargs, 
             )
 
     # TODO
-    def _oss_upload_future(): ...
+    def _oss_upload_future(self): ...
 
+    @overload
+    def _oss_multipart_upload(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        callback: dict, 
+        token: Optional[dict], 
+        upload_id: None | str, 
+        part_size: int, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _oss_multipart_upload(
+        self, 
+        /, 
+        file: ( bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        bucket: str, 
+        object: str, 
+        callback: dict, 
+        token: Optional[dict], 
+        upload_id: None | str, 
+        part_size: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def _oss_multipart_upload(
         self, 
         /, 
@@ -2621,21 +4402,22 @@ class P115Client:
         object: str, 
         callback: dict, 
         token: Optional[dict] = None, 
-        upload_id: Optional[int] = None, 
+        upload_id: None | str = None, 
         part_size: int = 10 * 1 << 20, # default to: 10 MB
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         url = self.upload_endpoint_url(bucket, object)
         parts: list[dict] = []
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
-                nonlocal token, upload_id
+                nonlocal async_, file, token, upload_id
+                async_ = cast(Literal[True], async_)
                 if not token:
-                    token = await self.upload_token(async_=True)
+                    token = await self.upload_token(async_=async_)
                 if upload_id:
                     async for part in self._oss_multipart_part_iter(
-                        bucket, object, url, token, upload_id, **request_kwargs, 
+                        bucket, object, url, token, upload_id, async_=async_, **request_kwargs, 
                     ):
                         if part["Size"] != part_size:
                             break
@@ -2644,16 +4426,17 @@ class P115Client:
                     if skipsize:
                         if isinstance(file, (bytes, bytearray, memoryview)):
                             file = memoryview(file)[skipsize:]
-                        elif hasattr(file, "read"):
+                        elif isinstance(file, SupportsRead):
                             try:
-                                await ensure_async(file.seek)(skipsize) # type: ignore 
+                                file_seek = ensure_async(getattr(file, "seek"))
+                                await file_seek(skipsize, 1)
                             except (AttributeError, TypeError, OSError):
                                 await async_through(bio_skip_async_iter(file, skipsize))
                         else:
                             file = await bytes_async_iter_skip(file, skipsize)
                 else:
                     upload_id = await self._oss_multipart_upload_init(
-                        bucket, object, url, token, **request_kwargs)
+                        bucket, object, url, token, async_=async_, **request_kwargs)
                 async for part in self._oss_multipart_upload_part_iter(
                     file, 
                     bucket, 
@@ -2663,6 +4446,7 @@ class P115Client:
                     upload_id, 
                     part_number_start=len(parts) + 1, 
                     part_size=part_size, 
+                    async_=async_, 
                     **request_kwargs, 
                 ):
                     parts.append(part)
@@ -2674,29 +4458,38 @@ class P115Client:
                     token, 
                     upload_id, 
                     parts=parts, 
+                    async_=async_, 
                     **request_kwargs, 
                 )
             return async_request()
         else:
             if not token:
-                token = self.upload_token()
+                token = self.upload_token(async_=async_)
             if upload_id:
-                parts.extend(takewhile(lambda p: p["Size"] == part_size, self._oss_multipart_part_iter(
-                    bucket, object, url, token, upload_id, **request_kwargs)))
+                parts.extend(takewhile(
+                    lambda p: p["Size"] == part_size, 
+                    self._oss_multipart_part_iter(
+                        bucket, object, url, token, upload_id, async_=async_, **request_kwargs)
+                ))
                 skipsize = sum(part["Size"] for part in parts)
                 if skipsize:
                     if isinstance(file, (bytes, bytearray, memoryview)):
                         file = memoryview(file)[skipsize:]
-                    elif hasattr(file, "read"):
+                    elif isinstance(file, SupportsRead):
+                        if iscoroutinefunction(file.read):
+                            raise TypeError(f"{file!r} with async read in non-async mode")
                         try:
-                            file.seek(skipsize) # type: ignore
+                            file_seek = getattr(file, "seek")
+                            file_seek(skipsize, 1)
                         except (AttributeError, TypeError, OSError):
                             through(bio_skip_iter(file, skipsize))
                     else:
+                        if isinstance(file, AsyncIterable):
+                            raise TypeError(f"async iterable {file!r} in non-async mode")
                         file = bytes_iter_skip(file, skipsize)
             else:
                 upload_id = self._oss_multipart_upload_init(
-                    bucket, object, url, token, **request_kwargs)
+                    bucket, object, url, token, async_=async_, **request_kwargs)
             parts.extend(self._oss_multipart_upload_part_iter(
                 file, 
                 bucket, 
@@ -2706,6 +4499,7 @@ class P115Client:
                 upload_id, 
                 part_number_start=len(parts) + 1, 
                 part_size=part_size, 
+                async_=async_, 
                 **request_kwargs, 
             ))
             return self._oss_multipart_upload_complete(
@@ -2716,11 +4510,12 @@ class P115Client:
                 token, 
                 upload_id, 
                 parts=parts, 
+                async_=async_, 
                 **request_kwargs, 
             )
 
     # TODO
-    def _oss_multipart_upload_future(): ...
+    def _oss_multipart_upload_future(self): ...
 
     @cached_property
     def upload_info(self, /) -> dict:
@@ -2749,25 +4544,68 @@ class P115Client:
         api = "https://uplb.115.com/3.0/getuploadinfo.php"
         return self.request(api)
 
-    def upload_endpoint_url(self, /, bucket, object):
+    def upload_endpoint_url(
+            self, 
+            /, 
+            bucket: str, 
+            object: str, 
+        ) -> str:
         endpoint = self.upload_url["endpoint"]
         urlp = urlsplit(endpoint)
         return f"{urlp.scheme}://{bucket}.{urlp.netloc}/{object}"
 
+    @overload
     @staticmethod
-    def upload_token(**request_kwargs) -> dict:
+    def upload_token(
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def upload_token(
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    @staticmethod
+    def upload_token(
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取阿里云 OSS 的 token，用于上传
         GET https://uplb.115.com/3.0/gettoken.php
         """
         api = "https://uplb.115.com/3.0/gettoken.php"
         request_kwargs.pop("parse", None)
-        return request(api, **request_kwargs)
+        return request(api, async_=async_, **request_kwargs)
 
+    @overload
     def upload_file_sample_init(
         self, 
         /, 
         filename: str, 
-        pid: int = 0, 
+        pid: int,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_file_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_file_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int = 0,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """网页端的上传接口的初始化，注意：不支持秒传
@@ -2776,8 +4614,9 @@ class P115Client:
         api = "https://uplb.115.com/3.0/sampleinitupload.php"
         payload = {"filename": filename, "target": f"U_1_{pid}"}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def upload_file_sample(
         self, 
         /, 
@@ -2786,32 +4625,62 @@ class P115Client:
                 SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
                 Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
                 AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
-        filename: Optional[str] = None, 
+        filename: None | str = None, 
         pid: int = 0, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_file_sample(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        filename: None | str, 
+        pid: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_file_sample(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        filename: None | str = None, 
+        pid: int = 0, 
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
         """
-        async_ = request_kwargs.get("async_", False)
         file_will_open: None | tuple[str, Any] = None
         if isinstance(file, (bytes, bytearray, memoryview)):
             pass
         elif isinstance(file, (str, PathLike)):
+            path = fsdecode(file)
             if not filename:
-                filename = ospath.basename(fsdecode(file))
+                filename = ospath.basename(path)
             if async_:
-                file_will_open = ("path", file)
+                file_will_open = ("path", path)
             else:
-                file = open(file, "rb")
-        elif hasattr(file, "read"):
+                file = open(path, "rb")
+        elif isinstance(file, SupportsRead):
             if not async_ and iscoroutinefunction(file.read):
-                async_ = request_kwargs["async_"] = True
+                raise TypeError(f"{file!r} with async read in non-async mode")
             if not filename:
                 try:
-                    filename = ospath.basename(fsdecode(file.name))
+                    filename = ospath.basename(fsdecode(getattr(file, "name")))
                 except Exception:
                     pass
-        elif isinstance(file, URL) or hasattr(file, "geturl"):
+        elif isinstance(file, (URL, SupportsGeturl)):
             if isinstance(file, URL):
                 url = str(file)
             else:
@@ -2822,16 +4691,23 @@ class P115Client:
                 file = urlopen(url)
                 if not filename:
                     filename = get_filename(file)
-        elif isinstance(file, AsyncIterable):
-            if not async_:
-                async_ = request_kwargs["async_"] = True
-        elif async_:
-            file = ensure_aiter(file)
+        else:
+            if async_:
+                file = ensure_aiter(file)
+            elif isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
         if async_:
             async def do_request(file, filename):
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
+
+                file = cast(bytes | bytearray | memoryview | 
+                    SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                    Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                    AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview], file)
                 if not filename:
                     filename = str(uuid4())
-                resp = await self.upload_file_sample_init(filename, pid, **request_kwargs)
+                resp = await self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
                 api = resp["host"]
                 data = {
                     "name": filename, 
@@ -2842,11 +4718,12 @@ class P115Client:
                     "callback": resp["callback"], 
                     "signature": resp["signature"], 
                 }
-                files = {"file": file}
-                headers, request_kwargs["data"] = encode_multipart_data_async(data, files)
+                headers, request_kwargs["data"] = encode_multipart_data_async(data, {"file": file})
                 request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
-                return await self.request(api, "POST", **request_kwargs)
+                return await self.request(api, "POST", async_=async_, **request_kwargs)
             async def async_request():
+                nonlocal async_
+                async_ = cast(Literal[True], async_)
                 if file_will_open:
                     type, path = file_will_open
                     if type == "path":
@@ -2866,15 +4743,18 @@ class P115Client:
                                 return await do_request(resp, filename or get_filename(resp))
                         else:
                             async with request("GET", url) as resp:
-                                return await do_request(resp, filename or get_filename(resp))
+                                return await do_request(resp.content, filename or get_filename(resp))
                     else:
                         raise ValueError
                 return await do_request(file, filename)
             return async_request()
         else:
+            file = cast(bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview], file)
             if not filename:
                 filename = str(uuid4())
-            resp = self.upload_file_sample_init(filename, pid, **request_kwargs)
+            resp = self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
             api = resp["host"]
             data = {
                 "name": filename, 
@@ -2885,22 +4765,66 @@ class P115Client:
                 "callback": resp["callback"], 
                 "signature": resp["signature"], 
             }
-            files = {"file": file}
-            headers, request_kwargs["data"] = encode_multipart_data(data, files)
+            headers, request_kwargs["data"] = encode_multipart_data(data, {"file": file})
             request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
-            return self.request(api, "POST", **request_kwargs)
+            return self.request(api, "POST", async_=async_, **request_kwargs)
 
+    @overload
     def upload_init(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def upload_init(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_init(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """秒传接口，参数的构造较为复杂，所以请不要直接使用
         POST https://uplb.115.com/4.0/initupload.php
         """
         api = "https://uplb.115.com/4.0/initupload.php"
-        return self.request(api, "POST", **request_kwargs)
+        return self.request(api, "POST", async_=async_, **request_kwargs)
 
+    @overload
+    def _upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        target: str, 
+        sign_key: str, 
+        sign_val: str,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def _upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        target: str, 
+        sign_key: str, 
+        sign_val: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def _upload_file_init(
         self, 
         /, 
@@ -2909,7 +4833,8 @@ class P115Client:
         file_sha1: str, 
         target: str = "U_1_0", 
         sign_key: str = "", 
-        sign_val: str = "", 
+        sign_val: str = "",
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """秒传接口，此接口是对 `upload_init` 的封装
@@ -2954,18 +4879,45 @@ class P115Client:
         request_kwargs["parse"] = lambda resp, content: loads(ECDH_ENCODER.decode(content))
         request_kwargs["params"] = {"k_ec": encoded_token}
         request_kwargs["data"] = ECDH_ENCODER.encode(urlencode(sorted(data.items())))
-        return self.upload_init(**request_kwargs)
+        return self.upload_init(async_=async_, **request_kwargs)
 
+    @overload
     def upload_file_init(
         self, 
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str | Callable[[], str], 
-        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview] = None, 
-        pid: int = 0, 
+        file_sha1: str, 
+        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview], 
+        pid: int,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview], 
+        pid: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_file_init(
+        self, 
+        /, 
+        filename: str, 
+        filesize: int, 
+        file_sha1: str, 
+        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview] = None, 
+        pid: int = 0, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """秒传接口，此接口是对 `upload_init` 的封装。
         NOTE: 
             - 文件大小 和 sha1 是必需的，只有 sha1 是没用的。
@@ -2973,16 +4925,10 @@ class P115Client:
         """
         if filesize >= 1 << 20:
             raise ValueError("filesize >= 1 MB, thus need pass the `read_range_bytes_or_hash` argument")
-
-        async_ = request_kwargs.get("async_", False)
         if async_:
             async def async_request():
-                nonlocal file_sha1
-                if not isinstance(file_sha1, str):
-                    file_sha1 = await to_thread(file_sha1)
-                    if isawaitable(file_sha1):
-                        file_sha1 = await file_sha1
-                    file_sha1 = cast(str, file_sha1)
+                nonlocal async_, file_sha1, read_range_bytes_or_hash
+                async_ = cast(Literal[True], async_)
                 file_sha1 = file_sha1.upper()
                 target = f"U_1_{pid}"
                 resp = await self._upload_file_init(
@@ -2990,12 +4936,14 @@ class P115Client:
                     filesize, 
                     file_sha1, 
                     target, 
+                    async_=async_, 
                     **request_kwargs, 
                 )
                 if resp["status"] == 7 and resp["statuscode"] == 701:
+                    read_range_bytes_or_hash = cast(Callable[[str], str | bytes | bytearray | memoryview], read_range_bytes_or_hash)
                     sign_key = resp["sign_key"]
                     sign_check = resp["sign_check"]
-                    data = await ensure_async(read_range_bytes_or_hash)(sign_check)
+                    data: str | bytes | bytearray | memoryview = await ensure_async(read_range_bytes_or_hash)(sign_check) # type: ignore
                     if isinstance(data, str):
                         sign_val = data.upper()
                     else:
@@ -3007,6 +4955,7 @@ class P115Client:
                         target, 
                         sign_key=sign_key, 
                         sign_val=sign_val, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                 resp["state"] = True
@@ -3020,8 +4969,6 @@ class P115Client:
                 return resp
             return async_request()
         else:
-            if not isinstance(file_sha1, str):
-                file_sha1 = file_sha1()
             file_sha1 = file_sha1.upper()
             target = f"U_1_{pid}"
             resp = self._upload_file_init(
@@ -3029,11 +4976,13 @@ class P115Client:
                 filesize, 
                 file_sha1, 
                 target, 
+                async_=async_, 
                 **request_kwargs, 
             )
             # NOTE: 当文件大于等于 1 MB (1048576 B)，需要 2 次检验 1 个范围哈希，它会给出此文件的 1 个范围区间
             #       ，你读取对应的数据计算 sha1 后上传，以供 2 次检验
             if resp["status"] == 7 and resp["statuscode"] == 701:
+                read_range_bytes_or_hash = cast(Callable[[str], str | bytes | bytearray | memoryview], read_range_bytes_or_hash)
                 sign_key = resp["sign_key"]
                 sign_check = resp["sign_check"]
                 data = read_range_bytes_or_hash(sign_check)
@@ -3047,7 +4996,8 @@ class P115Client:
                     file_sha1, 
                     target, 
                     sign_key=sign_key, 
-                    sign_val=sign_val, 
+                    sign_val=sign_val,
+                    async_=async_,  
                     **request_kwargs, 
                 )
             resp["state"] = True
@@ -3065,6 +5015,7 @@ class P115Client:
     # TODO: class P115MultipartUploadTask:
     #           @classmethod
     #           def from_cache(cls, /, bucket, object, upload_id, callback, file): ...
+    @overload
     def upload_file(
         self, 
         /, 
@@ -3073,42 +5024,72 @@ class P115Client:
                 SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
                 Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
                 AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
-        filename: Optional[str] = None, 
+        filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
-        file_sha1: Optional[str] = None, 
+        file_sha1: None | str = None, 
         part_size: int = 0, 
         upload_directly: bool = False, 
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def upload_file(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        filename: None | str, 
+        pid: int, 
+        filesize: int, 
+        file_sha1: None | str, 
+        part_size: int, 
+        upload_directly: bool, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_file(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                bytes | bytearray | memoryview | 
+                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
+                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
+                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        filename: None | str = None, 
+        pid: int = 0, 
+        filesize: int = -1, 
+        file_sha1: None | str = None, 
+        part_size: int = 0, 
+        upload_directly: bool = False, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """文件上传接口，这是高层封装，推荐使用
         """
         if upload_directly:
-            return self.upload_file_sample(file, filename, pid, **request_kwargs)
-
-        async_ = request_kwargs.get("async_", False)
-        if isinstance(file, (bytes, bytearray, memoryview, str, PathLike)):
-            pass
-        elif hasattr(file, "read"):
-            if not async_ and iscoroutinefunction(file.read):
-                async_ = request_kwargs["async_"] = True
-        elif isinstance(file, AsyncIterable):
-            if not async_:
-                async_ = request_kwargs["async_"] = True
-        elif async_:
-            file = ensure_aiter(file)
-
+            return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
         if async_:
             async def async_request():
-                nonlocal file, filename, filesize, file_sha1
+                nonlocal async_, file, filename, filesize, file_sha1
+                async_ = cast(Literal[True], async_)
 
                 async def do_upload(file):
+                    nonlocal async_
+                    async_ = cast(Literal[True], async_)
+
                     resp = await self.upload_file_init(
-                        filename, 
+                        cast(str, filename), 
                         filesize, 
-                        file_sha1, 
+                        cast(str, file_sha1), 
                         read_range_bytes_or_hash, 
                         pid=pid, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                     status = resp["status"]
@@ -3126,6 +5107,7 @@ class P115Client:
                             bucket, 
                             object, 
                             callback, 
+                            async_=async_, 
                             **request_kwargs, 
                         )
                     else:
@@ -3135,6 +5117,7 @@ class P115Client:
                             object, 
                             callback, 
                             part_size=part_size, 
+                            async_=async_, 
                             **request_kwargs, 
                         )
 
@@ -3145,9 +5128,10 @@ class P115Client:
                     if not file_sha1:
                         file_sha1 = sha1(file).hexdigest()
                     if filesize >= 1 << 20:
-                        def read_range_bytes_or_hash(sign_check):
+                        mmv = memoryview(file)
+                        def read_range_bytes_or_hash(sign_check: str):
                             start, end = map(int, sign_check.split("-"))
-                            return data[start : end + 1]
+                            return mmv[start : end + 1]
                 elif isinstance(file, (str, PathLike)):
                     @asynccontextmanager
                     async def ctx_async_read(path, /, start=0):
@@ -3156,12 +5140,12 @@ class P115Client:
                         except ImportError:
                             with open(path, "rb") as file:
                                 if start:
-                                    file.seek(file)
+                                    file.seek(start)
                                 yield file, as_thread(file.read)
                         else:
                             async with async_open(path, "rb") as file:
                                 if start:
-                                    await file.seek(start)
+                                    await getattr(file, "seek")(start)
                                 yield file, file.read
                     path = fsdecode(file)
                     if not filename:
@@ -3169,27 +5153,27 @@ class P115Client:
                     if filesize < 0:
                         filesize = stat(path).st_size
                     if filesize < 1 << 20:
-                        async with ctx_async_read(path) as _, read:
-                            file = await read()
+                        async with ctx_async_read(path) as (_, read):
+                            file = cast(bytes, await read())
                         if not file_sha1:
                             file_sha1 = sha1(file).hexdigest()
                     else:
                         if not file_sha1:
+                            file_digest_async
                             h = sha1()
                             h_update = h.update
-                            async with ctx_async_read(path) as _, read:
-                                while (chunk := (await read(1 << 16))):
-                                    h_update(chunk)
-                            file_sha1 = h.hexdigest()
+                            async with ctx_async_read(path) as (file, _):
+                                _, hashobj = await file_digest_async(file, "sha1")
+                            file_sha1 = hashobj.hexdigest()
                         async def read_range_bytes_or_hash(sign_check):
                             start, end = map(int, sign_check.split("-"))
-                            async with ctx_async_read(path, start) as _, read:
-                                return await file.read(end - start + 1)
-                        async with ctx_async_read(path) as file, _:
+                            async with ctx_async_read(path, start) as (_, read):
+                                return await read(end - start + 1)
+                        async with ctx_async_read(path) as (file, _):
                             return await do_upload(file)
-                elif hasattr(file, "read"):
+                elif isinstance(file, SupportsRead):
                     try:
-                        file_seek = ensure_async(file.seek)
+                        file_seek = ensure_async(getattr(file, "seek"))
                         curpos = await file_seek(0, 1)
                         seekable = True
                     except Exception:
@@ -3198,15 +5182,16 @@ class P115Client:
                     file_read = ensure_async(file.read)
                     if not filename:
                         try:
-                            filename = ospath.basename(fsdecode(file.name))
+                            filename = ospath.basename(fsdecode(getattr(file, "name")))
                         except Exception:
                             filename = str(uuid4())
                     if filesize < 0:
                         try:
-                            filesize = fstat(file.fileno()).st_size - curpos
+                            fileno = getattr(file, "fileno")()
+                            filesize = fstat(fileno).st_size - curpos
                         except Exception:
                             try:
-                                filesize = len(file) - curpos
+                                filesize = len(file) - curpos # type: ignore
                             except TypeError:
                                 if seekable:
                                     try:
@@ -3222,13 +5207,10 @@ class P115Client:
                     else:
                         if not file_sha1:
                             if not seekable:
-                                return await self.upload_file_sample(file, filename, pid, **request_kwargs)
+                                return await self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
                             try:
-                                h = sha1()
-                                h_update = h.update
-                                while (chunk := (await file_read(1 << 16))):
-                                    h_update(chunk)
-                                file_sha1 = h.hexdigest()
+                                _, hashobj = await file_digest_async(file, "sha1")
+                                file_sha1 = hashobj.hexdigest()
                             finally:
                                 await file_seek(curpos)
                         async def read_range_bytes_or_hash(sign_check):
@@ -3236,16 +5218,15 @@ class P115Client:
                                 raise TypeError(f"not a seekable reader: {file!r}")
                             start, end = map(int, sign_check.split("-"))
                             try:
-                                file_read = ensure_async(file.read)
                                 await file_seek(start)
                                 return await file_read(end - start + 1)
                             finally:
                                 await file_seek(curpos)
-                elif isinstance(file, URL) or hasattr(file, "geturl"):
+                elif isinstance(file, (URL, SupportsGeturl)):
                     @asynccontextmanager
                     async def ctx_async_read(url, /, start=0):
                         headers = None
-                        if start and is_ranged:
+                        if is_ranged and start:
                             headers = {"Range": "bytes=%s-" % start}
                         try:
                             from aiohttp import request
@@ -3257,24 +5238,24 @@ class P115Client:
                         else:
                             async with request("GET", url, headers=headers) as resp:
                                 if not headers:
-                                    await async_through(bio_skip_async_iter(resp, start))
+                                    await async_through(bio_skip_async_iter(resp.content, start))
                                 yield resp, resp.read
                     async def read_range_bytes_or_hash(sign_check):
                         start, end = map(int, sign_check.split("-"))
-                        async with ctx_async_read(url, start) as _, read:
+                        async with ctx_async_read(url, start) as (_, read):
                             return await read(end - start + 1)
                     if isinstance(file, URL):
                         url = str(file)
                     else:
                         url = file.geturl()
-                    async with ctx_async_read(url) as resp, read:
+                    async with ctx_async_read(url) as (resp, read):
                         is_ranged = is_range_request(resp)
                         if not filename:
                             filename = get_filename(resp) or str(uuid4())
                         if filesize < 0:
                             filesize = get_total_length(resp) or 0
                         if filesize < 1 << 20:
-                            file = await read()
+                            file = cast(bytes, await read())
                             if not file_sha1:
                                 file_sha1 = sha1(file).hexdigest()
                         else:
@@ -3285,7 +5266,7 @@ class P115Client:
                     if filesize < 0 or filesize >= 1 << 20:
                         filesize = 0
                 else:
-                    return await self.upload_file_sample(file, filename, pid, **request_kwargs)
+                    return await self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
 
                 if not filename:
                     filename = str(uuid4())
@@ -3296,11 +5277,12 @@ class P115Client:
         else:
             def do_upload(file):
                 resp = self.upload_file_init(
-                    filename, 
+                    cast(str, filename), 
                     filesize, 
-                    file_sha1, 
+                    cast(str, file_sha1), 
                     read_range_bytes_or_hash, 
                     pid=pid, 
+                    async_=async_, 
                     **request_kwargs, 
                 )
                 status = resp["status"]
@@ -3318,6 +5300,7 @@ class P115Client:
                         bucket, 
                         object, 
                         callback, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
                 else:
@@ -3327,19 +5310,21 @@ class P115Client:
                         object, 
                         callback, 
                         part_size=part_size, 
+                        async_=async_, 
                         **request_kwargs, 
                     )
 
-            read_range_bytes_or_hash = None
+            read_range_bytes_or_hash: None | Callable = None
             if isinstance(file, (bytes, bytearray, memoryview)):
                 if filesize < 0:
                     filesize = len(file)
                 if not file_sha1:
                     file_sha1 = sha1(file).hexdigest()
                 if filesize >= 1 << 20:
-                    def read_range_bytes_or_hash(sign_check: str) -> str:
+                    mmv = memoryview(file)
+                    def read_range_bytes_or_hash(sign_check: str):
                         start, end = map(int, sign_check.split("-"))
-                        return data[start : end + 1]
+                        return mmv[start : end + 1]
             elif isinstance(file, (str, PathLike)):
                 path = fsdecode(file)
                 if not filename:
@@ -3352,65 +5337,71 @@ class P115Client:
                         file_sha1 = sha1(file).hexdigest()
                 else:
                     if not file_sha1:
-                        file_sha1 = file_digest(open(path, "rb"))
-                    def read_range_bytes_or_hash(sign_check):
+                        _, hashobj = file_digest(open(path, "rb"), "sha1")
+                        file_sha1 = hashobj.hexdigest()
+                    def read_range_bytes_or_hash(sign_check: str):
                         start, end = map(int, sign_check.split("-"))
                         with open(path, "rb") as file:
                             file.seek(start)
                             return sha1(file.read(end - start + 1)).hexdigest()
                     file = open(path, "rb")
-            elif hasattr(file, "read"):
-                try:
-                    curpos = file.seek(0, 1)
-                    seekable = True
-                except Exception:
-                    curpos = 0
-                    seekable = False
+            elif isinstance(file, SupportsRead):
+                file_read: Callable[..., bytes] = getattr(file, "read")
+                file_seek = getattr(file, "seek", None)
+                if file_seek is not None:
+                    try:
+                        curpos = file_seek(0, 1)
+                        seekable = True
+                    except Exception:
+                        curpos = 0
+                        seekable = False
                 if not filename:
                     try:
-                        filename = ospath.basename(fsdecode(file.name))
+                        filename = ospath.basename(fsdecode(getattr(file, "name")))
                     except Exception:
                         filename = str(uuid4())
                 if filesize < 0:
                     try:
-                        filesize = fstat(file.fileno()).st_size - curpos
+                        fileno = getattr(file, "fileno")()
+                        filesize = fstat(fileno).st_size - curpos
                     except Exception:
                         try:
-                            filesize = len(file) - curpos
+                            filesize = len(file) - curpos # type: ignore
                         except TypeError:
                             if seekable:
                                 try:
-                                    filesize = file.seek(0, 2) - curpos
+                                    filesize = file_seek(0, 2) - curpos
                                 finally:
-                                    file.seek(curpos)
+                                    file_seek(curpos)
                             else:
                                 filesize = 0
                 if 0 < filesize < 1 << 20:
-                    file = file.read()
+                    file = file_read()
                     if not file_sha1:
                         file_sha1 = sha1(file).hexdigest()
                 else:
                     if not file_sha1:
                         if not seekable:
-                            return self.upload_file_sample(file, filename, pid, **request_kwargs)
+                            return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
                         try:
-                            file_sha1 = file_digest(file, "sha1").hexdigest()
+                            _, hashobj = file_digest(file, "sha1")
+                            file_sha1 = hashobj.hexdigest()
                         finally:
-                            file.seek(curpos)
-                    def read_range_bytes_or_hash(sign_check):
+                            file_seek(curpos)
+                    def read_range_bytes_or_hash(sign_check: str):
                         if not seekable:
                             raise TypeError(f"not a seekable reader: {file!r}")
                         start, end = map(int, sign_check.split("-"))
                         try:
-                            file.seek(start)
-                            return sha1(file.read(end - start + 1)).hexdigest()
+                            file_seek(start)
+                            return sha1(file_read(end - start + 1)).hexdigest()
                         finally:
-                            file.seek(curpos)
-            elif isinstance(file, URL) or hasattr(file, "geturl"):
-                def read_range_bytes_or_hash(sign_check):
+                            file_seek(curpos)
+            elif isinstance(file, (URL, SupportsGeturl)):
+                def read_range_bytes_or_hash(sign_check: str):
                     start, end = map(int, sign_check.split("-"))
                     headers = None
-                    if is_range_request and start:
+                    if is_ranged and start:
                         headers = {"Range": "bytes=%s-" % start}
                     with urlopen(url, headers=headers) as resp:
                         if not headers:
@@ -3432,13 +5423,13 @@ class P115Client:
                             file_sha1 = sha1(file).hexdigest()
                     else:
                         if not file_sha1 or not is_ranged:
-                            return self.upload_file_sample(resp, filename, pid, **request_kwargs)
+                            return self.upload_file_sample(resp, filename, pid, async_=async_, **request_kwargs)
                         return do_upload(resp)
             elif file_sha1:
                 if filesize < 0 or filesize >= 1 << 20:
                     filesize = 0
             else:
-                return self.upload_file_sample(file, filename, pid, **request_kwargs)
+                return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
 
             if not filename:
                 filename = str(uuid4())
@@ -3453,12 +5444,31 @@ class P115Client:
 
     ########## Decompress API ##########
 
+    @overload
     def extract_push(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def extract_push(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def extract_push(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
         POST https://webapi.115.com/files/push_extract
         payload:
@@ -3469,14 +5479,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"pick_code": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def extract_push_progress(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def extract_push_progress(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def extract_push_progress(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """查询解压缩任务的进度
         GET https://webapi.115.com/files/push_extract
         payload:
@@ -3486,14 +5515,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"pick_code": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def extract_info(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def extract_info(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def extract_info(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取压缩文件的文件列表，推荐直接用封装函数 `extract_list`
         GET https://webapi.115.com/files/extract_info
         payload:
@@ -3505,8 +5553,32 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/extract_info"
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def extract_list(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        next_marker: str, 
+        page_count: int, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_list(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        next_marker: str, 
+        page_count: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def extract_list(
         self, 
         /, 
@@ -3514,8 +5586,9 @@ class P115Client:
         path: str = "", 
         next_marker: str = "", 
         page_count: int = 999, 
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """获取压缩文件的文件列表，此方法是对 `extract_info` 的封装，推荐使用
         """
         if not 1 <= page_count <= 999:
@@ -3527,14 +5600,33 @@ class P115Client:
             "next_marker": next_marker, 
             "page_count": page_count, 
         }
-        return self.extract_info(payload, **request_kwargs)
+        return self.extract_info(payload, async_=async_, **request_kwargs)
 
+    @overload
     def extract_add_file(
         self, 
         payload: list | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def extract_add_file(
+        self, 
+        payload: list | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def extract_add_file(
+        self, 
+        payload: list | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """解压缩到某个文件夹，推荐直接用封装函数 `extract_file`
         POST https://webapi.115.com/files/add_extract_file
         payload:
@@ -3556,15 +5648,35 @@ class P115Client:
             api, 
             "POST", 
             data=urlencode(payload), 
+            async_=async_, 
             **request_kwargs, 
         )
 
+    @overload
     def extract_progress(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def extract_progress(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def extract_progress(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取 解压缩到文件夹 任务的进度
         GET https://webapi.115.com/files/add_extract_file
         payload:
@@ -3574,17 +5686,42 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"extract_id": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def extract_file(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str], 
+        dirname: str, 
+        to_pid: int | str,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_file(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str], 
+        dirname: str, 
+        to_pid: int | str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def extract_file(
         self, 
         /, 
         pickcode: str, 
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
-        to_pid: int | str = 0, 
+        to_pid: int | str = 0,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """解压缩到某个文件夹，是对 `extract_add_file` 的封装，推荐使用
         """
         dirname = dirname.strip("/")
@@ -3594,26 +5731,88 @@ class P115Client:
             ("paths", dir2), 
             ("to_pid", to_pid), 
         ]
-        if not paths:
-            resp = self.extract_list(pickcode, dirname)
-            if not resp["state"]:
-                return resp
-            paths = [p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"]]
-            while (next_marker := resp["data"].get("next_marker")):
-                resp = self.extract_list(pickcode, dirname, next_marker)
-                paths.extend(p["file_name"] if p["file_category"] else p["file_name"]+"/" for p in resp["data"]["list"])
-        if isinstance(paths, str):
-            data.append(("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/")))
+        if async_:
+            async def async_request():
+                nonlocal async_, paths
+                async_ = cast(Literal[True], async_)
+                if not paths:
+                    resp = await self.extract_list(pickcode, dirname, async_=async_, **request_kwargs)
+                    if not resp["state"]:
+                        return resp
+                    paths = [
+                        p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                        for p in resp["data"]["list"]
+                    ]
+                    while (next_marker := resp["data"].get("next_marker")):
+                        resp = await self.extract_list(
+                            pickcode, dirname, next_marker, async_=async_, **request_kwargs)
+                        paths.extend(
+                            p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                            for p in resp["data"]["list"]
+                        )
+                if isinstance(paths, str):
+                    data.append(
+                        ("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/"))
+                    )
+                else:
+                    data.extend(
+                        ("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) 
+                        for path in paths
+                    )
+                return await self.extract_add_file(data, async_=async_, **request_kwargs)
+            return async_request()
         else:
-            data.extend(("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) for path in paths)
-        return self.extract_add_file(data, **request_kwargs)
+            if not paths:
+                resp = self.extract_list(pickcode, dirname, async_=async_, **request_kwargs)
+                if not resp["state"]:
+                    return resp
+                paths = [
+                    p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                    for p in resp["data"]["list"]
+                ]
+                while (next_marker := resp["data"].get("next_marker")):
+                    resp = self.extract_list(
+                        pickcode, dirname, next_marker, async_=async_, **request_kwargs)
+                    paths.extend(
+                        p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                        for p in resp["data"]["list"]
+                    )
+            if isinstance(paths, str):
+                data.append(
+                    ("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/"))
+                )
+            else:
+                data.extend(
+                    ("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) 
+                    for path in paths
+                )
+            return self.extract_add_file(data, async_=async_, **request_kwargs)
 
+    @overload
     def extract_download_url_web(
         self, 
         payload: dict, 
         /, 
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def extract_download_url_web(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def extract_download_url_web(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取压缩包中文件的下载链接
         GET https://webapi.115.com/files/extract_down_file
         payload:
@@ -3622,57 +5821,127 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/extract_down_file"
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def extract_download_url(
         self, 
         /, 
         pickcode: str, 
-        path: str, 
+        path: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> str:
+        ...
+    @overload
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[str]:
+        ...
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> str | Awaitable[str]:
         """获取压缩包中文件的下载链接，此接口是对 `extract_download_url_web` 的封装
         """
-        async_ = request_kwargs.get("async_", False)
         resp = self.extract_download_url_web(
             {"pick_code": pickcode, "full_name": path.strip("/")}, 
+            async_=async_, 
             **request_kwargs, 
         )
         def get_url(resp: dict) -> str:
             data = check_response(resp)["data"]
             return quote(data["url"], safe=":/?&=%#")
         if async_:
-            async def request() -> str:
-                return get_url(await resp) # type: ignore
-            return request() # type: ignore
+            async def async_request() -> str:
+                return get_url(await cast(Awaitable[dict], resp)) 
+            return async_request()
         else:
-            return get_url(resp)
+            return get_url(cast(dict, resp))
 
+    # TODO
+    @overload
     def extract_push_future(
         self, 
         /, 
         pickcode: str, 
-        secret: str = "", 
+        secret: str,
+        async_: Literal[False] = False, 
         **request_kwargs, 
-    ) -> Optional[PushExtractProgress]:
+    ) -> None | PushExtractProgress:
+        ...
+    @overload
+    def extract_push_future(
+        self, 
+        /, 
+        pickcode: str, 
+        secret: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[None | PushExtractProgress]:
+        ...
+    def extract_push_future(
+        self, 
+        /, 
+        pickcode: str, 
+        secret: str = "",
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> None | PushExtractProgress | Awaitable[None | PushExtractProgress]:
         """执行在线解压，如果早就已经完成，返回 None，否则新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_push(
-            {"pick_code": pickcode, "secret": secret}, **request_kwargs
+            {"pick_code": pickcode, "secret": secret}, 
+            **request_kwargs, 
         ))
         if resp["data"]["unzip_status"] == 4:
             return None
         return PushExtractProgress(self, pickcode)
 
+    # TODO
+    @overload
+    def extract_file_future(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str], 
+        dirname: str, 
+        to_pid: int | str,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> ExtractProgress:
+        ...
+    @overload
+    def extract_file_future(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str], 
+        dirname: str, 
+        to_pid: int | str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[ExtractProgress]:
+        ...
     def extract_file_future(
         self, 
         /, 
         pickcode: str, 
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
-        to_pid: int | str = 0, 
+        to_pid: int | str = 0,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> ExtractProgress:
+    ) -> ExtractProgress | Awaitable[ExtractProgress]:
         """执行在线解压到目录，新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_file(
@@ -3682,72 +5951,176 @@ class P115Client:
 
     ########## Offline Download API ##########
 
+    @overload
     def offline_info(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_info(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_info(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取关于离线的限制的信息
         GET https://115.com/?ct=offline&ac=space
         """
         api = "https://115.com/?ct=offline&ac=space"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def offline_quota_info(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_quota_info(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_quota_info(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取当前离线配额信息（简略）
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def offline_quota_package_info(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_quota_package_info(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_quota_package_info(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取当前离线配额信息（详细）
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def offline_download_path(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_download_path(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_download_path(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取当前默认的离线下载到的文件夹信息（可能有多个）
         GET https://webapi.115.com/offine/downpath
         """
         api = "https://webapi.115.com/offine/downpath"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def offline_upload_torrent_path(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_upload_torrent_path(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_upload_torrent_path(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取当前的种子上传到的文件夹，当你添加种子任务后，这个种子会在此文件夹中保存
         GET https://115.com/?ct=lixian&ac=get_id&torrent=1
         """
         api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def offline_add_url(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_add_url(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_add_url(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """添加一个离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
         payload:
@@ -3765,14 +6138,33 @@ class P115Client:
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def offline_add_urls(
         self, 
         payload: Iterable[str] | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_add_urls(
+        self, 
+        payload: Iterable[str] | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_add_urls(
+        self, 
+        payload: Iterable[str] | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """添加一组离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
         payload:
@@ -3794,14 +6186,33 @@ class P115Client:
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def offline_add_torrent(
         self, 
         payload: dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_add_torrent(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_add_torrent(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """添加一个种子作为离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
         payload:
@@ -3818,14 +6229,33 @@ class P115Client:
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def offline_torrent_info(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_torrent_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_torrent_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """查看种子的文件列表等信息
         POST https://lixian.115.com/lixian/?ct=lixian&ac=torrent
         payload:
@@ -3835,14 +6265,33 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"sha1": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def offline_remove(
         self, 
         payload: str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_remove(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_remove(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """删除一组离线任务（无论是否已经完成）
         POST https://lixian.115.com/lixian/?ct=lixian&ac=task_del
         payload:
@@ -3861,14 +6310,33 @@ class P115Client:
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
     def offline_list(
         self, 
         payload: int | dict = 1, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def offline_list(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def offline_list(
+        self, 
+        payload: int | dict = 1, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取当前的离线任务列表
         POST https://lixian.115.com/lixian/?ct=lixian&ac=task_lists
         payload:
@@ -3878,14 +6346,33 @@ class P115Client:
         if isinstance(payload, int):
             payload = {"page": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def offline_clear(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_clear(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def offline_clear(
         self, 
         payload: int | dict = {"flag": 0}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """清空离线任务列表
         POST https://115.com/web/lixian/?ct=lixian&ac=task_clear
         payload:
@@ -3906,16 +6393,35 @@ class P115Client:
                 flag = 5
             payload = {"flag": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Recyclebin API ##########
 
+    @overload
     def recyclebin_info(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def recyclebin_info(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def recyclebin_info(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """回收站：文件信息
         POST https://webapi.115.com/rb/rb_info
         payload:
@@ -3925,14 +6431,33 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"rid": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def recyclebin_clean(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def recyclebin_clean(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def recyclebin_clean(
         self, 
         payload: int | str | Iterable[int | str] | dict = {}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """回收站：删除或清空
         POST https://webapi.115.com/rb/clean
         payload:
@@ -3947,14 +6472,33 @@ class P115Client:
         elif not isinstance(payload, dict):
             payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def recyclebin_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def recyclebin_list(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
     def recyclebin_list(
         self, 
         payload: dict = {"limit": 32, "offset": 0}, 
-        /, 
+        /,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """回收站：罗列
         GET https://webapi.115.com/rb
         payload:
@@ -3968,14 +6512,33 @@ class P115Client:
         api = "https://webapi.115.com/rb"
         payload = {"aid": 7, "cid": 0, "limit": 32, "offset": 0, "format": "json", **payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
     def recyclebin_revert(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def recyclebin_revert(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def recyclebin_revert(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """回收站：还原
         POST https://webapi.115.com/rb/revert
         payload:
@@ -3989,52 +6552,122 @@ class P115Client:
         elif not isinstance(payload, dict):
             payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Captcha System API ##########
 
+    @overload
     def captcha_sign(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def captcha_sign(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def captcha_sign(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """获取验证码的签名字符串
         GET https://captchaapi.115.com/?ac=code&t=sign
         """
         api = "https://captchaapi.115.com/?ac=code&t=sign"
         request_kwargs.pop("parse", None)
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def captcha_code(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
+        ...
+    @overload
+    def captcha_code(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def captcha_code(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
         """更新验证码，并获取图片数据（含 4 个汉字）
         GET https://captchaapi.115.com/?ct=index&ac=code&ctype=0
         """
         api = "https://captchaapi.115.com/?ct=index&ac=code&ctype=0"
         request_kwargs["parse"] = False
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def captcha_all(
         self, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
+        ...
+    @overload
+    def captcha_all(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def captcha_all(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
         """返回一张包含 10 个汉字的图片，包含验证码中 4 个汉字（有相应的编号，从 0 到 9，计数按照从左到右，从上到下的顺序）
         GET https://captchaapi.115.com/?ct=index&ac=code&t=all
         """
         api = "https://captchaapi.115.com/?ct=index&ac=code&t=all"
         request_kwargs["parse"] = False
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def captcha_single(
         self, 
         id: int, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
+        ...
+    @overload
+    def captcha_single(
+        self, 
+        id: int, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def captcha_single(
+        self, 
+        id: int, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
         """10 个汉字单独的图片，包含验证码中 4 个汉字，编号从 0 到 9
         GET https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}
         """
@@ -4042,14 +6675,33 @@ class P115Client:
             raise ValueError(f"expected integer between 0 and 9, got {id}")
         api = f"https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}"
         request_kwargs["parse"] = False
-        return self.request(api, **request_kwargs)
+        return self.request(api, async_=async_, **request_kwargs)
 
+    @overload
     def captcha_verify(
         self, 
         payload: int | str | dict, 
-        /, 
+        /,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
+        ...
+    @overload
+    def captcha_verify(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def captcha_verify(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
         """提交验证码
         POST https://webapi.115.com/user/captcha
         payload:
@@ -4066,20 +6718,45 @@ class P115Client:
             payload["sign"] = self.captcha_sign()["sign"]
         api = "https://webapi.115.com/user/captcha"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", data=payload, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
 
     # TODO: 支持 async_
+    @overload
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: Optional[Mapping], 
+        start: int, 
+        seek_threshold: int,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> RequestsFileReader:
+        ...
+    @overload
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: Optional[Mapping], 
+        start: int, 
+        seek_threshold: int,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[RequestsFileReader]:
+        ...
     def open(
         self, 
         /, 
         url: str | Callable[[], str], 
         headers: Optional[Mapping] = None, 
         start: int = 0, 
-        seek_threshold: int = 1 << 20, 
+        seek_threshold: int = 1 << 20,
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> RequestsFileReader:
+    ) -> RequestsFileReader | Awaitable[RequestsFileReader]:
         """
         """
         urlopen = self.session.get
@@ -4094,23 +6771,48 @@ class P115Client:
         )
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
-    def open_upload(): ...
+    def open_upload(self): ...
 
     # TODO: 下面 3 个函数支持 async_
+    @overload
     def read_bytes(
         self, 
         /, 
         url: str, 
         start: int = 0, 
         stop: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
+        headers: Optional[Mapping] = None,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
+        ...
+    @overload
+    def read_bytes(
+        self, 
+        /, 
+        url: str, 
+        start: int, 
+        stop: Optional[int], 
+        headers: Optional[Mapping],
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def read_bytes(
+        self, 
+        /, 
+        url: str, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: Optional[Mapping] = None,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
         """
         """
         length = None
         if start < 0:
-            with self.session.get(url, stream=True, headers={"Accept-Encoding": "identity"}) as resp:
+            with closing(self.request(url, stream=True, headers={"Accept-Encoding": "identity"})) as resp:
                 resp.raise_for_status()
                 length = get_content_length(resp)
             if length is None:
@@ -4123,7 +6825,7 @@ class P115Client:
         else:
             if stop < 0:
                 if length is None:
-                    with self.session.get(url, stream=True, headers={"Accept-Encoding": "identity"}) as resp:
+                    with closing(self.request(url, stream=True, headers={"Accept-Encoding": "identity"})) as resp:
                         resp.raise_for_status()
                         length = get_content_length(resp)
                 if length is None:
@@ -4134,14 +6836,37 @@ class P115Client:
             bytes_range = f"{start}-{stop-1}"
         return self.read_bytes_range(url, bytes_range, headers=headers, **request_kwargs)
 
+    @overload
     def read_bytes_range(
         self, 
         /, 
         url: str, 
         bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None, 
+        headers: Optional[Mapping] = None,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
+        ...
+    @overload
+    def read_bytes_range(
+        self, 
+        /, 
+        url: str, 
+        bytes_range: str, 
+        headers: Optional[Mapping],
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def read_bytes_range(
+        self, 
+        /, 
+        url: str, 
+        bytes_range: str = "0-", 
+        headers: Optional[Mapping] = None,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
         """
         """
         if headers:
@@ -4149,26 +6874,109 @@ class P115Client:
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         request_kwargs["stream"] = False
-        with self.session.get(url, headers=headers, **request_kwargs) as resp:
+        with closing(self.request(url, headers=headers, async_=async_, **request_kwargs)) as resp:
             if resp.status_code == 416:
                 return b""
             resp.raise_for_status()
             return resp.content
 
+    @overload
     def read_block(
         self, 
         /, 
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: Optional[Mapping] = None, 
+        headers: Optional[Mapping] = None,
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
+        ...
+    @overload
+    def read_block(
+        self, 
+        /, 
+        url: str, 
+        size: int, 
+        offset: int, 
+        headers: Optional[Mapping],
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def read_block(
+        self, 
+        /, 
+        url: str, 
+        size: int = 0, 
+        offset: int = 0, 
+        headers: Optional[Mapping] = None,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
         """
         """
         if size <= 0:
             return b""
         return self.read_bytes(url, offset, offset+size, headers=headers, **request_kwargs)
+
+    @cached_property
+    def fs(self, /) -> P115FileSystem:
+        """
+        """
+        return P115FileSystem(self)
+
+    def get_fs(self, /, *args, **kwargs) -> P115FileSystem:
+        """
+        """
+        return P115FileSystem(self, *args, **kwargs)
+
+    def get_share_fs(self, share_link: str, /, *args, **kwargs) -> P115ShareFileSystem:
+        """
+        """
+        return P115ShareFileSystem(self, share_link, *args, **kwargs)
+
+    def get_zip_fs(self, id_or_pickcode: int | str, /, *args, **kwargs) -> P115ZipFileSystem:
+        """
+        """
+        return P115ZipFileSystem(self, id_or_pickcode, *args, **kwargs)
+
+    @cached_property
+    def label(self, /) -> P115LabelList:
+        """
+        """
+        return P115LabelList(self)
+
+    @cached_property
+    def offline(self, /) -> P115Offline:
+        """
+        """
+        return P115Offline(self)
+
+    def get_offline(self, /, *args, **kwargs) -> P115Offline:
+        return P115Offline(self, *args, **kwargs)
+
+    @cached_property
+    def recyclebin(self, /) -> P115Recyclebin:
+        """
+        """
+        return P115Recyclebin(self)
+
+    def get_recyclebin(self, /, *args, **kwargs) -> P115Recyclebin:
+        """
+        """
+        return P115Recyclebin(self, *args, **kwargs)
+
+    @cached_property
+    def sharing(self, /) -> P115Sharing:
+        """
+        """
+        return P115Sharing(self)
+
+    def get_sharing(self, /, *args, **kwargs) -> P115Sharing:
+        """
+        """
+        return P115Sharing(self, *args, **kwargs)
 
 
 # TODO: 这些类再提供一个 Async 版本
@@ -4305,7 +7113,11 @@ class ExtractProgress(Future):
         Thread(target=update_progress).start()
 
 
-# 上传分几种：1. 不获取 hash 等信息，直接一次上传 2. 获取 hash 等信息，一次上传 3. 获取 hash 等信息，分块上传
-# http 的读写都基于 socket，设计一个方案，把上传进行封装为一个文件，可以自行决定一次写入多少，底层会多次调用write，最后flush
-# 如果文件足够小，小于 1MB，是不需要 2 次哈希的
+from .fs import P115FileSystem
+from .fs_share import P115ShareFileSystem
+from .fs_zip import P115ZipFileSystem
+from .labellist import P115LabelList
+from .offline import P115Offline
+from .recyclebin import P115Recyclebin
+from .sharing import P115Sharing
 

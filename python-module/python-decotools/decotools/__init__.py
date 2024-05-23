@@ -58,7 +58,8 @@ def decorated(
 def optional(
     f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]], 
     /, 
-) -> Callable[Concatenate[None, Args0], Callable[[Callable[Args, R]], Callable[Args, T]]] \
+) -> Callable[[None], Callable[[Callable[Args, R]], Callable[Args, T]]] \
+    | Callable[Concatenate[None, Args0], Callable[[Callable[Args, R]], Callable[Args, T]]] \
     | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]]:
     """This function decorates another decorator that with optional parameters.
     NOTE: Make sure that these optional parameters have default values.
