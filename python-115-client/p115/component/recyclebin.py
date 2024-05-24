@@ -10,6 +10,7 @@ from .client import check_response, P115Client
 
 
 class P115Recyclebin:
+    "封装回收站"
     __slots__ = ("client", "password")
 
     def __init__(
@@ -41,6 +42,7 @@ class P115Recyclebin:
         return self.iter()
 
     def __len__(self, /) -> int:
+        "计算回收站中的文件和文件夹数（不含文件夹内的递归计算）"
         return int(check_response(self.client.recyclebin_list({"limit": 1}))["count"])
 
     def __repr__(self, /) -> str:
@@ -57,6 +59,7 @@ class P115Recyclebin:
         /, 
         password: None | int | str = None, 
     ) -> dict:
+        "清空回收站，如果不传入密码则用 self.password"
         if password is None:
             password = self.password
         return self.client.recyclebin_clean({"password": password})
@@ -67,6 +70,7 @@ class P115Recyclebin:
         /, 
         default=None, 
     ):
+        "用 id 查询回收站中的文件信息"
         ids = str(id)
         return next((item for item in self if item["id"] == ids), default)
 
@@ -76,6 +80,7 @@ class P115Recyclebin:
         offset: int = 0, 
         page_size: int = 1 << 10, 
     ) -> Iterator[dict]:
+        "迭代获取回收站的文件信息"
         if offset < 0:
             offset = 0
         if page_size <= 0:
@@ -101,6 +106,7 @@ class P115Recyclebin:
         offset: int = 0, 
         limit: int = 0, 
     ) -> list[dict]:
+        "获取回收站的文件信息列表"
         if limit <= 0:
             return list(self.iter(offset))
         resp = check_response(self.client.recyclebin_list({"offset": offset, "limit": limit}))
@@ -115,6 +121,7 @@ class P115Recyclebin:
         /, 
         password: None | int | str = None, 
     ) -> dict:
+        "从回收站删除文件（即永久删除），如果不传入密码则用 self.password"
         if isinstance(ids, (int, str)):
             payload = {"rid[0]": ids}
         else:
@@ -128,6 +135,7 @@ class P115Recyclebin:
         ids: int | str | Iterable[int | str], 
         /, 
     ) -> dict:
+        "恢复已删除文件"
         if isinstance(ids, (int, str)):
             payload = {"rid[0]": ids}
         else:

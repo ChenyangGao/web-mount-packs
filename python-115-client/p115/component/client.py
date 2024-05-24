@@ -15,16 +15,15 @@ from collections.abc import (
     AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager, aclosing, closing
 from datetime import date, datetime
 from email.utils import formatdate
 from functools import cached_property, partial, update_wrapper
 from hashlib import md5, sha1
 from hmac import digest as hmac_digest
-from http.cookiejar import Cookie
+from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel
-from inspect import isawaitable, iscoroutinefunction
-from io import UnsupportedOperation
+from inspect import iscoroutinefunction
 from itertools import count, takewhile
 from json import dumps, loads
 from os import fsdecode, fstat, stat, PathLike
@@ -33,7 +32,7 @@ from re import compile as re_compile
 from threading import Condition, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
-    cast, overload, Any, Final, Literal, Never, Optional, Self, TypeVar, 
+    cast, overload, Any, Final, Literal, Never, Self, TypeVar, 
 )
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
@@ -52,9 +51,9 @@ from filewrap import (
 from hashtools import file_digest, file_digest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_range_request
-from httpfile import RequestsFileReader # TODO: use urllib3 instead
+from httpfile import HTTPFileReader
 from httpx import AsyncClient, Client, Cookies, TimeoutException
-from httpx_request import request
+from httpx_request import request as httpx_request
 from iterutils import through, async_through, wrap_iter, wrap_aiter
 from multidict import CIMultiDict
 from qrcode import QRCode # type: ignore
@@ -71,6 +70,8 @@ RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
+
+request = partial(httpx_request, parse=lambda _, content: loads(content))
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -193,7 +194,7 @@ class P115Client:
     |      8 | H1      | ?          | 未知: ipad             |
     |      9 | I1      | tv         | 115网盘(Android电视端) |
     |     10 | M1      | qandriod   | 115管理(Android端)     |
-    |     11 | N1      | ?          | 115管理(iOS端)         |
+    |     11 | N1      | qios       | 115管理(iOS端)         |
     |     12 | O1      | ?          | 未知: ipad             |
     |     13 | P1      | windows    | 115生活(Windows端)     |
     |     14 | P2      | mac        | 115生活(macOS端)       |
@@ -256,6 +257,10 @@ class P115Client:
         return session
 
     @property
+    def cookiejar(self, /) -> CookieJar:
+        return self.__dict__["cookies"].jar
+
+    @property
     def cookies(self, /) -> str:
         """115 登录的 cookies，包含 UID, CID 和 SEID 这 3 个字段
         """
@@ -306,7 +311,6 @@ class P115Client:
         /, 
         url: str, 
         method: str = "GET", 
-        parse: None | bool | Callable = lambda _, content: loads(content), 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ):
@@ -315,7 +319,6 @@ class P115Client:
         return request(
             url, 
             method=method, 
-            parse=parse, 
             async_=async_, 
             session=self.async_session if async_ else self.session, # type: ignore
             **request_kwargs, 
@@ -444,7 +447,6 @@ class P115Client:
         GET https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices
         """
         api = "https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices"
-        request_kwargs.pop("parse", None)
         return self.request(api, async_=async_, **request_kwargs)
 
     @overload
@@ -487,6 +489,10 @@ class P115Client:
             - linux
             - wechatmini
             - alipaymini
+        还有几个备选：
+            - bios
+            - bandroid
+            - qios
 
         设备列表如下：
 
@@ -502,7 +508,7 @@ class P115Client:
         |      8 | H1      | ?          | 未知: ipad             |
         |      9 | I1      | tv         | 115网盘(Android电视端) |
         |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | ?          | 115管理(iOS端)         |
+        |     11 | N1      | qios       | 115管理(iOS端)         |
         |     12 | O1      | ?          | 未知: ipad             |
         |     13 | P1      | windows    | 115生活(Windows端)     |
         |     14 | P2      | mac        | 115生活(macOS端)       |
@@ -576,6 +582,10 @@ class P115Client:
             - linux
             - wechatmini
             - alipaymini
+        还有几个备选：
+            - bios
+            - bandroid
+            - qios
 
         设备列表如下：
 
@@ -591,7 +601,7 @@ class P115Client:
         |      8 | H1      | ?          | 未知: ipad             |
         |      9 | I1      | tv         | 115网盘(Android电视端) |
         |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | ?          | 115管理(iOS端)         |
+        |     11 | N1      | qios       | 115管理(iOS端)         |
         |     12 | O1      | ?          | 未知: ipad             |
         |     13 | P1      | windows    | 115生活(Windows端)     |
         |     14 | P2      | mac        | 115生活(macOS端)       |
@@ -610,7 +620,7 @@ class P115Client:
                     qr.add_data(qrcode)
                     qr.print_ascii(tty=True)
                 else:
-                    await startfile_async("https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode?uid=" + qrcode_token["uid"])
+                    await startfile_async("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"])
                 while True:
                     try:
                         resp = await cls.login_qrcode_status(
@@ -645,7 +655,7 @@ class P115Client:
                 qr.add_data(qrcode)
                 qr.print_ascii(tty=True)
             else:
-                startfile("https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode?uid=" + qrcode_token["uid"])
+                startfile("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"])
             while True:
                 try:
                     resp = cls.login_qrcode_status(
@@ -718,7 +728,7 @@ class P115Client:
         |      8 | H1      | ?          | 未知: ipad             |
         |      9 | I1      | tv         | 115网盘(Android电视端) |
         |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | ?          | 115管理(iOS端)         |
+        |     11 | N1      | qios       | 115管理(iOS端)         |
         |     12 | O1      | ?          | 未知: ipad             |
         |     13 | P1      | windows    | 115生活(Windows端)     |
         |     14 | P2      | mac        | 115生活(macOS端)       |
@@ -768,8 +778,8 @@ class P115Client:
                 return type(self)(data["data"]["cookie"])
 
     @overload
-    @staticmethod
     def login_qrcode_scan(
+        self, 
         payload: str | dict, 
         /,
         async_: Literal[False] = False, 
@@ -777,16 +787,16 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    @staticmethod
     def login_qrcode_scan(
+        self, 
         payload: str | dict, 
         /,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
-    @staticmethod
     def login_qrcode_scan(
+        self, 
         payload: str | dict, 
         /,
         async_: Literal[False, True] = False, 
@@ -801,11 +811,11 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"uid": payload}
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, async_=async_, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    @staticmethod
     def login_qrcode_scan_confirm(
+        self, 
         payload: str | dict, 
         /,
         async_: Literal[False] = False, 
@@ -813,16 +823,16 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    @staticmethod
     def login_qrcode_scan_confirm(
+        self, 
         payload: str | dict, 
         /,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
-    @staticmethod
     def login_qrcode_scan_confirm(
+        self, 
         payload: str | dict, 
         /,
         async_: Literal[False, True] = False, 
@@ -839,7 +849,7 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"key": payload, "uid": payload, "client": 0}
         request_kwargs.pop("parse", None)
-        return request(api, params=payload, async_=async_, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     @staticmethod
@@ -1104,7 +1114,7 @@ class P115Client:
         |      8 | H1      | ?          | 未知: ipad             |
         |      9 | I1      | tv         | 115网盘(Android电视端) |
         |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | ?          | 115管理(iOS端)         |
+        |     11 | N1      | qios       | 115管理(iOS端)         |
         |     12 | O1      | ?          | 未知: ipad             |
         |     13 | P1      | windows    | 115生活(Windows端)     |
         |     14 | P2      | mac        | 115生活(macOS端)       |
@@ -1161,7 +1171,7 @@ class P115Client:
         |      8 | H1      | ?          | 未知: ipad             |
         |      9 | I1      | tv         | 115网盘(Android电视端) |
         |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | ?          | 115管理(iOS端)         |
+        |     11 | N1      | qios       | 115管理(iOS端)         |
         |     12 | O1      | ?          | 未知: ipad             |
         |     13 | P1      | windows    | 115生活(Windows端)     |
         |     14 | P2      | mac        | 115生活(macOS端)       |
@@ -3426,8 +3436,8 @@ class P115Client:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
             return resp
         request_kwargs["parse"] = parse
-        data = RSA_ENCODER.encode(dumps(payload))
-        return self.request(api, "POST", data={"data": data}, async_=async_, **request_kwargs)
+        request_kwargs["data"] = RSA_ENCODER.encode(dumps(payload)).decode("ascii")
+        return self.request(api, "POST", async_=async_, **request_kwargs)
 
     @overload
     def share_download_url(
@@ -3570,10 +3580,10 @@ class P115Client:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
             return resp
         request_kwargs["parse"] = parse
+        request_kwargs["data"] = {"data": RSA_ENCODER.encode(dumps(payload)).decode("ascii")}
         return self.request(
             api, 
             "POST", 
-            data={"data": RSA_ENCODER.encode(dumps(payload))}, 
             async_=async_, 
             **request_kwargs, 
         )
@@ -4255,7 +4265,7 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: Optional[dict], 
+        token: None | dict, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4271,7 +4281,7 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: Optional[dict], 
+        token: None | dict, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -4286,7 +4296,7 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: Optional[dict] = None, 
+        token: None | dict = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -4355,6 +4365,10 @@ class P115Client:
     # TODO
     def _oss_upload_future(self): ...
 
+    # TODO: 上下文管理器，需要返回的信息：bucket, object, upload_id, callback
+    # TODO: 支持断点续传，但只支持 buffer、路径、url、可 seek 的 reader，否则报错
+    def _oss_multipart_upload_ctx(self): ...
+
     @overload
     def _oss_multipart_upload(
         self, 
@@ -4366,7 +4380,7 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: Optional[dict], 
+        token: None | dict, 
         upload_id: None | str, 
         part_size: int, 
         async_: Literal[False] = False, 
@@ -4384,7 +4398,7 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: Optional[dict], 
+        token: None | dict, 
         upload_id: None | str, 
         part_size: int, 
         async_: Literal[True], 
@@ -4401,7 +4415,7 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: Optional[dict] = None, 
+        token: None | dict = None, 
         upload_id: None | str = None, 
         part_size: int = 10 * 1 << 20, # default to: 10 MB
         async_: Literal[False, True] = False, 
@@ -5011,7 +5025,6 @@ class P115Client:
             return resp
 
     # TODO: 支持进度条和随时暂停，基于迭代器，使用一个 flag，每次迭代检查一下
-    # TODO: 支持断点续传（只支持 buffer、路径、url、可 seek 的 reader），需要保存的信息：bucket, object, upload_id, callback
     # TODO: class P115MultipartUploadTask:
     #           @classmethod
     #           def from_cache(cls, /, bucket, object, upload_id, callback, file): ...
@@ -5057,6 +5070,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
+                # TODO: 当升级到 0.1 版本时，将强制要求 python 3.12，这 bytes | bytearray | memoryview 用 collections.abc.Buffer 
                 bytes | bytearray | memoryview | 
                 SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
                 Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
@@ -5074,6 +5088,7 @@ class P115Client:
         """
         if upload_directly:
             return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
+
         if async_:
             async def async_request():
                 nonlocal async_, file, filename, filesize, file_sha1
@@ -5159,9 +5174,6 @@ class P115Client:
                             file_sha1 = sha1(file).hexdigest()
                     else:
                         if not file_sha1:
-                            file_digest_async
-                            h = sha1()
-                            h_update = h.update
                             async with ctx_async_read(path) as (file, _):
                                 _, hashobj = await file_digest_async(file, "sha1")
                             file_sha1 = hashobj.hexdigest()
@@ -5225,9 +5237,10 @@ class P115Client:
                 elif isinstance(file, (URL, SupportsGeturl)):
                     @asynccontextmanager
                     async def ctx_async_read(url, /, start=0):
-                        headers = None
                         if is_ranged and start:
                             headers = {"Range": "bytes=%s-" % start}
+                        else:
+                            headers = {}
                         try:
                             from aiohttp import request
                         except ImportError:
@@ -5267,12 +5280,9 @@ class P115Client:
                         filesize = 0
                 else:
                     return await self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
-
                 if not filename:
                     filename = str(uuid4())
-
                 return await do_upload(file)
-
             return async_request()
         else:
             def do_upload(file):
@@ -5400,9 +5410,10 @@ class P115Client:
             elif isinstance(file, (URL, SupportsGeturl)):
                 def read_range_bytes_or_hash(sign_check: str):
                     start, end = map(int, sign_check.split("-"))
-                    headers = None
                     if is_ranged and start:
                         headers = {"Range": "bytes=%s-" % start}
+                    else:
+                        headers = {}
                     with urlopen(url, headers=headers) as resp:
                         if not headers:
                             through(bio_skip_iter(resp, start))
@@ -5430,10 +5441,8 @@ class P115Client:
                     filesize = 0
             else:
                 return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
-
             if not filename:
                 filename = str(uuid4())
-
             return do_upload(file)
 
     # TODO: 提供一个可断点续传的版本
@@ -5868,7 +5877,7 @@ class P115Client:
         else:
             return get_url(cast(dict, resp))
 
-    # TODO
+    # TODO 支持异步
     @overload
     def extract_push_future(
         self, 
@@ -5907,7 +5916,7 @@ class P115Client:
             return None
         return PushExtractProgress(self, pickcode)
 
-    # TODO
+    # TODO 支持异步
     @overload
     def extract_file_future(
         self, 
@@ -6608,9 +6617,9 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
         """更新验证码，并获取图片数据（含 4 个汉字）
-        GET https://captchaapi.115.com/?ct=index&ac=code&ctype=0
+        GET https://captchaapi.115.com/?ct=index&ac=code
         """
-        api = "https://captchaapi.115.com/?ct=index&ac=code&ctype=0"
+        api = "https://captchaapi.115.com/?ct=index&ac=code"
         request_kwargs["parse"] = False
         return self.request(api, async_=async_, **request_kwargs)
 
@@ -6709,6 +6718,8 @@ class P115Client:
             - sign: str = <default>
             - ac: str = "security_code"
             - type: str = "web"
+            - ctype: str = <default>  # 其实不需要传，如果要传，就和 type 相同
+            - client: str = <default> # 其实不需要传，如果要传，就和 type 相同
         """
         if isinstance(payload, (int, str)):
             payload = {"code": payload, "ac": "security_code", "type": "web"}
@@ -6722,66 +6733,67 @@ class P115Client:
 
     ########## Other Encapsulations ##########
 
-    # TODO: 支持 async_
+    # TODO 支持异步
     @overload
     def open(
         self, 
         /, 
         url: str | Callable[[], str], 
-        headers: Optional[Mapping], 
+        headers: None | Mapping, 
         start: int, 
         seek_threshold: int,
         async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> RequestsFileReader:
+    ) -> HTTPFileReader:
         ...
     @overload
     def open(
         self, 
         /, 
         url: str | Callable[[], str], 
-        headers: Optional[Mapping], 
+        headers: None | Mapping, 
         start: int, 
         seek_threshold: int,
         async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Awaitable[RequestsFileReader]:
+    ) -> Awaitable[HTTPFileReader]:
         ...
     def open(
         self, 
         /, 
         url: str | Callable[[], str], 
-        headers: Optional[Mapping] = None, 
+        headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20,
         async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> RequestsFileReader | Awaitable[RequestsFileReader]:
+    ) -> HTTPFileReader | Awaitable[HTTPFileReader]:
+        """打开下载链接，可以从网盘、网盘上的压缩包内、分享链接中获取：
+            - P115Client.download_url
+            - P115Client.share_download_url
+            - P115Client.extract_download_url
         """
-        """
-        urlopen = self.session.get
-        if request_kwargs:
-            urlopen = partial(urlopen, **request_kwargs)
-        return RequestsFileReader(
-            url, 
-            headers=headers, 
-            start=start, 
-            seek_threshold=seek_threshold, 
-            urlopen=urlopen, 
-        )
+        if headers is None:
+            headers = self.headers
+        if async_:
+            raise OSError(errno.ENOSYS, "asynchronous mode not implemented")
+        else:
+            return HTTPFileReader(
+                url, 
+                headers=headers, 
+                start=start, 
+                seek_threshold=seek_threshold, 
+                urlopen=partial(urlopen, cookies=self.cookiejar), 
+            )
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
     def open_upload(self): ...
 
-    # TODO: 下面 3 个函数支持 async_
     @overload
     def read_bytes(
         self, 
         /, 
         url: str, 
         start: int = 0, 
-        stop: Optional[int] = None, 
-        headers: Optional[Mapping] = None,
+        stop: None | int = None, 
+        headers: None | Mapping = None,
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -6792,8 +6804,8 @@ class P115Client:
         /, 
         url: str, 
         start: int, 
-        stop: Optional[int], 
-        headers: Optional[Mapping],
+        stop: None | int, 
+        headers: None | Mapping,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -6803,38 +6815,75 @@ class P115Client:
         /, 
         url: str, 
         start: int = 0, 
-        stop: Optional[int] = None, 
-        headers: Optional[Mapping] = None,
+        stop: None | int = None, 
+        headers: None | Mapping = None,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
+        """读取文件一定索引范围的数据
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param start: 开始索引，可以为负数（从文件尾部开始）
+        :param stop: 结束索引（不含），可以为负数（从文件尾部开始）
+        :param headers: 一些请求头，最好提供一个 "User-Agent"
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
         """
-        """
-        length = None
-        if start < 0:
-            with closing(self.request(url, stream=True, headers={"Accept-Encoding": "identity"})) as resp:
-                resp.raise_for_status()
-                length = get_content_length(resp)
-            if length is None:
-                raise OSError(errno.ESPIPE, "can't determine content length")
-            start += length
-        if start < 0:
-            start = 0
-        if stop is None:
-            bytes_range = f"{start}-"
+        need_get_length = start < 0 or (stop is None or stop < 0)
+        if need_get_length:
+            if headers:
+                headers = {**headers, "Accept-Encoding": "identity"}
+            else:
+                headers = {"Accept-Encoding": "identity"}
+        request_kwargs["headers"] = headers
+        request_kwargs["parse"] = None
+        if async_:
+            async def get_bytes_range_async(start, stop) -> str:
+                if need_get_length:
+                    async with aclosing(self.request(url, async_=async_, **request_kwargs)) as resp:
+                        resp.raise_for_status()
+                        length = get_total_length(resp)
+                    if length is None:
+                        raise OSError(errno.ESPIPE, "can't determine content length")
+                    if start < 0:
+                        start += length
+                    if start < 0:
+                        start = 0
+                    if stop is None:
+                        return f"{start}-"
+                    elif stop < 0:
+                        stop += length
+                if stop <= 0 or start >= stop:
+                    return ""
+                return f"{start}-{stop-1}"
+            async def async_request():
+                bytes_range = await get_bytes_range_async(start, stop)
+                if not bytes_range:
+                    return b""
+                return await self.read_bytes_range(url, bytes_range, async_=async_, **request_kwargs)
+            return async_request()
         else:
-            if stop < 0:
-                if length is None:
-                    with closing(self.request(url, stream=True, headers={"Accept-Encoding": "identity"})) as resp:
+            def get_bytes_range(start, stop) -> str:
+                if need_get_length:
+                    with closing(self.request(url, async_=async_, **request_kwargs)) as resp:
                         resp.raise_for_status()
                         length = get_content_length(resp)
-                if length is None:
-                    raise OSError(errno.ESPIPE, "can't determine content length")
-                stop += length
-            if stop <= 0 or start >= stop:
+                    if length is None:
+                        raise OSError(errno.ESPIPE, "can't determine content length")
+                    if start < 0:
+                        start += length
+                    if start < 0:
+                        start = 0
+                    if stop is None:
+                        return f"{start}-"
+                    elif stop < 0:
+                        stop += length
+                if stop <= 0 or start >= stop:
+                    return ""
+                return f"{start}-{stop-1}"
+            bytes_range = get_bytes_range(start, stop)
+            if not bytes_range:
                 return b""
-            bytes_range = f"{start}-{stop-1}"
-        return self.read_bytes_range(url, bytes_range, headers=headers, **request_kwargs)
+            return self.read_bytes_range(url, bytes_range, async_=async_, **request_kwargs)
 
     @overload
     def read_bytes_range(
@@ -6842,7 +6891,7 @@ class P115Client:
         /, 
         url: str, 
         bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None,
+        headers: None | Mapping = None,
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -6853,7 +6902,7 @@ class P115Client:
         /, 
         url: str, 
         bytes_range: str, 
-        headers: Optional[Mapping],
+        headers: None | Mapping,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -6863,22 +6912,38 @@ class P115Client:
         /, 
         url: str, 
         bytes_range: str = "0-", 
-        headers: Optional[Mapping] = None,
+        headers: None | Mapping = None,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
-        """
+        """读取文件一定索引范围的数据
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param bytes_range: 索引范围，语法符合 [HTTP Range Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests)
+        :param headers: 一些请求头，最好提供一个 "User-Agent"
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
         """
         if headers:
             headers = {**headers, "Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
-        request_kwargs["stream"] = False
-        with closing(self.request(url, headers=headers, async_=async_, **request_kwargs)) as resp:
-            if resp.status_code == 416:
-                return b""
-            resp.raise_for_status()
-            return resp.content
+        request_kwargs["headers"] = headers
+        request_kwargs["parse"] = None
+        request_kwargs["raise_for_status"] = False
+        if async_:
+            async def async_request():
+                async with aclosing(self.request(url, async_=async_, **request_kwargs)) as resp:
+                    if resp.status_code == 416:
+                        return b""
+                    resp.raise_for_status()
+                    return await resp.read()
+            return async_request()
+        else:
+            with closing(self.request(url, async_=async_, **request_kwargs)) as resp:
+                if resp.status_code == 416:
+                    return b""
+                resp.raise_for_status()
+                return resp.read()
 
     @overload
     def read_block(
@@ -6887,7 +6952,7 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: Optional[Mapping] = None,
+        headers: None | Mapping = None,
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -6899,7 +6964,7 @@ class P115Client:
         url: str, 
         size: int, 
         offset: int, 
-        headers: Optional[Mapping],
+        headers: None | Mapping,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -6910,71 +6975,93 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: Optional[Mapping] = None,
+        headers: None | Mapping = None,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
-        """
+        """读取文件一定索引范围的数据
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param size: 下载字节数（最多下载这么多字节，如果遇到 EOF，就可能较小）
+        :param offset: 偏移索引，从 0 开始，可以为负数（从文件尾部开始）
+        :param headers: 一些请求头，最好提供一个 "User-Agent"
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
         """
         if size <= 0:
             return b""
-        return self.read_bytes(url, offset, offset+size, headers=headers, **request_kwargs)
+        return self.read_bytes(
+            url, 
+            offset, 
+            offset+size, 
+            headers=headers, 
+            async_=async_, 
+            **request_kwargs, 
+        )
 
     @cached_property
     def fs(self, /) -> P115FileSystem:
-        """
+        """你的网盘的文件列表的封装对象
         """
         return P115FileSystem(self)
 
     def get_fs(self, /, *args, **kwargs) -> P115FileSystem:
-        """
+        """新建你的网盘的文件列表的封装对象
         """
         return P115FileSystem(self, *args, **kwargs)
 
     def get_share_fs(self, share_link: str, /, *args, **kwargs) -> P115ShareFileSystem:
-        """
+        """新建一个分享链接的文件列表的封装对象
         """
         return P115ShareFileSystem(self, share_link, *args, **kwargs)
 
     def get_zip_fs(self, id_or_pickcode: int | str, /, *args, **kwargs) -> P115ZipFileSystem:
-        """
+        """新建压缩文件（支持 zip、rar、7z）的文件列表的封装对象（这个压缩文件在你的网盘中，且已经被云解压）
+
+        https://vip.115.com/?ct=info&ac=information
+        云解压预览规则：
+        1. 支持rar、zip、7z类型的压缩包云解压，其他类型的压缩包暂不支持；
+        2. 支持云解压20GB以下的压缩包；
+        3. 暂不支持分卷压缩包类型进行云解压，如rar.part等；
+        4. 暂不支持有密码的压缩包进行在线预览。
         """
         return P115ZipFileSystem(self, id_or_pickcode, *args, **kwargs)
 
     @cached_property
     def label(self, /) -> P115LabelList:
-        """
+        """你的标签列表的封装对象（标签是给文件或文件夹做标记的）
         """
         return P115LabelList(self)
 
     @cached_property
     def offline(self, /) -> P115Offline:
-        """
+        """你的离线任务列表的封装对象
         """
         return P115Offline(self)
 
     def get_offline(self, /, *args, **kwargs) -> P115Offline:
+        """新建你的离线任务列表的封装对象
+        """
         return P115Offline(self, *args, **kwargs)
 
     @cached_property
     def recyclebin(self, /) -> P115Recyclebin:
-        """
+        """你的回收站的封装对象
         """
         return P115Recyclebin(self)
 
     def get_recyclebin(self, /, *args, **kwargs) -> P115Recyclebin:
-        """
+        """新建你的回收站的封装对象
         """
         return P115Recyclebin(self, *args, **kwargs)
 
     @cached_property
     def sharing(self, /) -> P115Sharing:
-        """
+        """你的分享列表的封装对象
         """
         return P115Sharing(self)
 
     def get_sharing(self, /, *args, **kwargs) -> P115Sharing:
-        """
+        """新建你的分享列表的封装对象
         """
         return P115Sharing(self, *args, **kwargs)
 

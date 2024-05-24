@@ -19,11 +19,9 @@ from typing import Any, BinaryIO, IO, Optional, Protocol, Self, TypeVar
 from types import MappingProxyType
 from warnings import warn
 
-from aiohttp import ClientSession
 from filewrap import bio_skip_iter
 from http_response import get_filename, get_length, get_range, get_total_length, is_chunked, is_range_request
 from property import funcproperty
-from requests import Session
 from urlopen import urlopen
 
 
@@ -368,42 +366,63 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         else:
             return buffer
 
+try:
+    from requests import Session
 
-class RequestsFileReader(HTTPFileReader):
+    class RequestsFileReader(HTTPFileReader):
 
-    def __init__(
-        self, 
-        /, 
-        url: str | Callable[[], str], 
-        headers: Optional[Mapping] = None, 
-        start: int = 0, 
-        seek_threshold: int = 1 << 20, 
-        urlopen: Callable = Session().get, 
-    ):
-        def urlopen_wrapper(url: str, headers: Optional[Mapping] = headers):
-            resp = urlopen(url, headers=headers, stream=True)
-            resp.raise_for_status()
-            return resp
-        super().__init__(
-            url, 
-            headers=headers, 
-            start=start, 
-            seek_threshold=seek_threshold, 
-            urlopen=urlopen_wrapper, 
-        )
+        def __init__(
+            self, 
+            /, 
+            url: str | Callable[[], str], 
+            headers: Optional[Mapping] = None, 
+            start: int = 0, 
+            seek_threshold: int = 1 << 20, 
+            urlopen: Callable = Session().get, 
+        ):
+            def urlopen_wrapper(url: str, headers: Optional[Mapping] = headers):
+                resp = urlopen(url, headers=headers, stream=True)
+                resp.raise_for_status()
+                return resp
+            super().__init__(
+                url, 
+                headers=headers, 
+                start=start, 
+                seek_threshold=seek_threshold, 
+                urlopen=urlopen_wrapper, 
+            )
 
-    def _add_start(self, delta: int, /):
-        pass
+        def _add_start(self, delta: int, /):
+            pass
 
-    @funcproperty
-    def file(self, /) -> BinaryIO:
-        return self.response.raw
+        @funcproperty
+        def file(self, /) -> BinaryIO:
+            return self.response.raw
 
-    def tell(self, /) -> int:
-        start = self.start
-        if start >= self.length:
-            return start
-        return start + self.file.tell()
+        def tell(self, /) -> int:
+            start = self.start
+            if start >= self.length:
+                return start
+            return start + self.file.tell()
+    __all__.append("RequestsFileReader")
+except ImportError:
+    pass
+
+
+try:
+    from aiohttp import ClientSession
+
+    ...
+except ImportError:
+    pass
+
+
+try:
+    from httpx import Client, AsyncClient
+
+    ...
+except ImportError:
+    pass
 
 
 # TODO: 支持异步文件，使用 aiohttp，参考 aiofiles 的接口实现

@@ -36,10 +36,10 @@ def normalize_info(
 ) -> dict:
     if "fid" in info:
         fid = info["fid"]
-        parent_id = info["id"]
+        parent_id = info["cid"]
         is_dir = False
     else:
-        fid = info["id"]
+        fid = info["cid"]
         parent_id = info["pid"]
         is_dir = True
     info2 =  {
@@ -386,7 +386,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             "offset": offset, 
             "show_dir": 1, 
         }))
-        if id and int(resp["path"][-1]["id"]) != id:
+        if id and int(resp["path"][-1]["cid"]) != id:
             raise NotADirectoryError(errno.ENOTDIR, f"{id} is not a directory")
         return resp
 
@@ -936,7 +936,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
         if id:
             ls.extend(
-                {"name": p["name"], "id": int(p["id"]), "parent_id": int(p["pid"]), "is_directory": True} 
+                {"name": p["name"], "id": int(p["cid"]), "parent_id": int(p["pid"]), "is_directory": True} 
                 for p in self.fs_files(id, limit=1)["path"][1:]
             )
         return ls
@@ -1133,7 +1133,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             except FileNotFoundError:
                 exists = False
                 resp = self.fs_mkdir(name, pid)
-                pid = int(resp["id"])
+                pid = int(resp["cid"])
                 attr = get_attr(pid)
             else:
                 exists = True
@@ -1178,7 +1178,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if i < len(patht):
             raise FileNotFoundError(errno.ENOENT, f"{path!r} (in {pid!r}) missing superior directory")
         resp = self.fs_mkdir(name, pid)
-        return self.attr(int(resp["id"]))
+        return self.attr(int(resp["cid"]))
 
     def move(
         self, 

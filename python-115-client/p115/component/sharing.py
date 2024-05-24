@@ -11,6 +11,7 @@ from .client import check_response, P115Client
 
 
 class P115Sharing:
+    "封装自己的分享列表"
     __slots__ = "client",
 
     def __init__(self, client: str | P115Client, /):
@@ -43,6 +44,7 @@ class P115Sharing:
         return self.iter()
 
     def __len__(self, /) -> int:
+        "计算共有多少个分享"
         return check_response(self.client.share_list({"limit": 1}))["count"]
 
     def __repr__(self, /) -> str:
@@ -60,8 +62,18 @@ class P115Sharing:
         /, 
         is_asc: Literal[0, 1] = 1, 
         order: str = "file_name", 
-        ignore_warn: Literal[0, 1] = 1, 
     ) -> dict:
+        """创建分享链接
+        :param file_ids: 文件列表，有多个时用逗号 "," 隔开或者传入可迭代器
+        :param is_asc: 是否升序排列
+        :param order: 用某字段排序：
+            - 文件名："file_name"
+            - 文件大小："file_size"
+            - 文件种类："file_type"
+            - 修改时间："user_utime"
+            - 创建时间："user_ptime"
+            - 上次打开时间："user_otime"
+        """
         if not isinstance(file_ids, (int, str)):
             file_ids = ",".join(map(str, file_ids))
             if not file_ids:
@@ -70,15 +82,19 @@ class P115Sharing:
             "file_ids": file_ids, 
             "is_asc": is_asc, 
             "order": order, 
-            "ignore_warn": ignore_warn, 
         })
 
     @check_response
     def clear(self, /) -> dict:
+        "清空分享列表"
         return self.client.share_update({
             "share_code": ",".join(item["share_code"] for item in self), 
             "action": "cancel", 
         })
+
+    def code_of(self, snap_id: int, /) -> str:
+        "获取 id 对应的分享码"
+        return self[snap_id]["share_code"]
 
     def get(
         self, 
@@ -86,6 +102,7 @@ class P115Sharing:
         /, 
         default=None, 
     ):
+        "用分享码或 id 查询分享信息"
         if isinstance(code_or_id, str):
             resp = self.client.share_info(code_or_id)
             if resp["state"]:
@@ -100,6 +117,7 @@ class P115Sharing:
         offset: int = 0, 
         page_size: int = 1 << 10, 
     ) -> Iterator[dict]:
+        "迭代获取分享信息"
         if offset < 0:
             offset = 0
         if page_size <= 0:
@@ -123,6 +141,7 @@ class P115Sharing:
         offset: int = 0, 
         limit: int = 0, 
     ) -> list[dict]:
+        "获取分享信息列表"
         if limit <= 0:
             return list(self.iter(offset))
         return check_response(self.client.share_list({"offset": offset, "limit": limit}))["list"]
@@ -133,6 +152,7 @@ class P115Sharing:
         code_or_id_s: int | str | Iterable[int | str], 
         /, 
     ) -> dict:
+        "用分享码或 id 查询并删除分享"
         def share_code_of(code_or_id: int | str) -> str:
             if isinstance(code_or_id, str):
                 return code_or_id
@@ -155,5 +175,15 @@ class P115Sharing:
         share_code: str, 
         **payload, 
     ) -> dict:
+        """更新分享信息
+        payload:
+            - share_code: str
+            - receive_code: str = <default>         # 访问密码（口令）
+            - share_duration: int = <default>       # 分享天数: 1(1天), 7(7天), -1(长期)
+            - is_custom_code: 0 | 1 = <default>     # 用户自定义口令（不用管）
+            - auto_fill_recvcode: 0 | 1 = <default> # 分享链接自动填充口令（不用管）
+            - share_channel: int = <default>        # 分享渠道代码（不用管）
+            - action: str = <default>               # 操作: 取消分享 "cancel"
+        """
         return self.client.share_update({"share_code": share_code, **payload})
 

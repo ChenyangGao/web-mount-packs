@@ -27,12 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-aiohttp = "*"
 http_response = "*"
 python-filewrap = "*"
 python-property = "*"
 python-urlopen = "*"
-requests = "*"
 
 [build-system]
 requires = ["poetry-core"]

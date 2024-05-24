@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["urlopen", "download"]
 
 import errno
@@ -10,6 +10,7 @@ import errno
 from collections.abc import Callable, Generator, Mapping, Sequence
 from copy import copy
 from http.client import HTTPResponse
+from http.cookiejar import CookieJar
 from inspect import isgenerator
 from json import dumps
 from os import fsdecode, fstat, makedirs, PathLike
@@ -18,7 +19,7 @@ from shutil import COPY_BUFSIZE # type: ignore
 from ssl import SSLContext, _create_unverified_context
 from typing import cast, Any, Optional
 from urllib.parse import urlencode, urlsplit
-from urllib.request import build_opener, HTTPSHandler, OpenerDirector, Request
+from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, OpenerDirector, Request
 
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
@@ -30,12 +31,13 @@ if "__del__" not in HTTPResponse.__dict__:
 
 def urlopen(
     url: str | Request, 
+    method: str = "GET", 
     params: Optional[str | Mapping | Sequence[tuple[Any, Any]]] = None, 
     data: Optional[bytes | str | Mapping | Sequence[tuple[Any, Any]]] = None, 
     json: Any = None, 
-    headers: Optional[dict[str, str]] = {"User-agent": ""}, 
-    method: str = "GET", 
+    headers: dict[str, str] = {"User-agent": ""}, 
     timeout: Optional[int | float] = None, 
+    cookies: Optional[CookieJar] = None, 
     proxy: Optional[tuple[str, str]] = None, 
     opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context())), 
     context: Optional[SSLContext] = None, 
@@ -77,11 +79,15 @@ def urlopen(
     else:
         if params:
             url += "?&"["?" in url] + params
-        req = Request(url, data, headers=headers, method=method.upper())
+        req = Request(url, data=data, headers=headers, method=method.upper())
     if proxy:
         req.set_proxy(*proxy)
-    if context:
-        opener = build_opener(HTTPSHandler(context=context))
+    if opener is None:
+        opener = build_opener()
+    if context is not None:
+        opener.add_handler(HTTPSHandler(context=context))
+    if cookies is not None:
+        opener.add_handler(HTTPCookieProcessor(cookies))
     if timeout is None:
         return opener.open(req)
     else:

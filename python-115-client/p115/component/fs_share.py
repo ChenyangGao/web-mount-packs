@@ -27,7 +27,7 @@ from .client import check_response, P115Client
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 
 
-CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
+CRE_SHARE_LINK_search = re_compile(r"(?:/s/|share\.115\.com/)(?P<share_code>[a-z0-9]+)(\?password=(?P<receive_code>\w+))?").search
 
 
 def normalize_info(
@@ -37,10 +37,10 @@ def normalize_info(
 ) -> dict:
     if "fid" in info:
         fid = info["fid"]
-        parent_id = info["id"]
+        parent_id = info["cid"]
         is_dir = False
     else:
-        fid = info["id"]
+        fid = info["cid"]
         parent_id = info["pid"]
         is_dir = True
     info2 =  {
@@ -51,7 +51,7 @@ def normalize_info(
         "parent_id": int(parent_id), 
         "sha1": info.get("sha"), 
     }
-    timestamp = info2["timestamp"] = int(info2["t"])
+    timestamp = info2["timestamp"] = int(info["t"])
     info2["time"] = datetime.fromtimestamp(timestamp)
     if "pc" in info:
         info2["pickcode"] = info["pc"]
