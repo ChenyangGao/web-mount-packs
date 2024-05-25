@@ -2312,6 +2312,7 @@ class P115Client:
                 # - 视频: 4
                 # - 压缩包: 5
                 # - 应用: 6
+                # - 书籍: 7
         """
         api = "https://webapi.115.com/files/search"
         if isinstance(payload, str):
@@ -2824,7 +2825,7 @@ class P115Client:
         """添加标签（可以接受多个）
         POST https://webapi.115.com/label/add_multi
 
-        可传入多个 label 描述，每个 label 的格式都是 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
+        可传入多个 label 描述，每个 label 的格式都是 "{label_name}" 或 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
         """
         api = "https://webapi.115.com/label/add_multi"
         payload = [("name[]", label) for label in lables if label]
@@ -2911,7 +2912,7 @@ class P115Client:
             - id: int | str # 标签 id
             - name: str = <default>  # 标签名
             - color: str = <default> # 标签颜色，支持 css 颜色语法
-            - sort: int = <default> # 序号
+            - sort: int = <default>  # 序号
         """
         api = "https://webapi.115.com/label/edit"
         request_kwargs.pop("parse", None)
@@ -3351,7 +3352,7 @@ class P115Client:
             - share_code: str
             - receive_code: str
             - file_id: int | str             # 有多个时，用逗号 "," 分隔
-            - cid: int | str = 0             # 这是你网盘的文件夹 cid
+            - cid: int | str = <default>     # 这是你网盘的文件夹 cid
             - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/receive"
@@ -4937,7 +4938,7 @@ class P115Client:
             - 文件大小 和 sha1 是必需的，只有 sha1 是没用的。
             - 如果文件大于等于 1 MB (1048576 B)，就需要 2 次检验一个范围哈希，就必须提供 `read_range_bytes_or_hash`
         """
-        if filesize >= 1 << 20:
+        if filesize >= 1 << 20 and read_range_bytes_or_hash is None:
             raise ValueError("filesize >= 1 MB, thus need pass the `read_range_bytes_or_hash` argument")
         if async_:
             async def async_request():
@@ -6716,15 +6717,15 @@ class P115Client:
         payload:
             - code: int | str # 从 0 到 9 中选取 4 个数字的一种排列
             - sign: str = <default>
-            - ac: str = "security_code"
-            - type: str = "web"
-            - ctype: str = <default>  # 其实不需要传，如果要传，就和 type 相同
-            - client: str = <default> # 其实不需要传，如果要传，就和 type 相同
+            - ac: str = "security_code" # 默认就行，不要自行决定
+            - type: str = "web"         # 默认就行，不要自行决定
+            - ctype: str = "web"        # 需要和 type 相同
+            - client: str = "web"       # 需要和 type 相同
         """
         if isinstance(payload, (int, str)):
-            payload = {"code": payload, "ac": "security_code", "type": "web"}
+            payload = {"code": payload, "ac": "security_code", "type": "web", "ctype": "web", "client": "web"}
         else:
-            payload = {"ac": "security_code", "type": "web", **payload}
+            payload = {"ac": "security_code", "type": "web", "ctype": "web", "client": "web", **payload}
         if "sign" not in payload:
             payload["sign"] = self.captcha_sign()["sign"]
         api = "https://webapi.115.com/user/captcha"

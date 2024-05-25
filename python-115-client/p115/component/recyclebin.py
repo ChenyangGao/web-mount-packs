@@ -10,7 +10,7 @@ from .client import check_response, P115Client
 
 
 class P115Recyclebin:
-    "封装回收站"
+    "回收站"
     __slots__ = ("client", "password")
 
     def __init__(

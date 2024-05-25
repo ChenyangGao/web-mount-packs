@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-http_request"
-version = "0.0.4"
+version = "0.0.4.1"
 description = "Python http response utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,6 +29,7 @@ include = [
 python = "^3.10"
 python-asynctools = "*"
 python-filewrap = "*"
+python-texttools = "*"
 integer_tool = "*"
 
 [build-system]

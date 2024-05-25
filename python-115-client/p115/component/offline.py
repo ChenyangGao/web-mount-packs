@@ -2,20 +2,44 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["P115Offline"]
+__all__ = ["P115Offline", "P115OfflineClearEnum"]
 
 from asyncio import run
 from collections.abc import Callable, Iterable, Iterator
+from enum import Enum
 from hashlib import sha1
 from time import time
 from types import MappingProxyType
+from typing import Self
 
 from magnet2torrent import Magnet2Torrent # type: ignore
 
 from .client import check_response, P115Client
+from .fs import P115Path
+
+
+class P115OfflineClearEnum(Enum):
+    completed = 0
+    all = 1
+    failed = 2
+    downloading = 3
+    completed_and_files = 4
+    failed_and_files = 5
+
+    @classmethod
+    def ensure(cls, val, /) -> Self:
+        if isinstance(val, cls):
+            return val
+        try:
+            if isinstance(val, str):
+                return cls[val]
+        except KeyError:
+            pass
+        return cls(val)
 
 
 class P115Offline:
+    "离线任务列表"
     __slots__ = ("client", "_sign_time")
 
     client: P115Client
@@ -42,6 +66,7 @@ class P115Offline:
         return self.iter()
 
     def __len__(self, /) -> int:
+        "计算共有多少个离线任务"
         return check_response(self.client.offline_list())["count"]
 
     def __repr__(self, /) -> str:
@@ -53,7 +78,19 @@ class P115Offline:
         return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
 
     @property
+    def download_paths_raw(self, /) -> list[dict]:
+        "离线下载的目录列表"
+        return check_response(self.client.offline_download_path())["data"]
+
+    @property
+    def download_paths(self, /) -> list[P115Path]:
+        "离线下载的目录列表"
+        as_path = self.client.fs.as_path
+        return [as_path(int(attr["file_id"])) for attr in self.download_paths_raw]
+
+    @property
     def sign_time(self, /) -> MappingProxyType:
+        "签名和时间等信息"
         try:
             sign_time = self._sign_time
             if time() - sign_time["time"] < 30 * 60:
@@ -64,6 +101,12 @@ class P115Offline:
         sign_time = self._sign_time = MappingProxyType({"sign": info["sign"], "time": info["time"]})
         return sign_time
 
+    @property
+    def torrent_path(self, /) -> P115Path:
+        "添加 BT 种子任务的默认上传路径"
+        client = self.client
+        return client.fs.as_path(int(client.offline_upload_torrent_path()['cid']))
+
     def add(
         self, 
         urls: str | Iterable[str], 
@@ -71,6 +114,7 @@ class P115Offline:
         pid: None | int = None, 
         savepath: None | str = None, 
     ) -> dict:
+        "用（1 个或若干个）链接创建离线任务"
         payload: dict
         if isinstance(urls, str):
             payload = {"url": urls}
@@ -95,6 +139,7 @@ class P115Offline:
         savepath: None | str = None, 
         predicate: None | str | Callable[[dict], bool] = None, 
     ) -> dict:
+        "用 BT 种子创建离线任务"
         resp = check_response(self.torrent_info(torrent_or_magnet_or_sha1_or_fid))
         if predicate is None:
             wanted = ",".join(
@@ -118,24 +163,31 @@ class P115Offline:
         payload.update(self.sign_time)
         return check_response(self.client.offline_add_torrent(payload))
 
-    # TOOD: 使用 enum
-    def clear(self, /, flag: int = 1) -> dict:
+    def clear(
+        self, 
+        /, 
+        flag: int | str | P115OfflineClearEnum = P115OfflineClearEnum.all, 
+    ) -> dict:
         """清空离线任务列表
-
         :param flag: 操作目标
-            - 0: 已完成
-            - 1: 全部（默认值）
-            - 2: 已失败
-            - 3: 进行中
-            - 4: 已完成+删除源文件
-            - 5: 全部+删除源文件
+            - 已完成: 0, 'completed', P115OfflineClearEnum.completed
+            - 全部: 1, 'all', P115OfflineClearEnum.all # 默认值
+            - 已失败: 2, 'failed', P115OfflineClearEnum.failed
+            - 进行中: 3, 'downloading', P115OfflineClearEnum.downloading
+            - 已完成+删除源文件: 4, 'completed_and_files', P115OfflineClearEnum.completed_and_files
+            - 全部+删除源文件: 5, 'failed_and_files', P115OfflineClearEnum.failed_and_files
         """
-        return check_response(self.client.offline_clear(flag))
+        flag = P115OfflineClearEnum(flag)
+        return check_response(self.client.offline_clear(flag.value))
 
     def get(self, hash: str, /, default=None):
+        "用 infohash 查询离线任务"
         return next((item for item in self if item["info_hash"] == hash), default)
 
     def iter(self, /, start_page: int = 1) -> Iterator[dict]:
+        """迭代获取离线任务
+        :start_page: 开始页数，从 1 开始计数，迭代从这个页数开始，到最大页数结束
+        """
         if start_page < 1:
             page = 1
         else:
@@ -157,6 +209,9 @@ class P115Offline:
             yield from resp["tasks"]
 
     def list(self, /, page: int = 0) -> list[dict]:
+        """获取离线任务列表
+        :param page: 获取第 `page` 页的数据，从 1 开始计数，如果小于等于 0 则返回全部
+        """
         if page <= 0:
             return list(self.iter())
         return check_response(self.client.offline_list(page))["tasks"]
@@ -167,6 +222,10 @@ class P115Offline:
         /, 
         remove_files: bool = False, 
     ) -> dict:
+        """用 infohash 查询并移除（1 个或若干个）离线任务
+        :param hashes: （1 个或若干个）离线任务的 infohash
+        :param remove_files: 移除任务时是否也删除已转存的文件
+        """
         if isinstance(hashes, str):
             payload = {"hash[0]": hashes}
         else:
@@ -179,6 +238,14 @@ class P115Offline:
         return check_response(self.client.offline_remove(payload))
 
     def torrent_info(self, torrent_or_magnet_or_sha1_or_fid: int | bytes | str, /) -> dict:
+        """获取种子的信息
+        :param torrent_or_magnet_or_sha1_or_fid: BT 种子
+            - bytes: 种子的二进制数据（如果种子从未被人上传过 115，就会先被上传）
+            - str:
+                - 磁力链接
+                - 种子文件的 sha1，但要求这个种子曾被人上传到 115
+            - int: 种子文件在你的网盘上的文件 id
+        """
         torrent = None
         if isinstance(torrent_or_magnet_or_sha1_or_fid, int):
             fid = torrent_or_magnet_or_sha1_or_fid

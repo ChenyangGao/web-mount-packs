@@ -87,6 +87,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def __hash__(self, /) -> int:
         return hash((self.fs.client, self.id))
 
+    def __index__(self, /) -> int:
+        return self.id
+
     def __iter__(self, /) -> Iterator[str]:
         return iter(self.__dict__)
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-texttools"
-version = "0.0.1"
+version = "0.0.1.1"
 description = "Python texttools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

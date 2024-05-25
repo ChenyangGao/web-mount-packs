@@ -4,9 +4,11 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["login_scan_cookie", "crack_captcha"]
 
+from collections import defaultdict
 from collections.abc import Callable
 from typing import cast
 
+from concurrenttools import thread_pool_batch
 from p115 import P115Client
 
 
@@ -21,15 +23,41 @@ def login_scan_cookie(
 
     app 共有 17 个可用值，目前找出 10 个：
         - web
-        - android
         - ios
-        - linux
-        - mac
-        - windows
+        - android
         - tv
-        - alipaymini
-        - wechatmini
         - qandroid
+        - windows
+        - mac
+        - linux
+        - wechatmini
+        - alipaymini
+    还有几个备选：
+        - bios
+        - bandroid
+        - qios
+
+    设备列表如下：
+
+    | No.    | ssoent  | app        | description            |
+    |-------:|:--------|:-----------|:-----------------------|
+    |      1 | A1      | web        | 网页版                 |
+    |      2 | A2      | ?          | 未知: android          |
+    |      3 | A3      | ?          | 未知: iphone           |
+    |      4 | A4      | ?          | 未知: ipad             |
+    |      5 | B1      | ?          | 未知: android          |
+    |      6 | D1      | ios        | 115生活(iOS端)         |
+    |      7 | F1      | android    | 115生活(Android端)     |
+    |      8 | H1      | ?          | 未知: ipad             |
+    |      9 | I1      | tv         | 115网盘(Android电视端) |
+    |     10 | M1      | qandriod   | 115管理(Android端)     |
+    |     11 | N1      | qios       | 115管理(iOS端)         |
+    |     12 | O1      | ?          | 未知: ipad             |
+    |     13 | P1      | windows    | 115生活(Windows端)     |
+    |     14 | P2      | mac        | 115生活(macOS端)       |
+    |     15 | P3      | linux      | 115生活(Linux端)       |
+    |     16 | R1      | wechatmini | 115生活(微信小程序)    |
+    |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
     """
     if isinstance(client, str):
         client = P115Client(client)
@@ -40,7 +68,6 @@ def login_scan_cookie(
     return "; ".join(f"{k}={v}" for k, v in data["data"]["cookie"].items())
 
 
-# TODO: 多线程下载图片，以加速破解
 def crack_captcha(
     client: str | P115Client, 
     sample_count: int = 16, 
@@ -56,8 +83,16 @@ def crack_captcha(
 
     你可以反复尝试，直到破解成功，代码如下
 
-        while not crack_115_captcha(client):
+        while not crack_captcha(client):
             pass
+
+    如果你需要检测是否存在验证码，然后进行破解，代码如下
+
+        resp = client.download_url_web("a")
+        if not resp["state"] and resp["code"] == 911:
+            print("出现验证码，尝试破解")
+            while not crack_captcha(client):
+                print("破解失败，再次尝试")
     """
     global CAPTCHA_CRACK
     if crack is None:
@@ -79,19 +114,18 @@ def crack_captcha(
         captcha = crack(client.captcha_code())
         if len(captcha) == 4 and all("\u4E00" <= char <= "\u9FFF" for char in captcha):
             break
-    l: list[str] = []
-    for i in range(10):
-        d: dict[str, int] = {}
-        for _ in range(sample_count):
-            while True:
-                char = crack(client.captcha_single(i))
-                if len(char) == 1 and "\u4E00" <= char <= "\u9FFF":
-                    break
-            try:
-                d[char] += 1
-            except KeyError:
-                d[char] = 1
-        l.append(max(d, key=lambda k: d[k]))
+    ls: list[defaultdict[str, int]] = [defaultdict(int) for _ in range(10)]
+    def crack_single(i, submit):
+        try:
+            char = crack(client.captcha_single(i))
+            if len(char) == 1 and "\u4E00" <= char <= "\u9FFF":
+                ls[i][char] += 1
+            else:
+                submit(i)
+        except:
+            submit(i)
+    thread_pool_batch(crack_single, (i for i in range(10) for _ in range(sample_count)))
+    l: list[str] = [max(d, key=lambda k: d[k]) for d in ls]
     try:
         code = "".join(str(l.index(char)) for char in captcha)
     except ValueError:

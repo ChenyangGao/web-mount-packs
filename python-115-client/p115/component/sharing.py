@@ -8,10 +8,11 @@ from collections.abc import Iterable, Iterator
 from typing import Literal
 
 from .client import check_response, P115Client
+from .fs import P115Path
 
 
 class P115Sharing:
-    "封装自己的分享列表"
+    "自己的分享列表"
     __slots__ = "client",
 
     def __init__(self, client: str | P115Client, /):
@@ -55,6 +56,10 @@ class P115Sharing:
             name = module + "." + name
         return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
 
+    @property
+    def receive_path(self, /) -> P115Path:
+        return self.client.fs.as_path("我的接收")
+
     @check_response
     def add(
         self, 
@@ -92,9 +97,11 @@ class P115Sharing:
             "action": "cancel", 
         })
 
-    def code_of(self, snap_id: int, /) -> str:
+    def code_of(self, code_or_id: int | str, /) -> str:
         "获取 id 对应的分享码"
-        return self[snap_id]["share_code"]
+        if isinstance(code_or_id, str):
+            return code_or_id
+        return self[code_or_id]["share_code"]
 
     def get(
         self, 
@@ -153,14 +160,10 @@ class P115Sharing:
         /, 
     ) -> dict:
         "用分享码或 id 查询并删除分享"
-        def share_code_of(code_or_id: int | str) -> str:
-            if isinstance(code_or_id, str):
-                return code_or_id
-            return self[code_or_id]["share_code"]
         if isinstance(code_or_id_s, (int, str)):
-            share_code = share_code_of(code_or_id_s)
+            share_code = self.code_of(code_or_id_s)
         else:
-            share_code = ",".join(map(share_code_of, code_or_id_s))
+            share_code = ",".join(map(self.code_of, code_or_id_s))
             if not share_code:
                 raise ValueError("no `share_code` or `snap_id` specified")
         return self.client.share_update({
@@ -171,13 +174,12 @@ class P115Sharing:
     @check_response
     def update(
         self, 
+        code_or_id: int | str, 
         /, 
-        share_code: str, 
         **payload, 
     ) -> dict:
-        """更新分享信息
+        """用分享码或 id 查询并更新分享信息
         payload:
-            - share_code: str
             - receive_code: str = <default>         # 访问密码（口令）
             - share_duration: int = <default>       # 分享天数: 1(1天), 7(7天), -1(长期)
             - is_custom_code: 0 | 1 = <default>     # 用户自定义口令（不用管）
@@ -185,5 +187,6 @@ class P115Sharing:
             - share_channel: int = <default>        # 分享渠道代码（不用管）
             - action: str = <default>               # 操作: 取消分享 "cancel"
         """
-        return self.client.share_update({"share_code": share_code, **payload})
+        payload["share_code"] = self.code_of(code_or_id)
+        return self.client.share_update(payload)
 
