@@ -212,9 +212,10 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
-        to_pid: int | str = 0, 
+        to_pid: int | str = 0,
+        secret: str = "",
     ) -> ExtractProgress:
-        return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid)
+        return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid, secret)
 
     def get_url(
         self, 

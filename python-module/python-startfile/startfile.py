@@ -60,7 +60,7 @@ else:
     from functools import wraps
 
     @wraps(startfile)
-    async def startfile_aysnc(*args, **kwds):
+    async def startfile_async(*args, **kwds):
         return await to_thread(startfile, *args, **kwds)
 
 

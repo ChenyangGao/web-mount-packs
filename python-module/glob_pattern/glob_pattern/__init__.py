@@ -14,9 +14,9 @@ from typing import Final
 from posixpatht import splits
 
 
-REFIND_BRACKET: Final = re_compile("\[[^]]+\]").finditer
-RESUB_DOT: Final = re_compile("((?:^|(?<=[^\\\\]))(?s:\\\\.)*)\\.").sub
-RESUB_REMOVE_WRAP_BRACKET: Final = partial(re_compile("(?s:\\[(.[^]]*)(?<![?*])\\])").sub, "\\1")
+REFIND_BRACKET: Final = re_compile(r"\[[^]]+\]").finditer
+RESUB_DOT: Final = re_compile(r"((?:^|(?<=[^\\\\]))(?s:\\\\.)*)\\.").sub
+RESUB_REMOVE_WRAP_BRACKET: Final = partial(re_compile(r"(?s:\\[(.[^]]*)(?<![?*])\\])").sub, "\\1")
 
 
 def _glob_is_pat(part: str, /) -> bool:
@@ -51,7 +51,7 @@ def _glob_replace_dots(pat: str, /) -> str:
             yield pat[last:start].replace(".", "[^/]")
             yield m[0]
             last = stop
-        yield RESUB_DOT("\g<1>[^/]", pat[last:])
+        yield RESUB_DOT(r"\g<1>[^/]", pat[last:])
     return "".join(iter(pat))
 
 

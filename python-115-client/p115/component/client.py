@@ -5572,7 +5572,8 @@ class P115Client:
         pickcode: str, 
         path: str, 
         next_marker: str, 
-        page_count: int, 
+        page_count: int,
+        secret: str = "",
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5584,8 +5585,9 @@ class P115Client:
         pickcode: str, 
         path: str, 
         next_marker: str, 
-        page_count: int, 
-        async_: Literal[True], 
+        page_count: int,
+        secret: str = "",
+        async_: Literal[True] = True,
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
@@ -5595,7 +5597,8 @@ class P115Client:
         pickcode: str, 
         path: str = "", 
         next_marker: str = "", 
-        page_count: int = 999, 
+        page_count: int = 999,
+        secret: str = "",
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5608,7 +5611,8 @@ class P115Client:
             "file_name": path.strip("/"), 
             "paths": "文件", 
             "next_marker": next_marker, 
-            "page_count": page_count, 
+            "page_count": page_count,
+            "secret": secret,
         }
         return self.extract_info(payload, async_=async_, **request_kwargs)
 
@@ -5706,6 +5710,7 @@ class P115Client:
         paths: str | Sequence[str], 
         dirname: str, 
         to_pid: int | str,
+        secret: str = "",
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5718,8 +5723,9 @@ class P115Client:
         paths: str | Sequence[str], 
         dirname: str, 
         to_pid: int | str,
-        async_: Literal[True], 
-        **request_kwargs, 
+        secret: str = "",
+        async_: Literal[True] = True,
+        **request_kwargs,
     ) -> Awaitable[dict]:
         ...
     def extract_file(
@@ -5729,8 +5735,9 @@ class P115Client:
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
         to_pid: int | str = 0,
+        secret: str = "",
         async_: Literal[False, True] = False, 
-        **request_kwargs, 
+        **request_kwargs,
     ) -> dict | Awaitable[dict]:
         """解压缩到某个文件夹，是对 `extract_add_file` 的封装，推荐使用
         """
@@ -5739,7 +5746,8 @@ class P115Client:
         data = [
             ("pick_code", pickcode), 
             ("paths", dir2), 
-            ("to_pid", to_pid), 
+            ("to_pid", to_pid),
+            ("secret", secret),
         ]
         if async_:
             async def async_request():
@@ -5926,6 +5934,7 @@ class P115Client:
         paths: str | Sequence[str], 
         dirname: str, 
         to_pid: int | str,
+        secret: str = "",
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> ExtractProgress:
@@ -5938,7 +5947,8 @@ class P115Client:
         paths: str | Sequence[str], 
         dirname: str, 
         to_pid: int | str,
-        async_: Literal[True], 
+        secret: str = "",
+        async_: Literal[True] = False,
         **request_kwargs, 
     ) -> Awaitable[ExtractProgress]:
         ...
@@ -5949,13 +5959,14 @@ class P115Client:
         paths: str | Sequence[str] = "", 
         dirname: str = "", 
         to_pid: int | str = 0,
+        secret: str = "",
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> ExtractProgress | Awaitable[ExtractProgress]:
         """执行在线解压到目录，新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_file(
-            pickcode, paths, dirname, to_pid, **request_kwargs
+            pickcode, paths, dirname, to_pid, secret, **request_kwargs
         ))
         return ExtractProgress(self, resp["data"]["extract_id"])
 
