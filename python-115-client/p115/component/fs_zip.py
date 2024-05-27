@@ -12,7 +12,7 @@ from collections import deque
 from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from datetime import datetime
 from functools import cached_property
-from itertools import count
+from itertools import count, islice
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
@@ -48,7 +48,7 @@ class P115ZipPath(P115PathBase):
 # TODO: 参考 zipfile 模块的接口设计 namelist、filelist 等属性，以及其它的和 zipfile 兼容的接口
 # TODO: 当文件特别多时，可以用 zipfile 等模块来读取文件列表
 class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
-    file_id: None | int
+    file_id: int
     pickcode: str
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, AttrDict]
@@ -62,15 +62,16 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         client: str | P115Client, 
         id_or_pickcode: int | str, 
     ):
-        file_id: None | int
         if isinstance(client, str):
             client = P115Client(client)
         if isinstance(id_or_pickcode, int):
             file_id = id_or_pickcode
-            pickcode = client.fs.attr(file_id)["pickcode"]
+            attr = client.fs.attr(file_id)
+            pickcode = attr["pickcode"]
+            self.__dict__["create_time"] = attr["ptime"]
         else:
-            file_id = None
             pickcode = id_or_pickcode
+            file_id = client.fs.get_id_from_pickcode(pickcode)
         resp = check_response(client.extract_push_progress(pickcode))
         if resp["data"]["extract_status"]["unzip_status"] != 4:
             raise OSError(errno.EIO, "file was not decompressed")
@@ -78,16 +79,14 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             client=client, 
             id=0, 
             path="/", 
-            pickcode=pickcode, 
             file_id=file_id, 
+            pickcode=pickcode, 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
             attr_cache={}, 
             full_loaded=False, 
             _nextid=count(1).__next__, 
         )
-        if file_id is None:
-            self.__dict__["create_time"] = datetime.fromtimestamp(0)
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attributes")
@@ -119,8 +118,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
 
     @cached_property
     def create_time(self, /) -> datetime:
-        if self.file_id is None:
-            return datetime.fromtimestamp(0)
+        "创建时间"
         return self.client.fs.attr(self.file_id)["ptime"]
 
     def _attr(self, id: int = 0, /) -> AttrDict:
@@ -194,6 +192,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         pid: None | int = None, 
     ) -> AttrDict:
+        "获取属性"
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
             return self._attr(id_or_path["id"])
@@ -214,6 +213,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         dirname: str = "", 
         to_pid: int | str = 0, 
     ) -> ExtractProgress:
+        "解压缩到网盘"
         return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid)
 
     def get_url(
@@ -223,6 +223,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         pid: None | int = None, 
         headers: None | Mapping = None, 
     ) -> str:
+        "获取下载链接"
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
@@ -233,8 +234,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        page_size: int = 999, 
         **kwargs, 
     ) -> Iterator[AttrDict]:
+        """迭代获取目录内直属的文件或目录的信息
+        """
+        if page_size <= 0 or page_size > 999:
+            page_size = 999
         attr = self.attr(id_or_path, pid)
         if not attr["is_directory"]:
             raise NotADirectoryError(
@@ -250,7 +256,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             def iterdir():
                 get_files = self.fs_files
                 path_to_id = self.path_to_id
-                data = get_files(dirname, **kwargs)["data"]
+                data = get_files(path=dirname, page_count=page_size)["data"]
                 for info in data["list"]:
                     attr = normalize_info(info, fs=self)
                     path = joinpath(dirname, escape(attr["name"]))
@@ -259,7 +265,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     yield attr
                 next_marker = data["next_marker"]
                 while next_marker:
-                    data = get_files(dirname, next_marker, **kwargs)["data"]
+                    data = get_files(path=dirname, next_marker=next_marker, page_count=page_size)["data"]
                     for info in data["list"]:
                         attr = normalize_info(info, fs=self)
                         path = joinpath(dirname, escape(attr["name"]))
@@ -277,6 +283,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         pid: None | int = None, 
     ) -> stat_result:
+        "检查路径的属性，就像 `os.stat`"
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
         timestamp: float = attr["timestamp"]

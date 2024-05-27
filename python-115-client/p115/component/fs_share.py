@@ -14,6 +14,7 @@ from collections.abc import (
 )
 from datetime import datetime
 from functools import cached_property
+from itertools import islice
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from re import compile as re_compile
@@ -78,14 +79,18 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     share_link: str
     share_code: str
     receive_code: str
-    user_id: int
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, AttrDict]
     attr_cache: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
     path_class = P115SharePath
 
-    def __init__(self, /, client: str | P115Client, share_link: str):
+    def __init__(
+        self, 
+        /, 
+        client: str | P115Client, 
+        share_link: str, 
+    ):
         m = CRE_SHARE_LINK_search(share_link)
         if m is None:
             raise ValueError("not a valid 115 share link")
@@ -103,7 +108,6 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             attr_cache={}, 
             full_loaded=False, 
         )
-        self.__dict__["user_id"] = int(self.sharedata["userinfo"]["user_id"])
 
     def __repr__(self, /) -> str:
         cls = type(self)
@@ -113,6 +117,9 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             name = module + "." + name
         return f"<{name}(client={self.client!r}, share_link={self.share_link!r}, id={self.id!r}, path={self.path!r}) at {hex(id(self))}>"
 
+    def __setattr__(self, attr, val, /) -> Never:
+        raise TypeError("can't set attributes")
+
     @classmethod
     def login(
         cls, 
@@ -120,18 +127,14 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         share_link: str, 
         cookie = None, 
         app: str = "web", 
+        **kwargs, 
     ) -> Self:
-        return cls(P115Client(cookie, app=app), share_link)
+        return cls(P115Client(cookie, app=app), share_link, **kwargs)
 
     @check_response
-    def fs_files(
-        self, 
-        /, 
-        id: int = 0, 
-        **kwargs, 
-    ) -> dict:
+    def fs_files(self, /, payload: dict) -> dict:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
-        params:
+        :param payload:
             - id: int | str = 0
             - limit: int = 32
             - offset: int = 0
@@ -146,10 +149,9 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 # - 上次打开时间："user_otime"
         """
         return self.client.share_snap({
-            **kwargs, 
+            **payload, 
             "share_code": self.share_code, 
             "receive_code": self.receive_code, 
-            "cid": id, 
         })
 
     @check_response
@@ -164,14 +166,27 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
 
     @cached_property
     def create_time(self, /) -> datetime:
+        "分享的创建时间"
         return datetime.fromtimestamp(int(self.shareinfo["create_time"]))
+
+    @cached_property
+    def snap_id(self, /) -> int:
+        "获取这个分享的 id"
+        return int(self.shareinfo["snap_id"])
+
+    @cached_property
+    def user_id(self, /) -> int:
+        "获取分享者的用户 id"
+        return int(self.sharedata["userinfo"]["user_id"])
 
     @property
     def sharedata(self, /) -> dict:
-        return self.fs_files(limit=1)["data"]
+        "获取分享的首页数据"
+        return self.fs_files({"limit": 1})["data"]
 
     @property
     def shareinfo(self, /) -> dict:
+        "获取分享信息"
         return self.sharedata["shareinfo"]
 
     def _attr(self, id: int = 0, /) -> AttrDict:
@@ -242,6 +257,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         /, 
         pid: Optional[int] = None, 
     ) -> AttrDict:
+        "获取属性"
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
             return self._attr(id_or_path["id"])
@@ -262,6 +278,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: Optional[int] = None, 
         headers: Optional[Mapping] = None, 
     ) -> str:
+        "获取下载链接"
         path_class = type(self).path_class
         if isinstance(id_or_path, (int, path_class)):
             id = id_or_path if isinstance(id_or_path, int) else id_or_path.id
@@ -285,8 +302,25 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
-        **kwargs, 
+        page_size: int = 1_000, 
+        **payload, 
     ) -> Iterator[AttrDict]:
+        """迭代获取目录内直属的文件或目录的信息
+        :param payload:
+            - limit: int = 32
+            - offset: int = 0
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+        """
+        if page_size <= 0:
+            page_size = 1_000
         path_class = type(self).path_class
         if isinstance(id_or_path, int):
             attr = self.attr(id_or_path)
@@ -302,23 +336,29 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
             )
         id = attr["id"]
+        payload["cid"] = id
+        payload["limit"] = page_size
+        offset = int(payload.setdefault("offset", 0))
+        if offset < 0:
+            offset = payload["offset"] = 0
+        else:
+            payload["offset"] = 0
         try:
-            return iter(self.attr_cache[id])
+            return islice(self.attr_cache[id], offset, None)
         except KeyError:
             dirname = attr["path"]
             def iterdir():
-                page_size = kwargs.setdefault("limit", 1 << 10)
                 get_files = self.fs_files
                 path_to_id = self.path_to_id
-                data = get_files(id, **kwargs)["data"]
+                data = get_files(payload)["data"]
                 for attr in map(normalize_info, data["list"]):
                     attr["fs"] = self
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                     path_to_id[path] = attr["id"]
                     yield attr
                 for offset in range(page_size, data["count"], page_size):
-                    kwargs["offset"] = offset
-                    data = get_files(id, **kwargs)["data"]
+                    payload["offset"] = offset
+                    data = get_files(payload)["data"]
                     for attr in map(normalize_info, data["list"]):
                         attr["fs"] = self
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
@@ -328,7 +368,16 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             self.id_to_attr.update((attr["id"], attr) for attr in t)
             return iter(t)
 
-    def receive(self, ids: int | str | Iterable[int | str], /, cid: int = 0):
+    def receive(
+        self, 
+        ids: int | str | Iterable[int | str], 
+        /, 
+        to_pid: int = 0, 
+    ) -> dict:
+        """接收分享文件到网盘
+        :param ids: 要转存到文件 id（这些 id 归属分享链接）
+        :param to_pid: 你的网盘的一个目录 id（这个 id 归属你的网盘）
+        """
         if isinstance(ids, int):
             ids = str(ids)
         elif isinstance(ids, Iterable):
@@ -339,7 +388,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             "share_code": self.share_code, 
             "receive_code": self.receive_code, 
             "file_id": ids, 
-            "cid": cid, 
+            "cid": to_pid, 
         }
         return check_response(self.client.share_receive)(payload)
 
@@ -349,6 +398,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         /, 
         pid: Optional[int] = None, 
     ) -> stat_result:
+        "检查路径的属性，就像 `os.stat`"
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
         timestamp: float = attr["timestamp"]

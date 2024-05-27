@@ -14,6 +14,7 @@ from collections.abc import (
 )
 from datetime import datetime
 from io import BytesIO, TextIOWrapper
+from itertools import islice
 from json import JSONDecodeError
 from os import (
     path as ospath, fsdecode, fspath, makedirs, remove, rmdir, scandir, stat_result, PathLike
@@ -24,8 +25,10 @@ from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
 from typing import cast, Literal, Optional, Self
 from uuid import uuid4
+from yarl import URL
 
-from filewrap import SupportsRead
+from filewrap import Buffer, SupportsRead
+from http_request import SupportsGeturl
 from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 
 from .client import check_response, P115Client
@@ -36,7 +39,7 @@ def normalize_info(
     info: Mapping, 
     keep_raw: bool = False, 
     **extra_data, 
-) -> dict:
+) -> AttrDict:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -98,6 +101,36 @@ def normalize_info(
 class P115Path(P115PathBase):
     fs: P115FileSystem
 
+    @property
+    def length(self, /):
+        if self.is_dir():
+            return self.fs.dirlen(self.id)
+        return self["size"]
+
+    @property
+    def desc(self, /):
+        return self.fs.desc(self)
+
+    @desc.setter
+    def desc(self, /, desc: str = ""):
+        return self.fs.desc(self, desc=desc)
+
+    @property
+    def score(self, /) -> bool:
+        return self["score"]
+
+    @score.setter
+    def score(self, /, score: bool = True):
+        self.fs.score(self, score=score)
+
+    @property
+    def star(self, /) -> bool:
+        return self["star"]
+
+    @star.setter
+    def star(self, /, star: bool = True):
+        self.fs.star(self, star=star)
+
     def copy(
         self, 
         /, 
@@ -118,20 +151,6 @@ class P115Path(P115PathBase):
             return None
         return type(self)(attr)
 
-    @property
-    def desc(self, /):
-        return self.fs.desc(self)
-
-    @desc.setter
-    def desc(self, /, desc: str = ""):
-        return self.fs.desc(self, desc=desc)
-
-    @property
-    def length(self, /):
-        if self.is_dir():
-            return self.fs.dirlen(self.id)
-        return self["size"]
-
     def mkdir(self, /, exist_ok: bool = True) -> Self:
         self.__dict__.update(self.fs.makedirs(self, exist_ok=exist_ok))
         return self
@@ -145,7 +164,7 @@ class P115Path(P115PathBase):
         self.__dict__.update(self.fs.move(self, dst_path, pid))
         return self
 
-    def remove(self, /, recursive: bool = True) -> dict:
+    def remove(self, /, recursive: bool = True) -> AttrDict:
         return self.fs.remove(self, recursive=recursive)
 
     def rename(
@@ -175,24 +194,11 @@ class P115Path(P115PathBase):
         self.__dict__.update(self.fs.replace(self, dst_path, pid))
         return self
 
-    def rmdir(self, /) -> dict:
+    def rmdir(self, /) -> AttrDict:
         return self.fs.rmdir(self)
 
-    @property
-    def score(self, /) -> bool:
-        return self["score"]
-
-    @score.setter
-    def score(self, /, score: bool = True):
-        self.fs.score(self, score=score)
-
-    @property
-    def star(self, /) -> bool:
-        return self["star"]
-
-    @star.setter
-    def star(self, /, star: bool = True):
-        self.fs.star(self, star=star)
+    def search(self, /, **payload) -> Iterator[P115Path]:
+        return self.fs.search(self, **payload)
 
     def touch(self, /) -> Self:
         self.__dict__.update(self.fs.touch(self))
@@ -203,7 +209,7 @@ class P115Path(P115PathBase):
     def write_bytes(
         self, 
         /, 
-        data: bytes | bytearray | memoryview | SupportsRead[bytes] = b"", 
+        data: Buffer | SupportsRead[Buffer] = b"", 
     ) -> Self:
         self.__dict__.update(self.fs.write_bytes(self, data))
         return self
@@ -212,9 +218,9 @@ class P115Path(P115PathBase):
         self, 
         /, 
         text: str = "", 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
     ) -> Self:
         self.__dict__.update(self.fs.write_text(
             self, 
@@ -268,7 +274,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def __setitem__(
         self, 
         id_or_path: IDOrPathType, 
-        file: None | str | bytes | bytearray | memoryview | PathLike = None, 
+        file: ( None | str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         /, 
     ):
         if file is None:
@@ -303,23 +310,23 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self.__dict__["password"] = password
 
     @check_response
-    def fs_mkdir(self, name: str, /, pid: int = 0) -> dict:
+    def fs_mkdir(self, name: str, /, pid: int = 0) -> AttrDict:
         return self.client.fs_mkdir({"cname": name, "pid": pid})
 
     @check_response
-    def fs_copy(self, id: int, /, pid: int = 0) -> dict:
+    def fs_copy(self, id: int, /, pid: int = 0) -> AttrDict:
         return self.client.fs_copy(id, pid)
 
     @check_response
-    def fs_delete(self, id: int, /) -> dict:
+    def fs_delete(self, id: int, /) -> AttrDict:
         return self.client.fs_delete(id)
 
     @check_response
-    def fs_move(self, id: int, /, pid: int = 0) -> dict:
+    def fs_move(self, id: int, /, pid: int = 0) -> AttrDict:
         return self.client.fs_move(id, pid)
 
     @check_response
-    def fs_rename(self, id: int, name: str, /) -> dict:
+    def fs_rename(self, id: int, name: str, /) -> AttrDict:
         return self.client.fs_rename(id, name)
 
     @check_response
@@ -328,7 +335,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: dict | Iterable[int | str], 
         /, 
         pid: int = 0, 
-    ) -> dict:
+    ) -> AttrDict:
         return self.client.fs_batch_copy(payload, pid)
 
     @check_response
@@ -336,7 +343,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         payload: dict | Iterable[int | str], 
         /, 
-    ) -> dict:
+    ) -> AttrDict:
         return self.client.fs_batch_delete(payload)
 
     @check_response
@@ -345,7 +352,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: dict | Iterable[int | str], 
         /, 
         pid: int = 0, 
-    ) -> dict:
+    ) -> AttrDict:
         return self.client.fs_batch_move(payload, pid)
 
     @check_response
@@ -353,10 +360,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         payload: dict | Iterable[tuple[int | str, str]], 
         /, 
-    ) -> dict:
+    ) -> AttrDict:
         return self.client.fs_batch_rename(payload)
 
-    def fs_info(self, id: int, /) -> dict:
+    def fs_info(self, id: int, /) -> AttrDict:
         result = self.client.fs_info({"file_id": id})
         if result["state"]:
             return result
@@ -370,60 +377,45 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             case _:
                 raise OSError(errno.EIO, result)
 
-    def fs_files(
-        self, 
-        /, 
-        id: int = 0, 
-        limit: int = 32, 
-        offset: int = 0, 
-    ) -> dict:
-        resp = check_response(self.client.fs_files({
-            "cid": id, 
-            "limit": limit, 
-            "offset": offset, 
-            "show_dir": 1, 
-        }))
-        if id and int(resp["path"][-1]["cid"]) != id:
-            raise NotADirectoryError(errno.ENOTDIR, f"{id} is not a directory")
+    def fs_files(self, /, payload: dict) -> AttrDict:
+        id = int(payload["id"])
+        resp = check_response(self.client.fs_files(payload))
+        if int(resp["path"][-1]["cid"]) != id:
+            raise NotADirectoryError(errno.ENOTDIR, f"{id!r} is not a directory")
         return resp
 
     @check_response
-    def fs_search(self, payload: str | dict, /) -> dict:
+    def fs_search(self, payload: str | dict, /) -> AttrDict:
         return self.client.fs_search(payload)
 
     @check_response
-    def space_summury(self, /) -> dict:
+    def space_summury(self, /) -> AttrDict:
         return self.client.fs_space_summury()
 
-    # TODO: 参数 file 支持更多类型
     def _upload(
         self, 
         /, 
-        file, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         name: str, 
-        pid: Optional[int] = None, 
-    ) -> dict:
+        pid: None | int = None, 
+    ) -> AttrDict:
         if pid is None:
             pid = self.id
-        if hasattr(file, "getbuffer"):
-            try:
-                file = file.getbuffer()
-            except TypeError:
-                pass
         data = check_response(self.client.upload_file(file, name, pid))["data"]
         if "file_id" in data:
             file_id = int(data["file_id"])
             try:
                 return self._attr(file_id)
             except FileNotFoundError:
-                self.fs_files(pid, 1)
+                self.fs_files({"cid": pid, "limit": 1})
                 return self._attr(file_id)
         else:
             name = data["file_name"]
             try:
                 return self._attr_path([name], pid)
             except FileNotFoundError:
-                self.fs_files(pid, 1)
+                self.fs_files({"cid": pid, "limit": 1})
                 return self._attr_path([name], pid)
 
     def _clear_cache(self, attr: dict, /):
@@ -529,96 +521,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             if path_to_id is not None and pop_path is not None:
                 for k in tuple(k for k in path_to_id if startswith(k, old_path)):
                     pop_path(k)
-
-    def iterdir(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        pid: None | int = None, 
-        refresh: bool = False, 
-        **kwargs, 
-    ) -> Iterator[AttrDict]:
-        path_to_id = self.path_to_id
-        attr_cache = self.attr_cache
-        get_version = self.get_version
-        version = None
-        if attr_cache is None and isinstance(id_or_path, int):
-            id = id_or_path
-        else:
-            attr = None
-            if not refresh:
-                path_class = type(self).path_class
-                if isinstance(id_or_path, dict):
-                    attr = id_or_path
-                elif isinstance(id_or_path, path_class):
-                    attr = id_or_path.__dict__
-            if attr is None:
-                attr = self.attr(id_or_path, pid)
-            if not attr["is_directory"]:
-                raise NotADirectoryError(
-                    errno.ENOTDIR, 
-                    f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
-                )
-            id = attr["id"]
-            if get_version is not None:
-                version = get_version(attr)
-        if attr_cache is None:
-            pid_attrs = None
-        else:
-            pid_attrs = attr_cache.get(id)
-        if (
-            refresh or 
-            pid_attrs is None or 
-            "version" not in pid_attrs or
-            version != pid_attrs["version"]
-        ):
-            pagesize = 1 << 10
-            def normalize_attr(attr, dirname, /, **extra):
-                attr = normalize_info(attr, **extra)
-                path = attr["path"] = joinpath(dirname, escape(attr["name"]))
-                if path_to_id is not None:
-                    path_to_id[path] = attr["id"]
-                if attr_cache is not None:
-                    try:
-                        id_attrs = attr_cache[attr["id"]]
-                    except LookupError:
-                        attr_cache[attr["id"]] = {"attr": attr}
-                    else:
-                        try:
-                            old_attr = id_attrs["attr"]
-                        except LookupError:
-                            id_attrs["attr"] = attr
-                        else:
-                            if path != old_attr["path"] and path_to_id is not None:
-                                try:
-                                    del path_to_id[old_attr["path"]]
-                                except LookupError:
-                                    pass
-                            old_attr.update(attr)
-                return attr
-            def iterdir():
-                get_files = self.fs_files
-                kwargs["limit"] = pagesize
-                resp = get_files(id, **kwargs)
-                dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
-                if path_to_id is not None:
-                    path_to_id[dirname] = id
-                count = resp["count"]
-                for attr in resp["data"]:
-                    yield normalize_attr(attr, dirname, fs=self)
-                for offset in range(pagesize, count, 1 << 10):
-                    kwargs["offset"] = offset
-                    resp = get_files(id, **kwargs)
-                    if resp["count"] != count:
-                        raise RuntimeError(f"{id} detected count changes during iteration")
-                    for attr in resp["data"]:
-                        yield normalize_attr(attr, dirname, fs=self)
-            children = {a["id"]: a for a in iterdir()}
-            if attr_cache is not None:
-                attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
-        else:
-            children = pid_attrs["children"]
-        return iter(children.values())
 
     def _attr(self, id: int, /)  -> AttrDict:
         if id == 0:
@@ -736,12 +638,22 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} (in {pid!r})")
         return attr
 
+    def _dir_get_ancestors(self, id: int, /) -> list[dict]:
+        ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
+        if id:
+            ls.extend(
+                {"name": p["name"], "id": int(p["cid"]), "parent_id": int(p["pid"]), "is_directory": True} 
+                for p in self.fs_files({"cid": id, "limit": 1})["path"][1:]
+            )
+        return ls
+
     def attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
     )  -> AttrDict:
+        "获取属性"
         if isinstance(id_or_path, P115Path):
             return id_or_path.__dict__
         elif isinstance(id_or_path, dict):
@@ -750,6 +662,143 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return self._attr(id_or_path)
         else:
             return self._attr_path(id_or_path, pid)
+
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        refresh: bool = False, 
+        page_size: int = 1_000, 
+        **payload, 
+    ) -> Iterator[AttrDict]:
+        """迭代获取目录内直属的文件或目录的信息
+        payload:
+            - asc: 0 | 1 = 1     # 是否升序排列
+            - code: int | str = <default>
+            - count_folders: 0 | 1 = 1
+            - custom_order: int | str = <default>
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - format: str = "json"
+            - is_q: 0 | 1 = <default>
+            - is_share: 0 | 1 = <default>
+            - natsort: 0 | 1 = <default>
+            - o: str = "file_name"
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+            - record_open_time: 0 | 1 = 1
+            - scid: int | str = <default>
+            - show_dir: 0 | 1 = 1
+            - snap: 0 | 1 = <default>
+            - source: str = <default>
+            - star: 0 | 1 = <default> # 是否星标文件
+            - suffix: str = <default> # 后缀名
+            - type: int | str = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
+                # - 书籍: 7
+        """
+        if page_size <= 0:
+            page_size = 1_000
+        path_to_id = self.path_to_id
+        attr_cache = self.attr_cache
+        get_version = self.get_version
+        version = None
+        if attr_cache is None and isinstance(id_or_path, int):
+            id = id_or_path
+        else:
+            attr = None
+            if not refresh:
+                path_class = type(self).path_class
+                if isinstance(id_or_path, dict):
+                    attr = id_or_path
+                elif isinstance(id_or_path, path_class):
+                    attr = id_or_path.__dict__
+            if attr is None:
+                attr = self.attr(id_or_path, pid)
+            if not attr["is_directory"]:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
+                )
+            id = attr["id"]
+            if get_version is not None:
+                version = get_version(attr)
+        payload["cid"] = id
+        payload["limit"] = page_size
+        offset = int(payload.setdefault("offset", 0))
+        if offset < 0:
+            offset = payload["offset"] = 0
+        if attr_cache is None:
+            pid_attrs = None
+        else:
+            pid_attrs = attr_cache.get(id)
+        if (
+            refresh or 
+            pid_attrs is None or 
+            "version" not in pid_attrs or
+            version != pid_attrs["version"]
+        ):
+            def normalize_attr(attr, dirname, /, **extra):
+                attr = normalize_info(attr, **extra)
+                path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                if path_to_id is not None:
+                    path_to_id[path] = attr["id"]
+                if attr_cache is not None:
+                    try:
+                        id_attrs = attr_cache[attr["id"]]
+                    except LookupError:
+                        attr_cache[attr["id"]] = {"attr": attr}
+                    else:
+                        try:
+                            old_attr = id_attrs["attr"]
+                        except LookupError:
+                            id_attrs["attr"] = attr
+                        else:
+                            if path != old_attr["path"] and path_to_id is not None:
+                                try:
+                                    del path_to_id[old_attr["path"]]
+                                except LookupError:
+                                    pass
+                            old_attr.update(attr)
+                return attr
+            def iterdir():
+                get_files = self.fs_files
+                resp = get_files(payload)
+                dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
+                if path_to_id is not None:
+                    path_to_id[dirname] = id
+                count = resp["count"]
+                for attr in resp["data"]:
+                    yield normalize_attr(attr, dirname, fs=self)
+                for offset in range(page_size, count, 1 << 10):
+                    payload["offset"] = offset
+                    resp = get_files(payload)
+                    if resp["count"] != count:
+                        raise RuntimeError(f"{id} detected count changes during iteration")
+                    for attr in resp["data"]:
+                        yield normalize_attr(attr, dirname, fs=self)
+            if attr_cache is None:
+                return iterdir()
+            else:
+                payload["offset"] = 0
+                children = {a["id"]: a for a in iterdir()}
+                attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
+        else:
+            children = pid_attrs["children"]
+        return islice(children.values(), offset, None)
 
     def copy(
         self, 
@@ -760,7 +809,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         overwrite: bool = False, 
         onerror: bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
-    ) -> None | dict:
+    ) -> None | AttrDict:
+        "复制文件"
         try:
             src_attr = self.attr(src_path, pid)
             src_path = cast(str, src_attr["path"])
@@ -863,7 +913,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         overwrite: bool = False, 
         onerror: bool | Callable[[OSError], bool] = True, 
-    ) -> None | dict:
+    ) -> None | AttrDict:
+        "复制路径"
         try:
             src_attr = self.attr(src_path, pid)
             if not src_attr["is_directory"]:
@@ -928,33 +979,24 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return None
 
         src_files: list[int] = []
-        kwargs: dict = dict(pid=dst_id, overwrite=overwrite, onerror=onerror)
+        payload: dict = dict(pid=dst_id, overwrite=overwrite, onerror=onerror)
         for attr in src_attrs:
-            kwargs["src_path"] = attr
+            payload["src_path"] = attr
             if attr["name"] in dst_attrs_map:
-                kwargs["dst_path"] = dst_attrs_map[attr["name"]]
+                payload["dst_path"] = dst_attrs_map[attr["name"]]
                 if attr["is_directory"]:
-                    self.copytree(**kwargs)
+                    self.copytree(**payload)
                 else:
-                    self.copy(**kwargs)
+                    self.copy(**payload)
             elif attr["is_directory"]:
-                kwargs["dst_path"] = [attr["name"]]
-                self.copytree(**kwargs)
+                payload["dst_path"] = [attr["name"]]
+                self.copytree(**payload)
             else:
                 src_files.append(attr["id"])
         if src_files:
             for i in range(0, len(src_files), 50_000):
                 self.fs_batch_copy(src_files[i:i+50_000], dst_id)
         return dst_attr
-
-    def _dir_get_ancestors(self, id: int, /) -> list[dict]:
-        ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
-        if id:
-            ls.extend(
-                {"name": p["name"], "id": int(p["cid"]), "parent_id": int(p["pid"]), "is_directory": True} 
-                for p in self.fs_files(id, limit=1)["path"][1:]
-            )
-        return ls
 
     def desc(
         self, 
@@ -963,6 +1005,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         desc: None | str = None, 
     ) -> str:
+        """目录的描述文本（支持 HTML）
+        :param desc: 如果为 None，返回描述文本；否则，设置文本
+        """
         fid = self.get_id(id_or_path, pid)
         if fid == 0:
             return ""
@@ -977,6 +1022,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
     ) -> list[dict]:
+        "获取各个上级目录的少量信息（从根目录到当前目录）"
         attr = self.attr(id_or_path, pid)
         ls = self._dir_get_ancestors(attr["parent_id"])
         ls.append({"name": attr["name"], "id": attr["id"], "parent_id": attr["parent_id"], "is_directory": attr["is_directory"]})
@@ -988,14 +1034,17 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
     ) -> int:
-        return self.fs_files(self.get_id(id_or_path, pid), limit=1)["count"]
+        "文件夹中的项目数（直属的文件和目录计数）"
+        return self.fs_files({"cid": self.get_id(id_or_path, pid), "limit": 1})["count"]
 
     def get_id_from_pickcode(self, /, pickcode: str = "") -> int:
+        "由 pickcode 获取 id"
         if not pickcode:
             return 0
         return self.get_info_from_pickcode(pickcode)["id"]
 
-    def get_info_from_pickcode(self, /, pickcode: str) -> dict:
+    def get_info_from_pickcode(self, /, pickcode: str) -> AttrDict:
+        "由 pickcode 获取一些目录信息"
         return self.client.download_url(pickcode, strict=False, detail=True).__dict__
 
     def get_pickcode(
@@ -1004,6 +1053,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
     ) -> str:
+        "获取 pickcode"
         return self.attr(id_or_path, pid).get("pickcode", "")
 
     def get_url(
@@ -1014,6 +1064,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: Optional[Mapping] = None, 
         detail: bool = False, 
     ) -> str:
+        "获取下载链接"
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
@@ -1031,12 +1082,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: Optional[Mapping] = None, 
         detail: bool = False, 
     ) -> str:
+        "由 pickcode 获取下载链接"
         return self.client.download_url(
             pickcode, 
             detail=detail, 
             headers=headers, 
         )
 
+    # TODO: 如果超过 5 万个文件，则需要分批进入隐藏模式
     def hide(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -1044,6 +1097,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         show: None | bool = None, 
     ) -> bool:
+        "把路径隐藏或显示（如果隐藏，只能在隐藏模式中看到）"
         if show is None:
             return self.attr(id_or_path, pid)["hidden"]
         else:
@@ -1056,6 +1110,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     @property
     def hidden_mode(self, /) -> bool:
+        "是否进入隐藏模式"
         return self.client.user_setting()["data"]["show"] == "1"
 
     def hidden_switch(
@@ -1064,6 +1119,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         show: None | bool = None, 
         password: str = "", 
     ):
+        "切换隐藏模式，如果需要进入隐藏模式，需要提供密码"
         if show is None:
             show = not self.hidden_mode
         check_response(self.client.fs_hidden_switch({"show": int(show), "safe_pwd": password or self.password}))
@@ -1074,6 +1130,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
     ) -> bool:
+        "路径是否为空文件或空目录"
         attr: dict | P115Path
         if isinstance(id_or_path, P115Path):
             attr = id_or_path
@@ -1092,7 +1149,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
         page_size: int = 1150, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[AttrDict]:
+        "获取重复文件（不含当前这个）"
         if page_size <= 0:
             page_size = 1150
         payload = {
@@ -1114,6 +1172,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
     ) -> list[dict]:
+        "获取路径的标签"
         return self.attr(id_or_path, pid)["labels"]
 
     def makedirs(
@@ -1122,7 +1181,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
         exist_ok: bool = False, 
-    ) -> dict:
+    ) -> AttrDict:
+        "创建目录，如果上级目录不存在，则会进行创建"
         if isinstance(path, dict):
             patht, parents = splits(path["path"])
         elif isinstance(path, (str, PathLike)):
@@ -1164,11 +1224,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def mkdir(
         self, 
-        path: str | PathLike[str] | Sequence[str], 
+        path: IDOrPathType, 
         /, 
         pid: None | int = None, 
-    ) -> dict:
-        if isinstance(path, (str, PathLike)):
+    ) -> AttrDict:
+        "创建目录"
+        if isinstance(path, (int, dict)):
+            return self.attr(path)
+        elif isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
         else:
             patht = [p for p in path if p]
@@ -1211,7 +1274,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
         pid: None | int = None, 
-    ) -> dict:
+    ) -> AttrDict:
+        "重命名路径，如果目标路径是目录，则移动到其中"
         try:
             dst_attr = self.attr(dst_path, pid)
         except FileNotFoundError:
@@ -1235,7 +1299,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             f"destination already exists: {src_path!r} -> {dst_path!r}", 
         )
 
-    # TODO: 由于 115 网盘不支持删除里面有超过 5 万个文件等文件夹，因此执行失败时需要拆分任务
+    # TODO: 由于 115 网盘不支持删除里面有超过 5 万个文件等目录，因此执行失败时需要拆分任务
     # TODO: 就算删除和还原执行返回成功，后台可能依然在执行，需要等待前一批完成再执行下一批
     def remove(
         self, 
@@ -1243,7 +1307,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
         recursive: bool = False, 
-    ) -> dict:
+    ) -> AttrDict:
+        "删除文件"
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
         if attr["is_directory"]:
@@ -1265,7 +1330,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType, 
         /, 
         pid: None | int = None, 
-    ) -> dict:
+    ) -> AttrDict:
+        "逐级往上尝试删除空目录"
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
         if not attr["is_directory"]:
@@ -1277,7 +1343,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pattr = attr
         get_files = self.fs_files
         while id:
-            files = get_files(id, limit=1)
+            files = get_files({"id": id, "limit": 1})
             if files["count"] > 1:
                 break
             delid = id
@@ -1300,7 +1366,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         dst_path: IDOrPathType, 
         pid: None | int = None, 
         replace: bool = False, 
-    ) -> dict:
+    ) -> AttrDict:
+        "重命名路径"
         src_attr = self.attr(src_path, pid)
         src_id = src_attr["id"]
         src_path = src_attr["path"]
@@ -1393,9 +1460,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
         pid: None | int = None, 
-    ) -> dict:
-        attr = self.rename(src_path, dst_path, pid=pid)
-        self.removedirs(attr["parent_id"])
+    ) -> AttrDict:
+        "重命名路径，如果文件被移动到其它目录中，则尝试从原来的上级目录逐级往上删除空目录"
+        attr = self.attr(src_path, pid)
+        parent_id = attr["parent_id"]
+        attr = self.rename(attr, dst_path, pid=pid)
+        if parent_id != attr["parent_id"]:
+            self.removedirs(parent_id)
         return attr
 
     def replace(
@@ -1404,7 +1475,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
         pid: None | int = None, 
-    ) -> dict:
+    ) -> AttrDict:
+        "替换路径"
         return self.rename(src_path, dst_path, pid=pid, replace=True)
 
     def rmdir(
@@ -1412,14 +1484,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType, 
         /, 
         pid: None | int = None, 
-    ) -> dict:
+    ) -> AttrDict:
+        "删除空目录"
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
         if id == 0:
             raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         elif not attr["is_directory"]:
             raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
-        elif self.fs_files(id, limit=1)["count"]:
+        elif self.fs_files({"id": id, "limit": 1})["count"]:
             raise OSError(errno.ENOTEMPTY, f"directory is not empty: {id_or_path!r} (in {pid!r})")
         self.fs_delete(id)
         self._clear_cache(attr) 
@@ -1430,7 +1503,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType, 
         /, 
         pid: None | int = None, 
-    ) -> dict:
+    ) -> AttrDict:
+        "删除路径"
         return self.remove(id_or_path, pid, recursive=True)
 
     def score(
@@ -1440,6 +1514,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         score: None | int = None, 
     ) -> int:
+        """路径的分数
+        :param star: 如果为 None，返回分数；否则，设置分数
+        """
         if score is None:
             return self.attr(id_or_path, pid).get("score", 0)
         else:
@@ -1454,31 +1531,53 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        search_value: str = "", 
         page_size: int = 1_000, 
-        offset: int = 0, 
-        **kwargs, 
+        **payload, 
     ) -> Iterator[P115Path]:
-        assert page_size > 0
+        """搜索目录
+        :param payload:
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - count_folders: 0 | 1 = <default>
+            - date: str = <default> # 筛选日期
+            - fc_mix: 0 | 1 = <default> # 是否目录置顶，0 为置顶
+            - file_label: int | str = <default> # 标签 id
+            - format: str = "json" # 输出格式（不用管）
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+            - offset: int = 0  # 索引偏移，索引从 0 开始计算
+            - pick_code: str = <default>
+            - search_value: str = <default>
+            - show_dir: 0 | 1 = 1
+            - source: str = <default>
+            - star: 0 | 1 = <default>
+            - suffix: str = <default>
+            - type: int | str = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
+                # - 书籍: 7
+        """
+        if page_size <= 0:
+            page_size = 1_000
         attr = self.attr(id_or_path, pid)
-        if attr["is_directory"]:
-            if not search_value:
-                return
-            id = attr["id"]
-        else:
-            if not search_value:
-                search_value = attr["sha1"]
-            id = 0
-        payload = {
-            "cid": id, 
-            "search_value": search_value, 
-            "limit": page_size, 
-            "offset": offset, 
-            **kwargs, 
-        }
-        def wrap(attr):
-            attr = normalize_info(attr, fs=self)
-            return P115Path(attr)
+        payload["cid"] = attr["id"]
+        payload["limit"] = page_size
+        offset = int(payload.setdefault("offset", 0))
+        if offset < 0:
+            payload["offset"] = 0
+        if not attr["is_directory"]:
+            payload.setdefault("search_value", attr["sha1"])
         search = self.fs_search
         while True:
             resp = search(payload)
@@ -1501,6 +1600,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         star: None | bool = None, 
     ) -> bool:
+        """路径的星标
+        :param star: 如果为 None，返回星标是否已设置；如果为 True，设置星标；如果为 False，取消星标
+        """
         if star is None:
             return self.attr(id_or_path, pid).get("star", False)
         else:
@@ -1516,6 +1618,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
     ) -> stat_result:
+        "检查路径的属性，就像 `os.stat`"
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
         return stat_result((
@@ -1536,25 +1639,33 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-    ) -> dict:
+        is_dir: bool = False, 
+    ) -> AttrDict:
+        """检查路径是否存在，当不存在时，如果 is_dir 是 False 时，则创建空文件，否则创建空目录
+        """
         try:
             return self.attr(id_or_path, pid)
         except FileNotFoundError:
             if isinstance(id_or_path, int):
                 raise ValueError(f"no such id: {id_or_path!r}")
-            return self.upload(BytesIO(), id_or_path, pid=pid)
+            elif is_dir:
+                return self.mkdir(id_or_path, pid)
+            else:
+                return self.upload(b"", id_or_path, pid=pid)
 
     # TODO: 增加功能，返回一个 Task 对象，可以获取上传进度，可随时取消
     # TODO: 参数 file 支持更多类型
     def upload(
         self, 
         /, 
-        file: bytes | str | PathLike | SupportsRead[bytes], 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         path: IDOrPathType = "", 
         pid: None | int = None, 
         overwrite: bool = False, 
         remove_done: bool = False, 
-    ) -> dict:
+    ) -> AttrDict:
+        "上传文件"
         name: str = ""
         if not path:
             pid = self.id if pid is None else self.get_id(pid)
@@ -1593,23 +1704,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 else:
                     raise FileExistsError(errno.EEXIST, f"remote path {attr['path']!r} already exists")
 
-        fio: SupportsRead[bytes]
-        if isinstance(file, SupportsRead):
-            fio = file
-            if not name:
-                try:
-                    name = ospath.basename(getattr(file, "name"))
-                except:
-                    pass
-        elif isinstance(file, (str, PathLike)):
-            file = fsdecode(file)
-            fio = open(file, "rb")
-            if not name:
-                name = ospath.basename(file)
-        else:
-            fio = BytesIO(file)
-
-        resp = self._upload(fio, name, pid)
+        resp = self._upload(file, name, pid)
         if remove_done and isinstance(file, (str, PathLike)):
             try:
                 remove(file)
@@ -1631,7 +1726,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         predicate: None | Callable[[Path], bool] = None, 
         onerror: bool | Callable[[OSError], bool] = True, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[AttrDict]:
+        "上传到路径"
         remote_path_attr_map: None | dict[str, dict] = None
         try:
             attr = self.attr(path, pid)
@@ -1767,9 +1863,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        data: bytes | bytearray | memoryview | SupportsRead[bytes] = b"", 
+        data: Buffer | SupportsRead[Buffer] = b"", 
         pid: None | int = None, 
-    ) -> dict:
+    ) -> AttrDict:
+        "向文件写入二进制数据，如果文件已存在则替换"
         return self.upload(data, id_or_path, pid=pid, overwrite=True)
 
     def write_text(
@@ -1778,10 +1875,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         text: str = "", 
         pid: None | int = None, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
-    ) -> dict:
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+    ) -> AttrDict:
+        "向文件写入文本数据，如果文件已存在则替换"
         bio = BytesIO()
         if text:
             if encoding is None:

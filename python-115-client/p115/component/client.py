@@ -41,7 +41,7 @@ from xml.etree.ElementTree import fromstring
 from asynctools import as_thread, ensure_aiter, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
 from filewrap import (
-    SupportsRead, 
+    Buffer, SupportsRead, 
     bio_chunk_iter, bio_chunk_async_iter, 
     bio_skip_iter, bio_skip_async_iter, 
     bytes_iter_skip, bytes_async_iter_skip, 
@@ -3829,10 +3829,7 @@ class P115Client:
     def _oss_multipart_upload_part(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -3848,10 +3845,7 @@ class P115Client:
     def _oss_multipart_upload_part(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -3866,10 +3860,7 @@ class P115Client:
     def _oss_multipart_upload_part(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -3902,7 +3893,12 @@ class P115Client:
         request_kwargs["parse"] = parse
         request_kwargs["params"] = {"partNumber": part_number, "uploadId": upload_id}
         request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
-        if isinstance(file, (bytes, bytearray, memoryview)):
+        if hasattr(file, "getbuffer"):
+            try:
+                file = getattr(self, "getbuffer")()
+            except TypeError:
+                pass
+        if isinstance(file, Buffer):
             count_in_bytes = len(file)
             if async_:
                 async def make_iter():
@@ -4065,10 +4061,7 @@ class P115Client:
     def _oss_multipart_upload_part_iter(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -4084,10 +4077,7 @@ class P115Client:
     def _oss_multipart_upload_part_iter(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -4102,10 +4092,7 @@ class P115Client:
     def _oss_multipart_upload_part_iter(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -4118,7 +4105,12 @@ class P115Client:
     ) -> Iterator[dict] | AsyncIterator[dict]:
         """帮助函数：迭代器，迭代一次上传一个分片
         """
-        if isinstance(file, (bytes, bytearray, memoryview)):
+        if hasattr(file, "getbuffer"):
+            try:
+                file = getattr(self, "getbuffer")()
+            except TypeError:
+                pass
+        if isinstance(file, Buffer):
             if async_:
                 file = bytes_to_chunk_async_iter(file, part_size)
             else:
@@ -4259,10 +4251,7 @@ class P115Client:
     def _oss_upload(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4275,10 +4264,7 @@ class P115Client:
     def _oss_upload(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4290,10 +4276,7 @@ class P115Client:
     def _oss_upload(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4304,7 +4287,12 @@ class P115Client:
         """帮助函数：上传文件到阿里云 OSS，一次上传全部（即不进行分片）
         """
         url = self.upload_endpoint_url(bucket, object)
-        if isinstance(file, (bytes, bytearray, memoryview)):
+        if hasattr(file, "getbuffer"):
+            try:
+                file = getattr(self, "getbuffer")()
+            except TypeError:
+                pass
+        if isinstance(file, Buffer):
             if async_:
                 async def make_iter(file):
                     yield file
@@ -4374,10 +4362,7 @@ class P115Client:
     def _oss_multipart_upload(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4392,10 +4377,7 @@ class P115Client:
     def _oss_multipart_upload(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4409,10 +4391,7 @@ class P115Client:
     def _oss_multipart_upload(
         self, 
         /, 
-        file: ( bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4424,6 +4403,11 @@ class P115Client:
     ) -> dict | Awaitable[dict]:
         url = self.upload_endpoint_url(bucket, object)
         parts: list[dict] = []
+        if hasattr(file, "getbuffer"):
+            try:
+                file = getattr(self, "getbuffer")()
+            except TypeError:
+                pass
         if async_:
             async def async_request():
                 nonlocal async_, file, token, upload_id
@@ -4439,7 +4423,7 @@ class P115Client:
                         parts.append(part)
                     skipsize = sum(part["Size"] for part in parts)
                     if skipsize:
-                        if isinstance(file, (bytes, bytearray, memoryview)):
+                        if isinstance(file, Buffer):
                             file = memoryview(file)[skipsize:]
                         elif isinstance(file, SupportsRead):
                             try:
@@ -4488,7 +4472,7 @@ class P115Client:
                 ))
                 skipsize = sum(part["Size"] for part in parts)
                 if skipsize:
-                    if isinstance(file, (bytes, bytearray, memoryview)):
+                    if isinstance(file, Buffer):
                         file = memoryview(file)[skipsize:]
                     elif isinstance(file, SupportsRead):
                         if iscoroutinefunction(file.read):
@@ -4636,10 +4620,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         async_: Literal[False] = False, 
@@ -4651,10 +4632,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str, 
         pid: int, 
         async_: Literal[True], 
@@ -4665,10 +4643,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         async_: Literal[False, True] = False, 
@@ -4677,7 +4652,12 @@ class P115Client:
         """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
         """
         file_will_open: None | tuple[str, Any] = None
-        if isinstance(file, (bytes, bytearray, memoryview)):
+        if hasattr(file, "getbuffer"):
+            try:
+                file = getattr(self, "getbuffer")()
+            except TypeError:
+                pass
+        if isinstance(file, Buffer):
             pass
         elif isinstance(file, (str, PathLike)):
             path = fsdecode(file)
@@ -4716,10 +4696,10 @@ class P115Client:
                 nonlocal async_
                 async_ = cast(Literal[True], async_)
 
-                file = cast(bytes | bytearray | memoryview | 
-                    SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                    Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                    AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview], file)
+                file = cast(Buffer | 
+                    SupportsRead[Buffer] | 
+                    Iterable[Buffer] | 
+                    AsyncIterable[Buffer], file)
                 if not filename:
                     filename = str(uuid4())
                 resp = await self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
@@ -4764,9 +4744,9 @@ class P115Client:
                 return await do_request(file, filename)
             return async_request()
         else:
-            file = cast(bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview], file)
+            file = cast(Buffer | 
+                SupportsRead[Buffer] | 
+                Iterable[Buffer], file)
             if not filename:
                 filename = str(uuid4())
             resp = self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
@@ -4903,7 +4883,7 @@ class P115Client:
         filename: str, 
         filesize: int, 
         file_sha1: str, 
-        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview], 
+        read_range_bytes_or_hash: None | Callable[[str], str | Buffer], 
         pid: int,
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -4916,7 +4896,7 @@ class P115Client:
         filename: str, 
         filesize: int, 
         file_sha1: str, 
-        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview], 
+        read_range_bytes_or_hash: None | Callable[[str], str | Buffer], 
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
@@ -4928,7 +4908,7 @@ class P115Client:
         filename: str, 
         filesize: int, 
         file_sha1: str, 
-        read_range_bytes_or_hash: None | Callable[[str], str | bytes | bytearray | memoryview] = None, 
+        read_range_bytes_or_hash: None | Callable[[str], str | Buffer] = None, 
         pid: int = 0, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -4955,10 +4935,10 @@ class P115Client:
                     **request_kwargs, 
                 )
                 if resp["status"] == 7 and resp["statuscode"] == 701:
-                    read_range_bytes_or_hash = cast(Callable[[str], str | bytes | bytearray | memoryview], read_range_bytes_or_hash)
+                    read_range_bytes_or_hash = cast(Callable[[str], str | Buffer], read_range_bytes_or_hash)
                     sign_key = resp["sign_key"]
                     sign_check = resp["sign_check"]
-                    data: str | bytes | bytearray | memoryview = await ensure_async(read_range_bytes_or_hash)(sign_check) # type: ignore
+                    data: str | Buffer = await ensure_async(read_range_bytes_or_hash)(sign_check) # type: ignore
                     if isinstance(data, str):
                         sign_val = data.upper()
                     else:
@@ -4997,7 +4977,7 @@ class P115Client:
             # NOTE: 当文件大于等于 1 MB (1048576 B)，需要 2 次检验 1 个范围哈希，它会给出此文件的 1 个范围区间
             #       ，你读取对应的数据计算 sha1 后上传，以供 2 次检验
             if resp["status"] == 7 and resp["statuscode"] == 701:
-                read_range_bytes_or_hash = cast(Callable[[str], str | bytes | bytearray | memoryview], read_range_bytes_or_hash)
+                read_range_bytes_or_hash = cast(Callable[[str], str | Buffer], read_range_bytes_or_hash)
                 sign_key = resp["sign_key"]
                 sign_check = resp["sign_check"]
                 data = read_range_bytes_or_hash(sign_check)
@@ -5034,10 +5014,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
@@ -5053,10 +5030,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str, 
         pid: int, 
         filesize: int, 
@@ -5071,11 +5045,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                # TODO: 当升级到 0.1 版本时，将强制要求 python 3.12，这 bytes | bytearray | memoryview 用 collections.abc.Buffer 
-                bytes | bytearray | memoryview | 
-                SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
@@ -5089,7 +5059,11 @@ class P115Client:
         """
         if upload_directly:
             return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
-
+        if hasattr(file, "getbuffer"):
+            try:
+                file = getattr(self, "getbuffer")()
+            except TypeError:
+                pass
         if async_:
             async def async_request():
                 nonlocal async_, file, filename, filesize, file_sha1
@@ -5138,7 +5112,7 @@ class P115Client:
                         )
 
                 read_range_bytes_or_hash = None
-                if isinstance(file, (bytes, bytearray, memoryview)):
+                if isinstance(file, Buffer):
                     if filesize < 0:
                         filesize = len(file)
                     if not file_sha1:
@@ -5326,7 +5300,7 @@ class P115Client:
                     )
 
             read_range_bytes_or_hash: None | Callable = None
-            if isinstance(file, (bytes, bytearray, memoryview)):
+            if isinstance(file, Buffer):
                 if filesize < 0:
                     filesize = len(file)
                 if not file_sha1:
@@ -5547,7 +5521,7 @@ class P115Client:
         ...
     def extract_info(
         self, 
-        payload: dict, 
+        payload: str | dict, 
         /,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -5556,12 +5530,16 @@ class P115Client:
         GET https://webapi.115.com/files/extract_info
         payload:
             - pick_code: str
-            - file_name: str
-            - paths: str
-            - next_marker: str
-            - page_count: int | str # NOTE: 介于 1-999
+            - file_name: str = ""
+            - next_marker: str = ""
+            - page_count: int | str = 999 # NOTE: 介于 1-999
+            - paths: str = "文件"
         """
         api = "https://webapi.115.com/files/extract_info"
+        if isinstance(payload, str):
+            payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", "pick_code": payload}
+        else:
+            payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", **payload}
         request_kwargs.pop("parse", None)
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 

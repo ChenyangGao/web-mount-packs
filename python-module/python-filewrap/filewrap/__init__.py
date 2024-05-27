@@ -2,9 +2,10 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 1)
 __all__ = [
-    "SupportsRead", "SupportsWrite", "SupportsSeek", 
+    "Buffer", "SupportsRead", "SupportsReadinto", 
+    "SupportsWrite", "SupportsSeek", 
     "bio_chunk_iter", "bio_chunk_async_iter", 
     "bio_skip_iter", "bio_skip_async_iter", 
     "bytes_iter_skip", "bytes_async_iter_skip", 
@@ -25,7 +26,39 @@ from typing import runtime_checkable, Any, Protocol, TypeVar
 try:
     from collections.abc import Buffer # type: ignore
 except ImportError:
-    Buffer = Any
+    from abc import ABC, abstractmethod
+    from array import array
+
+    def _check_methods(C, *methods):
+        mro = C.__mro__
+        for method in methods:
+            for B in mro:
+                if method in B.__dict__:
+                    if B.__dict__[method] is None:
+                        return NotImplemented
+                    break
+            else:
+                return NotImplemented
+        return True
+
+    class Buffer(ABC): # type: ignore
+        __slots__ = ()
+
+        @abstractmethod
+        def __buffer__(self, flags: int, /) -> memoryview:
+            raise NotImplementedError
+
+        @classmethod
+        def __subclasshook__(cls, C):
+            if cls is Buffer:
+                return _check_methods(C, "__buffer__")
+            return NotImplemented
+
+    Buffer.register(bytes)
+    Buffer.register(bytearray)
+    Buffer.register(memoryview)
+    Buffer.register(array)
+
 
 from asynctools import async_chain, ensure_async, ensure_aiter
 
@@ -37,6 +70,11 @@ _T_contra = TypeVar("_T_contra", contravariant=True)
 @runtime_checkable
 class SupportsRead(Protocol[_T_co]):
     def read(self, /, __length: int = ...) -> _T_co: ...
+
+
+@runtime_checkable
+class SupportsReadinto(Protocol):
+    def readinto(self, /, buf: Buffer = ...) -> int: ...
 
 
 @runtime_checkable
@@ -316,7 +354,7 @@ def bytes_iter_skip(
     /, 
     size: int = -1, 
     callback: None | Callable[[int], Any] = None, 
-) -> Iterator[memoryview | Buffer]:
+) -> Iterator[Buffer]:
     it = iter(it)
     if size == 0:
         return it
@@ -340,7 +378,7 @@ async def bytes_async_iter_skip(
     /, 
     size: int = -1, 
     callback: None | Callable[[int], Any] = None, 
-) -> AsyncIterator[memoryview | Buffer]:
+) -> AsyncIterator[Buffer]:
     it = aiter(ensure_aiter(it))
     if size == 0:
         return it
@@ -566,7 +604,7 @@ def bytes_ensure_part_iter(
     it: Iterable[Buffer], 
     /, 
     partsize: int = COPY_BUFSIZE, 
-) -> Iterator[Buffer | memoryview]:
+) -> Iterator[Buffer]:
     n = partsize
     for b in it:
         m = memoryview(b)
@@ -594,7 +632,7 @@ async def bytes_ensure_part_async_iter(
     it: Iterable[Buffer] | AsyncIterable[Buffer], 
     /, 
     partsize: int = COPY_BUFSIZE, 
-) -> AsyncIterator[Buffer | memoryview]:
+) -> AsyncIterator[Buffer]:
     n = partsize
     async for b in ensure_aiter(it):
         m = memoryview(b)

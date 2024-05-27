@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "cookies_str_to_dict", "headers_str_to_dict", 
     "encode_multipart_data", "encode_multipart_data_async", 
@@ -16,7 +16,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from asynctools import ensure_aiter, async_chain
-from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
+from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead
 from integer_tool import int_to_bytes
 from texttools import text_to_dict
 
@@ -73,8 +73,8 @@ def headers_str_to_dict(
     return text_to_dict(headers.strip(), kv_sep, entry_sep)
 
 
-def ensure_bytes(s, /) -> bytes | bytearray | memoryview:
-    if isinstance(s, (bytes, bytearray, memoryview)):
+def ensure_bytes(s, /) -> Buffer:
+    if isinstance(s, Buffer):
         return s
     if isinstance(s, int):
         return int_to_bytes(s)
@@ -88,16 +88,14 @@ def ensure_bytes(s, /) -> bytes | bytearray | memoryview:
 
 def encode_multipart_data(
     data: Mapping[str, Any], 
-    files: Mapping[str, bytes | bytearray | memoryview | 
-                        SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                        Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview]], 
+    files: Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer]], 
     boundary: None | str = None, 
-) -> tuple[dict, Iterator[bytes | bytearray | memoryview]]:
+) -> tuple[dict, Iterator[Buffer]]:
     if not boundary:
         boundary = uuid4().bytes.hex()
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
-    def encode_data(data) -> Iterator[bytes | bytearray | memoryview]:
+    def encode_data(data) -> Iterator[Buffer]:
         if isinstance(data, Mapping):
             data = ItemsView(data)
         for name, value in data:
@@ -106,13 +104,13 @@ def encode_multipart_data(
             yield ensure_bytes(value)
             yield b"\r\n"
 
-    def encode_files(files) -> Iterator[bytes | bytearray | memoryview]:
+    def encode_files(files) -> Iterator[Buffer]:
         if isinstance(files, Mapping):
             files = ItemsView(files)
         for name, file in files:
             yield boundary_line
             yield b'Content-Disposition: form-data; name="%s"\r\nContent-Type: application/octet-stream\r\n\r\n' % bytes(quote(name), "ascii")
-            if isinstance(file, (bytes, bytearray, memoryview)):
+            if isinstance(file, Buffer):
                 yield file
             elif hasattr(file, "read"):
                 yield from bio_chunk_iter(file)
@@ -126,17 +124,14 @@ def encode_multipart_data(
 
 def encode_multipart_data_async(
     data: Mapping[str, Any], 
-    files: Mapping[str, bytes | bytearray | memoryview | 
-                        SupportsRead[bytes] | SupportsRead[bytearray] | SupportsRead[memoryview] | 
-                        Iterable[bytes] | Iterable[bytearray] | Iterable[memoryview] | 
-                        AsyncIterable[bytes] | AsyncIterable[bytearray] | AsyncIterable[memoryview]], 
+    files: Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer]], 
     boundary: None | str = None, 
-) -> tuple[dict, AsyncIterator[bytes | bytearray | memoryview]]:
+) -> tuple[dict, AsyncIterator[Buffer]]:
     if not boundary:
         boundary = uuid4().bytes.hex()
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
-    async def encode_data(data) -> AsyncIterator[bytes | bytearray | memoryview]:
+    async def encode_data(data) -> AsyncIterator[Buffer]:
         if isinstance(data, Mapping):
             data = ItemsView(data)
         for name, value in data:
@@ -145,13 +140,13 @@ def encode_multipart_data_async(
             yield ensure_bytes(value)
             yield b"\r\n"
 
-    async def encode_files(files) -> AsyncIterator[bytes | bytearray | memoryview]:
+    async def encode_files(files) -> AsyncIterator[Buffer]:
         if isinstance(files, Mapping):
             files = ItemsView(files)
         for name, file in files:
             yield boundary_line
             yield b'Content-Disposition: form-data; name="%s"\r\nContent-Type: application/octet-stream\r\n\r\n' % bytes(quote(name), "ascii")
-            if isinstance(file, (bytes, bytearray, memoryview)):
+            if isinstance(file, Buffer):
                 yield file
             elif hasattr(file, "read"):
                 async for b in bio_chunk_async_iter(file):
