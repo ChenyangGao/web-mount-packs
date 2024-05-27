@@ -14,8 +14,11 @@ from collections.abc import (
 )
 from datetime import datetime
 from io import BytesIO, TextIOWrapper
-from os import fsdecode, fspath, makedirs, scandir, stat_result, PathLike
-from os import path as ospath
+from json import JSONDecodeError
+from os import (
+    path as ospath, fsdecode, fspath, makedirs, remove, rmdir, scandir, stat_result, PathLike
+)
+from pathlib import Path
 from posixpath import join as joinpath, splitext
 from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
@@ -99,14 +102,16 @@ class P115Path(P115PathBase):
         self, 
         /, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
-        overwrite_or_ignore: Optional[bool] = None, 
-    ) -> Optional[Self]:
+        pid: None | int = None, 
+        overwrite: bool = False, 
+        onerror: bool | Callable[[OSError], bool] = True, 
+    ) -> None | Self:
         attr = self.fs.copy(
             self, 
             dst_path, 
             pid=pid, 
-            overwrite_or_ignore=overwrite_or_ignore, 
+            overwrite=overwrite, 
+            onerror=onerror, 
             recursive=True, 
         )
         if attr is None:
@@ -135,11 +140,9 @@ class P115Path(P115PathBase):
         self, 
         /, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> Self:
-        attr = self.fs.move(self, dst_path, pid)
-        if attr:
-            self.__dict__.update(attr)
+        self.__dict__.update(self.fs.move(self, dst_path, pid))
         return self
 
     def remove(self, /, recursive: bool = True) -> dict:
@@ -149,33 +152,27 @@ class P115Path(P115PathBase):
         self, 
         /, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> Self:
-        attr = self.fs.rename(self, dst_path, pid)
-        if attr:
-            self.__dict__.update(attr)
+        self.__dict__.update(self.fs.rename(self, dst_path, pid))
         return self
 
     def renames(
         self, 
         /, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> Self:
-        attr = self.fs.renames(self, dst_path, pid)
-        if attr:
-            self.__dict__.update(attr)
+        self.__dict__.update(self.fs.renames(self, dst_path, pid))
         return self
 
     def replace(
         self, 
         /, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> Self:
-        attr = self.fs.replace(self, dst_path, pid)
-        if attr:
-            self.__dict__.update(attr)
+        self.__dict__.update(self.fs.replace(self, dst_path, pid))
         return self
 
     def rmdir(self, /) -> dict:
@@ -278,9 +275,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return self.touch(id_or_path)
         elif isinstance(file, PathLike):
             if ospath.isdir(file):
-                return list(self.upload_tree(file, id_or_path, no_root=True, overwrite_or_ignore=True))
+                return list(self.upload_tree(file, id_or_path, no_root=True, overwrite=True))
             else:
-                return self.upload(file, id_or_path, overwrite_or_ignore=True)
+                return self.upload(file, id_or_path, overwrite=True)
         elif isinstance(file, str):
             return self.write_text(id_or_path, file)
         else:
@@ -398,27 +395,36 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def space_summury(self, /) -> dict:
         return self.client.fs_space_summury()
 
-    def _upload(self, file, name, pid: int = 0) -> dict:
-        if not hasattr(file, "getbuffer") or len(file.getbuffer()) > 0:
+    # TODO: 参数 file 支持更多类型
+    def _upload(
+        self, 
+        /, 
+        file, 
+        name: str, 
+        pid: Optional[int] = None, 
+    ) -> dict:
+        if pid is None:
+            pid = self.id
+        if hasattr(file, "getbuffer"):
             try:
-                file.seek(0, 1)
-            except:
+                file = file.getbuffer()
+            except TypeError:
                 pass
-            else:
-                resp = self.client.upload_file(file, name, pid)
-                name = resp["data"]["file_name"]
-                try:
-                    return self._attr_path([name], pid)
-                except FileNotFoundError:
-                    self.fs_files(pid, 1)
-                    return self._attr_path([name], pid)
-        resp = check_response(self.client.upload_file_sample)(file, name, pid)
-        id = int(resp["data"]["file_id"])
-        try:
-            return self._attr(id)
-        except FileNotFoundError:
-            self.fs_files(pid, 1)
-            return self._attr(id)
+        data = check_response(self.client.upload_file(file, name, pid))["data"]
+        if "file_id" in data:
+            file_id = int(data["file_id"])
+            try:
+                return self._attr(file_id)
+            except FileNotFoundError:
+                self.fs_files(pid, 1)
+                return self._attr(file_id)
+        else:
+            name = data["file_name"]
+            try:
+                return self._attr_path([name], pid)
+            except FileNotFoundError:
+                self.fs_files(pid, 1)
+                return self._attr_path([name], pid)
 
     def _clear_cache(self, attr: dict, /):
         attr_cache = self.attr_cache
@@ -528,7 +534,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         refresh: bool = False, 
         **kwargs, 
     ) -> Iterator[AttrDict]:
@@ -689,7 +695,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         path: str | PathLike[str] | Sequence[str], 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     )  -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
@@ -734,15 +740,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     )  -> AttrDict:
         if isinstance(id_or_path, P115Path):
-            return self._attr(id_or_path.id)
+            return id_or_path.__dict__
         elif isinstance(id_or_path, dict):
-            attr = id_or_path
-            if "id" in attr:
-                return self._attr(attr["id"])
-            return self._attr_path(attr["path"])
+            return id_or_path
         elif isinstance(id_or_path, int):
             return self._attr(id_or_path)
         else:
@@ -753,184 +756,196 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
-        overwrite_or_ignore: Optional[bool] = None, 
+        pid: None | int = None, 
+        overwrite: bool = False, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
-    ) -> Optional[dict]:
-        src_patht = self.get_patht(src_path, pid)
-        dst_patht = self.get_patht(dst_path, pid)
-        src_fullpath = joins(src_patht)
-        dst_fullpath = joins(dst_patht)
-        src_attr = self.attr(src_path, pid)
-        if src_attr["is_directory"]:
-            if recursive:
-                return self.copytree(
-                    src_attr["id"], 
-                    dst_path, 
-                    pid, 
-                    overwrite_or_ignore=overwrite_or_ignore, 
-                )
-            if overwrite_or_ignore == False:
-                return None
-            raise IsADirectoryError(
-                errno.EISDIR, f"source is a directory: {src_fullpath!r} -> {dst_fullpath!r}")
-        if src_patht == dst_patht:
-            if overwrite_or_ignore is None:
-                raise SameFileError(src_fullpath)
-            return None
-        elif dst_patht == src_patht[:len(dst_patht)]:
-            if overwrite_or_ignore == False:
-                return None
-            raise PermissionError(
-                errno.EPERM, 
-                f"copy a path as its ancestor is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
-            )
-        elif src_patht == dst_patht[:len(src_patht)]:
-            if overwrite_or_ignore == False:
-                return None
-            raise PermissionError(
-                errno.EPERM, 
-                f"copy a path as its descendant is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
-            )
-        *src_dirt, src_name = src_patht
-        *dst_dirt, dst_name = dst_patht
+    ) -> None | dict:
         try:
-            dst_attr = self.attr(dst_path, pid)
-        except FileNotFoundError:
-            if src_dirt == dst_dirt:
-                dst_pid = src_attr["parent_id"]
-            else:
-                destdir_attr = self.attr(dst_dirt)
-                if not destdir_attr["is_directory"]:
-                    raise NotADirectoryError(
-                        errno.ENOTDIR, 
-                        f"parent path {joins(dst_dirt)!r} is not directory: {src_fullpath!r} -> {dst_fullpath!r}", 
+            src_attr = self.attr(src_path, pid)
+            src_path = cast(str, src_attr["path"])
+            if src_attr["is_directory"]:
+                if recursive:
+                    return self.copytree(
+                        src_attr, 
+                        dst_path, 
+                        pid=pid, 
+                        overwrite=overwrite, 
+                        onerror=onerror, 
                     )
-                dst_pid = destdir_attr["id"]
-        else:
-            if dst_attr["is_directory"]:
-                if overwrite_or_ignore == False:
-                    return None
-                raise IsADirectoryError(
-                    errno.EISDIR, 
-                    f"destination is a directory: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-            elif overwrite_or_ignore is None:
-                raise FileExistsError(
-                    errno.EEXIST, 
-                    f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-            elif not overwrite_or_ignore:
-                return None
-            self.fs_delete(dst_attr["id"])
-            dst_pid = dst_attr["parent_id"]
-        src_id = src_attr["id"]
-        if splitext(src_name)[1] != splitext(dst_name)[1]:
-            dst_name = check_response(self.client.upload_file_init)(
-                dst_name, 
-                filesize=src_attr["size"], 
-                file_sha1=src_attr["sha1"], 
-                read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
-                pid=dst_pid, 
-            )["data"]["file_name"]
-            return self.attr([dst_name], dst_pid)
-        elif src_name == dst_name:
-            self.fs_copy(src_id, dst_pid)
-            return self.attr([src_name], dst_pid)
-        else:
-            tempdir_id = int(self.fs_mkdir(str(uuid4()))["id"])
-            try:
-                self.fs_copy(src_id, tempdir_id)
-                dst_id = self.attr([src_name], tempdir_id)["id"]
-                resp = self.fs_rename(dst_id, dst_name)
-                if resp["data"]:
-                    dst_name = resp["data"][str(dst_id)]
-                self.fs_move(dst_id, dst_pid)
-            finally:
-                self.fs_delete(tempdir_id)
-            return self.attr(dst_id)
+                raise IsADirectoryError(errno.EISDIR, f"source path is a directory: {src_path!r}")
 
+            src_patht = self.get_patht(src_path)
+            *src_dirt, src_name = src_patht
+            src_id = src_attr["id"]
+            try:
+                dst_attr = self.attr(dst_path, pid)
+            except FileNotFoundError:
+                if isinstance(dst_path, int):
+                    raise
+
+                dst_patht = self.get_patht(dst_path, pid)
+                *dst_dirt, dst_name = dst_patht
+                dst_path = joins(dst_patht)
+                if dst_patht == src_patht[:len(dst_patht)]:
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a file to its ancestor path is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+                elif src_patht == dst_patht[:len(src_patht)]:
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a file to its descendant path is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+
+                if src_dirt == dst_dirt:
+                    dst_pid = src_attr["parent_id"]
+                else:
+                    dst_pattr = self.makedirs(dst_patht[:-1])
+                    dst_pid = dst_pattr["id"]
+            else:
+                if src_id == dst_attr["id"]:
+                    raise SameFileError(src_path)
+                elif dst_attr["is_directory"]:
+                    raise IsADirectoryError(
+                        errno.EISDIR, 
+                        f"destination is a directory: {src_path!r} -> {dst_path!r}", 
+                    )
+                elif overwrite:
+                    self.remove(dst_attr)
+                else:
+                    raise FileExistsError(
+                        errno.EEXIST, 
+                        f"destination already exists: {src_path!r} -> {dst_path!r}", 
+                    )
+                dst_pid = dst_attr["parent_id"]
+
+            if splitext(src_name)[1] != splitext(dst_name)[1]:
+                dst_name = check_response(self.client.upload_file_init)(
+                    filename=dst_name, 
+                    filesize=src_attr["size"], 
+                    file_sha1=src_attr["sha1"], 
+                    read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
+                    pid=dst_pid, 
+                )["data"]["file_name"]
+                return self.attr([dst_name], dst_pid)
+            elif src_name == dst_name:
+                self.fs_copy(src_id, dst_pid)
+                return self.attr([dst_name], dst_pid)
+            else:
+                tempdir_id = int(self.fs_mkdir(str(uuid4()))["id"])
+                try:
+                    self.fs_copy(src_id, tempdir_id)
+                    dst_id = self.attr([src_name], tempdir_id)["id"]
+                    resp = self.fs_rename(dst_id, dst_name)
+                    if resp["data"]:
+                        dst_name = resp["data"][str(dst_id)]
+                    self.fs_move(dst_id, dst_pid)
+                finally:
+                    self.fs_delete(tempdir_id)
+                return self.attr(dst_id)
+        except OSError as e:
+            if onerror is True:
+                raise
+            elif onerror is False:
+                pass
+            else:
+                onerror(e)
+            return None
+
+    # TODO: 使用 fs_batch_* 方法，尽量加快执行速度，但是如果任务数过大（大于 5 万）而报错，则尝试对任务进行拆分
+    # TODO: 删除、还原、复制、移动等操作均遵此例，也就是尽量用 batch 方法
     def copytree(
         self, 
         /, 
         src_path: IDOrPathType, 
         dst_path: IDOrPathType = "", 
-        pid: Optional[int] = None, 
-        overwrite_or_ignore: Optional[bool] = None, 
-        **kwargs, 
-    ) -> Optional[dict]:
-        src_attr = self.attr(src_path, pid)
-        src_id = src_attr["id"]
-        if not src_attr["is_directory"]:
-            return self.copy(
-                src_id, 
-                dst_path, 
-                pid, 
-                overwrite_or_ignore=overwrite_or_ignore, 
-            )
-        src_name = src_attr["name"]
-        src_fullpath = src_attr["path"]
+        pid: None | int = None, 
+        overwrite: bool = False, 
+        onerror: bool | Callable[[OSError], bool] = True, 
+    ) -> None | dict:
         try:
-            dst_attr = self.attr(dst_path, pid)
-        except FileNotFoundError:
-            if isinstance(dst_path, int):
-                if overwrite_or_ignore == False:
-                    return None
+            src_attr = self.attr(src_path, pid)
+            if not src_attr["is_directory"]:
+                return self.copy(
+                    src_attr, 
+                    dst_path, 
+                    pid=pid, 
+                    overwrite=overwrite, 
+                    onerror=onerror, 
+                )
+
+            src_id = src_attr["id"]
+            src_path = src_attr["path"]
+            src_name = src_attr["name"]
+            try:
+                dst_attr = self.attr(dst_path, pid)
+            except FileNotFoundError:
+                if isinstance(dst_path, int):
+                    raise
+                dst_patht = self.get_patht(dst_path, pid)
+                if len(dst_patht) == 1:
+                    dst_id = 0
+                    dst_name = src_name
+                else:
+                    dst_pattr = self.makedirs(dst_patht[:-1], exist_ok=True)
+                    dst_id = dst_pattr["id"]
+                    dst_name = dst_patht[-1]
+                try:
+                    if src_name == dst_name:
+                        self.fs_copy(src_id, dst_id)
+                        return self.attr([dst_name], dst_id)
+                except (OSError, JSONDecodeError):
+                    pass
+                dst_attr = self.makedirs([dst_name], pid=dst_id, exist_ok=True)
+                dst_id = dst_pattr["id"]
+                dst_attrs_map = {}
+            else:
+                dst_path = dst_attr["path"]
+                if not dst_attr["is_directory"]:
+                    raise NotADirectoryError(
+                        errno.ENOTDIR, 
+                        f"destination path {dst_path!r} is not directory", 
+                    )
+                dst_id = dst_attr["id"]
+                if src_id == dst_id:
+                    raise SameFileError(src_path)
+                elif any(a["id"] == src_id for a in self.get_ancestors(dst_id)):
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a directory as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+                dst_attrs_map = {a["name"]: a for a in self.listdir_attr(dst_id)}
+
+            src_attrs = self.listdir_attr(src_id)
+        except OSError as e:
+            if onerror is True:
                 raise
-            dst_patht = self.get_patht(dst_path, pid)
-            if len(dst_patht) == 1:
-                dst_attr = self.attr(0)
-                dst_id = 0
+            elif onerror is False:
+                pass
             else:
-                dst_attr = self.makedirs(dst_patht[:-1], exist_ok=True)
-                dst_id = dst_attr["id"]
-                if src_name == dst_patht[-1]:
-                    self.fs_copy(src_id, dst_id)
-                    return self.attr([src_name], dst_id)
-                dst_attr = self.makedirs([src_name], dst_id, exist_ok=True)
-                dst_id = dst_attr["id"]
-        else:
-            dst_id = dst_attr["id"]
-            dst_fullpath = dst_attr["path"]
-            if src_fullpath == dst_fullpath:
-                if overwrite_or_ignore is None:
-                    raise SameFileError(dst_fullpath)
-                return None
-            elif any(a["id"] == src_id for a in self.get_ancestors(dst_id)):
-                if overwrite_or_ignore == False:
-                    return None
-                raise PermissionError(
-                    errno.EPERM, 
-                    f"copy a directory as its descendant is not allowed: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-            elif not dst_attr["is_directory"]:
-                if overwrite_or_ignore == False:
-                    return None
-                raise NotADirectoryError(
-                    errno.ENOTDIR, 
-                    f"destination is not directory: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-            elif overwrite_or_ignore is None:
-                raise FileExistsError(
-                    errno.EEXIST, 
-                    f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}", 
-                )
-        for attr in self.iterdir(src_id, **kwargs):
-            if attr["is_directory"]:
-                self.copytree(
-                    attr["id"], 
-                    [attr["name"]], 
-                    dst_id, 
-                    overwrite_or_ignore=overwrite_or_ignore, 
-                )
+                onerror(e)
+            return None
+
+        src_files: list[int] = []
+        kwargs: dict = dict(pid=dst_id, overwrite=overwrite, onerror=onerror)
+        for attr in src_attrs:
+            kwargs["src_path"] = attr
+            if attr["name"] in dst_attrs_map:
+                kwargs["dst_path"] = dst_attrs_map[attr["name"]]
+                if attr["is_directory"]:
+                    self.copytree(**kwargs)
+                else:
+                    self.copy(**kwargs)
+            elif attr["is_directory"]:
+                kwargs["dst_path"] = [attr["name"]]
+                self.copytree(**kwargs)
             else:
-                self.copy(
-                    attr["id"], 
-                    [attr["name"]], 
-                    dst_id, 
-                    overwrite_or_ignore=overwrite_or_ignore, 
-                )
-        return self.attr(dst_attr["id"])
+                src_files.append(attr["id"])
+        if src_files:
+            for i in range(0, len(src_files), 50_000):
+                self.fs_batch_copy(src_files[i:i+50_000], dst_id)
+        return dst_attr
 
     def _dir_get_ancestors(self, id: int, /) -> list[dict]:
         ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
@@ -945,7 +960,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         desc: None | str = None, 
     ) -> str:
         fid = self.get_id(id_or_path, pid)
@@ -960,7 +975,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> list[dict]:
         attr = self.attr(id_or_path, pid)
         ls = self._dir_get_ancestors(attr["parent_id"])
@@ -971,7 +986,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> int:
         return self.fs_files(self.get_id(id_or_path, pid), limit=1)["count"]
 
@@ -987,7 +1002,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> str:
         return self.attr(id_or_path, pid).get("pickcode", "")
 
@@ -995,7 +1010,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         headers: Optional[Mapping] = None, 
         detail: bool = False, 
     ) -> str:
@@ -1026,7 +1041,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         show: None | bool = None, 
     ) -> bool:
         if show is None:
@@ -1057,7 +1072,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> bool:
         attr: dict | P115Path
         if isinstance(id_or_path, P115Path):
@@ -1075,7 +1090,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         page_size: int = 1150, 
     ) -> Iterator[dict]:
         if page_size <= 0:
@@ -1097,7 +1112,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> list[dict]:
         return self.attr(id_or_path, pid)["labels"]
 
@@ -1105,7 +1120,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         path: str | PathLike[str] | Sequence[str] | AttrDict, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         exist_ok: bool = False, 
     ) -> dict:
         if isinstance(path, dict):
@@ -1138,7 +1153,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             else:
                 exists = True
                 if not attr["is_directory"]:
-                    raise NotADirectoryError(errno.ENOTDIR, f"{path!r} (in {pid!r}): there is a superior non-directory")
+                    raise NotADirectoryError(
+                        errno.ENOTDIR, 
+                        f"{path!r} (in {pid!r}): there is a superior non-directory", 
+                    )
                 pid = attr["id"]
         if not exist_ok and exists:
             raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
@@ -1148,7 +1166,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         path: str | PathLike[str] | Sequence[str], 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> dict:
         if isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
@@ -1171,12 +1189,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 break
             else:
                 if not attr["is_directory"]:
-                    raise NotADirectoryError(errno.ENOTDIR, f"{attr['id']!r} ({name!r} in {pid!r}) not a directory")
+                    raise NotADirectoryError(
+                        errno.ENOTDIR, 
+                        f"{attr['id']!r} ({name!r} in {pid!r}) not a directory", 
+                    )
                 pid = attr["id"]
         else:
-            raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) already exists")
+            raise FileExistsError(
+                errno.EEXIST, f"{path!r} (in {pid!r}) already exists")
         if i < len(patht):
-            raise FileNotFoundError(errno.ENOENT, f"{path!r} (in {pid!r}) missing superior directory")
+            raise FileNotFoundError(
+                errno.ENOENT, 
+                f"{path!r} (in {pid!r}) missing superior directory", 
+            )
         resp = self.fs_mkdir(name, pid)
         return self.attr(int(resp["cid"]))
 
@@ -1185,8 +1210,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
-    ) -> Optional[dict]:
+        pid: None | int = None, 
+    ) -> dict:
         try:
             dst_attr = self.attr(dst_path, pid)
         except FileNotFoundError:
@@ -1195,134 +1220,151 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         src_id = src_attr["id"]
         dst_id = dst_attr["id"]
         if src_id == dst_id or src_attr["parent_id"] == dst_id:
-            return None
+            return src_attr
+        src_path = src_attr["path"]
+        dst_path = dst_attr["path"]
         if any(a["id"] == src_id for a in self.get_ancestors(dst_id)):
-            raise PermissionError(errno.EPERM, f"move a path to its subordinate path is not allowed: {src_id!r} -> {dst_id!r}")
+            raise PermissionError(
+                errno.EPERM, 
+                f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}"
+            )
         if dst_attr["is_directory"]:
-            name = src_attr["name"]
-            if self.exists([name], dst_id):
-                raise FileExistsError(errno.EEXIST, f"destination {name!r} (in {dst_id!r}) already exists")
-            self.fs_move(src_id, dst_id)
-            new_attr = self.attr(src_id)
-            self._update_cache_path(src_attr, new_attr)
-            return new_attr
-        raise FileExistsError(errno.EEXIST, f"destination {dst_id!r} already exists")
+            return self.rename(src_attr, [src_attr["name"]], pid=dst_attr["id"])
+        raise FileExistsError(
+            errno.EEXIST, 
+            f"destination already exists: {src_path!r} -> {dst_path!r}", 
+        )
 
-    # TODO: 由于 115 网盘不支持删除里面有超过 5 万个文件等文件夹，因此需要增加参数，支持在失败后，拆分任务，返回一个 Future 对象，可以获取已完成和未完成，并且可以随时取消
+    # TODO: 由于 115 网盘不支持删除里面有超过 5 万个文件等文件夹，因此执行失败时需要拆分任务
+    # TODO: 就算删除和还原执行返回成功，后台可能依然在执行，需要等待前一批完成再执行下一批
     def remove(
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         recursive: bool = False, 
     ) -> dict:
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
-        clear_cache = self._clear_cache
         if attr["is_directory"]:
             if not recursive:
-                raise IsADirectoryError(errno.EISDIR, f"{id_or_path!r} (in {pid!r}) is a directory")
+                raise IsADirectoryError(
+                    errno.EISDIR, 
+                    f"{attr['path']!r} (id={id!r}) is a directory", 
+                )
             if id == 0:
                 for subattr in self.iterdir(0):
-                    id = subattr["id"]
-                    self.fs_delete(id)
-                    clear_cache(subattr)
+                    self.remove(subattr, recursive=True)
                 return attr
         self.fs_delete(id)
-        clear_cache(attr)
+        self._clear_cache(attr)
         return attr
 
     def removedirs(
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
-    ) -> Optional[dict]:
-        try:
-            attr = self.attr(id_or_path, pid)
-        except FileNotFoundError:
-            return None
+        pid: None | int = None, 
+    ) -> dict:
+        attr = self.attr(id_or_path, pid)
+        id = attr["id"]
         if not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"{attr['path']!r} (id={id!r}) is not a directory", 
+            )
         delid = 0
-        pid = attr["id"]
         pattr = attr
         get_files = self.fs_files
-        while pid:
-            files = get_files(pid, limit=1)
+        while id:
+            files = get_files(id, limit=1)
             if files["count"] > 1:
                 break
-            delid = pid
-            pid = int(files["path"][-1]["pid"])
+            delid = id
+            id = int(files["path"][-1]["pid"])
             pattr = {
                 "id": delid, 
-                "parent_id": pid, 
+                "parent_id": id, 
                 "is_directory": True, 
                 "path": "/" + joins([p["name"] for p in files["path"][1:]]), 
             }
-        if delid == 0:
-            return None
-        self.fs_delete(delid)
-        self._clear_cache(pattr)
+        if delid:
+            self.fs_delete(delid)
+            self._clear_cache(pattr)
         return attr
 
-    # TODO: 支持 dst_path 从 src_path 开始的相对路径
     def rename(
         self, 
         /, 
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         replace: bool = False, 
-    ) -> Optional[dict]:
-        src_patht = self.get_patht(src_path, pid)
-        dst_patht = self.get_patht(dst_path, pid)
-        src_fullpath = joins(src_patht)
-        dst_fullpath = joins(dst_patht)
-        if src_patht == dst_patht:
-            return None
-        elif dst_patht == src_patht[:len(dst_patht)]:
-            raise PermissionError(errno.EPERM, f"rename a path as its ancestor is not allowed: {src_fullpath!r} -> {dst_fullpath!r}")
-        elif src_patht == dst_patht[:len(src_patht)]:
-            raise PermissionError(errno.EPERM, f"rename a path as its descendant is not allowed: {src_fullpath!r} -> {dst_fullpath!r}")
-        *src_dirt, src_name = src_patht
-        *dst_dirt, dst_name = dst_patht
+    ) -> dict:
         src_attr = self.attr(src_path, pid)
         src_id = src_attr["id"]
-        src_id_str = str(src_id)
-        src_ext = splitext(src_name)[1]
-        dst_ext = splitext(dst_name)[1]
-        def get_result(resp):
-            if resp["data"]:
-                new_attr = self._attr(src_id)
-                self._update_cache_path(src_attr, new_attr)
-                return new_attr
-            return None
+        src_path = src_attr["path"]
+        src_patht = self.get_patht(src_path)
         try:
             dst_attr = self.attr(dst_path, pid)
         except FileNotFoundError:
-            if src_dirt == dst_dirt and (src_attr["is_directory"] or src_ext == dst_ext):
-                return get_result(self.fs_rename(src_id, dst_name))
-            destdir_attr = self.attr(dst_dirt)
-            if not destdir_attr["is_directory"]:
-                raise NotADirectoryError(errno.ENOTDIR, f"parent path {joins(dst_dirt)!r} is not directory: {src_fullpath!r} -> {dst_fullpath!r}")
-            dst_pid = destdir_attr["id"]
+            dst_patht = self.get_patht(dst_path, pid)
+            dst_path = joins(dst_patht)
+            if dst_patht == src_patht[:len(dst_patht)]:
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"rename a path to its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
+                )
+            elif src_patht == dst_patht[:len(src_patht)]:
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"rename a path to its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+                )
+            dst_pattr = self.makedirs(dst_patht[:-1], exist_ok=True)
+            dst_pid = dst_pattr["id"]
         else:
+            dst_id = dst_attr["id"]
+            if src_id == dst_id:
+                return dst_attr
             if replace:
                 if src_attr["is_directory"]:
                     if dst_attr["is_directory"]:
                         if self.dirlen(dst_attr["id"]):
-                            raise OSError(errno.ENOTEMPTY, f"source is directory, but destination is non-empty directory: {src_fullpath!r} -> {dst_fullpath!r}")
+                            raise OSError(
+                                errno.ENOTEMPTY, 
+                                f"source is directory, but destination is non-empty directory: {src_path!r} -> {dst_path!r}", 
+                            )
                     else:
-                        raise NotADirectoryError(errno.ENOTDIR, f"source is directory, but destination is not a directory: {src_fullpath!r} -> {dst_fullpath!r}")
+                        raise NotADirectoryError(
+                            errno.ENOTDIR, 
+                            f"source is directory, but destination is not a directory: {src_path!r} -> {dst_path!r}", 
+                        )
                 elif dst_attr["is_directory"]:
-                    raise IsADirectoryError(errno.EISDIR, f"source is file, but destination is directory: {src_fullpath!r} -> {dst_fullpath!r}")
-                self.fs_delete(dst_attr["id"])
+                    raise IsADirectoryError(
+                        errno.EISDIR, 
+                        f"source is file, but destination is directory: {src_path!r} -> {dst_path!r}", 
+                    )
+                self.fs_delete(dst_id)
             else:
-                raise FileExistsError(errno.EEXIST, f"destination already exists: {src_fullpath!r} -> {dst_fullpath!r}")
+                raise FileExistsError(
+                    errno.EEXIST, 
+                    f"destination already exists: {src_path!r} -> {dst_path!r}", 
+                )
             dst_pid = dst_attr["parent_id"]
-        if not (src_attr["is_directory"] or src_ext == dst_ext):
-            name = check_response(self.client.upload_file_init)(
+            dst_path = dst_attr["path"]
+            dst_patht = self.get_patht(dst_path)
+
+        *src_dirt, src_name = src_patht
+        *dst_dirt, dst_name = dst_patht
+        src_ext = splitext(src_name)[1]
+        dst_ext = splitext(dst_name)[1]
+
+        if src_dirt == dst_dirt and (src_attr["is_directory"] or src_ext == dst_ext):
+            self.fs_rename(src_id, dst_name)
+        elif src_name == dst_name:
+            self.fs_move(src_id, dst_pid)
+        elif not src_attr["is_directory"] and src_ext != dst_ext:
+            dst_name = check_response(self.client.upload_file_init)(
                 dst_name, 
                 filesize=src_attr["size"], 
                 file_sha1=src_attr["sha1"], 
@@ -1330,56 +1372,46 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 pid=dst_pid, 
             )["data"]["file_name"]
             self.fs_delete(src_id)
-            new_attr = self._attr_path([name], dst_pid)
-            self._update_cache_path(src_attr, new_attr)
-            return new_attr
-        if src_name == dst_name:
-            self.fs_move(src_id, dst_pid)
-            new_attr = self._attr(src_id)
-            self._update_cache_path(src_attr, new_attr)
-            return new_attr
-        elif src_dirt == dst_dirt:
-            return get_result(self.fs_rename(src_id, dst_name))
+            return self.attr([dst_name], dst_pid)
         else:
             self.fs_rename(src_id, str(uuid4()))
             try:
                 self.fs_move(src_id, dst_pid)
                 try:
-                    return get_result(self.fs_rename(src_id, dst_name))
+                    self.fs_rename(src_id, dst_name)
                 except:
                     self.fs_move(src_id, src_attr["parent_id"])
                     raise
             except:
                 self.fs_rename(src_id, src_name)
                 raise
+        return self.attr(src_id)
 
     def renames(
         self, 
         /, 
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
-    ) -> Optional[dict]:
-        result = self.rename(src_path, dst_path, pid=pid)
-        if result:
-            self.removedirs(result["parent_id"])
-            return result
-        return None
+        pid: None | int = None, 
+    ) -> dict:
+        attr = self.rename(src_path, dst_path, pid=pid)
+        self.removedirs(attr["parent_id"])
+        return attr
 
     def replace(
         self, 
         /, 
         src_path: IDOrPathType, 
         dst_path: IDOrPathType, 
-        pid: Optional[int] = None, 
-    ) -> Optional[dict]:
+        pid: None | int = None, 
+    ) -> dict:
         return self.rename(src_path, dst_path, pid=pid, replace=True)
 
     def rmdir(
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> dict:
         attr = self.attr(id_or_path, pid)
         id = attr["id"]
@@ -1397,7 +1429,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> dict:
         return self.remove(id_or_path, pid, recursive=True)
 
@@ -1405,7 +1437,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         score: None | int = None, 
     ) -> int:
         if score is None:
@@ -1421,7 +1453,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         search_value: str = "", 
         page_size: int = 1_000, 
         offset: int = 0, 
@@ -1466,7 +1498,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         star: None | bool = None, 
     ) -> bool:
         if star is None:
@@ -1482,7 +1514,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> stat_result:
         attr = self.attr(id_or_path, pid)
         is_dir = attr["is_directory"]
@@ -1503,7 +1535,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> dict:
         try:
             return self.attr(id_or_path, pid)
@@ -1513,29 +1545,60 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return self.upload(BytesIO(), id_or_path, pid=pid)
 
     # TODO: 增加功能，返回一个 Task 对象，可以获取上传进度，可随时取消
-    # TODO: 支持一个参数，不计算 sha1 等信息，直接就进行上传（就像网页版那样）
+    # TODO: 参数 file 支持更多类型
     def upload(
         self, 
         /, 
         file: bytes | str | PathLike | SupportsRead[bytes], 
         path: IDOrPathType = "", 
-        pid: Optional[int] = None, 
-        overwrite_or_ignore: Optional[bool] = None, 
+        pid: None | int = None, 
+        overwrite: bool = False, 
+        remove_done: bool = False, 
     ) -> dict:
-        fio: SupportsRead[bytes]
-        dirname: str | Sequence[str] = ""
         name: str = ""
-        if not path or isinstance(path, int):
-            pass
-        elif isinstance(path, (str, PathLike)):
-            dirname, name = ospath.split(path)
+        if not path:
+            pid = self.id if pid is None else self.get_id(pid)
         else:
-            *dirname, name = (p for p in path if p)
-        if hasattr(file, "read"):
-            fio = cast(SupportsRead[bytes], file)
+            attr: Mapping
+            if isinstance(path, int):
+                attr = self.attr(path)
+            elif isinstance(path, (str, PathLike)):
+                dirname, name = ospath.split(path)
+                attr = self.attr(dirname, pid)
+            elif isinstance(path, Sequence):
+                if len(path) == 1 and path[0] == "":
+                    attr = self.attr(0)
+                else:
+                    *dirname_t, name = path
+                    attr = self.attr(dirname_t, pid)
+            else:
+                attr = path
+            pid = attr["id"]
+            if attr["is_directory"]:
+                if name:
+                    try:
+                        attr = self.attr([name], pid)
+                        if attr["is_directory"]:
+                            pid = attr["id"]
+                            name = ""
+                    except FileNotFoundError:
+                        pass
+            if not attr["is_directory"]:
+                if name:
+                    raise NotADirectoryError(errno.ENOTDIR, f"parent path {attr['path']!r} is not directory")
+                elif overwrite:
+                    self.remove(attr)
+                    name = attr["name"]
+                    pid = attr["parent_id"]
+                else:
+                    raise FileExistsError(errno.EEXIST, f"remote path {attr['path']!r} already exists")
+
+        fio: SupportsRead[bytes]
+        if isinstance(file, SupportsRead):
+            fio = file
             if not name:
                 try:
-                    name = ospath.basename(file.name) # type: ignore
+                    name = ospath.basename(getattr(file, "name"))
                 except:
                     pass
         elif isinstance(file, (str, PathLike)):
@@ -1545,77 +1608,158 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 name = ospath.basename(file)
         else:
             fio = BytesIO(file)
-        if pid is None:
-            pid = self.id
-        if dirname:
-            pid = cast(int, self.makedirs(dirname, pid=pid, exist_ok=True)["id"])
-        if name:
-            try:
-                attr = self._attr_path([name], pid)
-            except FileNotFoundError:
-                pass
-            else:
-                if overwrite_or_ignore is None:
-                    raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
-                elif attr["is_directory"]:
-                    raise IsADirectoryError(errno.EISDIR, f"{path!r} (in {pid!r}) is a directory")
-                elif not overwrite_or_ignore:
-                    return attr
-                self.fs_delete(attr["id"])
-        return self._upload(fio, name, pid)
 
-    # TODO: 为了提升速度，之后会支持多线程上传，以及直接上传不做检查
+        resp = self._upload(fio, name, pid)
+        if remove_done and isinstance(file, (str, PathLike)):
+            try:
+                remove(file)
+            except OSError:
+                pass
+        return resp
+
+    # TODO: 上传和下载都要支持多线程
     # TODO: 返回上传任务的迭代器，包含进度相关信息，以及最终的响应信息
-    # TODO: 增加参数，onerror, predicate, submit 等
+    # TODO: 增加参数，submit，可以把任务提交给线程池
     def upload_tree(
         self, 
         /, 
         local_path: str | PathLike[str] = ".", 
         path: IDOrPathType = "", 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         no_root: bool = False, 
-        overwrite_or_ignore: Optional[bool] = None, 
+        overwrite: bool = False, 
+        remove_done: bool = False, 
+        predicate: None | Callable[[Path], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
     ) -> Iterator[dict]:
+        remote_path_attr_map: None | dict[str, dict] = None
         try:
             attr = self.attr(path, pid)
         except FileNotFoundError:
             if isinstance(path, int):
                 raise ValueError(f"no such id: {path!r}")
-            attr = self.makedirs(path, pid, exist_ok=True)
+            attr = self.makedirs(path, pid=pid, exist_ok=True)
+            remote_path_attr_map = {}
         else:
             if not attr["is_directory"]:
-                raise NotADirectoryError(errno.ENOTDIR, f"{attr['path']!r} (id={attr['id']!r}) is not a directory")
-        pid = attr["id"]
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
+                )
+        pid = cast(int, attr["id"])
+
+        local_path = ospath.normpath(local_path)
         try:
-            it = scandir(local_path or ".")
-        except NotADirectoryError:
-            yield self.upload(
-                local_path, 
-                [ospath.basename(local_path)], 
-                pid=pid, 
-                overwrite_or_ignore=overwrite_or_ignore, 
-            )
-        else:
+            try:
+                if predicate is None:
+                    subpaths = tuple(scandir(local_path))
+                else:
+                    subpaths = tuple(filter(lambda e: predicate(Path(e)), scandir(local_path)))
+                if not subpaths:
+                    return
+            except NotADirectoryError:
+                try:
+                    yield self.upload(
+                        local_path, 
+                        [ospath.basename(local_path)], 
+                        pid=pid, 
+                        overwrite=overwrite, 
+                        remove_done=remove_done, 
+                    )
+                except OSError as e:
+                    if onerror is True:
+                        raise e
+                    elif onerror is False:
+                        pass
+                    else:
+                        onerror(e)
+                    return
             if not no_root:
-                attr = self.makedirs(ospath.basename(local_path), pid, exist_ok=True)
-                pid = attr["parent_id"]
-            for entry in it:
-                if entry.is_dir():
+                attr = self.makedirs(
+                    [ospath.basename(local_path)], 
+                    pid=pid, 
+                    exist_ok=True, 
+                )
+                pid = attr["id"]
+                remote_path_attr_map = {}
+            elif remote_path_attr_map is None:
+                remote_path_attr_map = {a["name"]: a for a in self.iterdir(pid)}
+        except OSError as e:
+            if onerror is True:
+                raise e
+            elif onerror is False:
+                pass
+            else:
+                onerror(e)
+            return
+
+        for entry in subpaths:
+            name = entry.name
+            isdir = entry.is_dir()
+            remote_path_attr = remote_path_attr_map.get(name)
+            if remote_path_attr and isdir != remote_path_attr["is_directory"]:
+                if onerror is True:
+                    raise FileExistsError(
+                        errno.EEXIST, 
+                        f"remote path {remote_path_attr['path']!r} already exists", 
+                    )
+                elif onerror is False:
+                    pass
+                else:
+                    onerror(FileExistsError(
+                        errno.EEXIST, 
+                        f"remote path {remote_path_attr['path']!r} already exists"), 
+                    )
+                return
+            if isdir:
+                if remote_path_attr is None:
                     yield from self.upload_tree(
-                        entry.path, 
-                        entry.name, 
+                        entry, 
+                        [name], 
                         pid=pid, 
                         no_root=True, 
-                        overwrite_or_ignore=overwrite_or_ignore, 
+                        overwrite=overwrite, 
+                        remove_done=remove_done, 
+                        onerror=onerror, 
                     )
                 else:
-                    yield self.upload(
-                        entry.path, 
-                        entry.name, 
-                        pid=pid, 
-                        overwrite_or_ignore=overwrite_or_ignore, 
+                    yield from self.upload_tree(
+                        entry, 
+                        remote_path_attr, 
+                        no_root=True, 
+                        overwrite=overwrite, 
+                        remove_done=remove_done, 
+                        onerror=onerror, 
                     )
-            return attr
+                if remove_done:
+                    try:
+                        rmdir(entry)
+                    except OSError:
+                        pass
+            else:
+                try:
+                    if remote_path_attr is None:
+                        yield self.upload(
+                            entry, 
+                            [name], 
+                            pid=pid, 
+                            overwrite=overwrite, 
+                            remove_done=remove_done, 
+                        )
+                    else:
+                        yield self.upload(
+                            entry, 
+                            remote_path_attr, 
+                            overwrite=overwrite, 
+                            remove_done=remove_done, 
+                        )
+                except OSError as e:
+                    if onerror is True:
+                        raise e
+                    elif onerror is False:
+                        pass
+                    else:
+                        onerror(e)
 
     unlink = remove
 
@@ -1624,18 +1768,16 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         data: bytes | bytearray | memoryview | SupportsRead[bytes] = b"", 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> dict:
-        if isinstance(data, (bytes, bytearray, memoryview)):
-            data = BytesIO(data)
-        return self.upload(data, id_or_path, pid=pid, overwrite_or_ignore=True)
+        return self.upload(data, id_or_path, pid=pid, overwrite=True)
 
     def write_text(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         text: str = "", 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         encoding: Optional[str] = None, 
         errors: Optional[str] = None, 
         newline: Optional[str] = None, 
@@ -1648,7 +1790,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             tio.write(text)
             tio.flush()
             bio.seek(0)
-        return self.write_bytes(id_or_path, bio, pid=pid)
+        return self.write_bytes(id_or_path, data=bio, pid=pid)
 
     cp = copy
     mv = move

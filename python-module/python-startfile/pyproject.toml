@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-startfile"
-version = "0.0.1.1"
+version = "0.0.2"
 description = "Python startfile."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -22,9 +22,13 @@ include = [
     "LICENSE",
 ]
 
+[tool.poetry.scripts]
+python-startfile = "startfile.__main__:main"
+startfile = "startfile.__main__:main"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "startfile.py"
+include = "startfile"

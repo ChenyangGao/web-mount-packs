@@ -19,7 +19,7 @@ pip install -U python-startfile
 ### Commad
 
 ```console
-$ python -m startfile -h
+$ startfile -h
 usage: startfile.py [-h] [-v] [path ...]
 
 Start file(s) with its/their associated application.

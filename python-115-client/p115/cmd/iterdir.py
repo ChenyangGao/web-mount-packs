@@ -22,7 +22,7 @@ else:
 
 
 def main(args):
-    from p115 import P115FileSystem, __version__
+    from p115 import P115FileSystem, P115Path, __version__
 
     if args.version:
         print(".".join(map(str, __version__)))
@@ -148,9 +148,9 @@ def main(args):
                 write(b"\n")
         return
 
-    def get_key(path, key):
+    def get_key(path: P115Path, key: str):
         if key == "description":
-            return path.description
+            return path.desc
         elif key == "relpath":
             return path["path"][top_start:]
         else:

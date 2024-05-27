@@ -71,7 +71,7 @@ ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
 
-request = partial(httpx_request, parse=lambda _, content: loads(content))
+request = partial(httpx_request, parse=lambda _, content: loads(content), timeout=60)
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -241,7 +241,7 @@ class P115Client:
         """同步请求的 session
         """
         ns = self.__dict__
-        session = Client()
+        session = Client(verify=False)
         session._headers = ns["headers"]
         session._cookies = ns["cookies"]
         return session
@@ -251,7 +251,7 @@ class P115Client:
         """异步请求的 session
         """
         ns = self.__dict__
-        session = AsyncClient()
+        session = AsyncClient(verify=False)
         session._headers = ns["headers"]
         session._cookies = ns["cookies"]
         return session
