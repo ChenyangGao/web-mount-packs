@@ -8,7 +8,10 @@ __doc__ = "扫码获取 115 cookies"
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
+    from pathlib import Path
+    from sys import path
 
+    path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
     from argparse import RawTextHelpFormatter

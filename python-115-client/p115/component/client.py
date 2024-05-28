@@ -1277,6 +1277,70 @@ class P115Client:
         request_kwargs.pop("parse", None)
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def user_points_sign(
+        self, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_points_sign(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_points_sign(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取签到信息
+        GET https://proapi.115.com/android/2.0/user/points_sign
+        """
+        api = "https://proapi.115.com/android/2.0/user/points_sign"
+        request_kwargs.pop("parse", None)
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_points_sign_post(
+        self, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_points_sign_post(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_points_sign_post(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """进行自动签到
+        POST https://proapi.115.com/android/2.0/user/points_sign
+        """
+        api = "https://proapi.115.com/android/2.0/user/points_sign"
+        t = int(time())
+        text = str(self.user_id)+"-Points_Sign@#115-"+str(t)
+        request_kwargs["data"] = {
+            "token": sha1(text.encode()).hexdigest(), 
+            "token_time": t, 
+        }
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", async_=async_, **request_kwargs)
+
     ########## App API ##########
 
     @overload

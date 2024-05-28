@@ -378,7 +378,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 raise OSError(errno.EIO, result)
 
     def fs_files(self, /, payload: dict) -> AttrDict:
-        id = int(payload["id"])
+        id = int(payload["cid"])
         resp = check_response(self.client.fs_files(payload))
         if int(resp["path"][-1]["cid"]) != id:
             raise NotADirectoryError(errno.ENOTDIR, f"{id!r} is not a directory")

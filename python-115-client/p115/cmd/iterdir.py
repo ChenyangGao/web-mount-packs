@@ -13,7 +13,10 @@ KEYS = (
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
+    from pathlib import Path
+    from sys import path
 
+    path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
     from argparse import RawTextHelpFormatter
@@ -23,7 +26,7 @@ else:
 
 
 def main(args):
-    from p115 import P115FileSystem, P115Path, __version__
+    from p115 import P115Client, P115Path, __version__
 
     if args.version:
         print(".".join(map(str, __version__)))
@@ -43,9 +46,11 @@ def main(args):
             except FileNotFoundError:
                 pass
 
-    fs = P115FileSystem.login(cookies)
-    if fs.client.cookies != cookies:
-        open("115-cookies.txt", "w").write(fs.client.cookies)
+    client = P115Client(cookies)
+    if client.cookies != cookies:
+        open("115-cookies.txt", "w").write(client.cookies)
+
+    fs = client.fs
 
     if args.password and not fs.hidden_mode:
         fs.hidden_switch(True, password=args.password)

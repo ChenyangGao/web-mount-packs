@@ -7,3 +7,4 @@ from .init import parser, subparsers
 
 from .iterdir import *
 from .qrcode import *
+from .check import *
