@@ -1328,14 +1328,13 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
-        """进行自动签到
+        """每日签到
         POST https://proapi.115.com/android/2.0/user/points_sign
         """
         api = "https://proapi.115.com/android/2.0/user/points_sign"
         t = int(time())
-        text = str(self.user_id)+"-Points_Sign@#115-"+str(t)
         request_kwargs["data"] = {
-            "token": sha1(text.encode()).hexdigest(), 
+            "token": sha1(b"%d-Points_Sign@#115-%d" % (self.user_id, t)).hexdigest(), 
             "token_time": t, 
         }
         request_kwargs.pop("parse", None)
