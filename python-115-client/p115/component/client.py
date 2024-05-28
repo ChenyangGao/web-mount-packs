@@ -1328,7 +1328,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
-        """每日签到
+        """每日签到（注意：不要用 web，即浏览器，的 cookies，会失败）
         POST https://proapi.115.com/android/2.0/user/points_sign
         """
         api = "https://proapi.115.com/android/2.0/user/points_sign"

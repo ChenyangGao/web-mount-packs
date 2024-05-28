@@ -137,7 +137,7 @@ class P115Path(P115PathBase):
         dst_path: IDOrPathType, 
         pid: None | int = None, 
         overwrite: bool = False, 
-        onerror: bool | Callable[[OSError], bool] = True, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
     ) -> None | Self:
         attr = self.fs.copy(
             self, 
@@ -783,7 +783,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 count = resp["count"]
                 for attr in resp["data"]:
                     yield normalize_attr(attr, dirname, fs=self)
-                for offset in range(page_size, count, 1 << 10):
+                for offset in range(page_size, count, page_size):
                     payload["offset"] = offset
                     resp = get_files(payload)
                     if resp["count"] != count:
@@ -807,7 +807,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         dst_path: IDOrPathType, 
         pid: None | int = None, 
         overwrite: bool = False, 
-        onerror: bool | Callable[[OSError], bool] = True, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
     ) -> None | AttrDict:
         "复制文件"
@@ -897,7 +897,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         except OSError as e:
             if onerror is True:
                 raise
-            elif onerror is False:
+            elif onerror is False or onerror is None:
                 pass
             else:
                 onerror(e)
@@ -912,7 +912,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         dst_path: IDOrPathType = "", 
         pid: None | int = None, 
         overwrite: bool = False, 
-        onerror: bool | Callable[[OSError], bool] = True, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
     ) -> None | AttrDict:
         "复制路径"
         try:
@@ -972,7 +972,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         except OSError as e:
             if onerror is True:
                 raise
-            elif onerror is False:
+            elif onerror is False or onerror is None:
                 pass
             else:
                 onerror(e)
@@ -1300,7 +1300,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         )
 
     # TODO: 由于 115 网盘不支持删除里面有超过 5 万个文件等目录，因此执行失败时需要拆分任务
-    # TODO: 就算删除和还原执行返回成功，后台可能依然在执行，需要等待前一批完成再执行下一批
+    # TODO: 就算删除和还原执行返回成功，后台可能依然在执行，需要等待几秒钟，前一批完成再执行下一批
+    #       {'state': False, 'error': '删除[...]操作尚未执行完成，请稍后再试！', 'errno': 990009, 'errtype': 'war'}
     def remove(
         self, 
         id_or_path: IDOrPathType, 
@@ -1725,7 +1726,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         overwrite: bool = False, 
         remove_done: bool = False, 
         predicate: None | Callable[[Path], bool] = None, 
-        onerror: bool | Callable[[OSError], bool] = True, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
     ) -> Iterator[AttrDict]:
         "上传到路径"
         remote_path_attr_map: None | dict[str, dict] = None
@@ -1765,7 +1766,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 except OSError as e:
                     if onerror is True:
                         raise e
-                    elif onerror is False:
+                    elif onerror is False or onerror is None:
                         pass
                     else:
                         onerror(e)
@@ -1783,7 +1784,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         except OSError as e:
             if onerror is True:
                 raise e
-            elif onerror is False:
+            elif onerror is False or onerror is None:
                 pass
             else:
                 onerror(e)
@@ -1799,7 +1800,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         errno.EEXIST, 
                         f"remote path {remote_path_attr['path']!r} already exists", 
                     )
-                elif onerror is False:
+                elif onerror is False or onerror is None:
                     pass
                 else:
                     onerror(FileExistsError(
@@ -1852,7 +1853,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 except OSError as e:
                     if onerror is True:
                         raise e
-                    elif onerror is False:
+                    elif onerror is False or onerror is None:
                         pass
                     else:
                         onerror(e)

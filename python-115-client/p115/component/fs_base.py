@@ -468,7 +468,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         return self.fs.walk(
@@ -486,7 +486,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         return self.fs.walk_attr(
@@ -504,7 +504,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[Self], list[Self]]]:
         return self.fs.walk_path(
@@ -1358,7 +1358,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: Optional[int] = None, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         dq: deque[tuple[int, AttrDict]] = deque()
@@ -1398,7 +1398,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         if not max_depth:
@@ -1442,7 +1442,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         for path, dirs, files in self.walk_attr(
@@ -1464,7 +1464,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         if topdown is None:
@@ -1495,7 +1495,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: Optional[bool] = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable = None, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[P115PathType], list[P115PathType]]]:
         path_class = type(self).path_class
