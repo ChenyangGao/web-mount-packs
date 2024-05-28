@@ -325,6 +325,11 @@ class CloudDriveFileSrvStub(object):
                 request_serializer=CloudDrive__pb2.LoginXunleiOAuthRequest.SerializeToString,
                 response_deserializer=CloudDrive__pb2.APILoginResult.FromString,
                 )
+        self.ApiLogin123panOAuth = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/ApiLogin123panOAuth',
+                request_serializer=CloudDrive__pb2.Login123panOAuthRequest.SerializeToString,
+                response_deserializer=CloudDrive__pb2.APILoginResult.FromString,
+                )
         self.APILogin189QRCode = channel.unary_stream(
                 '/clouddrive.CloudDriveFileSrv/APILogin189QRCode',
                 request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
@@ -409,6 +414,11 @@ class CloudDriveFileSrvStub(object):
                 '/clouddrive.CloudDriveFileSrv/PushTaskChange',
                 request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
                 response_deserializer=CloudDrive__pb2.GetAllTasksCountResult.FromString,
+                )
+        self.PushMessage = channel.unary_stream(
+                '/clouddrive.CloudDriveFileSrv/PushMessage',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=CloudDrive__pb2.CloudDrivePushMessage.FromString,
                 )
         self.GetCloudDrive1UserData = channel.unary_unary(
                 '/clouddrive.CloudDriveFileSrv/GetCloudDrive1UserData',
@@ -594,6 +604,21 @@ class CloudDriveFileSrvStub(object):
                 '/clouddrive.CloudDriveFileSrv/CanAddMoreBackups',
                 request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
                 response_deserializer=CloudDrive__pb2.FileOperationResult.FromString,
+                )
+        self.GetMachineId = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/GetMachineId',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=CloudDrive__pb2.StringResult.FromString,
+                )
+        self.GetOnlineDevices = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/GetOnlineDevices',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=CloudDrive__pb2.OnlineDevices.FromString,
+                )
+        self.KickoutDevice = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/KickoutDevice',
+                request_serializer=CloudDrive__pb2.DeviceRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 )
 
 
@@ -1040,6 +1065,13 @@ class CloudDriveFileSrvServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ApiLogin123panOAuth(self, request, context):
+        """add 123 cloud with client id and client secret
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def APILogin189QRCode(self, request, context):
         """add 189 cloud with qr scanning
         """
@@ -1153,8 +1185,16 @@ class CloudDriveFileSrvServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def PushTaskChange(self, request, context):
-        """push upload/download task count changes to client, also can be used for
+        """[deprecated] use PushMessage instead
+        push upload/download task count changes to client, also can be used for
         client to detect conenction broken
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PushMessage(self, request, context):
+        """general message notification
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1406,13 +1446,36 @@ class CloudDriveFileSrvServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def BackupRestartWalkingThrough(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """restart a backup walking through
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def CanAddMoreBackups(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """check if current plan can support more backups
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetMachineId(self, request, context):
+        """get machine id
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetOnlineDevices(self, request, context):
+        """get online devices
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def KickoutDevice(self, request, context):
+        """kickout a device
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -1730,6 +1793,11 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
                     request_deserializer=CloudDrive__pb2.LoginXunleiOAuthRequest.FromString,
                     response_serializer=CloudDrive__pb2.APILoginResult.SerializeToString,
             ),
+            'ApiLogin123panOAuth': grpc.unary_unary_rpc_method_handler(
+                    servicer.ApiLogin123panOAuth,
+                    request_deserializer=CloudDrive__pb2.Login123panOAuthRequest.FromString,
+                    response_serializer=CloudDrive__pb2.APILoginResult.SerializeToString,
+            ),
             'APILogin189QRCode': grpc.unary_stream_rpc_method_handler(
                     servicer.APILogin189QRCode,
                     request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
@@ -1814,6 +1882,11 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
                     servicer.PushTaskChange,
                     request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                     response_serializer=CloudDrive__pb2.GetAllTasksCountResult.SerializeToString,
+            ),
+            'PushMessage': grpc.unary_stream_rpc_method_handler(
+                    servicer.PushMessage,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=CloudDrive__pb2.CloudDrivePushMessage.SerializeToString,
             ),
             'GetCloudDrive1UserData': grpc.unary_unary_rpc_method_handler(
                     servicer.GetCloudDrive1UserData,
@@ -1999,6 +2072,21 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
                     servicer.CanAddMoreBackups,
                     request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                     response_serializer=CloudDrive__pb2.FileOperationResult.SerializeToString,
+            ),
+            'GetMachineId': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetMachineId,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=CloudDrive__pb2.StringResult.SerializeToString,
+            ),
+            'GetOnlineDevices': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetOnlineDevices,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=CloudDrive__pb2.OnlineDevices.SerializeToString,
+            ),
+            'KickoutDevice': grpc.unary_unary_rpc_method_handler(
+                    servicer.KickoutDevice,
+                    request_deserializer=CloudDrive__pb2.DeviceRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -3065,6 +3153,23 @@ class CloudDriveFileSrv(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
+    def ApiLogin123panOAuth(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/ApiLogin123panOAuth',
+            CloudDrive__pb2.Login123panOAuthRequest.SerializeToString,
+            CloudDrive__pb2.APILoginResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
     def APILogin189QRCode(request,
             target,
             options=(),
@@ -3350,6 +3455,23 @@ class CloudDriveFileSrv(object):
         return grpc.experimental.unary_stream(request, target, '/clouddrive.CloudDriveFileSrv/PushTaskChange',
             google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             CloudDrive__pb2.GetAllTasksCountResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def PushMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(request, target, '/clouddrive.CloudDriveFileSrv/PushMessage',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            CloudDrive__pb2.CloudDrivePushMessage.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -3979,5 +4101,56 @@ class CloudDriveFileSrv(object):
         return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/CanAddMoreBackups',
             google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             CloudDrive__pb2.FileOperationResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetMachineId(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/GetMachineId',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            CloudDrive__pb2.StringResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetOnlineDevices(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/GetOnlineDevices',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            CloudDrive__pb2.OnlineDevices.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def KickoutDevice(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/KickoutDevice',
+            CloudDrive__pb2.DeviceRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

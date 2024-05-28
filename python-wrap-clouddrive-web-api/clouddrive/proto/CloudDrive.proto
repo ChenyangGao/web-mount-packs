@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package clouddrive;
 
-// 0.6.4-beta
+// 0.7.0-beta2
 
 option csharp_namespace = "CloudDriveSrv.Protos";
 
@@ -167,8 +167,9 @@ service CloudDriveFileSrv {
   rpc ApiLoginGoogleDriveRefreshToken(LoginGoogleDriveRefreshTokenRequest)
       returns (APILoginResult) {}
   // add Xunlei Drive with OAuth result
-  rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest)
-    returns (APILoginResult) {}
+  rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest) returns (APILoginResult) {}
+  // add 123 cloud with client id and client secret
+  rpc ApiLogin123panOAuth(Login123panOAuthRequest) returns (APILoginResult) {}
   // add 189 cloud with qr scanning
   rpc APILogin189QRCode(google.protobuf.Empty)
       returns (stream QRCodeScanMessage) {}
@@ -207,10 +208,13 @@ service CloudDriveFileSrv {
   // get temp file table
   rpc GetTempFileTable(google.protobuf.Empty) returns (TempFileTable) {}
 
+  // [deprecated] use PushMessage instead
   // push upload/download task count changes to client, also can be used for
   // client to detect conenction broken
   rpc PushTaskChange(google.protobuf.Empty)
       returns (stream GetAllTasksCountResult) {}
+  // general message notification
+  rpc PushMessage(google.protobuf.Empty) returns (stream CloudDrivePushMessage) {}
   // get CloudDrive1's user data string
   rpc GetCloudDrive1UserData(google.protobuf.Empty) returns (StringResult) {}
   // restart service
@@ -269,14 +273,11 @@ service CloudDriveFileSrv {
   // // list all backups
   rpc BackupGetAll(google.protobuf.Empty) returns (BackupList) {}
   // add a backup
-  rpc BackupAdd(Backup)
-      returns (google.protobuf.Empty) {}
+  rpc BackupAdd(Backup) returns (google.protobuf.Empty) {}
   // remove a backup by it's source path
-  rpc BackupRemove(StringValue)
-      returns (google.protobuf.Empty) {}
+  rpc BackupRemove(StringValue) returns (google.protobuf.Empty) {}
   // update a backup
-  rpc BackupUpdate(Backup)
-      returns (google.protobuf.Empty) {}
+  rpc BackupUpdate(Backup) returns (google.protobuf.Empty) {}
   // add destinations to a backup
   rpc BackupAddDestination(BackupModifyRequest)
       returns (google.protobuf.Empty) {}
@@ -292,10 +293,17 @@ service CloudDriveFileSrv {
   // deprecated, use BackupUpdate instead
   rpc BackupUpdateStrategies(BackupModifyRequest)
       returns (google.protobuf.Empty) {}
-  rpc BackupRestartWalkingThrough(StringValue)
-      returns (google.protobuf.Empty) {}
-  rpc CanAddMoreBackups(google.protobuf.Empty)
-      returns (FileOperationResult) {}
+  // restart a backup walking through
+  rpc BackupRestartWalkingThrough(StringValue) returns (google.protobuf.Empty) {
+  }
+  // check if current plan can support more backups
+  rpc CanAddMoreBackups(google.protobuf.Empty) returns (FileOperationResult) {}
+  // get machine id
+  rpc GetMachineId(google.protobuf.Empty) returns (StringResult) {}
+  // get online devices
+  rpc GetOnlineDevices(google.protobuf.Empty) returns (OnlineDevices) {}
+  // kickout a device
+  rpc KickoutDevice(DeviceRequest) returns (google.protobuf.Empty) {} // kickout a device with deviceId
 }
 message GetTokenRequest {
   string userName = 1;
@@ -555,6 +563,69 @@ message GetAllTasksCountResult {
   uint32 uploadCount = 2;
   PushMessage pushMessage = 3;
   bool hasUpdate = 4;
+  repeated UploadFileInfo uploadFileStatusChanges = 5; //upload file status changed
+}
+message FileSystemChange {
+  enum ChangeType {
+    CREATE = 0;
+    DELETE = 1;
+    RENAME = 2;
+  }
+  ChangeType changeType = 1;
+  bool isDirectory = 2;
+  string path = 3;
+  //only used for RENAME type
+  string newPath = 4;
+}
+message UpdateStatus {
+  enum UpdatePhase {
+    NO_UPDATE = 0;
+    DOWNLOADING = 1;
+    READY_TO_UPDATE = 2;
+    UPDATING = 3;
+    UPDATE_SUCCESS = 4;
+    UPDATE_FAILED = 5;
+  }
+  UpdatePhase updatePhase = 1;
+  optional string newVersion = 2;
+  optional string message = 3;
+}
+message TransferTaskStatus {
+  uint32 downloadCount = 1;
+  uint32 uploadCount = 2;
+  string clouddriveVersion = 3;
+  repeated UploadFileInfo uploadFileStatusChanges = 4;
+}
+message ExitedMessage {
+  enum ExitReason {
+    UNKNOWN = 0;
+    KICKEDOUT_BY_USER = 1;
+    KICKEDOUT_BY_SERVER = 2;
+    PASSWORD_CHANGED = 3;
+    RESTART = 4;
+    SHUTDOWN = 5;
+  }
+  ExitReason exitReason = 1;
+  string message = 2; 
+}
+message FileSystemChangeList {
+  repeated FileSystemChange fileSystemChanges = 1;
+}
+message CloudDrivePushMessage {
+  enum MessageType {
+    DOWNLOADER_COUNT = 0;
+    UPLOADER_COUNT = 1;
+    UPDATE_STATUS = 2;
+    FORCE_EXIT = 3;
+    FILE_SYSTEM_CHANGE = 4;
+  }
+  MessageType messageType = 1;
+  oneof data {
+    TransferTaskStatus transferTaskStatus = 2;
+    UpdateStatus updateStatus = 3;
+    ExitedMessage exitedMessage = 4;
+    FileSystemChangeList fileSystemChanges = 5;
+  }
 }
 message GetDownloadFileCountResult { uint32 fileCount = 1; }
 message DownloadFileInfo {
@@ -587,6 +658,7 @@ message GetUploadFileListRequest {
 message GetUploadFileListResult {
   uint32 totalCount = 1;
   repeated UploadFileInfo uploadFiles = 2;
+  double globalBytesPerSecond = 3;
 }
 message MultpleUploadFileKeyRequest { repeated string keys = 1; }
 message Login115EditthiscookieRequest { string editThiscookieString = 1; }
@@ -626,6 +698,11 @@ message LoginXunleiOAuthRequest {
   string access_token = 2;
   uint64 expires_in = 3;
 }
+message Login123panOAuthRequest {
+  string refresh_token = 1;
+  string access_token = 2;
+  uint64 expires_in = 3;
+}
 message LoginWebDavRequest {
   string serverUrl = 1;
   string userName = 2;
@@ -641,6 +718,19 @@ message RemoveCloudAPIRequest {
   string userName = 2;
   bool permanentRemove = 3;
 }
+enum ProxyType {
+  SYSTEM = 0;
+  NOPROXY = 1;
+  HTTP = 2;
+  SOCKS5 = 3;
+}
+message ProxyInfo {
+  ProxyType proxyType = 1;
+  string host = 2;
+  uint32 port = 3;
+  optional string username = 4;
+  optional string password = 5;
+}
 message GetCloudAPIConfigRequest {
   string cloudName = 1;
   string userName = 2;
@@ -654,6 +744,9 @@ message CloudAPIConfig {
   uint64 maxBufferPoolSizeMB = 5;
   double maxQueriesPerSecond = 6;
   bool forceIpv4 = 7;
+  optional ProxyInfo apiProxy = 8;
+  optional ProxyInfo dataProxy = 9;
+  optional string customUserAgent = 10;
 }
 message SetCloudAPIConfigRequest {
   string cloudName = 1;
@@ -694,6 +787,9 @@ message SystemSettings {
   optional StringList processBlackList = 8;
   optional StringList uploadIgnoredExtensions = 9;
   optional UpdateChannel updateChannel = 10;
+  optional double maxDownloadSpeedKBytesPerSecond = 11;
+  optional double maxUploadSpeedKBytesPerSecond = 12;
+  optional string deviceName = 13;
 }
 message SetDirCacheTimeRequest {
   string path = 1;
@@ -891,14 +987,14 @@ message BackupDestination {
   optional google.protobuf.Timestamp lastFinishTime = 3;
 }
 message DaysOfWeek {
-  repeated uint32 daysOfWeek = 1; //Mon: 1, Tue: 2, ..., Sun: 0
+  repeated uint32 daysOfWeek = 1; // Mon: 1, Tue: 2, ..., Sun: 0
 }
 message TimeSchedule {
   bool isEnabled = 1;
   uint32 hour = 2;
   uint32 minute = 3;
   uint32 second = 4;
-  optional DaysOfWeek daysOfWeek = 5; //none means every day
+  optional DaysOfWeek daysOfWeek = 5; // none means every day
 }
 message Backup {
   string sourcePath = 1;
@@ -945,4 +1041,18 @@ message BackupModifyRequest {
 message BackupSetEnabledRequest {
   string sourcePath = 1;
   bool isEnabled = 2;
+}
+message Device {
+  string deviceId = 1;
+  string deviceName = 2;
+  string osType = 3;
+  string version = 4;
+  string ipAddress = 5;
+  google.protobuf.Timestamp lastUpdateTime = 6;
+}
+message OnlineDevices {
+  repeated Device devices = 1;
+}
+message DeviceRequest {
+  string deviceId = 1;
 }

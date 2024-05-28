@@ -1226,8 +1226,17 @@ class Client:
           uint32 uploadCount = 2;
           PushMessage pushMessage = 3;
           bool hasUpdate = 4;
+          repeated UploadFileInfo uploadFileStatusChanges = 5; //upload file status changed
         }
         message PushMessage { string clouddriveVersion = 1; }
+        message UploadFileInfo {
+          string key = 1;
+          string destPath = 2;
+          uint64 size = 3;
+          uint64 transferedBytes = 4;
+          string status = 5;
+          string errorMessage = 6;
+        }
         """
         return (self.async_stub if async_ else self.stub).GetAllTasksCount(Empty(), metadata=self.metadata)
 
@@ -1313,6 +1322,7 @@ class Client:
         message GetUploadFileListResult {
           uint32 totalCount = 1;
           repeated UploadFileInfo uploadFiles = 2;
+          double globalBytesPerSecond = 3;
         }
         message UploadFileInfo {
           string key = 1;
@@ -1653,8 +1663,7 @@ class Client:
         ------------------- protobuf rpc definition --------------------
 
         // add Xunlei Drive with OAuth result
-        rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest)
-          returns (APILoginResult) {}
+        rpc ApiLoginXunleiOAuth(LoginXunleiOAuthRequest) returns (APILoginResult) {}
 
         ------------------- protobuf type definition -------------------
 
@@ -1669,6 +1678,29 @@ class Client:
         }
         """
         return (self.async_stub if async_ else self.stub).ApiLoginXunleiOAuth(arg, metadata=self.metadata)
+
+    def ApiLogin123panOAuth(self, arg: CloudDrive_pb2.Login123panOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+        """
+        add 123 cloud with client id and client secret
+
+        ------------------- protobuf rpc definition --------------------
+
+        // add 123 cloud with client id and client secret
+        rpc ApiLogin123panOAuth(Login123panOAuthRequest) returns (APILoginResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message APILoginResult {
+          bool success = 1;
+          string errorMessage = 2;
+        }
+        message Login123panOAuthRequest {
+          string refresh_token = 1;
+          string access_token = 2;
+          uint64 expires_in = 3;
+        }
+        """
+        return (self.async_stub if async_ else self.stub).ApiLogin123panOAuth(arg, metadata=self.metadata)
 
     def APILogin189QRCode(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
         """
@@ -1826,10 +1858,20 @@ class Client:
           uint64 maxBufferPoolSizeMB = 5;
           double maxQueriesPerSecond = 6;
           bool forceIpv4 = 7;
+          optional ProxyInfo apiProxy = 8;
+          optional ProxyInfo dataProxy = 9;
+          optional string customUserAgent = 10;
         }
         message GetCloudAPIConfigRequest {
           string cloudName = 1;
           string userName = 2;
+        }
+        message ProxyInfo {
+          ProxyType proxyType = 1;
+          string host = 2;
+          uint32 port = 3;
+          optional string username = 4;
+          optional string password = 5;
         }
         """
         return (self.async_stub if async_ else self.stub).GetCloudAPIConfig(arg, metadata=self.metadata)
@@ -1854,6 +1896,9 @@ class Client:
           uint64 maxBufferPoolSizeMB = 5;
           double maxQueriesPerSecond = 6;
           bool forceIpv4 = 7;
+          optional ProxyInfo apiProxy = 8;
+          optional ProxyInfo dataProxy = 9;
+          optional string customUserAgent = 10;
         }
         message SetCloudAPIConfigRequest {
           string cloudName = 1;
@@ -1889,6 +1934,9 @@ class Client:
           optional StringList processBlackList = 8;
           optional StringList uploadIgnoredExtensions = 9;
           optional UpdateChannel updateChannel = 10;
+          optional double maxDownloadSpeedKBytesPerSecond = 11;
+          optional double maxUploadSpeedKBytesPerSecond = 12;
+          optional string deviceName = 13;
         }
         enum UpdateChannel {
           Release = 0;
@@ -1923,6 +1971,9 @@ class Client:
           optional StringList processBlackList = 8;
           optional StringList uploadIgnoredExtensions = 9;
           optional UpdateChannel updateChannel = 10;
+          optional double maxDownloadSpeedKBytesPerSecond = 11;
+          optional double maxUploadSpeedKBytesPerSecond = 12;
+          optional string deviceName = 13;
         }
         enum UpdateChannel {
           Release = 0;
@@ -2038,11 +2089,13 @@ class Client:
 
     def PushTaskChange(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.GetAllTasksCountResult]:
         """
+        [deprecated] use PushMessage instead
         push upload/download task count changes to client, also can be used for
         client to detect conenction broken
 
         ------------------- protobuf rpc definition --------------------
 
+        // [deprecated] use PushMessage instead
         // push upload/download task count changes to client, also can be used for
         // client to detect conenction broken
         rpc PushTaskChange(google.protobuf.Empty)
@@ -2055,10 +2108,77 @@ class Client:
           uint32 uploadCount = 2;
           PushMessage pushMessage = 3;
           bool hasUpdate = 4;
+          repeated UploadFileInfo uploadFileStatusChanges = 5; //upload file status changed
         }
         message PushMessage { string clouddriveVersion = 1; }
+        message UploadFileInfo {
+          string key = 1;
+          string destPath = 2;
+          uint64 size = 3;
+          uint64 transferedBytes = 4;
+          string status = 5;
+          string errorMessage = 6;
+        }
         """
         return (self.async_stub if async_ else self.stub).PushTaskChange(Empty(), metadata=self.metadata)
+
+    def PushMessage(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.CloudDrivePushMessage]:
+        """
+        general message notification
+
+        ------------------- protobuf rpc definition --------------------
+
+        // general message notification
+        rpc PushMessage(google.protobuf.Empty) returns (stream CloudDrivePushMessage) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message CloudDrivePushMessage {
+          enum MessageType {
+            DOWNLOADER_COUNT = 0;
+            UPLOADER_COUNT = 1;
+            UPDATE_STATUS = 2;
+            FORCE_EXIT = 3;
+            FILE_SYSTEM_CHANGE = 4;
+          }
+          MessageType messageType = 1;
+          oneof data {
+            TransferTaskStatus transferTaskStatus = 2;
+            UpdateStatus updateStatus = 3;
+            ExitedMessage exitedMessage = 4;
+            FileSystemChangeList fileSystemChanges = 5;
+          }
+        }
+        message ExitedMessage {
+          enum ExitReason {
+            UNKNOWN = 0;
+            KICKEDOUT_BY_USER = 1;
+            KICKEDOUT_BY_SERVER = 2;
+            PASSWORD_CHANGED = 3;
+            RESTART = 4;
+            SHUTDOWN = 5;
+          }
+          ExitReason exitReason = 1;
+          string message = 2; 
+        }
+        message FileSystemChangeList {
+          repeated FileSystemChange fileSystemChanges = 1;
+        }
+        message UpdateStatus {
+          enum UpdatePhase {
+            NO_UPDATE = 0;
+            DOWNLOADING = 1;
+            READY_TO_UPDATE = 2;
+            UPDATING = 3;
+            UPDATE_SUCCESS = 4;
+            UPDATE_FAILED = 5;
+          }
+          UpdatePhase updatePhase = 1;
+          optional string newVersion = 2;
+          optional string message = 3;
+        }
+        """
+        return (self.async_stub if async_ else self.stub).PushMessage(Empty(), metadata=self.metadata)
 
     def GetCloudDrive1UserData(self, /, async_: bool = False) -> CloudDrive_pb2.StringResult:
         """
@@ -2603,8 +2723,7 @@ class Client:
         ------------------- protobuf rpc definition --------------------
 
         // add a backup
-        rpc BackupAdd(Backup)
-            returns (google.protobuf.Empty) {}
+        rpc BackupAdd(Backup) returns (google.protobuf.Empty) {}
 
         ------------------- protobuf type definition -------------------
 
@@ -2653,7 +2772,7 @@ class Client:
           uint32 hour = 2;
           uint32 minute = 3;
           uint32 second = 4;
-          optional DaysOfWeek daysOfWeek = 5; //none means every day
+          optional DaysOfWeek daysOfWeek = 5; // none means every day
         }
         """
         return (self.async_stub if async_ else self.stub).BackupAdd(arg, metadata=self.metadata)
@@ -2665,8 +2784,7 @@ class Client:
         ------------------- protobuf rpc definition --------------------
 
         // remove a backup by it's source path
-        rpc BackupRemove(StringValue)
-            returns (google.protobuf.Empty) {}
+        rpc BackupRemove(StringValue) returns (google.protobuf.Empty) {}
 
         ------------------- protobuf type definition -------------------
 
@@ -2681,8 +2799,7 @@ class Client:
         ------------------- protobuf rpc definition --------------------
 
         // update a backup
-        rpc BackupUpdate(Backup)
-            returns (google.protobuf.Empty) {}
+        rpc BackupUpdate(Backup) returns (google.protobuf.Empty) {}
 
         ------------------- protobuf type definition -------------------
 
@@ -2731,7 +2848,7 @@ class Client:
           uint32 hour = 2;
           uint32 minute = 3;
           uint32 second = 4;
-          optional DaysOfWeek daysOfWeek = 5; //none means every day
+          optional DaysOfWeek daysOfWeek = 5; // none means every day
         }
         """
         return (self.async_stub if async_ else self.stub).BackupUpdate(arg, metadata=self.metadata)
@@ -2961,11 +3078,13 @@ class Client:
 
     def BackupRestartWalkingThrough(self, arg: CloudDrive_pb2.StringValue, /, async_: bool = False) -> None:
         """
+        restart a backup walking through
 
         ------------------- protobuf rpc definition --------------------
 
-        rpc BackupRestartWalkingThrough(StringValue)
-            returns (google.protobuf.Empty) {}
+        // restart a backup walking through
+        rpc BackupRestartWalkingThrough(StringValue) returns (google.protobuf.Empty) {
+        }
 
         ------------------- protobuf type definition -------------------
 
@@ -2975,11 +3094,12 @@ class Client:
 
     def CanAddMoreBackups(self, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
         """
+        check if current plan can support more backups
 
         ------------------- protobuf rpc definition --------------------
 
-        rpc CanAddMoreBackups(google.protobuf.Empty)
-            returns (FileOperationResult) {}
+        // check if current plan can support more backups
+        rpc CanAddMoreBackups(google.protobuf.Empty) returns (FileOperationResult) {}
 
         ------------------- protobuf type definition -------------------
 
@@ -2990,4 +3110,61 @@ class Client:
         }
         """
         return (self.async_stub if async_ else self.stub).CanAddMoreBackups(Empty(), metadata=self.metadata)
+
+    def GetMachineId(self, /, async_: bool = False) -> CloudDrive_pb2.StringResult:
+        """
+        get machine id
+
+        ------------------- protobuf rpc definition --------------------
+
+        // get machine id
+        rpc GetMachineId(google.protobuf.Empty) returns (StringResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message StringResult { string result = 1; }
+        """
+        return (self.async_stub if async_ else self.stub).GetMachineId(Empty(), metadata=self.metadata)
+
+    def GetOnlineDevices(self, /, async_: bool = False) -> CloudDrive_pb2.OnlineDevices:
+        """
+        get online devices
+
+        ------------------- protobuf rpc definition --------------------
+
+        // get online devices
+        rpc GetOnlineDevices(google.protobuf.Empty) returns (OnlineDevices) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message Device {
+          string deviceId = 1;
+          string deviceName = 2;
+          string osType = 3;
+          string version = 4;
+          string ipAddress = 5;
+          google.protobuf.Timestamp lastUpdateTime = 6;
+        }
+        message OnlineDevices {
+          repeated Device devices = 1;
+        }
+        """
+        return (self.async_stub if async_ else self.stub).GetOnlineDevices(Empty(), metadata=self.metadata)
+
+    def KickoutDevice(self, arg: CloudDrive_pb2.DeviceRequest, /, async_: bool = False) -> None:
+        """
+        kickout a device
+
+        ------------------- protobuf rpc definition --------------------
+
+        // kickout a device
+        rpc KickoutDevice(DeviceRequest) returns (google.protobuf.Empty) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message DeviceRequest {
+          string deviceId = 1;
+        }
+        """
+        return (self.async_stub if async_ else self.stub).KickoutDevice(arg, metadata=self.metadata)
 

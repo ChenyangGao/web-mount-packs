@@ -4,13 +4,13 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__: list[str] = []
 __doc__ = """\
-    alist 更新 115 cookie
+    alist 更新 115 cookies
 
-你可以先把你的手机抓包得到的 cookie，保存在本地的 ~/115-cookie.txt 中，然后自动进行扫码更新 cookie，自动绑定为微信小程序的 cookie
+你可以先把你的手机抓包得到的 cookies，保存在本地的 ~/115-cookies.txt 中，然后自动进行扫码更新 cookies，自动绑定为微信小程序的 cookies
 
 .. code: console
 
-    /usr/bin/env python3 -m alist 115 --origin 'http://localhost:5244' --user admin --password 123456 --cookie "$(cat ~/115-cookie.txt)" --only-not-work wechatmini
+    /usr/bin/env python3 -m alist 115 --origin 'http://localhost:5244' --user admin --password 123456 --cookies "$(cat ~/115-cookies.txt)" --only-not-work wechatmini
 
 这个命令可以定期运行，比如 1 分钟跑 1 次，在 crontab 里配置
 """
@@ -20,9 +20,10 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
+    from argparse import RawTextHelpFormatter
     from .init import subparsers
 
-    parser = subparsers.add_parser("115", description=__doc__)
+    parser = subparsers.add_parser("115", description=__doc__, formatter_class=RawTextHelpFormatter)
 
 from enum import Enum
 from http.client import HTTPResponse
@@ -31,7 +32,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen, Request
 
 from alist import __version__, AlistClient
-from alist.tool import alist_update_115_cookie
+from alist.tool import alist_update_115_cookies
 
 
 AppEnum = Enum("AppEnum", "web, android, ios, linux, mac, windows, tv, alipaymini, wechatmini, qandroid")
@@ -74,7 +75,7 @@ def get_qrcode_status(payload) -> dict:
 
 
 def post_qrcode_result(uid: str, app: str = "web") -> dict:
-    """获取扫码登录的结果，并且绑定设备，包含 cookie
+    """获取扫码登录的结果，并且绑定设备，包含 cookies
     POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
 
     :param uid: 二维码的 uid，取自 `login_qrcode_token` 接口响应
@@ -91,7 +92,7 @@ def post_qrcode_result(uid: str, app: str = "web") -> dict:
             - 9,  "wechatmini", AppEnum.wechatmini
             - 10, "qandroid",   AppEnum.qandroid
 
-    :return: 包含 cookie 的响应
+    :return: 包含 cookies 的响应
     """
     app = get_enum_name(app, AppEnum)
     payload = {"app": app, "account": uid}
@@ -133,7 +134,7 @@ def login_with_qrcode(
     qrcode = qrcode_token.pop("qrcode")
     if scan_in_console:
         try:
-            from qrcode import QRCode
+            from qrcode import QRCode # type: ignore
         except ModuleNotFoundError:
             from sys import executable
             from subprocess import run
@@ -187,12 +188,12 @@ def login_with_qrcode(
 
 
 def login_with_autoscan(
-    cookie: str, 
+    cookies: str, 
     app: str = "web", 
 ) -> dict:
     """自动扫码登录
     """
-    headers = {"Cookie": cookie.strip()}
+    headers = {"Cookie": cookies.strip()}
     token = get_qrcode_token()["data"]
     uid = token["uid"]
     # scanned
@@ -226,26 +227,26 @@ def main(args):
     ):
         return
 
-    if args.set_cookie:
-        cookie = args.set_cookie
+    if args.set_cookies:
+        cookies = args.set_cookies
     else:
-        if args.cookie:
-            resp = login_with_autoscan(args.cookie, args.app)
+        if args.cookies:
+            resp = login_with_autoscan(args.cookies, args.app)
         else:
             resp = login_with_qrcode(args.app, scan_in_console=not args.open_qrcode)
-        cookie = "; ".join("%s=%s" % t for t in resp["data"]["cookie"].items())
+        cookies = "; ".join("%s=%s" % t for t in resp["data"]["cookie"].items())
 
-    alist_update_115_cookie(client, cookie)
+    alist_update_115_cookies(client, cookies)
 
 
 parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv", "alipaymini", "wechatmini", "qandroid"), default="web", help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
 parser.add_argument("-u", "--username", default="admin", help="用户名，默认为 admin")
 parser.add_argument("-p", "--password", default="", help="密码，默认为空")
-parser.add_argument("-c", "--cookie", help="115 登录 cookie，如果提供了，就可以用这个 cookie 进行自动扫码，否则需要你用手机来手动扫码")
-parser.add_argument("-ck", "--set-cookie", help="115 登录 cookie，如果指定则直接把这个 cookie 更新到 alist")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，如果提供了，就可以用这个 cookies 进行自动扫码，否则需要你用手机来手动扫码")
+parser.add_argument("-ck", "--set-cookies", help="115 登录 cookies，如果指定则直接把这个 cookies 更新到 alist")
 parser.add_argument("-op", "--open-qrcode", action="store_true", help="打开二维码图片，而不是在命令行输出")
-parser.add_argument("-on", "--only-not-work", action="store_true", help="如果 cookie 未失效则不进行更新")
+parser.add_argument("-on", "--only-not-work", action="store_true", help="如果 cookies 未失效则不进行更新")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 

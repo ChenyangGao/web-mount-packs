@@ -54,12 +54,13 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
+    from argparse import RawTextHelpFormatter
     from ..init import subparsers
     from .fuser import AlistFuseOperations
     from .util.log import logger
     from .util.predicate import make_predicate
 
-    parser = subparsers.add_parser("fuse", description=__doc__)
+    parser = subparsers.add_parser("fuse", description=__doc__, formatter_class=RawTextHelpFormatter)
 
 
 def main(args):

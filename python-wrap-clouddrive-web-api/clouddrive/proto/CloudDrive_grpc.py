@@ -265,6 +265,10 @@ class CloudDriveFileSrvBase(abc.ABC):
         pass
 
     @abc.abstractmethod
+    async def ApiLogin123panOAuth(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.Login123panOAuthRequest, CloudDrive_pb2.APILoginResult]') -> None:
+        pass
+
+    @abc.abstractmethod
     async def APILogin189QRCode(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.QRCodeScanMessage]') -> None:
         pass
 
@@ -330,6 +334,10 @@ class CloudDriveFileSrvBase(abc.ABC):
 
     @abc.abstractmethod
     async def PushTaskChange(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.GetAllTasksCountResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def PushMessage(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.CloudDrivePushMessage]') -> None:
         pass
 
     @abc.abstractmethod
@@ -478,6 +486,18 @@ class CloudDriveFileSrvBase(abc.ABC):
 
     @abc.abstractmethod
     async def CanAddMoreBackups(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.FileOperationResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def GetMachineId(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.StringResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def GetOnlineDevices(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.OnlineDevices]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def KickoutDevice(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.DeviceRequest, google.protobuf.empty_pb2.Empty]') -> None:
         pass
 
     def __mapping__(self) -> typing.Dict[str, grpclib.const.Handler]:
@@ -854,6 +874,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 CloudDrive_pb2.LoginXunleiOAuthRequest,
                 CloudDrive_pb2.APILoginResult,
             ),
+            '/clouddrive.CloudDriveFileSrv/ApiLogin123panOAuth': grpclib.const.Handler(
+                self.ApiLogin123panOAuth,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.Login123panOAuthRequest,
+                CloudDrive_pb2.APILoginResult,
+            ),
             '/clouddrive.CloudDriveFileSrv/APILogin189QRCode': grpclib.const.Handler(
                 self.APILogin189QRCode,
                 grpclib.const.Cardinality.UNARY_STREAM,
@@ -955,6 +981,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 grpclib.const.Cardinality.UNARY_STREAM,
                 google.protobuf.empty_pb2.Empty,
                 CloudDrive_pb2.GetAllTasksCountResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/PushMessage': grpclib.const.Handler(
+                self.PushMessage,
+                grpclib.const.Cardinality.UNARY_STREAM,
+                google.protobuf.empty_pb2.Empty,
+                CloudDrive_pb2.CloudDrivePushMessage,
             ),
             '/clouddrive.CloudDriveFileSrv/GetCloudDrive1UserData': grpclib.const.Handler(
                 self.GetCloudDrive1UserData,
@@ -1177,6 +1209,24 @@ class CloudDriveFileSrvBase(abc.ABC):
                 grpclib.const.Cardinality.UNARY_UNARY,
                 google.protobuf.empty_pb2.Empty,
                 CloudDrive_pb2.FileOperationResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/GetMachineId': grpclib.const.Handler(
+                self.GetMachineId,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                google.protobuf.empty_pb2.Empty,
+                CloudDrive_pb2.StringResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/GetOnlineDevices': grpclib.const.Handler(
+                self.GetOnlineDevices,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                google.protobuf.empty_pb2.Empty,
+                CloudDrive_pb2.OnlineDevices,
+            ),
+            '/clouddrive.CloudDriveFileSrv/KickoutDevice': grpclib.const.Handler(
+                self.KickoutDevice,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.DeviceRequest,
+                google.protobuf.empty_pb2.Empty,
             ),
         }
 
@@ -1556,6 +1606,12 @@ class CloudDriveFileSrvStub:
             CloudDrive_pb2.LoginXunleiOAuthRequest,
             CloudDrive_pb2.APILoginResult,
         )
+        self.ApiLogin123panOAuth = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/ApiLogin123panOAuth',
+            CloudDrive_pb2.Login123panOAuthRequest,
+            CloudDrive_pb2.APILoginResult,
+        )
         self.APILogin189QRCode = grpclib.client.UnaryStreamMethod(
             channel,
             '/clouddrive.CloudDriveFileSrv/APILogin189QRCode',
@@ -1657,6 +1713,12 @@ class CloudDriveFileSrvStub:
             '/clouddrive.CloudDriveFileSrv/PushTaskChange',
             google.protobuf.empty_pb2.Empty,
             CloudDrive_pb2.GetAllTasksCountResult,
+        )
+        self.PushMessage = grpclib.client.UnaryStreamMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/PushMessage',
+            google.protobuf.empty_pb2.Empty,
+            CloudDrive_pb2.CloudDrivePushMessage,
         )
         self.GetCloudDrive1UserData = grpclib.client.UnaryUnaryMethod(
             channel,
@@ -1879,4 +1941,22 @@ class CloudDriveFileSrvStub:
             '/clouddrive.CloudDriveFileSrv/CanAddMoreBackups',
             google.protobuf.empty_pb2.Empty,
             CloudDrive_pb2.FileOperationResult,
+        )
+        self.GetMachineId = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/GetMachineId',
+            google.protobuf.empty_pb2.Empty,
+            CloudDrive_pb2.StringResult,
+        )
+        self.GetOnlineDevices = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/GetOnlineDevices',
+            google.protobuf.empty_pb2.Empty,
+            CloudDrive_pb2.OnlineDevices,
+        )
+        self.KickoutDevice = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/KickoutDevice',
+            CloudDrive_pb2.DeviceRequest,
+            google.protobuf.empty_pb2.Empty,
         )

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clouddrive"
-version = "0.0.11.2"
+version = "0.0.12"
 description = "Python wrapper for CloudDrive."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,27 +27,25 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-
+glob_pattern = "*"
 grpcio = "*"
-grpclib = "*"
-protobuf = "*"
-requests = "*"
-python-dateutil = "*"
-yarl = "*"
-
-[tool.poetry.dev-dependencies]
-python = "^3.10"
-
-grpcio = "*"
-grpclib = "*"
-protobuf = "*"
-requests = "*"
-python-dateutil = "*"
-yarl = "*"
-
 grpcio-tools = "*"
+grpclib = "*"
 "grpclib[protobuf]" = "*"
-types-python-dateutil = "*"
+http_response = "*"
+path_ignore_pattern = "*"
+protobuf = "*"
+python-dateutil = "*"
+python-filewrap = ">=0.1"
+python-httpfile = "*"
+python-urlopen = "*"
+requests = "*" # ?
+
+yarl = "*"
+
+[tool.poetry.scripts]
+python-clouddrive = "clouddrive.__main__:main"
+clouddrive = "clouddrive.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]

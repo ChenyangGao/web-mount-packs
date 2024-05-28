@@ -13,7 +13,7 @@ which refer to `os`, `posixpath`, `pathlib.Path` and `shutil` modules.
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 11)
+__version__ = (0, 0, 12)
 __all__ = [
     "AlistClient", "AlistPath", "AlistFileSystem", "AlistCopyTaskList", "AlistOfflineDownloadTaskList", 
     "AlistOfflineDownloadTransferTaskList", "AlistUploadTaskList", "AlistAria2DownTaskList", 
@@ -48,10 +48,12 @@ from aiohttp import ClientSession
 from dateutil.parser import parse as dt_parse
 from requests import Session
 
-from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
-from .util.response import get_content_length
-from .util.text import complete_base_url, posix_glob_translate_iter
-from .util.urlopen import urlopen
+from filewrap import SupportsRead, SupportsWrite
+from glob_pattern import translate_iter
+from httpfile import HTTPFileReader
+from http_request import complete_url
+from http_response import get_content_length
+from urlopen import urlopen
 
 
 filterwarnings("ignore", category=DeprecationWarning)
@@ -136,7 +138,7 @@ class AlistClient:
         otp_code: int | str = "", 
     ):
         self.__dict__.update(
-            origin=complete_base_url(origin), 
+            origin=complete_url(origin), 
             username=username, 
             password=password, 
         )
@@ -2763,7 +2765,7 @@ class AlistPath(Mapping, PathLike[str]):
         path_pattern: str, 
         ignore_case: bool = False, 
     ) -> bool:
-        pattern = "/" + "/".join(t[0] for t in posix_glob_translate_iter(path_pattern))
+        pattern = "/" + "/".join(t[0] for t in translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -3935,7 +3937,7 @@ class AlistFileSystem:
             return iter(())
         elif not pattern.lstrip("/"):
             return iter((AlistPath(self, "/", password),))
-        splitted_pats = tuple(posix_glob_translate_iter(pattern))
+        splitted_pats = tuple(translate_iter(pattern))
         if pattern.startswith("/"):
             dirname = "/"
         elif isinstance(dirname, AlistPath):

@@ -11,7 +11,7 @@ from textwrap import dedent
 from typing import Final, Optional
 
 from alist import AlistPath
-from alist.util.ignore import read_str, read_file, parse
+from path_ignore_pattern import read_str, read_file, parse
 
 
 ConditionSourceType = AlistPath

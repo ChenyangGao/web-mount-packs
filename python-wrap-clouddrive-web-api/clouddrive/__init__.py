@@ -11,7 +11,7 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 11)
+__version__ = (0, 0, 12)
 __all__ = [
     "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
     "CloudDriveDownloadTaskList", "CloudDriveUploadTaskList", 
@@ -46,10 +46,11 @@ from grpc import StatusCode, RpcError # type: ignore
 from .client import Client
 import CloudDrive_pb2 # type: ignore
 
-from .util.file import HTTPFileReader, SupportsRead, SupportsWrite
-from .util.response import get_content_length
-from .util.text import posix_glob_translate_iter
-from .util.urlopen import urlopen
+from filewrap import SupportsRead, SupportsWrite
+from glob_pattern import translate_iter
+from httpfile import HTTPFileReader
+from http_response import get_content_length
+from urlopen import urlopen
 
 
 def check_response(func, /):
@@ -364,20 +365,10 @@ class CloudDrivePath(Mapping, PathLike[str]):
         return True
 
     def is_dir(self, /):
-        try:
-            return self["isDirectory"]
-        except FileNotFoundError:
-            return False
-        except KeyError:
-            return False
+        return self["isDirectory"]
 
     def is_file(self, /) -> bool:
-        try:
-            return not self["isDirectory"]
-        except FileNotFoundError:
-            return False
-        except KeyError:
-            return True
+        return not self["isDirectory"]
 
     def is_symlink(self, /) -> bool:
         return False
@@ -444,7 +435,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
         path_pattern: str, 
         ignore_case: bool = False, 
     ) -> bool:
-        pattern = "/" + "/".join(t[0] for t in posix_glob_translate_iter(path_pattern))
+        pattern = "/" + "/".join(t[0] for t in translate_iter(path_pattern))
         if ignore_case:
             pattern = "(?i:%s)" % pattern
         return re_compile(pattern).fullmatch(self.path) is not None
@@ -941,6 +932,7 @@ class CloudDriveFileSystem:
         attr["ctime"] = parse_as_timestamp(attr.get("createTime"))
         attr["mtime"] = parse_as_timestamp(attr.get("writeTime"))
         attr["atime"] = parse_as_timestamp(attr.get("accessTime"))
+        attr.setdefault("isDirectory", False)
         attr["last_update"] = last_update
         return attr
 
@@ -1142,7 +1134,7 @@ class CloudDriveFileSystem:
             return iter(())
         elif not pattern.lstrip("/"):
             return iter((CloudDrivePath(self, "/"),))
-        splitted_pats = tuple(posix_glob_translate_iter(pattern))
+        splitted_pats = tuple(translate_iter(pattern))
         if pattern.startswith("/"):
             dirname = "/"
         elif isinstance(dirname, CloudDrivePath):
@@ -1444,6 +1436,7 @@ class CloudDriveFileSystem:
             attr["ctime"] = parse_as_timestamp(attr.get("createTime"))
             attr["mtime"] = parse_as_timestamp(attr.get("writeTime"))
             attr["atime"] = parse_as_timestamp(attr.get("accessTime"))
+            attr.setdefault("isDirectory", False)
             attr["last_update"] = last_update
             yield attr
 
@@ -1931,7 +1924,7 @@ class CloudDriveFileSystem:
         _check: bool = True, 
     ):
         attr = self.attr(path, _check=_check)
-        is_dir = attr.get("isDirectory", False)
+        is_dir = attr["isDirectory"]
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o777, 
             0, # ino

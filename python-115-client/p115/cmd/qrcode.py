@@ -11,9 +11,10 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
+    from argparse import RawTextHelpFormatter
     from .init import subparsers
 
-    parser = subparsers.add_parser("qrcode", description=__doc__)
+    parser = subparsers.add_parser("qrcode", description=__doc__, formatter_class=RawTextHelpFormatter)
 
 
 def main(args):
