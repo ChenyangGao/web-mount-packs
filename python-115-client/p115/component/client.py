@@ -7112,7 +7112,7 @@ class P115Client:
         if isinstance(payload, (int, str)):
             payload = {"ids": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", params=payload, async_=async_, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
     def act_xys_get_desire_info(
@@ -7226,7 +7226,7 @@ class P115Client:
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/adopt"
         request_kwargs.pop("parse", None)
-        return self.request(api, "POST", params=payload, async_=async_, **request_kwargs)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
 

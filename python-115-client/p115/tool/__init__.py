@@ -176,7 +176,7 @@ def wish_answer(
     :param content: 助愿内容
     :param file_ids: 文件在你的网盘的 id，多个用逗号 "," 隔开
 
-    :return: 祝愿 id
+    :return: 助愿 id
     """
     if isinstance(client, str):
         client = P115Client(client)
@@ -237,7 +237,7 @@ def wish_adopt(
     :param client: 115 客户端
     :param wish_id: 许愿 id
     :param aid_id: 助愿 id
-    :param to_cid: 祝愿的分享文件保存到你的网盘中目录的 id
+    :param to_cid: 助愿的分享文件保存到你的网盘中目录的 id
     """
     if isinstance(client, str):
         client = P115Client(client)
