@@ -35,7 +35,21 @@ from alist import __version__, AlistClient
 from alist.tool import alist_update_115_cookies
 
 
-AppEnum = Enum("AppEnum", "web, android, ios, linux, mac, windows, tv, alipaymini, wechatmini, qandroid")
+AppEnum = Enum("AppEnum", {
+    "web": 1, 
+    "ios": 6, 
+    "115ios": 8, 
+    "android": 9, 
+    "115android": 11, 
+    "115ipad": 14, 
+    "tv": 15, 
+    "qandroid": 16, 
+    "windows": 19, 
+    "mac": 20, 
+    "linux": 21, 
+    "wechatmini": 22, 
+    "alipaymini": 23, 
+})
 
 
 def get_enum_name(val, cls):
@@ -80,17 +94,24 @@ def post_qrcode_result(uid: str, app: str = "web") -> dict:
 
     :param uid: 二维码的 uid，取自 `login_qrcode_token` 接口响应
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 目前发现的可用值：
-            - 1,  "web",        AppEnum.web
-            - 2,  "android",    AppEnum.android
-            - 3,  "ios",        AppEnum.ios
-            - 4,  "linux",      AppEnum.linux
-            - 5,  "mac",        AppEnum.mac
-            - 6,  "windows",    AppEnum.windows
-            - 7,  "tv",         AppEnum.tv
-            - 8,  "alipaymini", AppEnum.alipaymini
-            - 9,  "wechatmini", AppEnum.wechatmini
-            - 10, "qandroid",   AppEnum.qandroid
+        app 至少有 23 个可用值，目前找出 13 个：
+            - 'web',         1, AppEnum.web
+            - 'ios',         6, AppEnum.ios
+            - '115ios',      8, AppEnum['115ios']
+            - 'android',     9, AppEnum.android
+            - '115android', 11, AppEnum['115android']
+            - '115ipad',    14, AppEnum['115ipad']
+            - 'tv',         15, AppEnum.tv
+            - 'qandroid',   16, AppEnum.qandroid
+            - 'windows',    19, AppEnum.windows
+            - 'mac',        20, AppEnum.mac
+            - 'linux',      21, AppEnum.linux
+            - 'wechatmini', 22, AppEnum.wechatmini
+            - 'alipaymini', 23, AppEnum.alipaymini
+        还有几个备选：
+            - bios
+            - bandroid
+            - qios（登录机制有些不同，暂时未破解）
 
     :return: 包含 cookies 的响应
     """
@@ -115,17 +136,24 @@ def login_with_qrcode(
     """用二维码登录
 
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 目前发现的可用值：
-            - 1,  "web",        AppEnum.web
-            - 2,  "android",    AppEnum.android
-            - 3,  "ios",        AppEnum.ios
-            - 4,  "linux",      AppEnum.linux
-            - 5,  "mac",        AppEnum.mac
-            - 6,  "windows",    AppEnum.windows
-            - 7,  "tv",         AppEnum.tv
-            - 8,  "alipaymini", AppEnum.alipaymini
-            - 9,  "wechatmini", AppEnum.wechatmini
-            - 10, "qandroid",   AppEnum.qandroid
+        app 至少有 23 个可用值，目前找出 13 个：
+            - 'web',         1, AppEnum.web
+            - 'ios',         6, AppEnum.ios
+            - '115ios',      8, AppEnum['115ios']
+            - 'android',     9, AppEnum.android
+            - '115android', 11, AppEnum['115android']
+            - '115ipad',    14, AppEnum['115ipad']
+            - 'tv',         15, AppEnum.tv
+            - 'qandroid',   16, AppEnum.qandroid
+            - 'windows',    19, AppEnum.windows
+            - 'mac',        20, AppEnum.mac
+            - 'linux',      21, AppEnum.linux
+            - 'wechatmini', 22, AppEnum.wechatmini
+            - 'alipaymini', 23, AppEnum.alipaymini
+        还有几个备选：
+            - bios
+            - bandroid
+            - qios（登录机制有些不同，暂时未破解）
     :param scan_in_console: 是否在命令行输出二维码，否则会在默认的图片打开程序中打开
 
     :return: 扫码登录结果
@@ -239,7 +267,14 @@ def main(args):
     alist_update_115_cookies(client, cookies)
 
 
-parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv", "alipaymini", "wechatmini", "qandroid"), default="web", help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument(
+    "app", 
+    nargs="?", 
+    choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
+             "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+    default="web", 
+    help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线", 
+)
 parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
 parser.add_argument("-u", "--username", default="admin", help="用户名，默认为 admin")
 parser.add_argument("-p", "--password", default="", help="密码，默认为空")

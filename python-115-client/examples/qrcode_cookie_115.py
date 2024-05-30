@@ -4,7 +4,7 @@
 "扫码获取 115 cookie"
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "AppEnum", "get_qrcode_token", "get_qrcode_status", "post_qrcode_result", 
     "get_qrcode", "login_with_qrcode", 
@@ -20,7 +20,14 @@ if __name__ == "__main__":
     - https://pypi.org/project/qrcode/
 可以指定 -o 或 --open-qrcode 直接打开图片扫码
 """, formatter_class=RawTextHelpFormatter)
-    parser.add_argument("app", nargs="?", choices=("web", "android", "ios", "linux", "mac", "windows", "tv", "alipaymini", "wechatmini", "qandroid"), default="web", help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线")
+    parser.add_argument(
+        "app", 
+        nargs="?", 
+        choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
+                 "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+        default="web", 
+        help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线", 
+    )
     parser.add_argument("-o", "--open-qrcode", action="store_true", help="打开二维码图片，而不是在命令行输出")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
     args = parser.parse_args()
@@ -34,7 +41,21 @@ from urllib.parse import urlencode
 from urllib.request import urlopen, Request
 
 
-AppEnum = Enum("AppEnum", "web, android, ios, linux, mac, windows, tv, alipaymini, wechatmini, qandroid")
+AppEnum = Enum("AppEnum", {
+    "web": 1, 
+    "ios": 6, 
+    "115ios": 8, 
+    "android": 9, 
+    "115android": 11, 
+    "115ipad": 14, 
+    "tv": 15, 
+    "qandroid": 16, 
+    "windows": 19, 
+    "mac": 20, 
+    "linux": 21, 
+    "wechatmini": 22, 
+    "alipaymini": 23, 
+})
 
 
 def get_enum_name(val, cls):
@@ -75,17 +96,52 @@ def post_qrcode_result(uid, app="web"):
     POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
     :param uid: 二维码的 uid，取自 `login_qrcode_token` 接口响应
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 目前发现的可用值：
-            - 1,  "web",        AppEnum.web
-            - 2,  "android",    AppEnum.android
-            - 3,  "ios",        AppEnum.ios
-            - 4,  "linux",      AppEnum.linux
-            - 5,  "mac",        AppEnum.mac
-            - 6,  "windows",    AppEnum.windows
-            - 7,  "tv",         AppEnum.tv
-            - 8,  "alipaymini", AppEnum.alipaymini
-            - 9,  "wechatmini", AppEnum.wechatmini
-            - 10, "qandroid",   AppEnum.qandroid
+        app 至少有 23 个可用值，目前找出 13 个：
+            - 'web',         1, AppEnum.web
+            - 'ios',         6, AppEnum.ios
+            - '115ios',      8, AppEnum['115ios']
+            - 'android',     9, AppEnum.android
+            - '115android', 11, AppEnum['115android']
+            - '115ipad',    14, AppEnum['115ipad']
+            - 'tv',         15, AppEnum.tv
+            - 'qandroid',   16, AppEnum.qandroid
+            - 'windows',    19, AppEnum.windows
+            - 'mac',        20, AppEnum.mac
+            - 'linux',      21, AppEnum.linux
+            - 'wechatmini', 22, AppEnum.wechatmini
+            - 'alipaymini', 23, AppEnum.alipaymini
+        还有几个备选：
+            - bios
+            - bandroid
+            - qios（登录机制有些不同，暂时未破解）
+
+        设备列表如下：
+
+        | No.    | ssoent  | app        | description            |
+        |-------:|:--------|:-----------|:-----------------------|
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
     :return: dict，包含 cookie
     """
     app = get_enum_name(app, AppEnum)
@@ -105,17 +161,52 @@ def get_qrcode(uid):
 def login_with_qrcode(app="web", scan_in_console=True):
     """用二维码登录
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 目前发现的可用值：
-            - 1,  "web",        AppEnum.web
-            - 2,  "android",    AppEnum.android
-            - 3,  "ios",        AppEnum.ios
-            - 4,  "linux",      AppEnum.linux
-            - 5,  "mac",        AppEnum.mac
-            - 6,  "windows",    AppEnum.windows
-            - 7,  "tv",         AppEnum.tv
-            - 8,  "alipaymini", AppEnum.alipaymini
-            - 9,  "wechatmini", AppEnum.wechatmini
-            - 10, "qandroid",   AppEnum.qandroid
+        app 至少有 23 个可用值，目前找出 13 个：
+            - 'web',         1, AppEnum.web
+            - 'ios',         6, AppEnum.ios
+            - '115ios',      8, AppEnum['115ios']
+            - 'android',     9, AppEnum.android
+            - '115android', 11, AppEnum['115android']
+            - '115ipad',    14, AppEnum['115ipad']
+            - 'tv',         15, AppEnum.tv
+            - 'qandroid',   16, AppEnum.qandroid
+            - 'windows',    19, AppEnum.windows
+            - 'mac',        20, AppEnum.mac
+            - 'linux',      21, AppEnum.linux
+            - 'wechatmini', 22, AppEnum.wechatmini
+            - 'alipaymini', 23, AppEnum.alipaymini
+        还有几个备选：
+            - bios
+            - bandroid
+            - qios（登录机制有些不同，暂时未破解）
+
+        设备列表如下：
+
+        | No.    | ssoent  | app        | description            |
+        |-------:|:--------|:-----------|:-----------------------|
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
     :return: dict，扫码登录结果
     """
     qrcode_token = get_qrcode_token()["data"]

@@ -184,23 +184,29 @@ class P115Client:
 
     | No.    | ssoent  | app        | description            |
     |-------:|:--------|:-----------|:-----------------------|
-    |      1 | A1      | web        | 网页版                 |
-    |      2 | A2      | ?          | 未知: android          |
-    |      3 | A3      | ?          | 未知: iphone           |
-    |      4 | A4      | ?          | 未知: ipad             |
-    |      5 | B1      | ?          | 未知: android          |
-    |      6 | D1      | ios        | 115生活(iOS端)         |
-    |      7 | F1      | android    | 115生活(Android端)     |
-    |      8 | H1      | ?          | 未知: ipad             |
-    |      9 | I1      | tv         | 115网盘(Android电视端) |
-    |     10 | M1      | qandriod   | 115管理(Android端)     |
-    |     11 | N1      | qios       | 115管理(iOS端)         |
-    |     12 | O1      | ?          | 未知: ipad             |
-    |     13 | P1      | windows    | 115生活(Windows端)     |
-    |     14 | P2      | mac        | 115生活(macOS端)       |
-    |     15 | P3      | linux      | 115生活(Linux端)       |
-    |     16 | R1      | wechatmini | 115生活(微信小程序)    |
-    |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
+    |     01 | A1      | web        | 网页版                 |
+    |     02 | A2      | ?          | 未知: android          |
+    |     03 | A3      | ?          | 未知: iphone           |
+    |     04 | A4      | ?          | 未知: ipad             |
+    |     05 | B1      | ?          | 未知: android          |
+    |     06 | D1      | ios        | 115生活(iOS端)         |
+    |     07 | D2      | ?          | 未知: ios              |
+    |     08 | D3      | 115ios     | 115(iOS端)             |
+    |     09 | F1      | android    | 115生活(Android端)     |
+    |     10 | F2      | ?          | 未知: android          |
+    |     11 | F3      | 115android | 115(Android端)         |
+    |     12 | H1      | ipad       | 未知: ipad             |
+    |     13 | H2      | ?          | 未知: ipad             |
+    |     14 | H3      | 115ipad    | 115(iPad端)            |
+    |     15 | I1      | tv         | 115网盘(Android电视端) |
+    |     16 | M1      | qandriod   | 115管理(Android端)     |
+    |     17 | N1      | qios       | 115管理(iOS端)         |
+    |     18 | O1      | ?          | 未知: ipad             |
+    |     19 | P1      | windows    | 115生活(Windows端)     |
+    |     20 | P2      | mac        | 115生活(macOS端)       |
+    |     21 | P3      | linux      | 115生活(Linux端)       |
+    |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+    |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
     """
     def __init__(
         self, 
@@ -478,10 +484,13 @@ class P115Client:
         **request_kwargs, 
     ) -> Self | Awaitable[Self]:
         """扫码二维码登录，如果已登录则忽略
-        app 共有 17 个可用值，目前找出 10 个：
+        app 至少有 23 个可用值，目前找出 13 个：
             - web
             - ios
+            - 115ios
             - android
+            - 115android
+            - 115ipad
             - tv
             - qandroid
             - windows
@@ -492,29 +501,35 @@ class P115Client:
         还有几个备选：
             - bios
             - bandroid
-            - qios
+            - qios（登录机制有些不同，暂时未破解）
 
         设备列表如下：
 
         | No.    | ssoent  | app        | description            |
         |-------:|:--------|:-----------|:-----------------------|
-        |      1 | A1      | web        | 网页版                 |
-        |      2 | A2      | ?          | 未知: android          |
-        |      3 | A3      | ?          | 未知: iphone           |
-        |      4 | A4      | ?          | 未知: ipad             |
-        |      5 | B1      | ?          | 未知: android          |
-        |      6 | D1      | ios        | 115生活(iOS端)         |
-        |      7 | F1      | android    | 115生活(Android端)     |
-        |      8 | H1      | ?          | 未知: ipad             |
-        |      9 | I1      | tv         | 115网盘(Android电视端) |
-        |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | qios       | 115管理(iOS端)         |
-        |     12 | O1      | ?          | 未知: ipad             |
-        |     13 | P1      | windows    | 115生活(Windows端)     |
-        |     14 | P2      | mac        | 115生活(macOS端)       |
-        |     15 | P3      | linux      | 115生活(Linux端)       |
-        |     16 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         if async_:
             async def async_request():
@@ -571,10 +586,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """扫码二维码登录，获取响应（如果需要更新此 client 的 cookies，请直接用 login 方法）
-        app 共有 17 个可用值，目前找出 10 个：
+        app 至少有 23 个可用值，目前找出 13 个：
             - web
             - ios
+            - 115ios
             - android
+            - 115android
+            - 115ipad
             - tv
             - qandroid
             - windows
@@ -585,29 +603,35 @@ class P115Client:
         还有几个备选：
             - bios
             - bandroid
-            - qios
+            - qios（登录机制有些不同，暂时未破解）
 
         设备列表如下：
 
         | No.    | ssoent  | app        | description            |
         |-------:|:--------|:-----------|:-----------------------|
-        |      1 | A1      | web        | 网页版                 |
-        |      2 | A2      | ?          | 未知: android          |
-        |      3 | A3      | ?          | 未知: iphone           |
-        |      4 | A4      | ?          | 未知: ipad             |
-        |      5 | B1      | ?          | 未知: android          |
-        |      6 | D1      | ios        | 115生活(iOS端)         |
-        |      7 | F1      | android    | 115生活(Android端)     |
-        |      8 | H1      | ?          | 未知: ipad             |
-        |      9 | I1      | tv         | 115网盘(Android电视端) |
-        |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | qios       | 115管理(iOS端)         |
-        |     12 | O1      | ?          | 未知: ipad             |
-        |     13 | P1      | windows    | 115生活(Windows端)     |
-        |     14 | P2      | mac        | 115生活(macOS端)       |
-        |     15 | P3      | linux      | 115生活(Linux端)       |
-        |     16 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         if async_:
             async def async_request():
@@ -718,23 +742,29 @@ class P115Client:
 
         | No.    | ssoent  | app        | description            |
         |-------:|:--------|:-----------|:-----------------------|
-        |      1 | A1      | web        | 网页版                 |
-        |      2 | A2      | ?          | 未知: android          |
-        |      3 | A3      | ?          | 未知: iphone           |
-        |      4 | A4      | ?          | 未知: ipad             |
-        |      5 | B1      | ?          | 未知: android          |
-        |      6 | D1      | ios        | 115生活(iOS端)         |
-        |      7 | F1      | android    | 115生活(Android端)     |
-        |      8 | H1      | ?          | 未知: ipad             |
-        |      9 | I1      | tv         | 115网盘(Android电视端) |
-        |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | qios       | 115管理(iOS端)         |
-        |     12 | O1      | ?          | 未知: ipad             |
-        |     13 | P1      | windows    | 115生活(Windows端)     |
-        |     14 | P2      | mac        | 115生活(macOS端)       |
-        |     15 | P3      | linux      | 115生活(Linux端)       |
-        |     16 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         if async_:
             async def async_request():
@@ -1104,23 +1134,29 @@ class P115Client:
 
         | No.    | ssoent  | app        | description            |
         |-------:|:--------|:-----------|:-----------------------|
-        |      1 | A1      | web        | 网页版                 |
-        |      2 | A2      | ?          | 未知: android          |
-        |      3 | A3      | ?          | 未知: iphone           |
-        |      4 | A4      | ?          | 未知: ipad             |
-        |      5 | B1      | ?          | 未知: android          |
-        |      6 | D1      | ios        | 115生活(iOS端)         |
-        |      7 | F1      | android    | 115生活(Android端)     |
-        |      8 | H1      | ?          | 未知: ipad             |
-        |      9 | I1      | tv         | 115网盘(Android电视端) |
-        |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | qios       | 115管理(iOS端)         |
-        |     12 | O1      | ?          | 未知: ipad             |
-        |     13 | P1      | windows    | 115生活(Windows端)     |
-        |     14 | P2      | mac        | 115生活(macOS端)       |
-        |     15 | P3      | linux      | 115生活(Linux端)       |
-        |     16 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         api = f"https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout"
         request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Cookie": self.cookies}
@@ -1161,23 +1197,29 @@ class P115Client:
 
         | No.    | ssoent  | app        | description            |
         |-------:|:--------|:-----------|:-----------------------|
-        |      1 | A1      | web        | 网页版                 |
-        |      2 | A2      | ?          | 未知: android          |
-        |      3 | A3      | ?          | 未知: iphone           |
-        |      4 | A4      | ?          | 未知: ipad             |
-        |      5 | B1      | ?          | 未知: android          |
-        |      6 | D1      | ios        | 115生活(iOS端)         |
-        |      7 | F1      | android    | 115生活(Android端)     |
-        |      8 | H1      | ?          | 未知: ipad             |
-        |      9 | I1      | tv         | 115网盘(Android电视端) |
-        |     10 | M1      | qandriod   | 115管理(Android端)     |
-        |     11 | N1      | qios       | 115管理(iOS端)         |
-        |     12 | O1      | ?          | 未知: ipad             |
-        |     13 | P1      | windows    | 115生活(Windows端)     |
-        |     14 | P2      | mac        | 115生活(macOS端)       |
-        |     15 | P3      | linux      | 115生活(Linux端)       |
-        |     16 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     17 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     01 | A1      | web        | 网页版                 |
+        |     02 | A2      | ?          | 未知: android          |
+        |     03 | A3      | ?          | 未知: iphone           |
+        |     04 | A4      | ?          | 未知: ipad             |
+        |     05 | B1      | ?          | 未知: android          |
+        |     06 | D1      | ios        | 115生活(iOS端)         |
+        |     07 | D2      | ?          | 未知: ios              |
+        |     08 | D3      | 115ios     | 115(iOS端)             |
+        |     09 | F1      | android    | 115生活(Android端)     |
+        |     10 | F2      | ?          | 未知: android          |
+        |     11 | F3      | 115android | 115(Android端)         |
+        |     12 | H1      | ipad       | 未知: ipad             |
+        |     13 | H2      | ?          | 未知: ipad             |
+        |     14 | H3      | 115ipad    | 115(iPad端)            |
+        |     15 | I1      | tv         | 115网盘(Android电视端) |
+        |     16 | M1      | qandriod   | 115管理(Android端)     |
+        |     17 | N1      | qios       | 115管理(iOS端)         |
+        |     18 | O1      | ?          | 未知: ipad             |
+        |     19 | P1      | windows    | 115生活(Windows端)     |
+        |     20 | P2      | mac        | 115生活(macOS端)       |
+        |     21 | P3      | linux      | 115生活(Linux端)       |
+        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
+        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/mange"
         if isinstance(payload, str):
@@ -6772,6 +6814,419 @@ class P115Client:
         api = "https://webapi.115.com/user/captcha"
         request_kwargs.pop("parse", None)
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    ########## Activities API ##########
+
+    @overload
+    def act_xys_get_act_info(
+        self, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_get_act_info(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_get_act_info(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取许愿树活动的信息
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info"
+        request_kwargs.pop("parse", None)
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_home_list(
+        self, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_home_list(
+        self, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_home_list(
+        self, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """首页的许愿树（随机刷新 15 条）
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/home_list
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/home_list"
+        request_kwargs.pop("parse", None)
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_my_desire(
+        self, 
+        payload: int | dict = 0, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_my_desire(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_my_desire(
+        self, 
+        payload: int | dict = 0, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """我的许愿列表
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire
+        payload:
+            - type: 0 | 1 | 2 = 0
+                # 类型
+                # - 0: 全部
+                # - 1: 进行中
+                # - 2: 已实现
+            - start: int = 0  # 开始索引
+            - page: int = 1   # 第几页
+            - limit: int = 10 # 每页大小
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire"
+        if isinstance(payload, int):
+            payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
+        else:
+            payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_my_aid_desire(
+        self, 
+        payload: int | dict = 0, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_my_aid_desire(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_my_aid_desire(
+        self, 
+        payload: int | dict = 0, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """我的助愿列表
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire
+        payload:
+            - type: 0 | 1 | 2 = 0
+                # 类型
+                # - 0: 全部
+                # - 1: 进行中
+                # - 2: 已实现
+            - start: int = 0  # 开始索引
+            - page: int = 1   # 第几页
+            - limit: int = 10 # 每页大小
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire"
+        if isinstance(payload, int):
+            payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
+        else:
+            payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_wish(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_wish(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_wish(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """创建许愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/wish
+        payload:
+            - content: str # 许愿文本，不少于 5 个字，不超过 500 个字
+            - rewardSpace: int = 5 # 奖励容量，单位是 GB
+            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/wish"
+        if isinstance(payload, str):
+            payload = {"rewardSpace": 5, "content": payload}
+        else:
+            payload = {"rewardSpace": 5, **payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_wish_del(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_wish_del(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_wish_del(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """删除许愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish
+        payload:
+            - ids: str # 许愿的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish"
+        if isinstance(payload, str):
+            payload = {"ids": payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_aid_desire(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_aid_desire(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_aid_desire(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """创建助愿（如果提供 file_ids，则会创建一个分享链接）
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire
+        payload:
+            - id: str # 许愿 id
+            - content: str # 助愿文本，不少于 5 个字，不超过 500 个字
+            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
+            - file_ids: int | str = <default> # 文件在你的网盘的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire"
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_aid_desire_del(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_aid_desire_del(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_aid_desire_del(
+        self, 
+        payload: int | str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """删除助愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire
+        payload:
+            - ids: int | str # 助愿的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire"
+        if isinstance(payload, (int, str)):
+            payload = {"ids": payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_get_desire_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_get_desire_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_get_desire_info(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取的许愿信息
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info
+        payload:
+            - id: str # 许愿的 id
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info"
+        if isinstance(payload, str):
+            payload = {"id": payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_desire_aid_list(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_desire_aid_list(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_desire_aid_list(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取许愿的助愿列表
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list
+        payload:
+            - id: str         # 许愿的 id
+            - start: int = 0  # 开始索引
+            - page: int = 1   # 第几页
+            - limit: int = 10 # 每页大小
+            - sort: int | str = <default>
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list"
+        if isinstance(payload, str):
+            payload = {"start": 0, "page": 1, "limit": 10, "id": payload}
+        else:
+            payload = {"start": 0, "page": 1, "limit": 10, **payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_adopt(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_adopt(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def act_xys_adopt(
+        self, 
+        payload: dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """采纳助愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/adopt
+        payload:
+            - did: str # 许愿的 id
+            - aid: int | str # 助愿的 id
+            - to_cid: int = <default> # 助愿中的分享链接转存到你的网盘中目录的 id
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/adopt"
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", params=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
 
