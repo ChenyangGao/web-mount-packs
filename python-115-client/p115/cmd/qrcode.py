@@ -49,11 +49,12 @@ def main(args):
     print(cookies, file=file)
 
 
-parser.add_argument("app", nargs="?", choices=(
-                        "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
-                        "windows", "mac", "linux", "wechatmini", "alipaymini"), 
-                    default="web", 
-                    help="选择一个 app 进行登录，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument(
+    "app", nargs="?", default="qandroid", 
+    choices=(
+        "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+        "windows", "mac", "linux", "wechatmini", "alipaymini"),        
+    help="选择一个 app 进行登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-o", "--output-file", help="保存到文件，未指定时输出到 stdout")
 parser.add_argument("-c", "--cookies", help="115 登录 cookie，如果提供了，就可以用这个 cookies 进行自动扫码，否则需要你用手机来手动扫码")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")

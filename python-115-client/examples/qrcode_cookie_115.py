@@ -21,12 +21,10 @@ if __name__ == "__main__":
 可以指定 -o 或 --open-qrcode 直接打开图片扫码
 """, formatter_class=RawTextHelpFormatter)
     parser.add_argument(
-        "app", 
-        nargs="?", 
+        "app", nargs="?", default="qandroid", 
         choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
                  "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
-        default="web", 
-        help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线", 
+        help="选择一个 app 进行登录，默认为 'qandroid'，注意：这会把已经登录的相同 app 踢下线", 
     )
     parser.add_argument("-o", "--open-qrcode", action="store_true", help="打开二维码图片，而不是在命令行输出")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")

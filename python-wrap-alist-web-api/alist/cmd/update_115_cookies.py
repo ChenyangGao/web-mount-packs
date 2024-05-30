@@ -272,8 +272,8 @@ parser.add_argument(
     nargs="?", 
     choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
              "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
-    default="web", 
-    help="选择一个 app 进行登录，默认为 'web'，注意：这会把已经登录的相同 app 踢下线", 
+    default="qandroid", 
+    help="选择一个 app 进行登录，默认为 'qandroid'，注意：这会把已经登录的相同 app 踢下线", 
 )
 parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
 parser.add_argument("-u", "--username", default="admin", help="用户名，默认为 admin")

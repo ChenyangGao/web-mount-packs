@@ -182,6 +182,7 @@ def wish_answer(
         client = P115Client(client)
     if not isinstance(file_ids, (int, str)):
         file_ids = ",".join(map(str, file_ids))
+    check_response(client.act_xys_get_desire_info(wish_id))
     return check_response(
         client.act_xys_aid_desire({"id": wish_id, "content": content, "file_ids": file_ids}
     ))["data"]["aid_id"]

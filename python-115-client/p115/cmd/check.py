@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__: list[str] = []
-__doc__ = "115 签到"
+__doc__ = "115 签到 (check in)"
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -39,13 +39,19 @@ def main(args):
             except FileNotFoundError:
                 pass
 
-    client = P115Client(cookies)
+    client = P115Client(cookies, app=args.app)
     if client.cookies != cookies:
         open("115-cookies.txt", "w").write(client.cookies)
     print(client.user_points_sign_post())
 
 
 parser.add_argument("-c", "--cookies", help="115 登录 cookie，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument(
+    "-a", "--app", default="qandroid", 
+    choices=(
+        "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+        "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 
