@@ -33,11 +33,11 @@ if __name__ == "__main__":
 
     GET /?id={id}
 
-2. 查询文件或文件夹的信息，需要返回 json，可以通过
+2. 查询文件或文件夹的信息，返回 json
 
     GET /?method=attr
 
-3. 查询文件夹内所有文件和文件夹的信息，需要返回 json，可以通过
+3. 查询文件夹内所有文件和文件夹的信息，返回 json
 
     GET /?method=list
 
@@ -228,6 +228,16 @@ def query(path: str):
     for subattr in children:
         subattr["path_url"] = "%s%s" % (origin, quote(subattr["path"], safe=":/"))
         append_url(subattr)
+    fid = attr["id"]
+    if fid == 0:
+        header = f'<strong><a href="{origin}?id=0&method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
+    else:
+        ancestors = fs.get_ancestors(int(attr["id"]))
+        info = ancestors[-1]
+        header = f'<strong><a href="{origin}?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
+                f'<strong><a href="{origin}?id={info["id"]}" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>/' 
+                for info in ancestors[1:-1]
+            ) + f'<strong><a href="{origin}?id={info["id"]}&method=list" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>'
     return render_template_string(
         """\
 <!DOCTYPE html>
@@ -285,10 +295,7 @@ def query(path: str):
         attr=attr, 
         children=children, 
         origin=origin, 
-        header=f'<strong><a href="{origin}?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "/".join(
-            f'<strong><a href="{origin}?id={info["id"]}" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>' 
-            for info in fs.get_ancestors(int(attr["id"]))[1:]
-        ), 
+        header=header, 
     )
 
 

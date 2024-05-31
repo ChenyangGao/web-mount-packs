@@ -166,6 +166,10 @@ class AlistClient:
         raise TypeError("can't set attribute")
 
     @cached_property
+    def base_path(self, /) -> str:
+        return self.auth_me()["data"]["base_path"]
+
+    @cached_property
     def session(self, /) -> Session:
         return Session()
 
@@ -304,6 +308,7 @@ class AlistClient:
             ns["session"].headers.pop("Authorization", None)
             if "async_session" in ns:
                 ns["async_session"].headers.pop("Authorization", None)
+        ns.pop("base_path", None)
 
     # Undocumented
 
@@ -2402,6 +2407,8 @@ class AlistClient:
         return AlistQbitTransferTaskList(self)
 
     def get_url(self, /, path: str) -> str:
+        if self.base_path != "/":
+            path = self.base_path + path
         return self.origin + "/d" + quote(path, safe=":/?&=#")
 
     @staticmethod
