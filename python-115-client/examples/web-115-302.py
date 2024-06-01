@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __doc__ = "获取 115 文件信息和下载链接"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -133,9 +133,11 @@ application = Flask(__name__)
 def get_url_with_pickcode(pickcode: str):
     headers = {}
     for key, val in request.headers:
-        if key.lower() == "user-agent":
-            headers["User-Agent"] = val
-            break
+        match key.lower():
+            case "user-agent":
+                headers["User-Agent"] = val
+            case "range":
+                headers["Range"] = val
     try:
         url = fs.get_url_from_pickcode(pickcode, detail=True, headers=headers)
         resp = redirect(url)

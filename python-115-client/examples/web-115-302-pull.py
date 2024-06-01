@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -25,7 +25,6 @@ if args.version:
 from json import load, JSONDecodeError
 from os.path import expanduser, dirname, join as joinpath, realpath
 from threading import Lock
-from traceback import print_exc
 from urllib.request import urlopen, Request
 
 try:
@@ -90,28 +89,33 @@ def relogin_wrap(func, /, *args, **kwds):
 
 def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
     def read_range(url, rng):
-        return urlopen(Request(url, headers={"Range": f"bytes={rng}"})).read()
+        with urlopen(Request(url, headers={"Range": f"bytes={rng}"})) as resp:
+            return resp.read()
     def pull(task, submit):
         attr, pid = task
         try:
             if attr["is_directory"]:
                 try:
-                    dirid = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))["cid"]
+                    resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
+                    dirid = int(resp["cid"])
+                    print(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m{resp['cname']!r} in {dirid}")
                 except FileExistsError:
-                    dirid = relogin_wrap(client.fs.attr, [attr["name"]], pid)["id"]
+                    dattr = relogin_wrap(client.fs.attr, [attr["name"]], pid)
+                    dirid = dattr["id"]
+                    print(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m{dattr['path']!r}")
                 for subattr in listdir(attr["id"], base_url):
                     submit((subattr, dirid))
             else:
-                resp = check_response(client.upload_file_init(
+                data = check_response(client.upload_file_init(
                     attr["name"], 
                     pid=pid, 
                     filesize=attr["size"], 
                     file_sha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
-                ))
-                print(f"拉取文件：{attr['path']!r}")
-        except:
-            print_exc()
+                ))["data"]
+                print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m{attr['path']!r} => {data!r}")
+        except BaseException as e:
+            print(f"\x1b[1m\x1b[38;5;1m发生错误：\x1b[0m\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}")
             raise
     if push_id == 0:
         tasks = [(a, to_pid) for a in listdir(push_id, base_url)]

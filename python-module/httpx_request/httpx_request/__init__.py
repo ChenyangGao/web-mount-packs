@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 6)
 __all__ = ["request"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
@@ -11,6 +11,7 @@ from json import loads
 from typing import cast, overload, Any, Literal, TypeVar
 
 from argtools import argcount
+from httpx import ConnectTimeout, PoolTimeout, ReadTimeout
 from httpx._types import AuthTypes, SyncByteStream, URLTypes
 from httpx._client import AsyncClient, Client, Response, UseClientDefault, USE_CLIENT_DEFAULT
 
@@ -63,17 +64,26 @@ def request_sync(
 ):
     if session is None:
         session = Client()
+    method = method.upper()
     request = session.build_request(
         method=method, 
         url=url, 
         **request_kwargs, 
     )
-    resp = session.send(
-        request=request,
-        auth=auth,
-        follow_redirects=follow_redirects,
-        stream=stream,
-    )
+    for _ in range(5):
+        try:
+            resp = session.send(
+                request=request,
+                auth=auth,
+                follow_redirects=follow_redirects,
+                stream=stream,
+            )
+            break
+        except (ConnectTimeout, PoolTimeout):
+            pass
+        except ReadTimeout:
+            if method != "GET":
+                raise
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
@@ -116,12 +126,20 @@ async def request_async(
         url=url, 
         **request_kwargs, 
     )
-    resp = await session.send(
-        request=request,
-        auth=auth,
-        follow_redirects=follow_redirects,
-        stream=stream,
-    )
+    for _ in range(5):
+        try:
+            resp = await session.send(
+                request=request,
+                auth=auth,
+                follow_redirects=follow_redirects,
+                stream=stream,
+            )
+            break
+        except (ConnectTimeout, PoolTimeout):
+            pass
+        except ReadTimeout:
+            if method != "GET":
+                raise
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:

@@ -2,13 +2,14 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 3)
 __all__ = ["request"]
 
 from collections.abc import Callable
 from json import loads
 
 from argtools import argcount
+from requests.exceptions import ConnectTimeout, ReadTimeout
 from requests.models import Response
 from requests.sessions import Session
 
@@ -37,8 +38,17 @@ def request(
                 session=session, 
                 **request_kwargs, 
             )
+    method = method.upper()
     request_kwargs.setdefault("stream", True)
-    resp = session.request(method, url, **request_kwargs)
+    while True:
+        try:
+            resp = session.request(method, url, **request_kwargs)
+            break
+        except ConnectTimeout:
+            pass
+        except ReadTimeout:
+            if method != "GET":
+                raise
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:

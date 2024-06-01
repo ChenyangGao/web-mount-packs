@@ -8782,3 +8782,4 @@ class AlistQbitTransferTaskList:
 # TODO: 所有类和函数都要有单元测试
 # TODO: 上传下载都支持进度条，下载支持多线程（返回 Future）
 # TODO: task 的 Future 封装，支持进度条
+# TODO: storage list 封装，支持批量操作，提供一些简化配置的方法
