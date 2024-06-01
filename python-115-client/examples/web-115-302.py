@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-"获取 115 文件信息和下载链接"
-
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
+__doc__ = "获取 115 文件信息和下载链接"
 
-if __name__ == "__main__":
-    from argparse import ArgumentParser, RawTextHelpFormatter
+from argparse import ArgumentParser, RawTextHelpFormatter
 
-    parser = ArgumentParser(
-        formatter_class=RawTextHelpFormatter, 
-        description="获取 115 文件信息和下载链接", 
-        epilog="""
+parser = ArgumentParser(
+    formatter_class=RawTextHelpFormatter, 
+    description=__doc__, 
+    epilog="""
 ---------- 使用说明 ----------
 
 你可以打开浏览器进行直接访问。
@@ -57,31 +55,31 @@ method   | string  | 否   | 1. 'url': 【默认值】，这个文件的下载�
          |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息
          |         |      | 4. 'desc': 这个文件或文件夹的备注
 """)
-    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
-    parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
-    parser.add_argument("-c", "--cookies", help="115 登录 cookie，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
-    parser.add_argument("-pc", "--use-path-cache", action="store_true", help="启用 path 到 id 的缓存")
-    parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
-    args = parser.parse_args()
-    if args.version:
-        print(".".join(map(str, __version__)))
-        raise SystemExit(0)
+parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
+parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument("-pc", "--use-path-cache", action="store_true", help="启用 path 到 id 的缓存")
+parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
+args = parser.parse_args()
+if args.version:
+    print(".".join(map(str, __version__)))
+    raise SystemExit(0)
 
 try:
     from flask import Flask, request, redirect, render_template_string, Response
-    from p115 import P115FileSystem
+    from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "flask", "posixpatht", "python-115"], check=True)
     from flask import Flask, request, redirect, render_template_string, Response
-    from p115 import P115FileSystem
+    from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 
 from collections.abc import Callable
-from os.path import expanduser, dirname, join as joinpath
-from posixpath import dirname, realpath
+from json import JSONDecodeError
+from os.path import expanduser, dirname, join as joinpath, realpath
 from urllib.parse import quote, unquote
 
 
@@ -96,12 +94,9 @@ except ImportError:
         from json import dumps as odumps
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
 
-cookies = None
-path_cache = None # type: None | dict
-if __name__ == "__main__":
-    cookies = args.cookies
-    if args.use_path_cache:
-        path_cache = {}
+
+cookies = args.cookies
+cookie_path = None
 if not cookies:
     seen = set()
     for dir_ in (".", expanduser("~"), dirname(__file__)):
@@ -112,13 +107,20 @@ if not cookies:
         try:
             cookies = open(joinpath(dir_, "115-cookies.txt")).read()
             if cookies:
+                cookie_path = joinpath(dir_, "115-cookies.txt")
                 break
         except FileNotFoundError:
             pass
 
-fs = P115FileSystem.login(cookies, path_to_id=path_cache)
-if not cookies and fs.client.cookies != cookies:
-    open("115-cookies.txt", "w").write(fs.client.cookies)
+client = P115Client(cookies)
+device = client.login_device()["icon"]
+if cookie_path and cookies != client.cookies:
+    open(cookie_path, "w").write(client.cookies)
+
+path_cache = None # type: None | dict
+if args.use_path_cache:
+    path_cache = {}
+fs = P115FileSystem(client, path_to_id=path_cache)
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
@@ -141,6 +143,17 @@ def get_url_with_pickcode(pickcode: str):
         return resp
     except OSError:
         return "Not Found", 404
+
+
+def relogin_wrap(func, /, *args, **kwds):
+    try:
+        return func(*args, **kwds)
+    except JSONDecodeError as e:
+        pass
+    client.login_another_app(device, replace=True)
+    if cookie_path:
+        open(cookie_path, "w").write(client.cookies)
+    return func(*args, **kwds)
 
 
 @application.get("/")
@@ -170,10 +183,10 @@ def query(path: str):
             if pickcode:
                 fid = fs.get_id_from_pickcode(pickcode)
             if fid is not None:
-                attr = fs.attr(int(fid))
+                attr = relogin_wrap(fs.attr, int(fid))
             else:
                 path = request.args.get("path") or path
-                attr = fs.attr(path)
+                attr = relogin_wrap(fs.attr, path)
         except FileNotFoundError:
             return "Not Found", 404
         append_url(attr)
@@ -184,10 +197,10 @@ def query(path: str):
             if pickcode:
                 fid = fs.get_id_from_pickcode(pickcode)
             if fid is not None:
-                children = fs.listdir_attr(int(fid))
+                children = relogin_wrap(fs.listdir_attr, int(fid))
             else:
                 path = request.args.get("path") or path
-                children = fs.listdir_attr(path)
+                children = relogin_wrap(fs.listdir_attr, path)
         except FileNotFoundError:
             return "Not Found", 404
         except NotADirectoryError as exc:
@@ -202,7 +215,6 @@ def query(path: str):
             if pickcode:
                 fid = fs.get_id_from_pickcode(pickcode)
             if fid is not None:
-                print(fs.desc(int(fid)))
                 return fs.desc(int(fid))
             else:
                 path = request.args.get("path") or path
@@ -213,16 +225,16 @@ def query(path: str):
         return get_url_with_pickcode(pickcode)
     try:
         if fid is not None:
-            attr = fs.attr(int(fid))
+            attr = relogin_wrap(fs.attr, int(fid))
         else:
             path = request.args.get("path") or path
-            attr = fs.attr(path)
+            attr = relogin_wrap(fs.attr, path)
     except FileNotFoundError:
         return "Not Found", 404
     if not attr["is_directory"]:
         return get_url_with_pickcode(attr["pickcode"])
     try:
-        children = fs.listdir_attr(attr["id"])
+        children = relogin_wrap(fs.listdir_attr, attr["id"])
     except NotADirectoryError as exc:
         return f"Bad Request: {exc}", 400
     for subattr in children:
@@ -299,6 +311,5 @@ def query(path: str):
     )
 
 
-if __name__ == "__main__":
-    application.run(host=args.host, port=args.port, threaded=True)
+application.run(host=args.host, port=args.port, threaded=True)
 

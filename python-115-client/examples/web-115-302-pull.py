@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+# encoding: utf-8
+
+__author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 0, 1)
+__doc__ = "从 115 的挂载拉取文件"
+
+from argparse import ArgumentParser, RawTextHelpFormatter
+
+parser = ArgumentParser(
+    formatter_class=RawTextHelpFormatter, 
+    description=__doc__, 
+)
+parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
+parser.add_argument("-p", "--push-id", type=int, default=0, help="对方 115 网盘中的文件或文件夹的 id，默认值：0")
+parser.add_argument("-t", "--to-pid", type=int, default=0, help="保存到我的 115 网盘中的文件夹的 id，默认值：0")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
+parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
+args = parser.parse_args()
+if args.version:
+    print(".".join(map(str, __version__)))
+    raise SystemExit(0)
+
+from json import load, JSONDecodeError
+from os.path import expanduser, dirname, join as joinpath, realpath
+from threading import Lock
+from traceback import print_exc
+from urllib.request import urlopen, Request
+
+try:
+    from concurrenttools import thread_pool_batch
+    from p115 import P115Client, check_response
+except ImportError:
+    from sys import executable
+    from subprocess import run
+    run([executable, "-m", "pip", "install", "-U", "flask", "concurrenttools", "python-115"], check=True)
+    from concurrenttools import thread_pool_batch
+    from p115 import P115Client, check_response
+
+
+base_url = args.base_url
+push_id = args.push_id
+to_pid = args.to_pid
+cookies = args.cookies
+max_workers = args.max_workers
+lock = Lock()
+
+cookie_path = None
+if not cookies:
+    seen = set()
+    for dir_ in (".", expanduser("~"), dirname(__file__)):
+        dir_ = realpath(dir_)
+        if dir_ in seen:
+            continue
+        seen.add(dir_)
+        try:
+            cookies = open(joinpath(dir_, "115-cookies.txt")).read()
+            if cookies:
+                cookie_path = joinpath(dir_, "115-cookies.txt")
+                break
+        except FileNotFoundError:
+            pass
+
+client = P115Client(cookies)
+device = client.login_device()["icon"]
+if cookie_path and cookies != client.cookies:
+    open(cookie_path, "w").write(client.cookies)
+
+
+def attr(id=0, base_url=base_url):
+    return load(urlopen(f"{base_url}?id={id}&method=attr"))
+
+
+def listdir(id=0, base_url=base_url):
+    return load(urlopen(f"{base_url}?id={id}&method=list"))
+
+
+def relogin_wrap(func, /, *args, **kwds):
+    with lock:
+        try:
+            return func(*args, **kwds)
+        except JSONDecodeError as e:
+            pass
+        client.login_another_app(device, replace=True)
+        if cookie_path:
+            open(cookie_path, "w").write(client.cookies)
+        return func(*args, **kwds)
+
+
+def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
+    def read_range(url, rng):
+        return urlopen(Request(url, headers={"Range": f"bytes={rng}"})).read()
+    def pull(task, submit):
+        attr, pid = task
+        try:
+            if attr["is_directory"]:
+                try:
+                    dirid = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))["cid"]
+                except FileExistsError:
+                    dirid = relogin_wrap(client.fs.attr, [attr["name"]], pid)["id"]
+                for subattr in listdir(attr["id"], base_url):
+                    submit((subattr, dirid))
+            else:
+                resp = check_response(client.upload_file_init(
+                    attr["name"], 
+                    pid=pid, 
+                    filesize=attr["size"], 
+                    file_sha1=attr["sha1"], 
+                    read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
+                ))
+                print(f"拉取文件：{attr['path']!r}")
+        except:
+            print_exc()
+            raise
+    if push_id == 0:
+        tasks = [(a, to_pid) for a in listdir(push_id, base_url)]
+    else:
+        tasks = [(attr(push_id, base_url), to_pid)]
+    thread_pool_batch(pull, tasks, max_workers=max_workers)
+
+
+pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)
+

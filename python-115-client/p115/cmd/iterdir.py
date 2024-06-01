@@ -32,23 +32,30 @@ def main(args):
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
-    from os.path import expanduser, dirname, join as joinpath
+    from os.path import expanduser, dirname, join as joinpath, realpath
     from sys import stdout
     from typing import Callable
 
     cookies = args.cookies
+    cookie_path = None
     if not cookies:
+        seen = set()
         for dir_ in (".", expanduser("~"), dirname(__file__)):
+            dir_ = realpath(dir_)
+            if dir_ in seen:
+                continue
+            seen.add(dir_)
             try:
                 cookies = open(joinpath(dir_, "115-cookies.txt")).read()
                 if cookies:
+                    cookie_path = joinpath(dir_, "115-cookies.txt")
                     break
             except FileNotFoundError:
                 pass
 
     client = P115Client(cookies, app=args.app)
-    if client.cookies != cookies:
-        open("115-cookies.txt", "w").write(client.cookies)
+    if cookie_path and cookies != client.cookies:
+        open(cookie_path, "w").write(client.cookies)
 
     fs = client.fs
 
@@ -209,7 +216,7 @@ def main(args):
 
 
 parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
-parser.add_argument("-c", "--cookies", help="115 登录 cookie，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
 parser.add_argument(
     "-a", "--app", default="qandroid", 
     choices=(

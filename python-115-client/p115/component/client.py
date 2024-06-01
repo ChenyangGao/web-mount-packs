@@ -71,7 +71,7 @@ ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
 
-request = partial(httpx_request, parse=lambda _, content: loads(content), timeout=60)
+request = partial(httpx_request, parse=lambda _, content: loads(content), timeout=60, raise_for_status=True)
 
 
 def to_base64(s: bytes | str, /) -> str:
