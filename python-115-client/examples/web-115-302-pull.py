@@ -181,7 +181,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                             with count_lock:
                                 stats["dirs"] += 1
                         submit((subattr, dirid, subdattr))
-                    elif subattr["size"] != subdattr.get("size"):
+                    elif subattr["sha1"] != subdattr.get("sha1"):
                         submit((subattr, dirid, None))
                     else:
                         with count_lock:
