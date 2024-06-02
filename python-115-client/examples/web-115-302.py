@@ -265,9 +265,22 @@ def query(path: str):
 <html>
 <head>
     <title>115 File List</title>
+    <link href="//cdnres.115.com/site/static/style_v10.0/file/css/file_type.css?_vh=bf604a2_70" rel="stylesheet" type="text/css">
     <style>
         a:hover {
             color: red;
+        }
+        .file-type {
+            flex: 1;
+            min-width: 0;
+            position: relative;
+            height: 32px;
+            padding-left: 47px;
+            flex-direction: column;
+            justify-content: center;
+        }
+        td {
+            vertical-align: middle;
         }
         img {
             height: 32px;
@@ -291,6 +304,7 @@ def query(path: str):
         }
         tbody tr {
             border-bottom: 1px solid #dddddd;
+            transition: background-color 0.3s, transform 0.3s;
         }
         tbody tr:nth-of-type(even) {
             background-color: #f3f3f3;
@@ -299,8 +313,9 @@ def query(path: str):
             border-bottom: 2px solid #009879;
         }
         tbody tr:hover {
-            font-weight: bold;
             color: #009879;
+            background-color: rgba(135, 206, 235, 0.5);
+            transform: scale(1.02);
         }
     </style>
 </head>
@@ -327,7 +342,7 @@ def query(path: str):
             <tr>
                 {% set name = attr["name"] %}
                 {% set url = attr["url"] %}
-                <td><a href="{{ url }}">{{ name }}</a></td>
+                <td><i class="file-type tp-{{ attr.get("ico", "folder") }}"></i><a href="{{ url }}">{{ name }}</a></td>
                 {% if attr["is_directory"] %}
                 <td></td>
                 <td>--</td>

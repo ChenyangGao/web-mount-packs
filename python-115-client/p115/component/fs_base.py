@@ -685,10 +685,10 @@ class P115FileSystemBase(Generic[P115PathType]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = True, 
     ) -> Optional[DownloadTask]:
-        if not hasattr(local_path_or_file, "write"):
+        if isinstance(local_path_or_file, SupportsWrite):
             if not local_path_or_file:
                 local_path_or_file = self.attr(id_or_path, pid)["name"]
-            if ospath.lexists(local_path_or_file): # type: ignore
+            if ospath.lexists(local_path_or_file):
                 if write_mode == "x":
                     raise FileExistsError(
                         errno.EEXIST, 
@@ -704,7 +704,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             local_path_or_file, 
             headers=lambda: {
                 **self.client.headers, 
-                "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.__dict__["cookies"].items()), 
+                "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.cookiejar), 
             }, 
             **kwargs, 
         )

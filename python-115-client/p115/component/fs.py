@@ -91,6 +91,8 @@ def normalize_info(
         info2["thumb"] = info["u"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
+    if "ico" in info:
+        info2["ico"] = info["ico"]
     if keep_raw:
         info2["raw"] = info
     if extra_data:
