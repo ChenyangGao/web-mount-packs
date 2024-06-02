@@ -41,7 +41,7 @@ try:
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "flask", "concurrenttools", "python-115", "pygments"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "flask", "python-concurrenttools", "python-115", "Pygments"], check=True)
     from concurrenttools import thread_pool_batch
     from httpx import TimeoutException
     from p115 import P115Client, check_response
