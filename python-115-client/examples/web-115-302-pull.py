@@ -154,8 +154,8 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     try:
                         resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
                         dirid = int(resp["cid"])
-                        dattr = relogin_wrap(fs.attr, dirid)
-                        logger.info(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m\x1b[4;34m{resp['cname']!r}\x1b[0m in \x1b[1m\x1b[38;5;6m{dirid}\x1b[0m")
+                        dattr = {"id": dirid, "path": dirid}
+                        logger.info(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m\x1b[1m\x1b[38;5;6m{dirid}\x1b[0m @ \x1b[4;34m{resp['cname']!r}\x1b[0m in \x1b[1m\x1b[38;5;6m{pid}\x1b[0m")
                         subdattrs = {}
                     except FileExistsError:
                         def finddir(pid, name):
@@ -166,8 +166,10 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         dattr = relogin_wrap(finddir, pid, attr["name"])
                         dirid = dattr["id"]
                         logger.warning(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => \x1b[4;34m{dattr['path']!r}\x1b[0m")
-                    with count_lock:
-                        stats["dirs"] += 1
+                    finally:
+                        if dattr:
+                            with count_lock:
+                                stats["dirs"] += 1
                 if subdattrs is None:
                     subdattrs = {(attr["name"], attr["is_directory"]): attr for attr in relogin_wrap(fs.listdir_attr, dirid)}
                 subattrs = listdir(attr["id"], base_url)
@@ -184,9 +186,9 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     elif subattr["sha1"] != subdattr.get("sha1"):
                         submit((subattr, dirid, None))
                     else:
+                        logger.warning(f"\x1b[1m\x1b[38;5;3m文件存在：\x1b[0m\x1b[4;34m{subattr['path']!r}\x1b[0m => \x1b[4;34m{subdattr['path']!r}\x1b[0m")
                         with count_lock:
                             stats["files"] += 1
-                        logger.warning(f"\x1b[1m\x1b[38;5;3m文件存在：\x1b[0m\x1b[4;34m{subattr['path']!r}\x1b[0m => \x1b[4;34m{subdattr['path']!r}\x1b[0m")
             else:
                 resp = client.upload_file_init(
                     attr["name"], 
