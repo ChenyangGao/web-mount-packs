@@ -22,9 +22,10 @@ if args.version:
     print(".".join(map(str, __version__)))
     raise SystemExit(0)
 
+import logging
+
 from json import load, JSONDecodeError
 from os.path import expanduser, dirname, join as joinpath, realpath
-from sys import stderr
 from textwrap import indent
 from threading import Lock
 from traceback import format_exc
@@ -56,6 +57,7 @@ to_pid = args.to_pid
 cookies = args.cookies
 max_workers = args.max_workers
 lock = Lock()
+count_lock = Lock()
 
 cookie_path = None
 if not cookies:
@@ -77,6 +79,42 @@ client = P115Client(cookies)
 device = client.login_device()["icon"]
 if cookie_path and cookies != client.cookies:
     open(cookie_path, "w").write(client.cookies)
+fs = client.fs
+
+
+class ColoredLevelNameFormatter(logging.Formatter):
+
+    def format(self, record):
+        match record.levelno:
+            case logging.DEBUG:
+                # cyan
+                record.levelname = f"\x1b[1;34m{record.levelname}\x1b[0m"
+            case logging.INFO:
+                # green
+                record.levelname = f"\x1b[1;32m{record.levelname}\x1b[0m"
+            case logging.WARNING:
+                # yellow
+                record.levelname = f"\x1b[1;33m{record.levelname}\x1b[0m"
+            case logging.ERROR:
+                # red
+                record.levelname = f"\x1b[1;31m{record.levelname}\x1b[0m"
+            case logging.CRITICAL:
+                # magenta
+                record.levelname = f"\x1b[1;35m{record.levelname}\x1b[0m"
+            case _:
+                # dark grey
+                record.levelname = f"\x1b[1;2m{record.levelname}\x1b[0m"
+        return super().format(record)
+
+
+logger = logging.Logger("115-pull", logging.INFO)
+handler = logging.StreamHandler()
+formatter = ColoredLevelNameFormatter(
+    "[\x1b[1m%(asctime)s\x1b[0m] (%(levelname)s) \x1b[1;36m\x1b[0m"
+    "\x1b[1;34m%(name)s\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s"
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 def attr(id=0, base_url=base_url):
@@ -103,46 +141,98 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
     def read_range(url, rng):
         with urlopen(Request(url, headers={"Range": f"bytes={rng}"})) as resp:
             return resp.read()
+    stats = {"tasks": 0, "files": 0, "dirs": 0, "errors": 0, "is_success": False}
     def pull(task, submit):
-        attr, pid = task
+        attr, pid, dattr = task
         try:
             if attr["is_directory"]:
-                try:
-                    resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
-                    dirid = int(resp["cid"])
-                    print(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m\x1b[4;34m{resp['cname']!r}\x1b[0m in \x1b[1m\x1b[38;5;6m{dirid}\x1b[0m")
-                except FileExistsError:
-                    dattr = relogin_wrap(client.fs.attr, [attr["name"]], pid)
+                subdattrs: None | dict = None
+                if dattr:
                     dirid = dattr["id"]
-                    print(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m\x1b[4;34m{dattr['path']!r}\x1b[0m")
-                for subattr in listdir(attr["id"], base_url):
-                    submit((subattr, dirid))
+                    logger.warning(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => \x1b[4;34m{dattr['path']!r}\x1b[0m")
+                else:
+                    try:
+                        resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
+                        dirid = int(resp["cid"])
+                        dattr = fs.attr(dirid)
+                        logger.info(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m\x1b[4;34m{resp['cname']!r}\x1b[0m in \x1b[1m\x1b[38;5;6m{dirid}\x1b[0m")
+                        subdattrs = {}
+                    except FileExistsError:
+                        def finddir(pid, name):
+                            for attr in fs.listdir_attr(pid):
+                                if attr["is_directory"] and attr["name"] == name:
+                                    return attr
+                            raise FileNotFoundError(f"{name!r} in {pid}")
+                        dattr = relogin_wrap(finddir, pid, attr["name"])
+                        dirid = dattr["id"]
+                        logger.warning(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => \x1b[4;34m{dattr['path']!r}\x1b[0m")
+                    with count_lock:
+                        stats["dirs"] += 1
+                if subdattrs is None:
+                    subdattrs = {(attr["name"], attr["is_directory"]): attr for attr in relogin_wrap(fs.listdir_attr, dirid)}
+                subattrs = listdir(attr["id"], base_url)
+                with count_lock:
+                    stats["tasks"] += len(subattrs)
+                for subattr in subattrs:
+                    is_directory = subattr["is_directory"]
+                    subdattr = subdattrs.get((subattr["name"], is_directory), {})
+                    if is_directory:
+                        if subdattr:
+                            with count_lock:
+                                stats["dirs"] += 1
+                        submit((subattr, dirid, subdattr))
+                    elif subattr["size"] != subdattr.get("size"):
+                        submit((subattr, dirid, None))
+                    else:
+                        with count_lock:
+                            stats["files"] += 1
+                        logger.warning(f"\x1b[1m\x1b[38;5;3m文件存在：\x1b[0m\x1b[4;34m{subattr['path']!r}\x1b[0m => \x1b[4;34m{subdattr['path']!r}\x1b[0m")
             else:
-                resp = check_response(client.upload_file_init(
+                resp = client.upload_file_init(
                     attr["name"], 
                     pid=pid, 
                     filesize=attr["size"], 
                     file_sha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
-                ))
+                )
+                status = resp["status"]
+                statuscode = resp.get("statuscode", 0)
+                if status == 2 and statuscode == 0:
+                    pass
+                elif status == 1 and statuscode == 0:
+                    data_str = highlight(repr(attr), Python3Lexer(), TerminalFormatter()).rstrip()
+                    logger.warning(f"\x1b[1m\x1b[38;5;3m秒传失败（直接上传）：\x1b[0m{data_str} -> {pid}")
+                    resp = client.upload_file_sample(urlopen(attr["url"]), attr["name"], pid=pid)
+                else:
+                    raise OSError(resp)
                 data = resp["data"]
                 data_str = highlight(repr(data), Python3Lexer(), TerminalFormatter()).rstrip()
-                print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => {data_str}")
+                logger.info(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => {data_str}")
+                with count_lock:
+                    stats["files"] += 1
         except BaseException as e:
+            with count_lock:
+                stats["errors"] += 1
             data_str = highlight(repr(attr), Python3Lexer(), TerminalFormatter()).rstrip()
             if isinstance(e, (URLError, TimeoutException)):
                 exc_str = indent(f"\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}", "    |_ ")
-                print(f"\x1b[1m\x1b[38;5;1m发生错误（将重试）：\x1b[0m{data_str} -> {pid}\n{exc_str}", file=stderr)
-                submit(task)
+                logger.error(f"\x1b[1m\x1b[38;5;1m发生错误（将重试）：\x1b[0m{data_str} -> {pid}\n{exc_str}")
+                submit((attr, pid, dattr))
             else:
                 exc_str = indent(highlight(format_exc(), Python3TracebackLexer(), TerminalFormatter()).rstrip(), "    |_ ")
-                print(f"\x1b[1m\x1b[38;5;1m发生错误（将抛弃）：\x1b[0m{data_str} -> {pid}\n{exc_str}", file=stderr)
+                logger.error(f"\x1b[1m\x1b[38;5;1m发生错误（将抛弃）：\x1b[0m{data_str} -> {pid}\n{exc_str}")
                 raise
     if push_id == 0:
-        tasks = [(a, to_pid) for a in listdir(push_id, base_url)]
+        tasks = [({"id": 0, "is_directory": True}, to_pid, fs.attr(to_pid))]
     else:
-        tasks = [(attr(push_id, base_url), to_pid)]
-    thread_pool_batch(pull, tasks, max_workers=max_workers)
+        tasks = [(attr(push_id, base_url), to_pid, None)]
+    stats["tasks"] += 1
+    try:
+        thread_pool_batch(pull, tasks, max_workers=max_workers)
+        stats["is_success"] = True
+    finally:
+        data_str = highlight(repr(stats), Python3Lexer(), TerminalFormatter()).rstrip()
+        logger.info(data_str)
 
 
 pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)

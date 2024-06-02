@@ -367,7 +367,7 @@ def query(path: str):
                     <a href="iina://weblink?url={{ url }}"><img src="/?pic=iina" /></a>
                     <a href="potplayer://{{ url }}"><img src="/?pic=potplayer" /></a>
                     <a href="vlc://{{ url }}"><img src="/?pic=vlc" /></a>
-                    <a href="intent://{{ url }}#Intent;package=com.mxtech.videoplayer.ad;S.title={{ name }};end"><img src="/?pic=mxplayer" /></a>
+                    <a href="intent://{{ url }}#Intent;package=com.mxtech.videoplayer.pro;S.title={{ name }};end"><img src="/?pic=mxplayer" /></a>
                 </td>
                 </td>
                 <td>{{ attr["size"] }}</td>
