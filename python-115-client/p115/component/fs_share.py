@@ -10,11 +10,10 @@ import errno
 
 from collections import deque
 from collections.abc import (
-    Iterable, Iterator, Mapping, MutableMapping, Sequence
+    Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 )
 from datetime import datetime
 from functools import cached_property
-from itertools import islice
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from re import compile as re_compile
@@ -64,6 +63,8 @@ def normalize_info(
         info2["thumb"] = info["u"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
+    if "ico" in info:
+        info2["ico"] = info["ico"]
     if keep_raw:
         info2["raw"] = info
     if extra_data:
@@ -75,6 +76,7 @@ class P115SharePath(P115PathBase):
     fs: P115ShareFileSystem
 
 
+# TODO: 默认应该是没有缓存
 class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     share_link: str
     share_code: str
@@ -302,6 +304,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: Optional[int] = None, 
+        start: int = 0, 
+        stop: None | int = None, 
         page_size: int = 1_000, 
         **payload, 
     ) -> Iterator[AttrDict]:
@@ -336,16 +340,44 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
             )
         id = attr["id"]
-        payload["cid"] = id
-        payload["limit"] = page_size
-        offset = int(payload.setdefault("offset", 0))
-        if offset < 0:
-            offset = payload["offset"] = 0
-        else:
-            payload["offset"] = 0
+        children: Sequence[AttrDict]
         try:
-            return islice(self.attr_cache[id], offset, None)
+            children = self.attr_cache[id]
+            count = len(children)
+            if start is None:
+                start = 0
+            elif start < 0:
+                start += count
+                if start < 0:
+                    start = 0
+            if stop is None:
+                stop = count
+            elif stop < 0:
+                stop += count
+            if start >= stop or stop <= 0 or start >= count:
+                return iter(())
+            key: None | Callable
+            match payload.get("o"):
+                case "file_name":
+                    key = lambda attr: attr["name"]
+                case "file_size":
+                    key = lambda attr: attr.get("size") or 0
+                case "file_type":
+                    key = lambda attr: attr.get("ico", "")
+                case "user_utime" | "user_ptime" | "user_otime":
+                    key = lambda attr: attr["time"]
+                case _:
+                    key = None
+            if key:
+                children = sorted(children, key=key, reverse=payload.get("asc", True))
         except KeyError:
+            payload["cid"] = id
+            payload["limit"] = page_size
+            offset = int(payload.setdefault("offset", 0))
+            if offset < 0:
+                offset = payload["offset"] = 0
+            else:
+                payload["offset"] = 0
             dirname = attr["path"]
             def iterdir():
                 get_files = self.fs_files
@@ -364,9 +396,9 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                         path_to_id[path] = attr["id"]
                         yield attr
-            t = self.attr_cache[id] = tuple(iterdir())
-            self.id_to_attr.update((attr["id"], attr) for attr in t)
-            return iter(t)
+            children = self.attr_cache[id] = tuple(iterdir())
+            self.id_to_attr.update((attr["id"], attr) for attr in children)
+        return iter(children[start:stop])
 
     def receive(
         self, 
@@ -403,15 +435,15 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         is_dir = attr["is_directory"]
         timestamp: float = attr["timestamp"]
         return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o444, 
-            cast(int, attr["id"]), 
-            cast(int, attr["parent_id"]), 
-            1, 
-            self.user_id, 
-            1, 
-            cast(int, 0 if is_dir else attr["size"]), 
-            timestamp, 
-            timestamp, 
-            timestamp, 
+            (S_IFDIR if is_dir else S_IFREG) | 0o444, # mode
+            cast(int, attr["id"]), # ino
+            cast(int, attr["parent_id"]), # dev
+            1, # nlink
+            self.user_id, # uid
+            1, # gid
+            cast(int, 0 if is_dir else attr["size"]), # size
+            timestamp, # atime
+            timestamp, # mtime
+            timestamp, # ctime
         ))
 

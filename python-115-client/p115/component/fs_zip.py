@@ -34,6 +34,7 @@ def normalize_info(
         "is_directory": info["file_category"] == 0, 
         "file_category": info["file_category"], 
         "size": info["size"], 
+        "ico": info["ico"], 
         "time": datetime.fromtimestamp(timestamp), 
         "timestamp": timestamp, 
         **extra_data, 
@@ -234,6 +235,8 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        start: int = 0, 
+        stop: None | int = None, 
         page_size: int = 999, 
         **kwargs, 
     ) -> Iterator[AttrDict]:
@@ -249,7 +252,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             )
         id = attr["id"]
         try:
-            return iter(self.attr_cache[id])
+            children = self.attr_cache[id]
         except KeyError:
             nextid = self.__dict__["_nextid"]
             dirname = attr["path"]
@@ -273,9 +276,10 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                         path_to_id[path] = attr["id"]
                         yield attr
                     next_marker = data["next_marker"]
-            t = self.attr_cache[id] = tuple(iterdir())
-            self.id_to_attr.update((attr["id"], attr) for attr in t)
-            return iter(t)
+            children = self.attr_cache[id] = tuple(iterdir())
+            self.id_to_attr.update((attr["id"], attr) for attr in children)
+        count = len(children)
+        return iter(children[start:stop])
 
     def stat(
         self, 
@@ -288,15 +292,15 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         is_dir = attr["is_directory"]
         timestamp: float = attr["timestamp"]
         return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o444, 
-            cast(int, attr["id"]), 
-            cast(int, attr["parent_id"]), 
-            1, 
-            self.client.user_id, 
-            1, 
-            cast(int, 0 if is_dir else attr["size"]), 
-            timestamp, 
-            timestamp, 
-            timestamp, 
+            (S_IFDIR if is_dir else S_IFREG) | 0o444, # mode
+            cast(int, attr["id"]), # ino
+            cast(int, attr["parent_id"]), # dev
+            1, # nlink
+            self.client.user_id, # uid
+            1, # gid
+            cast(int, 0 if is_dir else attr["size"]), # size
+            timestamp, # atime
+            timestamp, # mtime
+            timestamp, # ctime
         ))
 

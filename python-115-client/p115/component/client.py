@@ -1722,7 +1722,7 @@ class P115Client:
     @overload
     def fs_files(
         self, 
-        payload: dict, 
+        payload: int | dict, 
         /,
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1731,7 +1731,7 @@ class P115Client:
     @overload
     def fs_files(
         self, 
-        payload: dict, 
+        payload: int | dict, 
         /,
         async_: Literal[True], 
         **request_kwargs, 
@@ -1739,7 +1739,7 @@ class P115Client:
         ...
     def fs_files(
         self, 
-        payload: dict = {}, 
+        payload: int | dict = 0, 
         /,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1750,17 +1750,9 @@ class P115Client:
             - cid: int | str = 0 # 文件夹 id
             - limit: int = 32    # 一页大小，意思就是 page_size
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
-            - asc: 0 | 1 = 1     # 是否升序排列
-            - o: str = "file_name"
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
 
             - aid: int | str = 1
+            - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
@@ -1769,6 +1761,14 @@ class P115Client:
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
             - record_open_time: 0 | 1 = 1
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
@@ -1788,17 +1788,23 @@ class P115Client:
                 # - 书籍: 7
         """
         api = "https://webapi.115.com/files"
-        payload = {
-            "aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
-            "offset": 0, "record_open_time": 1, "show_dir": 1, **payload, 
-        }
+        if isinstance(payload, int):
+            payload = {
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": payload, 
+            }
+        else:
+            payload = {
+                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, **payload, 
+            }
         request_kwargs.pop("parse", None)
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_files2(
         self, 
-        payload: dict, 
+        payload: int | dict, 
         /,
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1807,7 +1813,7 @@ class P115Client:
     @overload
     def fs_files2(
         self, 
-        payload: dict, 
+        payload: int | dict, 
         /,
         async_: Literal[True], 
         **request_kwargs, 
@@ -1815,7 +1821,7 @@ class P115Client:
         ...
     def fs_files2(
         self, 
-        payload: dict = {}, 
+        payload: int | dict = 0, 
         /,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1826,17 +1832,9 @@ class P115Client:
             - cid: int | str = 0 # 文件夹 id
             - limit: int = 32    # 一页大小，意思就是 page_size
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
-            - asc: 0 | 1 = 1     # 是否升序排列
-            - o: str = "file_name"
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
 
             - aid: int | str = 1
+            - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
@@ -1845,6 +1843,14 @@ class P115Client:
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
             - record_open_time: 0 | 1 = 1
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
@@ -1864,12 +1870,148 @@ class P115Client:
                 # - 书籍: 7
         """
         api = "https://aps.115.com/natsort/files.php"
-        payload = {
-            "aid": 1, "asc": 1, "cid": 0, "count_folders": 1, "limit": 32, "o": "file_name", 
-            "offset": 0, "record_open_time": 1, "show_dir": 1, **payload, 
-        }
+        if isinstance(payload, int):
+            payload = {
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": payload, 
+            }
+        else:
+            payload = {
+                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, **payload, 
+            }
         request_kwargs.pop("parse", None)
         return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files3(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files3(
+        self, 
+        payload: int | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files3(
+        self, 
+        payload: int | dict = 0, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取文件夹的中的文件列表和基本信息
+        GET https://proapi.115.com/android/2.0/ufile/files
+        payload:
+            - cid: int | str = 0 # 文件夹 id
+            - limit: int = 32    # 一页大小，意思就是 page_size
+            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+
+            - aid: int | str = 1
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - code: int | str = <default>
+            - count_folders: 0 | 1 = 1
+            - custom_order: int | str = <default>
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - format: str = "json"
+            - is_q: 0 | 1 = <default>
+            - is_share: 0 | 1 = <default>
+            - natsort: 0 | 1 = <default>
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+            - record_open_time: 0 | 1 = 1
+            - scid: int | str = <default>
+            - show_dir: 0 | 1 = 1
+            - snap: 0 | 1 = <default>
+            - source: str = <default>
+            - star: 0 | 1 = <default> # 是否星标文件
+            - suffix: str = <default> # 后缀名
+            - type: int | str = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
+                # - 书籍: 7
+        """
+        api = "https://proapi.115.com/android/2.0/ufile/files"
+        if isinstance(payload, int):
+            payload = {
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": payload, 
+            }
+        else:
+            payload = {
+                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, **payload, 
+            }
+        request_kwargs.pop("parse", None)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_order(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_order(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_order(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取文件夹的中的文件列表和基本信息
+        POST https://webapi.115.com/files/order
+        payload:
+            - user_order: str
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+            - file_id: int | str = 0 # 目录 id
+            - user_asc: 0 | 1 = <default> # 是否升序排列
+            - fc_mix: 0 | 1 = <default>   # 是否文件夹置顶，0 为置顶
+        """
+        api = "https://webapi.115.com/files/order"
+        if isinstance(payload, str):
+            payload = {"file_id": 0, "user_order": payload}
+        else:
+            payload = {"file_id": 0, **payload}
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_files_type(
@@ -4638,6 +4780,7 @@ class P115Client:
     def user_key(self, /) -> str:
         return self.upload_info["userkey"]
 
+    # TODO: 返回一个 DictAttr，这个类型会在一个公共模块中实现
     @cached_property
     def upload_url(self, /) -> dict:
         """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可

@@ -26,7 +26,7 @@ from re import compile as re_compile, escape as re_escape
 from stat import S_IFDIR, S_IFREG # TODO: common stat method
 from time import time
 from typing import (
-    cast, Any, Generic, IO, Literal, Never, Optional, Self, TypeAlias, TypeVar, 
+    cast, Any, Generic, IO, Literal, Never, Self, TypeAlias, TypeVar, 
 )
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
@@ -162,7 +162,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: None | bool | Callable[[Callable], Any] = None, 
         no_root: bool = False, 
-        predicate: Optional[Callable[[P115PathType], bool]] = None, 
+        predicate: None | Callable[[P115PathType], bool] = None, 
         onerror: None | bool | Callable[[BaseException], Any] = None, 
     ) -> Iterator[tuple[P115PathType, str, DownloadTask]]:
         return self.fs.download_tree(
@@ -175,11 +175,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             onerror=onerror, 
         )
 
+    def enumdir(self, /, **kwargs) -> Iterator[str]:
+        return self.fs.enumdir(self if self.is_dir() else self["parent_id"], **kwargs)
+
     def exists(self, /) -> bool:
         return self.fs.exists(self)
 
     @property
-    def file_extension(self, /) -> Optional[str]:
+    def file_extension(self, /) -> None | str:
         if not self.is_file():
             return None
         return splitext(basename(self.path))[1]
@@ -193,7 +196,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> Iterator[Self]:
         return self.fs.glob(
             pattern, 
-            self if self.is_dir() else self.parent, 
+            self if self.is_dir() else self["parent_id"], 
             ignore_case=ignore_case, 
             allow_escaped_slash=allow_escaped_slash, 
         )
@@ -232,15 +235,15 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def iter(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[Self], Optional[bool]]] = None, 
+        predicate: None | Callable[[Self], None | bool] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[Self]:
         return self.fs.iter(
-            self, 
+            self if self.is_dir() else self["parent_id"], 
             topdown=topdown, 
             min_depth=min_depth, 
             max_depth=max_depth, 
@@ -248,6 +251,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             onerror=onerror, 
             **kwargs, 
         )
+
+    def iterdir(self, /, **kwargs) -> Iterator[AttrDict]:
+        return self.fs.iterdir(self if self.is_dir() else self["parent_id"], **kwargs)
 
     def join(self, *names: str) -> Self:
         if not names:
@@ -275,13 +281,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self["size"]
 
     def listdir(self, /, **kwargs) -> list[str]:
-        return self.fs.listdir(self, **kwargs)
+        return self.fs.listdir(self if self.is_dir() else self["parent_id"], **kwargs)
 
     def listdir_attr(self, /, **kwargs) -> list[AttrDict]:
-        return self.fs.listdir_attr(self, **kwargs)
+        return self.fs.listdir_attr(self if self.is_dir() else self["parent_id"], **kwargs)
 
     def listdir_path(self, /, **kwargs) -> list[Self]:
-        return self.fs.listdir_path(self, **kwargs)
+        return self.fs.listdir_path(self if self.is_dir() else self["parent_id"], **kwargs)
 
     def match(
         self, 
@@ -298,7 +304,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return re_compile(pattern).fullmatch(self.path) is not None
 
     @property
-    def media_type(self, /) -> Optional[str]:
+    def media_type(self, /) -> None | str:
         if not self.is_file():
             return None
         return guess_type(self.path)[0] or "application/octet-stream"
@@ -311,11 +317,11 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         mode: str = "r", 
-        buffering: Optional[int] = None, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
-        headers: Optional[Mapping] = None, 
+        buffering: None | int = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
     ) -> HTTPFileReader | IO:
@@ -359,7 +365,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         start: int = 0, 
-        stop: Optional[int] = None, 
+        stop: None | int = None, 
     ) -> bytes:
         return self.fs.read_bytes(self, start, stop)
 
@@ -379,9 +385,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def read_text(
         self, 
         /, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
     ) -> str:
         return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
 
@@ -420,7 +426,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> Iterator[Self]:
         return self.fs.rglob(
             pattern, 
-            self if self.is_dir() else self.parent, 
+            self if self.is_dir() else self["parent_id"], 
             ignore_case=ignore_case, 
             allow_escaped_slash=allow_escaped_slash, 
         )
@@ -433,6 +439,9 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         if type(self) is type(path):
             return self == path
         return path in ("", ".") or self.path == self.fs.abspath(path)
+
+    def scandir(self, /, **kwargs) -> Iterator[Self]:
+        return self.fs.scandir(self if self.is_dir() else self["parent_id"], **kwargs)
 
     def stat(self, /) -> stat_result:
         return self.fs.stat(self)
@@ -465,14 +474,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def walk(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         return self.fs.walk(
-            self, 
+            self if self.is_dir() else self["parent_id"], 
             topdown=topdown, 
             min_depth=min_depth, 
             max_depth=max_depth, 
@@ -483,14 +492,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def walk_attr(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         return self.fs.walk_attr(
-            self, 
+            self if self.is_dir() else self["parent_id"], 
             topdown=topdown, 
             min_depth=min_depth, 
             max_depth=max_depth, 
@@ -501,14 +510,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def walk_path(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[Self], list[Self]]]:
         return self.fs.walk_path(
-            self, 
+            self if self.is_dir() else self["parent_id"], 
             topdown=topdown, 
             min_depth=min_depth, 
             max_depth=max_depth, 
@@ -564,7 +573,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> AttrDict:
         ...
 
@@ -573,8 +582,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
     ) -> str:
         ...
 
@@ -583,7 +592,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         **kwargs, 
     ) -> Iterator[AttrDict]:
         ...
@@ -595,7 +604,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> P115PathType:
         path_class = type(self).path_class
         attr: AttrDict
@@ -614,7 +623,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = 0, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> int:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
@@ -648,7 +657,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         full_path: bool = False, 
         **kwargs, 
     ) -> dict[int, str]:
@@ -661,7 +670,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         **kwargs, 
     ) -> dict[int, AttrDict]:
         return {attr["id"]: attr for attr in self.iterdir(id_or_path, pid, **kwargs)}
@@ -670,7 +679,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         **kwargs, 
     ) -> dict[int, P115PathType]:
         path_class = type(self).path_class
@@ -681,18 +690,19 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType, 
         /, 
         local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = True, 
-    ) -> Optional[DownloadTask]:
-        if isinstance(local_path_or_file, SupportsWrite):
-            if not local_path_or_file:
-                local_path_or_file = self.attr(id_or_path, pid)["name"]
-            if ospath.lexists(local_path_or_file):
+    ) -> None | DownloadTask:
+        if not isinstance(local_path_or_file, SupportsWrite):
+            path = cast(bytes | str | PathLike, local_path_or_file)
+            if not path:
+                path = self.attr(id_or_path, pid)["name"]
+            if ospath.lexists(path):
                 if write_mode == "x":
                     raise FileExistsError(
                         errno.EEXIST, 
-                        f"local path already exists: {local_path_or_file!r}", 
+                        f"local path already exists: {path!r}", 
                     )
                 elif write_mode == "i":
                     return None
@@ -719,11 +729,11 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         local_dir: bytes | str | PathLike = "", 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         write_mode: Literal["i", "x", "w", "a"] = "a", 
         submit: None | bool | Callable[[Callable], Any] = None, 
         no_root: bool = False, 
-        predicate: Optional[Callable[[P115PathType], bool]] = None, 
+        predicate: None | Callable[[P115PathType], bool] = None, 
         onerror: None | bool | Callable[[BaseException], Any] = None, 
     ) -> Iterator[tuple[P115PathType, str, DownloadTask]]:
         local_dir = fsdecode(local_dir)
@@ -785,11 +795,24 @@ class P115FileSystemBase(Generic[P115PathType]):
                         if submit is None:
                             task.run_wait()
 
+    def enumdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        **kwargs, 
+    ) -> Iterator[str]:
+        if full_path:
+            return (attr["path"] for attr in self.iterdir(id_or_path, pid, **kwargs))
+        else:
+            return (attr["name"] for attr in self.iterdir(id_or_path, pid, **kwargs))
+
     def exists(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> bool:
         path_class = type(self).path_class
         try:
@@ -813,7 +836,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> int:
         path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
@@ -837,7 +860,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> str:
         path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
@@ -872,7 +895,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> list[str]:
         path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
@@ -1041,7 +1064,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> bool:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
@@ -1055,7 +1078,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> bool:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
@@ -1069,10 +1092,10 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
@@ -1113,11 +1136,11 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
@@ -1173,11 +1196,11 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
-        topdown: Optional[bool] = True, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[P115PathType], Optional[bool]]] = None, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
@@ -1207,7 +1230,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         full_path: bool = False, 
         **kwargs, 
     ) -> list[str]:
@@ -1220,7 +1243,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         **kwargs, 
     ) -> list[AttrDict]:
         return list(self.iterdir(id_or_path, pid, **kwargs))
@@ -1229,7 +1252,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         **kwargs, 
     ) -> list[P115PathType]:
         path_class = type(self).path_class
@@ -1240,14 +1263,14 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         mode: str = "r", 
-        buffering: Optional[int] = None, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
-        headers: Optional[Mapping] = None, 
+        buffering: None | int = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
@@ -1270,8 +1293,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         start: int = 0, 
-        stop: Optional[int] = None, 
-        pid: Optional[int] = None, 
+        stop: None | int = None, 
+        pid: None | int = None, 
     ) -> bytes:
         url = self.get_url(id_or_path, pid)
         return self.client.read_bytes(url, start, stop)
@@ -1281,7 +1304,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         bytes_range: str = "0-", 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> bytes:
         url = self.get_url(id_or_path, pid)
         return self.client.read_bytes_range(url, bytes_range)
@@ -1292,7 +1315,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         size: int = 0, 
         offset: int = 0, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> bytes:
         if size <= 0:
             return b""
@@ -1303,10 +1326,10 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
-        pid: Optional[int] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        pid: None | int = None, 
     ):
         return self.open(
             id_or_path, 
@@ -1336,7 +1359,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
         return map(type(self).path_class, self.iterdir(id_or_path, pid, **kwargs))
@@ -1345,7 +1368,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> stat_result:
         raise UnsupportedOperation(errno.ENOSYS, 
             "`stat()` is currently not supported, use `attr()` instead."
@@ -1355,7 +1378,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
@@ -1394,7 +1417,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
@@ -1438,8 +1461,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
-        topdown: Optional[bool] = True, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
@@ -1460,8 +1483,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
-        topdown: Optional[bool] = True, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
@@ -1491,8 +1514,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         self, 
         top: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
-        topdown: Optional[bool] = True, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 

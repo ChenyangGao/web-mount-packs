@@ -56,7 +56,7 @@ class P115Offline:
     def __delitem__(self, hash: str, /):
         return self.remove(hash)
 
-    def __getitem__(self, hash: str, /) -> dict:
+    def __getitem__(self, index_or_hash: str, /) -> dict:
         for item in self:
             if item["info_hash"] == hash:
                 return item
@@ -89,6 +89,22 @@ class P115Offline:
         return [as_path(int(attr["file_id"])) for attr in self.download_paths_raw]
 
     @property
+    @check_response
+    def info(self, /) -> dict:
+        "获取关于离线的限制的信息"
+        return self.client.offline_info()
+
+    @property
+    def quota_info(self, /) -> dict:
+        "获取当前离线配额信息（简略）"
+        return self.client.offline_quota_info()
+
+    @property
+    def quota_package_info(self, /) -> dict:
+        "获取当前离线配额信息（详细）"
+        return self.client.offline_quota_package_info()
+
+    @property
     def sign_time(self, /) -> MappingProxyType:
         "签名和时间等信息"
         try:
@@ -97,7 +113,7 @@ class P115Offline:
                 return sign_time
         except AttributeError:
             pass
-        info = check_response(self.client.offline_info())
+        info = self.info
         sign_time = self._sign_time = MappingProxyType({"sign": info["sign"], "time": info["time"]})
         return sign_time
 

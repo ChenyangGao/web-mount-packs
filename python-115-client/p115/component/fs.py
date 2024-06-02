@@ -379,8 +379,17 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             case _:
                 raise OSError(errno.EIO, result)
 
-    def fs_files(self, /, payload: dict) -> AttrDict:
-        id = int(payload["cid"])
+    def fs_files(
+        self, 
+        /, 
+        payload: None | int | dict = None, 
+    ) -> AttrDict:
+        if payload is None:
+            payload = self.id
+        if isinstance(payload, int):
+            id = payload
+        else:
+            id = int(payload["cid"])
         resp = check_response(self.client.fs_files(payload))
         if int(resp["path"][-1]["cid"]) != id:
             raise NotADirectoryError(errno.ENOTDIR, f"{id!r} is not a directory")
@@ -388,6 +397,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     @check_response
     def fs_search(self, payload: str | dict, /) -> AttrDict:
+        if isinstance(payload, str):
+            payload = {"cid": self.id, "search_value": payload}
         return self.client.fs_search(payload)
 
     @check_response
@@ -670,13 +681,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        refresh: bool = False, 
+        start: int = 0, 
+        stop: None | int = None, 
         page_size: int = 1_000, 
+        refresh: bool = False, 
         **payload, 
     ) -> Iterator[AttrDict]:
         """迭代获取目录内直属的文件或目录的信息
         payload:
-            - asc: 0 | 1 = 1     # 是否升序排列
+            - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
@@ -685,7 +698,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
-            - o: str = "file_name"
+            - o: str = <default>
                 # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
@@ -693,7 +706,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
-            - offset: int = 0    # 索引偏移，索引从 0 开始计算
             - record_open_time: 0 | 1 = 1
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
@@ -776,8 +788,44 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                     pass
                             old_attr.update(attr)
                 return attr
-            def iterdir():
+            def iterdir(fetch_all: bool = True) -> Iterator[dict]:
+                nonlocal start, stop
                 get_files = self.fs_files
+                count = -1
+                total = -1
+                if fetch_all:
+                    payload["offset"] = 0
+                else:
+                    if start is None:
+                        start = 0
+                    elif start < 0:
+                        count = self.dirlen(id)
+                        start += count
+                        if start < 0:
+                            start = 0
+                    if stop is None or stop < 0:
+                        if count < 0:
+                            count = self.dirlen(id)
+                        if stop is None:
+                            stop = count
+                        else:
+                            stop += count
+                    if start >= stop or stop <= 0 or count >= 0 and start >= count:
+                        return
+                    payload["offset"] = start
+                    total = stop - start
+                    if total < page_size:
+                        payload["limit"] = total
+                    set_order_payload = {}
+                    if "o" in payload:
+                        set_order_payload["user_order"] = payload["o"]
+                    if "asc" in payload:
+                        set_order_payload["user_asc"] = payload["asc"]
+                    if set_order_payload:
+                        set_order_payload["file_id"] = id
+                        if "fc_mix" in payload:
+                            set_order_payload["fc_mix"] = payload["fc_mix"]
+                        self.client.fs_files_order(set_order_payload)
                 resp = get_files(payload)
                 dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
                 if path_to_id is not None:
@@ -785,22 +833,55 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 count = resp["count"]
                 for attr in resp["data"]:
                     yield normalize_attr(attr, dirname, fs=self)
-                for offset in range(page_size, count, page_size):
-                    payload["offset"] = offset
+                if total < 0:
+                    total = count
+                if total <= page_size:
+                    return
+                for _ in range((total - 1) // page_size + 1):
+                    payload["offset"] += page_size
                     resp = get_files(payload)
                     if resp["count"] != count:
                         raise RuntimeError(f"{id} detected count changes during iteration")
                     for attr in resp["data"]:
                         yield normalize_attr(attr, dirname, fs=self)
             if attr_cache is None:
-                return iterdir()
+                return iterdir(False)
             else:
-                payload["offset"] = 0
                 children = {a["id"]: a for a in iterdir()}
                 attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
         else:
             children = pid_attrs["children"]
-        return islice(children.values(), offset, None)
+        count = len(children)
+        if start is None:
+            start = 0
+        elif start < 0:
+            start += count
+            if start < 0:
+                start = 0
+        if stop is None:
+            stop = count
+        elif stop < 0:
+            stop += count
+        if start >= stop or stop <= 0 or start >= count:
+            return iter(())
+        match payload.get("o"):
+            case "file_name":
+                key = lambda attr: attr["name"]
+            case "file_size":
+                key = lambda attr: attr.get("size") or 0
+            case "file_type":
+                key = lambda attr: attr.get("ico", "")
+            case "user_utime":
+                key = lambda attr: attr["utime"]
+            case "user_ptime":
+                key = lambda attr: attr["ptime"]
+            case "user_otime":
+                key = lambda attr: attr["open_time"]
+            case _:
+                return islice(children.values(), start, stop)
+        return iter(sorted(
+            children.values(), key=key, reverse=payload.get("asc", True), 
+        )[start:stop])
 
     def copy(
         self, 
@@ -1032,7 +1113,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def dirlen(
         self, 
-        id_or_path: IDOrPathType, 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
     ) -> int:
@@ -1051,7 +1132,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def get_pickcode(
         self, 
-        id_or_path: IDOrPathType, 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
     ) -> str:
