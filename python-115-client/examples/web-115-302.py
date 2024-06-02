@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __doc__ = "获取 115 文件信息和下载链接"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -57,8 +57,8 @@ method   | string  | 否   | 1. 'url': 【默认值】，这个文件的下载�
 """)
 parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
 parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
-parser.add_argument("-c", "--cookies", help="115 登录 cookies，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
-parser.add_argument("-pc", "--use-path-cache", action="store_true", help="启用 path 到 id 的缓存")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
+parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -66,19 +66,21 @@ if args.version:
     raise SystemExit(0)
 
 try:
+    from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "flask", "posixpatht", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "posixpatht", "python-115"], check=True)
+    from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 
 from mimetypes import guess_type
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from io import BytesIO
 from json import JSONDecodeError
 from os.path import expanduser, dirname, join as joinpath, realpath
@@ -97,33 +99,35 @@ except ImportError:
         from json import dumps as odumps
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
 
-
 cookies = args.cookies
-cookie_path = None
+cookies_path = args.cookies_path
 if not cookies:
-    seen = set()
-    for dir_ in (".", expanduser("~"), dirname(__file__)):
-        dir_ = realpath(dir_)
-        if dir_ in seen:
-            continue
-        seen.add(dir_)
+    if cookies_path:
         try:
-            cookies = open(joinpath(dir_, "115-cookies.txt")).read()
-            if cookies:
-                cookie_path = joinpath(dir_, "115-cookies.txt")
-                break
+            cookies = open(cookies_path).read()
         except FileNotFoundError:
             pass
+    else:
+        seen = set()
+        for dir_ in (".", expanduser("~"), dirname(__file__)):
+            dir_ = realpath(dir_)
+            if dir_ in seen:
+                continue
+            seen.add(dir_)
+            try:
+                cookies = open(joinpath(dir_, "115-cookies.txt")).read()
+                if cookies:
+                    cookies_path = joinpath(dir_, "115-cookies.txt")
+                    break
+            except FileNotFoundError:
+                pass
 
-client = P115Client(cookies)
+client = P115Client(cookies, app="qandroid")
 device = client.login_device()["icon"]
-if cookie_path and cookies != client.cookies:
-    open(cookie_path, "w").write(client.cookies)
-
-path_cache = None # type: None | dict
-if args.use_path_cache:
-    path_cache = {}
-fs = P115FileSystem(client, path_to_id=path_cache)
+if cookies_path and cookies != client.cookies:
+    open(cookies_path, "w").write(client.cookies)
+fs = P115FileSystem(client, path_to_id=LRUCache(65536))
+url_cache: MutableMapping[tuple[str, str], str] = TTLCache(65536, 60 * 30)
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
@@ -135,14 +139,21 @@ application = Flask(__name__)
 
 def get_url_with_pickcode(pickcode: str, use_web_api: bool = False):
     headers = {}
+    user_agent = ""
     for key, val in request.headers:
         match key.lower():
             case "user-agent":
-                headers["User-Agent"] = val
+                user_agent = headers["User-Agent"] = val
             case "range":
                 headers["Range"] = val
     try:
-        url = fs.get_url_from_pickcode(pickcode, detail=True, use_web_api=use_web_api, headers=headers)
+        try:
+            url = url_cache[(pickcode, user_agent)]
+        except KeyError:
+            if not user_agent:
+                headers["User-Agent"] = user_agent
+            url_cache[(pickcode, user_agent)] = url = fs.get_url_from_pickcode(
+                pickcode, detail=True, use_web_api=use_web_api, headers=headers)
         if use_web_api:
             resp = urlopen(Request(
                 url, headers={**headers, "Cookie": "; ".join(f"{c.name}={c.value}" for c in client.cookiejar)}
@@ -150,7 +161,7 @@ def get_url_with_pickcode(pickcode: str, use_web_api: bool = False):
             return send_file(resp, mimetype=resp.headers.get("Content-Type") or "application/octet-stream")
         else:
             resp = redirect(url)
-            filename = url["file_name"]
+            filename = url["file_name"] # type: ignore
             resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % quote(filename)
             resp.headers["Content-Type"] = guess_type(filename)[0] or "application/octet-stream"
             return resp
@@ -164,8 +175,8 @@ def relogin_wrap(func, /, *args, **kwds):
     except JSONDecodeError as e:
         pass
     client.login_another_app(device, replace=True)
-    if cookie_path:
-        open(cookie_path, "w").write(client.cookies)
+    if cookies_path:
+        open(cookies_path, "w").write(client.cookies)
     return func(*args, **kwds)
 
 
