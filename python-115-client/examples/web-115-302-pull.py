@@ -125,16 +125,16 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     file_sha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
                 ))["data"]
-                data_str = highlight(repr(data), Python3Lexer(), TerminalFormatter())
+                data_str = highlight(repr(data), Python3Lexer(), TerminalFormatter()).rstrip()
                 print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => {data_str}")
         except BaseException as e:
-            data_str = highlight(repr(attr), Python3Lexer(), TerminalFormatter())
+            data_str = highlight(repr(attr), Python3Lexer(), TerminalFormatter()).rstrip()
             if isinstance(e, (URLError, TimeoutException)):
                 exc_str = indent(f"\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}", "    |_ ")
                 print(f"\x1b[1m\x1b[38;5;1m发生错误（将重试）：\x1b[0m{data_str} -> {pid}\n{exc_str}", file=stderr)
                 submit(task)
             else:
-                exc_str = indent(highlight(format_exc(), Python3TracebackLexer(), TerminalFormatter()), "    |_ ")
+                exc_str = indent(highlight(format_exc(), Python3TracebackLexer(), TerminalFormatter()).rstrip(), "    |_ ")
                 print(f"\x1b[1m\x1b[38;5;1m发生错误（将抛弃）：\x1b[0m{data_str} -> {pid}\n{exc_str}", file=stderr)
                 raise
     if push_id == 0:
