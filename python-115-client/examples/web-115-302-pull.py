@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -107,7 +107,7 @@ class ColoredLevelNameFormatter(logging.Formatter):
         return super().format(record)
 
 
-logger = logging.Logger("115-pull", logging.INFO)
+logger = logging.Logger("115-pull", logging.DEBUG)
 handler = logging.StreamHandler()
 formatter = ColoredLevelNameFormatter(
     "[\x1b[1m%(asctime)s\x1b[0m] (%(levelname)s) \x1b[1;36m\x1b[0m"
@@ -232,7 +232,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
         stats["is_success"] = True
     finally:
         data_str = highlight(repr(stats), Python3Lexer(), TerminalFormatter()).rstrip()
-        logger.info(data_str)
+        logger.debug(data_str)
 
 
 pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)
