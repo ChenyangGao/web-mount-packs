@@ -154,7 +154,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     try:
                         resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
                         dirid = int(resp["cid"])
-                        dattr = fs.attr(dirid)
+                        dattr = relogin_wrap(fs.attr, dirid)
                         logger.info(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m\x1b[4;34m{resp['cname']!r}\x1b[0m in \x1b[1m\x1b[38;5;6m{dirid}\x1b[0m")
                         subdattrs = {}
                     except FileExistsError:
