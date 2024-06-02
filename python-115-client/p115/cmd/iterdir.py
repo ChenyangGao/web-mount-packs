@@ -6,9 +6,9 @@ __all__: list[str] = []
 __doc__ = "115 文件夹信息遍历导出"
 
 KEYS = (
-    "id", "parent_id", "name", "path", "relpath", "sha1", "pickcode", "is_directory", 
-    "size", "ctime", "mtime", "atime", "hidden", "violated", "play_long", "thumb", 
-    "star", "score", "labels", "description", 
+    "id", "parent_id", "name", "path", "relpath", "size", "sha1", "pickcode", 
+    "is_directory", "ctime", "mtime", "atime", "hidden", "violated", "play_long", 
+    "thumb", "star", "score", "labels", "description", 
 )
 
 if __name__ == "__main__":
@@ -32,9 +32,9 @@ def main(args):
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
+    from collections.abc import Callable, Sequence
     from os.path import expanduser, dirname, join as joinpath, realpath
     from sys import stdout
-    from typing import Callable
 
     cookies = args.cookies
     cookie_path = None
@@ -62,7 +62,15 @@ def main(args):
     if args.password and not fs.hidden_mode:
         fs.hidden_switch(True, password=args.password)
 
-    keys = args.keys or KEYS
+    keys: Sequence[str]
+    if args.kind_keys:
+        keys = ["id", "parent_id", "name", "path", "relpath", "size", "sha1", "pickcode", "is_directory"]
+        if args.keys:
+            for k in args.keys:
+                if k not in keys:
+                    keys.append(k)
+    else:
+        keys = args.keys or KEYS
     output_type = args.output_type
 
     path = args.path
@@ -163,7 +171,10 @@ def main(args):
 
     def get_key(path: P115Path, key: str):
         if key == "description":
-            return path.desc
+            if path.get('described'):
+                return path.desc
+            else:
+                return ""
         elif key == "relpath":
             return path["path"][top_start:]
         else:
@@ -226,6 +237,7 @@ parser.add_argument(
 parser.add_argument("-p", "--password", help="密码，用于进入隐藏模式，罗列隐藏文件")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 p115.P115Path），用于对路径进行筛选")
 parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
+parser.add_argument("-kk", "--kind-keys", action="store_true", help="帮你选好的一组 key，相当于：-k id parent_id name path size sha1 pickcode is_directory")
 parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""\
 输出类型，默认为 log
     - log   每行输出一条数据，每条数据输出为一个 json 的 object

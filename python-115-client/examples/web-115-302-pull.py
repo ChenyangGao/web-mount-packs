@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -25,21 +25,29 @@ if args.version:
 from json import load, JSONDecodeError
 from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import stderr
+from textwrap import indent
 from threading import Lock
+from traceback import format_exc
 from urllib.error import URLError
 from urllib.request import urlopen, Request
 
-from httpx import TimeoutException
-
 try:
     from concurrenttools import thread_pool_batch
+    from httpx import TimeoutException
     from p115 import P115Client, check_response
+    from pygments import highlight
+    from pygments.lexers import Python3Lexer, Python3TracebackLexer
+    from pygments.formatters import TerminalFormatter
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "flask", "concurrenttools", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "flask", "concurrenttools", "python-115", "pygments"], check=True)
     from concurrenttools import thread_pool_batch
+    from httpx import TimeoutException
     from p115 import P115Client, check_response
+    from pygments import highlight
+    from pygments.lexers import Python3Lexer, Python3TracebackLexer
+    from pygments.formatters import TerminalFormatter
 
 
 base_url = args.base_url
@@ -102,11 +110,11 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 try:
                     resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
                     dirid = int(resp["cid"])
-                    print(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m{resp['cname']!r} in {dirid}")
+                    print(f"\x1b[1m\x1b[38;5;2m创建目录：\x1b[0m\x1b[4;34m{resp['cname']!r}\x1b[0m in \x1b[1m\x1b[38;5;6m{dirid}\x1b[0m")
                 except FileExistsError:
                     dattr = relogin_wrap(client.fs.attr, [attr["name"]], pid)
                     dirid = dattr["id"]
-                    print(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m{dattr['path']!r}")
+                    print(f"\x1b[1m\x1b[38;5;3m目录存在：\x1b[0m\x1b[4;34m{dattr['path']!r}\x1b[0m")
                 for subattr in listdir(attr["id"], base_url):
                     submit((subattr, dirid))
             else:
@@ -117,12 +125,16 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     file_sha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
                 ))["data"]
-                print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m{attr['path']!r} => {data!r}")
+                data_str = highlight(repr(data), Python3TracebackLexer(), TerminalFormatter())
+                print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => {data_str}")
         except BaseException as e:
-            print(f"\x1b[1m\x1b[38;5;1m发生错误：{attr} -> {pid}\n    |_ \x1b[0m\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}", file=stderr)
             if isinstance(e, (URLError, TimeoutException)):
+                exc_str = indent(f"\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}", "    |_ ")
+                print(f"\x1b[1m\x1b[38;5;1m发生错误（将重试）：\x1b[0m{attr} -> {pid}\n{exc_str}", file=stderr)
                 submit(task)
             else:
+                exc_str = indent(highlight(format_exc(), Python3TracebackLexer(), TerminalFormatter()), "    |_ ")
+                print(f"\x1b[1m\x1b[38;5;1m发生错误（将抛弃）：\x1b[0m{attr} -> {pid}\n{exc_str}", file=stderr)
                 raise
     if push_id == 0:
         tasks = [(a, to_pid) for a in listdir(push_id, base_url)]
