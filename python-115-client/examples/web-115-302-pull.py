@@ -118,13 +118,14 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 for subattr in listdir(attr["id"], base_url):
                     submit((subattr, dirid))
             else:
-                data = check_response(client.upload_file_init(
+                resp = check_response(client.upload_file_init(
                     attr["name"], 
                     pid=pid, 
                     filesize=attr["size"], 
                     file_sha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
-                ))["data"]
+                ))
+                data = resp["data"]
                 data_str = highlight(repr(data), Python3Lexer(), TerminalFormatter()).rstrip()
                 print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m\x1b[0m\x1b[4;34m{attr['path']!r}\x1b[0m => {data_str}")
         except BaseException as e:

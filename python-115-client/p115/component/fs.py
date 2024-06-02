@@ -1162,13 +1162,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         /, 
         pickcode: str, 
-        headers: Optional[Mapping] = None, 
         detail: bool = False, 
+        use_web_api: bool = False, 
+        headers: Optional[Mapping] = None, 
     ) -> str:
         "由 pickcode 获取下载链接"
         return self.client.download_url(
             pickcode, 
             detail=detail, 
+            use_web_api=use_web_api, 
             headers=headers, 
         )
 
