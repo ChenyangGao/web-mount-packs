@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -24,8 +24,12 @@ if args.version:
 
 from json import load, JSONDecodeError
 from os.path import expanduser, dirname, join as joinpath, realpath
+from sys import stderr
 from threading import Lock
+from urllib.error import URLError
 from urllib.request import urlopen, Request
+
+from httpx import TimeoutException
 
 try:
     from concurrenttools import thread_pool_batch
@@ -115,8 +119,11 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 ))["data"]
                 print(f"\x1b[1m\x1b[38;5;2m接收文件：\x1b[0m{attr['path']!r} => {data!r}")
         except BaseException as e:
-            print(f"\x1b[1m\x1b[38;5;1m发生错误：\x1b[0m\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}")
-            raise
+            print(f"\x1b[1m\x1b[38;5;1m发生错误：{attr} -> {pid}\n    |_ \x1b[0m\x1b[38;5;1m{type(e).__qualname__}\x1b[0m: {e}", file=stderr)
+            if isinstance(e, (URLError, TimeoutException)):
+                submit(task)
+            else:
+                raise
     if push_id == 0:
         tasks = [(a, to_pid) for a in listdir(push_id, base_url)]
     else:
