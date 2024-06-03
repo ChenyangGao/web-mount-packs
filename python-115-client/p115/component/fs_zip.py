@@ -242,6 +242,8 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     ) -> Iterator[AttrDict]:
         """迭代获取目录内直属的文件或目录的信息
         """
+        if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
+            return iter(())
         if page_size <= 0 or page_size > 999:
             page_size = 999
         attr = self.attr(id_or_path, pid)

@@ -724,6 +724,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 # - 应用: 6
                 # - 书籍: 7
         """
+        if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
+            return iter(())
         if page_size <= 0:
             page_size = 1_000
         path_to_id = self.path_to_id
@@ -791,17 +793,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             def iterdir(fetch_all: bool = True) -> Iterator[dict]:
                 nonlocal start, stop
                 get_files = self.fs_files
-                count = -1
                 if fetch_all:
                     payload["offset"] = 0
                 else:
-                    if start is None:
-                        start = 0
-                    elif start < 0:
+                    count = -1
+                    if start < 0:
                         count = self.dirlen(id)
                         start += count
                         if start < 0:
                             start = 0
+                    elif start >= 100:
+                        count = self.dirlen(id)
+                        if start >= count:
+                            return
                     if stop is not None:
                         if stop < 0:
                             if count < 0:
@@ -809,13 +813,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             stop += count
                         if start >= stop or stop <= 0:
                             return
-                    if count >= 0 and start >= count:
-                        return
+                        total = stop - start
                     payload["offset"] = start
                     if stop is not None:
-                        if stop - start < page_size:
-                            payload["limit"] = stop - start
-                    
+                        if total < page_size:
+                            payload["limit"] = total
                     set_order_payload = {}
                     if "o" in payload:
                         set_order_payload["user_order"] = payload["o"]
@@ -831,9 +833,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if path_to_id is not None:
                     path_to_id[dirname] = id
                 count = resp["count"]
+                if fetch_all:
+                    total = count
+                elif start >= count:
+                    return
+                elif stop is None or stop > count:
+                    total = count - start
                 for attr in resp["data"]:
                     yield normalize_attr(attr, dirname, fs=self)
-                total = count - start
                 if total <= page_size:
                     return
                 for _ in range((total - 1) // page_size + 1):

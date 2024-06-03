@@ -323,6 +323,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
         """
+        if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
+            return iter(())
         if page_size <= 0:
             page_size = 1_000
         path_class = type(self).path_class
@@ -344,9 +346,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         try:
             children = self.attr_cache[id]
             count = len(children)
-            if start is None:
-                start = 0
-            elif start < 0:
+            if start < 0:
                 start += count
                 if start < 0:
                     start = 0
