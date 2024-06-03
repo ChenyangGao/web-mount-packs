@@ -838,13 +838,13 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         pid: None | int = None, 
     ) -> int:
+        if isinstance(id_or_path, int):
+            return id_or_path
         path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
             return self.id
         elif isinstance(id_or_path, path_class):
             return id_or_path.id
-        elif isinstance(id_or_path, int):
-            return id_or_path
         if id_or_path == "/":
             return 0
         try:
@@ -862,6 +862,11 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         pid: None | int = None, 
     ) -> str:
+        if isinstance(id_or_path, int):
+            id = id_or_path
+            if id == 0:
+                return "/"
+            return self.attr(id)["path"]
         path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
             return self.path
@@ -869,11 +874,6 @@ class P115FileSystemBase(Generic[P115PathType]):
             return id_or_path.path
         elif isinstance(id_or_path, dict):
             return id_or_path["path"]
-        elif isinstance(id_or_path, int):
-            id = id_or_path
-            if id == 0:
-                return "/"
-            return self.attr(id)["path"]
         if isinstance(id_or_path, (str, PathLike)):
             path = fspath(id_or_path)
             if not path.startswith("/"):
@@ -897,6 +897,11 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         pid: None | int = None, 
     ) -> list[str]:
+        if isinstance(id_or_path, int):
+            id = id_or_path
+            if id == 0:
+                return [""]
+            return splits(self.attr(id)["path"])[0]
         path_class = type(self).path_class
         if pid is None and (not id_or_path or id_or_path == "."):
             return splits(self.path)[0]
@@ -904,26 +909,23 @@ class P115FileSystemBase(Generic[P115PathType]):
             return splits(id_or_path.path)[0]
         elif isinstance(id_or_path, dict):
             return splits(id_or_path["path"])[0]
-        elif isinstance(id_or_path, int):
-            id = id_or_path
-            if id == 0:
-                return [""]
-            return splits(self.attr(id)["path"])[0]
-        if pid is None:
-            pid = self.id
         patht: Sequence[str]
         if isinstance(id_or_path, (str, PathLike)):
             path = fspath(id_or_path)
             if path.startswith("/"):
                 return splits(path)[0]
             elif path in ("", "."):
+                if pid is None:
+                    return splits(self.path)[0]
                 return self.get_patht(pid)
             patht, parents = splits(path)
         else:
             patht = id_or_path
             if not patht[0]:
-                return list(id_or_path)
+                return [p for i, p in enumerate(patht) if not i or p]
             parents = 0
+        if pid is None:
+            pid = self.id
         ppatht = self.get_patht(pid)
         if parents:
             idx = min(parents, len(ppatht) - 1)

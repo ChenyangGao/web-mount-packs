@@ -7380,9 +7380,9 @@ class P115Client:
         self, 
         /, 
         url: str | Callable[[], str], 
-        headers: None | Mapping, 
-        start: int, 
-        seek_threshold: int,
+        headers: None | Mapping = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
         async_: Literal[False] = False, 
     ) -> HTTPFileReader:
         ...
@@ -7403,7 +7403,7 @@ class P115Client:
         url: str | Callable[[], str], 
         headers: None | Mapping = None, 
         start: int = 0, 
-        seek_threshold: int = 1 << 20,
+        seek_threshold: int = 1 << 20, 
         async_: Literal[False, True] = False, 
     ) -> HTTPFileReader | Awaitable[HTTPFileReader]:
         """打开下载链接，可以从网盘、网盘上的压缩包内、分享链接中获取：

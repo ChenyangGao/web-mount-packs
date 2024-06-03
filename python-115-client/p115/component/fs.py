@@ -25,6 +25,7 @@ from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
 from typing import cast, Literal, Optional, Self
 from uuid import uuid4
+from warnings import warn
 from yarl import URL
 
 from filewrap import Buffer, SupportsRead
@@ -1268,21 +1269,31 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def makedirs(
         self, 
-        path: str | PathLike[str] | Sequence[str] | AttrDict, 
+        path: IDOrPathType, 
         /, 
         pid: None | int = None, 
         exist_ok: bool = False, 
     ) -> AttrDict:
         "创建目录，如果上级目录不存在，则会进行创建"
-        if isinstance(path, dict):
-            patht, parents = splits(path["path"])
-        elif isinstance(path, (str, PathLike)):
+        if isinstance(path, int):
+            attr = self.attr(path)
+            if attr["is_directory"]:
+                return attr
+            raise NotADirectoryError(
+                errno.ENOTDIR, f"{attr['path']!r} is not a directory")
+        path_class = type(self).path_class
+        if isinstance(path, (AttrDict, path_class)):
+            path = path["path"]
+        path = cast(str | PathLike | Sequence[str], path)
+        if isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
         else:
-            patht = [p for p in path if p]
+            patht = [p for i, p in enumerate(path) if not i or p]
             parents = 0
         if pid is None:
             pid = self.id
+        elif patht[0] == "":
+            pid = 0
         get_attr = self.attr
         if not patht:
             if parents:
@@ -1297,6 +1308,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             try:
                 attr = get_attr([name], pid)
             except FileNotFoundError:
+                breakpoint()
                 exists = False
                 resp = self.fs_mkdir(name, pid)
                 pid = int(resp["cid"])
@@ -1320,17 +1332,27 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
     ) -> AttrDict:
         "创建目录"
-        if isinstance(path, (int, dict)):
-            return self.attr(path)
-        elif isinstance(path, (str, PathLike)):
+        if isinstance(path, int):
+            attr = self.attr(path)
+            if attr["is_directory"]:
+                raise FileExistsError(errno.EEXIST, f"{attr['path']!r} already exists")
+            raise NotADirectoryError(
+                errno.ENOTDIR, f"{attr['path']!r} is not a directory")
+        path_class = type(self).path_class
+        if isinstance(path, (AttrDict, path_class)):
+            path = path["path"]
+        path = cast(str | PathLike | Sequence[str], path)
+        if isinstance(path, (str, PathLike)):
             patht, parents = splits(fspath(path))
         else:
-            patht = [p for p in path if p]
+            patht = [p for i, p in enumerate(path) if not i or p]
             parents = 0
         if not patht or patht == [""]:
             raise OSError(errno.EINVAL, f"invalid path: {path!r}")
         if pid is None:
             pid = self.id
+        elif patht[0] == "":
+            pid = 0
         if parents:
             ancestors = self.get_ancestors(pid)
             idx = min(parents-1, len(ancestors))
@@ -1345,7 +1367,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if not attr["is_directory"]:
                     raise NotADirectoryError(
                         errno.ENOTDIR, 
-                        f"{attr['id']!r} ({name!r} in {pid!r}) not a directory", 
+                        f"{attr['id']!r} ({name!r} in {pid!r}) is not a directory", 
                     )
                 pid = attr["id"]
         else:
@@ -1523,15 +1545,31 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         elif src_name == dst_name:
             self.fs_move(src_id, dst_pid)
         elif not src_attr["is_directory"] and src_ext != dst_ext:
-            dst_name = check_response(self.client.upload_file_init)(
+            url = self.get_url(src_id)
+            client = self.client
+            resp = client.upload_file_init(
                 dst_name, 
+                pid=dst_pid, 
                 filesize=src_attr["size"], 
                 file_sha1=src_attr["sha1"], 
-                read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
-                pid=dst_pid, 
-            )["data"]["file_name"]
+                read_range_bytes_or_hash=lambda rng: client.read_bytes_range(url, rng), 
+            )
+            status = resp["status"]
+            statuscode = resp.get("statuscode", 0)
+            if status == 2 and statuscode == 0:
+                pass
+            elif status == 1 and statuscode == 0:
+                warn(f"wrong sha1 {src_attr['sha1']!r} found, will attempt to upload directly: {src_attr!r}")
+                resp = client.upload_file_sample(client.open(url), dst_name, pid=dst_pid)
+            else:
+                raise OSError(resp)
             self.fs_delete(src_id)
-            return self.attr([dst_name], dst_pid)
+            data = resp["data"]
+            if "file_id" in data:
+                return self.attr(int(data["file_id"]))
+            else:
+                dst_name = data["file_name"]
+                return self.attr([dst_name], dst_pid)
         else:
             self.fs_rename(src_id, str(uuid4()))
             try:
