@@ -207,11 +207,15 @@ def query(path: str):
     def append_url(attr):
         path_url = attr.get("path_url") or "%s%s" % (origin, quote(attr["path"], safe=":/"))
         if attr["is_directory"]:
+            attr["short_url"] = f"origin?id={attr['id']}"
             attr["url"] = f"{path_url}?id={attr['id']}"
         else:
+            short_url = f"{origin}?pickcode={attr['pickcode']}"
             url = f"{path_url}?pickcode={attr['pickcode']}"
             if attr["violated"] and attr["size"] < 1024 * 1024 * 115:
-                url += f"&web=true"
+                short_url += "&web=true"
+                url += "&web=true"
+            attr["short_url"] = short_url
             attr["url"] = url
         return attr
     if method == "attr":
@@ -378,7 +382,7 @@ def query(path: str):
                     <a href="iina://weblink?url={{ url }}"><img src="/?pic=iina" /></a>
                     <a href="potplayer://{{ url }}"><img src="/?pic=potplayer" /></a>
                     <a href="vlc://{{ url }}"><img src="/?pic=vlc" /></a>
-                    <a href="intent:{{ url }}#Intent;package=com.mxtech.videoplayer.pro;S.title={{ name }};end"><img src="/?pic=mxplayer" /></a>
+                    <a href="intent:{{ attr["short_url"] }}#Intent;package=com.mxtech.videoplayer.pro;S.title={{ name }};end"><img src="/?pic=mxplayer" /></a>
                 </td>
                 </td>
                 <td>{{ attr["size"] }}</td>
