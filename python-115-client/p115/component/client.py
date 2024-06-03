@@ -25,21 +25,22 @@ from hmac import digest as hmac_digest
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel
 from inspect import iscoroutinefunction
-from itertools import count, takewhile
+from itertools import chain, count, takewhile
 from json import dumps, loads
-from os import fsdecode, fstat, stat, PathLike
+from os import fsdecode, fspath, fstat, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
 from threading import Condition, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
-    cast, overload, Any, Final, Literal, Never, Self, TypeVar, 
+    cast, overload, Any, Final, Literal, Never, NotRequired, Self, 
+    TypeVar, TypedDict
 )
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
 from xml.etree.ElementTree import fromstring
 
-from asynctools import as_thread, ensure_aiter, ensure_async
+from asynctools import as_thread, async_chain, ensure_aiter, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
 from filewrap import (
     Buffer, SupportsRead, 
@@ -64,7 +65,7 @@ from urlopen import urlopen
 from yarl import URL
 
 from .cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
-from .exception import AuthenticationError, LoginError
+from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 
 
 RequestVarT = TypeVar("RequestVarT", dict, Callable)
@@ -175,6 +176,15 @@ class UrlStr(str):
 
     def geturl(self) -> str:
         return str(self)
+
+
+class MultipartResumeData(TypedDict):
+    bucket: str
+    object: str
+    upload_id: str
+    callback: dict
+    partsize: int
+    filesize: NotRequired[int]
 
 
 class P115Client:
@@ -4086,7 +4096,7 @@ class P115Client:
         token: dict, 
         upload_id: str, 
         part_number: int, 
-        part_size: int, 
+        partsize: int, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4102,7 +4112,7 @@ class P115Client:
         token: dict, 
         upload_id: str, 
         part_number: int, 
-        part_size: int, 
+        partsize: int, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -4117,7 +4127,7 @@ class P115Client:
         token: dict, 
         upload_id: str, 
         part_number: int, 
-        part_size: int = 10 * 1 << 20, # default to: 10 MB
+        partsize: int = 10 * 1 << 20, # default to: 10 MB
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -4164,14 +4174,15 @@ class P115Client:
                 nonlocal count_in_bytes
                 count_in_bytes += length
             if async_:
-                dataiter = bio_chunk_async_iter(file, part_size, callback=acc)
+                dataiter = bio_chunk_async_iter(file, partsize, callback=acc)
             else:
-                dataiter = bio_chunk_iter(file, part_size, callback=acc)
+                dataiter = bio_chunk_iter(file, partsize, callback=acc)
         else:
+            count_in_bytes = 0
             def acc(chunk):
                 nonlocal count_in_bytes
                 count_in_bytes += len(chunk)
-                if count_in_bytes >= part_size:
+                if count_in_bytes >= partsize:
                     raise StopIteration
             if not async_ and isinstance(file, AsyncIterable):
                 raise TypeError(f"async iterable {file!r} in non-async mode")
@@ -4318,7 +4329,7 @@ class P115Client:
         token: dict, 
         upload_id: str, 
         part_number_start, 
-        part_size: int, 
+        partsize: int, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> Iterator[dict]:
@@ -4334,7 +4345,7 @@ class P115Client:
         token: dict, 
         upload_id: str, 
         part_number_start: int, 
-        part_size: int, 
+        partsize: int, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> AsyncIterator[dict]:
@@ -4349,7 +4360,7 @@ class P115Client:
         token: dict, 
         upload_id: str, 
         part_number_start: int = 1, 
-        part_size: int = 10 * 1 << 20, # default to: 10 MB
+        partsize: int = 10 * 1 << 20, # default to: 10 MB
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> Iterator[dict] | AsyncIterator[dict]:
@@ -4362,9 +4373,9 @@ class P115Client:
                 pass
         if isinstance(file, Buffer):
             if async_:
-                file = bytes_to_chunk_async_iter(file, part_size)
+                file = bytes_to_chunk_async_iter(file, partsize)
             else:
-                file = bytes_to_chunk_iter(file, part_size)
+                file = bytes_to_chunk_iter(file, partsize)
         elif isinstance(file, SupportsRead):
             if not async_ and iscoroutinefunction(file.read):
                 raise TypeError(f"{file!r} with async read in non-async mode")
@@ -4372,9 +4383,9 @@ class P115Client:
             if not async_ and isinstance(file, AsyncIterable):
                 raise TypeError(f"async iterable {file!r} in non-async mode")
             if async_:
-                file = bytes_ensure_part_async_iter(file, part_size)
+                file = bytes_ensure_part_async_iter(file, partsize)
             else:
-                file = bytes_ensure_part_iter(cast(Iterable, file), part_size)
+                file = bytes_ensure_part_iter(cast(Iterable, file), partsize)
         if async_:
             async def async_request():
                 nonlocal async_
@@ -4388,12 +4399,12 @@ class P115Client:
                         token, 
                         upload_id, 
                         part_number=part_number, 
-                        part_size=part_size, 
+                        partsize=partsize, 
                         async_=async_, 
                         **request_kwargs, 
                     )
                     yield part
-                    if part["Size"] < part_size:
+                    if part["Size"] < partsize:
                         break
             return async_request()
         else:
@@ -4407,12 +4418,12 @@ class P115Client:
                         token, 
                         upload_id, 
                         part_number=part_number, 
-                        part_size=part_size, 
+                        partsize=partsize, 
                         async_=async_, 
                         **request_kwargs, 
                     )
                     yield part
-                    if part["Size"] < part_size:
+                    if part["Size"] < partsize:
                         break
             return request()
 
@@ -4505,7 +4516,9 @@ class P115Client:
         bucket: str, 
         object: str, 
         callback: dict, 
-        token: None | dict, 
+        token: None | dict = None, 
+        filesize: int = -1, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4519,6 +4532,8 @@ class P115Client:
         object: str, 
         callback: dict, 
         token: None | dict, 
+        filesize: int, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -4531,6 +4546,8 @@ class P115Client:
         object: str, 
         callback: dict, 
         token: None | dict = None, 
+        filesize: int = -1, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -4542,13 +4559,12 @@ class P115Client:
                 file = getattr(self, "getbuffer")()
             except TypeError:
                 pass
+        dataiter: Iterable[Buffer] | AsyncIterable[Buffer]
         if isinstance(file, Buffer):
             if async_:
-                async def make_iter(file):
-                    yield file
-                dataiter = make_iter(file)
+                dataiter = bytes_to_chunk_async_iter(file)
             else:
-                dataiter = iter((file,))
+                dataiter = bytes_to_chunk_iter(file)
         elif isinstance(file, SupportsRead):
             if not async_ and iscoroutinefunction(file.read):
                 raise TypeError(f"{file!r} with async read in non-async mode")
@@ -4563,6 +4579,19 @@ class P115Client:
                 dataiter = ensure_aiter(file)
             else:
                 dataiter = cast(Iterable, file)
+        if callable(make_reporthook):
+            if async_:
+                dataiter = progress_bytes_async_iter(
+                    cast(AsyncIterable[Buffer], dataiter), 
+                    make_reporthook, 
+                    None if filesize < 0 else filesize, 
+                )
+            else:
+                dataiter = progress_bytes_iter(
+                    cast(Iterable[Buffer], dataiter), 
+                    make_reporthook, 
+                    None if filesize < 0 else filesize, 
+                )
         request_kwargs["data"] = dataiter
         if async_:
             async def async_request():
@@ -4601,24 +4630,21 @@ class P115Client:
                 **request_kwargs, 
             )
 
-    # TODO
-    def _oss_upload_future(self): ...
-
-    # TODO: 上下文管理器，需要返回的信息：bucket, object, upload_id, callback
-    # TODO: 支持断点续传，但只支持 buffer、路径、url、可 seek 的 reader，否则报错
-    def _oss_multipart_upload_ctx(self): ...
-
+    # TODO: 返回一个task，初始化成功后，生成 {"bucket": bucket, "object": object, "upload_id": upload_id, "callback": callback, "partsize": partsize, "filesize": filesize}
     @overload
     def _oss_multipart_upload(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         bucket: str, 
         object: str, 
         callback: dict, 
         token: None | dict, 
         upload_id: None | str, 
-        part_size: int, 
+        partsize: int, 
+        filesize: int = -1, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4627,13 +4653,16 @@ class P115Client:
     def _oss_multipart_upload(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         bucket: str, 
         object: str, 
         callback: dict, 
         token: None | dict, 
         upload_id: None | str, 
-        part_size: int, 
+        partsize: int, 
+        filesize: int, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -4641,13 +4670,16 @@ class P115Client:
     def _oss_multipart_upload(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         bucket: str, 
         object: str, 
         callback: dict, 
         token: None | dict = None, 
         upload_id: None | str = None, 
-        part_size: int = 10 * 1 << 20, # default to: 10 MB
+        partsize: int = 10 * 1 << 20, # default to: 10 MB
+        filesize: int = -1, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -4661,45 +4693,236 @@ class P115Client:
         if async_:
             async def async_request():
                 nonlocal async_, file, token, upload_id
+                pending_to_close: list[Callable] = []
                 async_ = cast(Literal[True], async_)
                 if not token:
                     token = await self.upload_token(async_=async_)
-                if upload_id:
-                    async for part in self._oss_multipart_part_iter(
-                        bucket, object, url, token, upload_id, async_=async_, **request_kwargs, 
-                    ):
-                        if part["Size"] != part_size:
-                            break
-                        parts.append(part)
-                    skipsize = sum(part["Size"] for part in parts)
-                    if skipsize:
-                        if isinstance(file, Buffer):
-                            file = memoryview(file)[skipsize:]
-                        elif isinstance(file, SupportsRead):
+                try:
+                    skipsize = 0
+                    if upload_id:
+                        async for part in self._oss_multipart_part_iter(
+                            bucket, object, url, token, upload_id, async_=async_, **request_kwargs, 
+                        ):
+                            if part["Size"] != partsize:
+                                break
+                            parts.append(part)
+                        skipsize = sum(part["Size"] for part in parts)
+                        if skipsize:
+                            file_skipped = False
+                            if isinstance(file, (str, PathLike)):
+                                try:
+                                    from aiofile import async_open
+                                except ImportError:
+                                    file = open(file, "rb")
+                                    pending_to_close.append(ensure_async(file.close, threaded=False))
+                                else:
+                                    file = await async_open(fspath(file), "rb")
+                                    pending_to_close.append(file.close)
+                                file.seek(skipsize)
+                                file_skipped = True
+                            elif isinstance(file, (URL, SupportsGeturl)):
+                                if isinstance(file, URL):
+                                    url_ = str(file)
+                                else:
+                                    url_ = file.geturl()
+                                try:
+                                    from aiohttp import ClientSession
+                                except ImportError:
+                                    file = urlopen(url_, headers={"Range": f"bytes={skipsize}-"})
+                                    pending_to_close.append(ensure_async(file.close, threaded=False))
+                                else:
+                                    session = ClientSession()
+                                    pending_to_close.append(session.close)
+                                    resp = await session.get(url_, headers={"Range": f"bytes={skipsize}-"})
+                                    pending_to_close.append(resp.close)
+                                    file = resp.content
+                                file_skipped = is_range_request(file)
+                            if isinstance(file, Buffer):
+                                file = memoryview(file)[skipsize:]
+                            elif isinstance(file, SupportsRead):
+                                if not file_skipped:
+                                    try:
+                                        file_seek = ensure_async(getattr(file, "seek"))
+                                        await file_seek(skipsize, 1)
+                                    except (AttributeError, TypeError, OSError):
+                                        await async_through(bio_skip_async_iter(file, skipsize))
+                            else:
+                                file = await bytes_async_iter_skip(file, skipsize)
+                    else:
+                        upload_id = await self._oss_multipart_upload_init(
+                            bucket, object, url, token, async_=async_, **request_kwargs)
+
+                    multipart_resume_data = {
+                        "bucket": bucket, "object": object, "upload_id": upload_id, 
+                        "callback": callback, "partsize": partsize, "filesize": filesize, 
+                    }
+                    try:
+                        if isinstance(file, (str, PathLike)):
                             try:
-                                file_seek = ensure_async(getattr(file, "seek"))
-                                await file_seek(skipsize, 1)
-                            except (AttributeError, TypeError, OSError):
-                                await async_through(bio_skip_async_iter(file, skipsize))
+                                from aiofile import async_open
+                            except ImportError:
+                                file = open(file, "rb")
+                                pending_to_close.append(ensure_async(file.close, threaded=False))
+                            else:
+                                file = await async_open(fspath(file), "rb")
+                                pending_to_close.append(file.close)
+                        elif isinstance(file, (URL, SupportsGeturl)):
+                            if isinstance(file, URL):
+                                url_ = str(file)
+                            else:
+                                url_ = file.geturl()
+                            try:
+                                from aiohttp import ClientSession
+                            except ImportError:
+                                file = urlopen(url_)
+                                pending_to_close.append(ensure_async(file.close, threaded=False))
+                            else:
+                                session = ClientSession()
+                                pending_to_close.append(session.close)
+                                resp = await session.get(url_)
+                                pending_to_close.append(resp.close)
+                                file = resp.content
+                        file = cast(Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], file)
+                        if isinstance(file, Buffer):
+                            dataiter = bytes_to_chunk_async_iter(file, partsize)
+                        elif isinstance(file, SupportsRead):
+                            dataiter = bio_chunk_async_iter(file, chunksize=partsize)
                         else:
-                            file = await bytes_async_iter_skip(file, skipsize)
+                            dataiter = ensure_aiter(cast(Iterable[Buffer] | AsyncIterable[Buffer], file))
+                        if callable(make_reporthook):
+                            if skipsize:
+                                async def skipit():
+                                    yield type("", (bytes,), {"__len__": staticmethod(lambda: skipsize)})()
+                                dataiter = progress_bytes_async_iter(
+                                    async_chain(skipit(), dataiter), 
+                                    make_reporthook, 
+                                    None if filesize < 0 else filesize, 
+                                )
+                                await anext(dataiter)
+                            else:
+                                dataiter = progress_bytes_async_iter(dataiter, make_reporthook, None if filesize < 0 else filesize)
+                        async for part in self._oss_multipart_upload_part_iter(
+                            dataiter, 
+                            bucket, 
+                            object, 
+                            url, 
+                            token, 
+                            upload_id, 
+                            part_number_start=len(parts) + 1, 
+                            partsize=partsize, 
+                            async_=async_, 
+                            **request_kwargs, 
+                        ):
+                            parts.append(part)
+                        return await self._oss_multipart_upload_complete(
+                            bucket, 
+                            object, 
+                            callback, 
+                            url, 
+                            token, 
+                            upload_id, 
+                            parts=parts, 
+                            async_=async_, 
+                            **request_kwargs, 
+                        )
+                    except BaseException as e:
+                        raise MultipartUploadAbort(multipart_resume_data) from e
+                finally:
+                    for close in pending_to_close:
+                        try:
+                            await close()
+                        except:
+                            pass
+            return async_request()
+        else:
+            if not token:
+                token = self.upload_token(async_=async_)
+            skipsize = 0
+            if upload_id:
+                parts.extend(takewhile(
+                    lambda p: p["Size"] == partsize, 
+                    self._oss_multipart_part_iter(
+                        bucket, object, url, token, upload_id, async_=async_, **request_kwargs)
+                ))
+                skipsize = sum(part["Size"] for part in parts)
+                if skipsize:
+                    file_skipped = False
+                    if isinstance(file, (str, PathLike)):
+                        file = open(file, "rb")
+                        file.seek(skipsize)
+                        file_skipped = True
+                    elif isinstance(file, (URL, SupportsGeturl)):
+                        if isinstance(file, URL):
+                            url = str(file)
+                        else:
+                            url = file.geturl()
+                        file = urlopen(url, headers={"Range": f"bytes={skipsize}-"})
+                        file_skipped = is_range_request(file)
+                    if isinstance(file, Buffer):
+                        file = memoryview(file)[skipsize:]
+                    elif isinstance(file, SupportsRead):
+                        if iscoroutinefunction(file.read):
+                            raise TypeError(f"{file!r} with async read in non-async mode")
+                        if not file_skipped:
+                            try:
+                                file_seek = getattr(file, "seek")
+                                file_seek(skipsize, 1)
+                            except (AttributeError, TypeError, OSError):
+                                through(bio_skip_iter(file, skipsize))
+                    else:
+                        if isinstance(file, AsyncIterable):
+                            raise TypeError(f"async iterable {file!r} in non-async mode")
+                        file = bytes_iter_skip(file, skipsize)
+            else:
+                upload_id = self._oss_multipart_upload_init(
+                    bucket, object, url, token, async_=async_, **request_kwargs)
+
+            multipart_resume_data = {
+                "bucket": bucket, "object": object, "upload_id": upload_id, 
+                "callback": callback, "partsize": partsize, "filesize": filesize, 
+            }
+            try:
+                if isinstance(file, (str, PathLike)):
+                    file = open(file, "rb")
+                elif isinstance(file, (URL, SupportsGeturl)):
+                    if isinstance(file, URL):
+                        url = str(file)
+                    else:
+                        url = file.geturl()
+                    file = urlopen(url)
+                if isinstance(file, Buffer):
+                    dataiter = bytes_to_chunk_iter(file, partsize)
+                elif isinstance(file, SupportsRead):
+                    if iscoroutinefunction(file.read):
+                        raise TypeError(f"{file!r} with async read in non-async mode")
+                    dataiter = bio_chunk_iter(file, chunksize=partsize)
                 else:
-                    upload_id = await self._oss_multipart_upload_init(
-                        bucket, object, url, token, async_=async_, **request_kwargs)
-                async for part in self._oss_multipart_upload_part_iter(
-                    file, 
+                    if isinstance(file, AsyncIterable):
+                        raise TypeError(f"async iterable {file!r} in non-async mode")
+                    dataiter = iter(file)
+                if callable(make_reporthook):
+                    if skipsize:
+                        dataiter = progress_bytes_iter(
+                            chain((type("", (bytes,), {"__len__": staticmethod(lambda: skipsize)})(),), dataiter), 
+                            make_reporthook, 
+                            None if filesize < 0 else filesize, 
+                        )
+                        next(dataiter)
+                    else:
+                        dataiter = progress_bytes_iter(dataiter, make_reporthook, None if filesize < 0 else filesize)
+                parts.extend(self._oss_multipart_upload_part_iter(
+                    dataiter, 
                     bucket, 
                     object, 
                     url, 
                     token, 
                     upload_id, 
                     part_number_start=len(parts) + 1, 
-                    part_size=part_size, 
+                    partsize=partsize, 
                     async_=async_, 
                     **request_kwargs, 
-                ):
-                    parts.append(part)
-                return await self._oss_multipart_upload_complete(
+                ))
+                return self._oss_multipart_upload_complete(
                     bucket, 
                     object, 
                     callback, 
@@ -4710,61 +4933,8 @@ class P115Client:
                     async_=async_, 
                     **request_kwargs, 
                 )
-            return async_request()
-        else:
-            if not token:
-                token = self.upload_token(async_=async_)
-            if upload_id:
-                parts.extend(takewhile(
-                    lambda p: p["Size"] == part_size, 
-                    self._oss_multipart_part_iter(
-                        bucket, object, url, token, upload_id, async_=async_, **request_kwargs)
-                ))
-                skipsize = sum(part["Size"] for part in parts)
-                if skipsize:
-                    if isinstance(file, Buffer):
-                        file = memoryview(file)[skipsize:]
-                    elif isinstance(file, SupportsRead):
-                        if iscoroutinefunction(file.read):
-                            raise TypeError(f"{file!r} with async read in non-async mode")
-                        try:
-                            file_seek = getattr(file, "seek")
-                            file_seek(skipsize, 1)
-                        except (AttributeError, TypeError, OSError):
-                            through(bio_skip_iter(file, skipsize))
-                    else:
-                        if isinstance(file, AsyncIterable):
-                            raise TypeError(f"async iterable {file!r} in non-async mode")
-                        file = bytes_iter_skip(file, skipsize)
-            else:
-                upload_id = self._oss_multipart_upload_init(
-                    bucket, object, url, token, async_=async_, **request_kwargs)
-            parts.extend(self._oss_multipart_upload_part_iter(
-                file, 
-                bucket, 
-                object, 
-                url, 
-                token, 
-                upload_id, 
-                part_number_start=len(parts) + 1, 
-                part_size=part_size, 
-                async_=async_, 
-                **request_kwargs, 
-            ))
-            return self._oss_multipart_upload_complete(
-                bucket, 
-                object, 
-                callback, 
-                url, 
-                token, 
-                upload_id, 
-                parts=parts, 
-                async_=async_, 
-                **request_kwargs, 
-            )
-
-    # TODO
-    def _oss_multipart_upload_future(self): ...
+            except BaseException as e:
+                raise MultipartUploadAbort(multipart_resume_data) from e
 
     @cached_property
     def upload_info(self, /) -> dict:
@@ -4915,7 +5085,8 @@ class P115Client:
             except TypeError:
                 pass
         if isinstance(file, Buffer):
-            filesize = len(file)
+            if filesize < 0:
+                filesize = len(file)
         elif isinstance(file, (str, PathLike)):
             path = fsdecode(file)
             if not filename:
@@ -5074,7 +5245,7 @@ class P115Client:
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        filesha1: str, 
         target: str, 
         sign_key: str, 
         sign_val: str,
@@ -5088,7 +5259,7 @@ class P115Client:
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        filesha1: str, 
         target: str, 
         sign_key: str, 
         sign_val: str,
@@ -5101,7 +5272,7 @@ class P115Client:
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        filesha1: str, 
         target: str = "U_1_0", 
         sign_key: str = "", 
         sign_val: str = "",
@@ -5113,12 +5284,12 @@ class P115Client:
         def gen_sig() -> str:
             sig_sha1 = sha1()
             sig_sha1.update(bytes(userkey, "ascii"))
-            sig_sha1.update(b2a_hex(sha1(bytes(f"{userid}{file_sha1}{target}0", "ascii")).digest()))
+            sig_sha1.update(b2a_hex(sha1(bytes(f"{userid}{filesha1}{target}0", "ascii")).digest()))
             sig_sha1.update(b"000000")
             return sig_sha1.hexdigest().upper()
         def gen_token() -> str:
             token_md5 = md5(MD5_SALT)
-            token_md5.update(bytes(f"{file_sha1}{filesize}{sign_key}{sign_val}{userid}{t}", "ascii"))
+            token_md5.update(bytes(f"{filesha1}{filesize}{sign_key}{sign_val}{userid}{t}", "ascii"))
             token_md5.update(b2a_hex(md5(bytes(userid, "ascii")).digest()))
             token_md5.update(bytes(APP_VERSION, "ascii"))
             return token_md5.hexdigest()
@@ -5134,7 +5305,7 @@ class P115Client:
             "userid": userid, 
             "filename": filename, 
             "filesize": filesize, 
-            "fileid": file_sha1, 
+            "fileid": filesha1, 
             "target": target, 
             "sig": sig, 
             "t": t, 
@@ -5158,7 +5329,7 @@ class P115Client:
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        filesha1: str, 
         read_range_bytes_or_hash: None | Callable[[str], str | Buffer], 
         pid: int,
         async_: Literal[False] = False, 
@@ -5171,7 +5342,7 @@ class P115Client:
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        filesha1: str, 
         read_range_bytes_or_hash: None | Callable[[str], str | Buffer], 
         pid: int,
         async_: Literal[True], 
@@ -5183,7 +5354,7 @@ class P115Client:
         /, 
         filename: str, 
         filesize: int, 
-        file_sha1: str, 
+        filesha1: str, 
         read_range_bytes_or_hash: None | Callable[[str], str | Buffer] = None, 
         pid: int = 0, 
         async_: Literal[False, True] = False, 
@@ -5198,14 +5369,14 @@ class P115Client:
             raise ValueError("filesize >= 1 MB, thus need pass the `read_range_bytes_or_hash` argument")
         if async_:
             async def async_request():
-                nonlocal async_, file_sha1, read_range_bytes_or_hash
+                nonlocal async_, filesha1, read_range_bytes_or_hash
                 async_ = cast(Literal[True], async_)
-                file_sha1 = file_sha1.upper()
+                filesha1 = filesha1.upper()
                 target = f"U_1_{pid}"
                 resp = await self._upload_file_init(
                     filename, 
                     filesize, 
-                    file_sha1, 
+                    filesha1, 
                     target, 
                     async_=async_, 
                     **request_kwargs, 
@@ -5222,7 +5393,7 @@ class P115Client:
                     resp = await self._upload_file_init(
                         filename, 
                         filesize, 
-                        file_sha1, 
+                        filesha1, 
                         target, 
                         sign_key=sign_key, 
                         sign_val=sign_val, 
@@ -5233,19 +5404,19 @@ class P115Client:
                 resp["data"] = {
                     "file_name": filename, 
                     "file_size": filesize, 
-                    "sha1": file_sha1, 
+                    "sha1": filesha1, 
                     "cid": pid, 
                     "pickcode": resp["pickcode"], 
                 }
                 return resp
             return async_request()
         else:
-            file_sha1 = file_sha1.upper()
+            filesha1 = filesha1.upper()
             target = f"U_1_{pid}"
             resp = self._upload_file_init(
                 filename, 
                 filesize, 
-                file_sha1, 
+                filesha1, 
                 target, 
                 async_=async_, 
                 **request_kwargs, 
@@ -5264,7 +5435,7 @@ class P115Client:
                 resp = self._upload_file_init(
                     filename, 
                     filesize, 
-                    file_sha1, 
+                    filesha1, 
                     target, 
                     sign_key=sign_key, 
                     sign_val=sign_val,
@@ -5275,13 +5446,14 @@ class P115Client:
             resp["data"] = {
                 "file_name": filename, 
                 "file_size": filesize, 
-                "sha1": file_sha1, 
+                "sha1": filesha1, 
                 "cid": pid, 
                 "pickcode": resp["pickcode"], 
             }
             return resp
 
     # TODO: 支持进度条和随时暂停，基于迭代器，使用一个 flag，每次迭代检查一下
+    # TODO: 返回 task，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait
     # TODO: class P115MultipartUploadTask:
     #           @classmethod
     #           def from_cache(cls, /, bucket, object, upload_id, callback, file): ...
@@ -5294,9 +5466,11 @@ class P115Client:
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
-        file_sha1: None | str = None, 
-        part_size: int = 0, 
+        filesha1: None | str = None, 
+        partsize: int = 0, 
         upload_directly: bool = False, 
+        multipart_resume_data: None | MultipartResumeData = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5310,9 +5484,11 @@ class P115Client:
         filename: None | str, 
         pid: int, 
         filesize: int, 
-        file_sha1: None | str, 
-        part_size: int, 
+        filesha1: None | str, 
+        partsize: int, 
         upload_directly: bool, 
+        multipart_resume_data: None | MultipartResumeData, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5325,16 +5501,39 @@ class P115Client:
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
-        file_sha1: None | str = None, 
-        part_size: int = 0, 
+        filesha1: None | str = None, 
+        partsize: int = 0, 
         upload_directly: bool = False, 
+        multipart_resume_data: None | MultipartResumeData = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """文件上传接口，这是高层封装，推荐使用
         """
+        if multipart_resume_data is not None:
+            return self._oss_multipart_upload(
+                file, 
+                bucket=multipart_resume_data["bucket"], 
+                object=multipart_resume_data["object"], 
+                upload_id=multipart_resume_data["upload_id"], 
+                callback=multipart_resume_data["callback"], 
+                partsize=multipart_resume_data["partsize"], 
+                filesize=multipart_resume_data.get("filesize", -1), 
+                make_reporthook=make_reporthook, # type: ignore
+                async_=async_, # type: ignore
+                **request_kwargs, 
+            )
         if upload_directly:
-            return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
+            return self.upload_file_sample(
+                file, 
+                filename, 
+                filesize=filesize, 
+                pid=pid, 
+                make_reporthook=make_reporthook, # type: ignore
+                async_=async_, # type: ignore
+                **request_kwargs, 
+            )
         if hasattr(file, "getbuffer"):
             try:
                 file = getattr(self, "getbuffer")()
@@ -5342,20 +5541,16 @@ class P115Client:
                 pass
         if async_:
             async def async_request():
-                nonlocal async_, file, filename, filesize, file_sha1
-                async_ = cast(Literal[True], async_)
+                nonlocal file, filename, filesize, filesha1
 
                 async def do_upload(file):
-                    nonlocal async_
-                    async_ = cast(Literal[True], async_)
-
                     resp = await self.upload_file_init(
                         cast(str, filename), 
                         filesize, 
-                        cast(str, file_sha1), 
+                        cast(str, filesha1), 
                         read_range_bytes_or_hash, 
                         pid=pid, 
-                        async_=async_, 
+                        async_=True, 
                         **request_kwargs, 
                     )
                     status = resp["status"]
@@ -5367,13 +5562,15 @@ class P115Client:
                     else:
                         raise OSError(errno.EINVAL, resp)
 
-                    if part_size <= 0:
+                    if partsize <= 0:
                         return await self._oss_upload(
                             file, 
                             bucket, 
                             object, 
                             callback, 
-                            async_=async_, 
+                            filesize=filesize, 
+                            make_reporthook=make_reporthook, 
+                            async_=True, 
                             **request_kwargs, 
                         )
                     else:
@@ -5382,8 +5579,10 @@ class P115Client:
                             bucket, 
                             object, 
                             callback, 
-                            part_size=part_size, 
-                            async_=async_, 
+                            partsize=partsize, 
+                            filesize=filesize, 
+                            make_reporthook=make_reporthook, 
+                            async_=True, 
                             **request_kwargs, 
                         )
 
@@ -5391,8 +5590,8 @@ class P115Client:
                 if isinstance(file, Buffer):
                     if filesize < 0:
                         filesize = len(file)
-                    if not file_sha1:
-                        file_sha1 = sha1(file).hexdigest()
+                    if not filesha1:
+                        filesha1 = sha1(file).hexdigest()
                     if filesize >= 1 << 20:
                         mmv = memoryview(file)
                         def read_range_bytes_or_hash(sign_check: str):
@@ -5421,13 +5620,13 @@ class P115Client:
                     if filesize < 1 << 20:
                         async with ctx_async_read(path) as (_, read):
                             file = cast(bytes, await read())
-                        if not file_sha1:
-                            file_sha1 = sha1(file).hexdigest()
+                        if not filesha1:
+                            filesha1 = sha1(file).hexdigest()
                     else:
-                        if not file_sha1:
+                        if not filesha1:
                             async with ctx_async_read(path) as (file, _):
                                 _, hashobj = await file_digest_async(file, "sha1")
-                            file_sha1 = hashobj.hexdigest()
+                            filesha1 = hashobj.hexdigest()
                         async def read_range_bytes_or_hash(sign_check):
                             start, end = map(int, sign_check.split("-"))
                             async with ctx_async_read(path, start) as (_, read):
@@ -5465,16 +5664,23 @@ class P115Client:
                                     filesize = 0
                     if 0 < filesize <= 1 << 20:
                         file = await file_read()
-                        if not file_sha1:
-                            file_sha1 = sha1(file).hexdigest()
+                        if not filesha1:
+                            filesha1 = sha1(file).hexdigest()
                     else:
-                        if not file_sha1:
+                        if not filesha1:
                             if not seekable:
                                 return await self.upload_file_sample(
-                                    file, filename, pid, async_=async_, **request_kwargs)
+                                    file, 
+                                    filename, 
+                                    pid=pid, 
+                                    filesize=filesize, 
+                                    make_reporthook=make_reporthook, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
                             try:
                                 _, hashobj = await file_digest_async(file, "sha1")
-                                file_sha1 = hashobj.hexdigest()
+                                filesha1 = hashobj.hexdigest()
                             finally:
                                 await file_seek(curpos)
                         async def read_range_bytes_or_hash(sign_check):
@@ -5521,32 +5727,48 @@ class P115Client:
                             filesize = get_total_length(resp) or 0
                         if filesize < 1 << 20:
                             file = cast(bytes, await read())
-                            if not file_sha1:
-                                file_sha1 = sha1(file).hexdigest()
+                            if not filesha1:
+                                filesha1 = sha1(file).hexdigest()
                         else:
-                            if not file_sha1 or not is_ranged:
+                            if not filesha1 or not is_ranged:
                                 return await self.upload_file_sample(
-                                    resp, filename, pid, **request_kwargs)
+                                    resp, 
+                                    filename, 
+                                    pid=pid, 
+                                    filesize=filesize, 
+                                    make_reporthook=make_reporthook, 
+                                    async_=True, 
+                                    **request_kwargs
+                                )
                             return await do_upload(resp)
-                elif file_sha1:
+                elif filesha1:
                     if filesize < 0 or filesize >= 1 << 20:
                         filesize = 0
                 else:
                     return await self.upload_file_sample(
-                        file, filename, pid, async_=async_, **request_kwargs)
+                        file, 
+                        filename, 
+                        pid=pid, 
+                        filesize=filesize, 
+                        make_reporthook=make_reporthook, 
+                        async_=True, 
+                        **request_kwargs, 
+                    )
                 if not filename:
                     filename = str(uuid4())
                 return await do_upload(file)
             return async_request()
         else:
+            make_reporthook = cast(None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]], make_reporthook)
+
             def do_upload(file):
                 resp = self.upload_file_init(
                     cast(str, filename), 
                     filesize, 
-                    cast(str, file_sha1), 
+                    cast(str, filesha1), 
                     read_range_bytes_or_hash, 
                     pid=pid, 
-                    async_=async_, 
+                    async_=False, 
                     **request_kwargs, 
                 )
                 status = resp["status"]
@@ -5558,13 +5780,15 @@ class P115Client:
                 else:
                     raise OSError(errno.EINVAL, resp)
 
-                if part_size <= 0:
+                if partsize <= 0:
                     return self._oss_upload(
                         file, 
                         bucket, 
                         object, 
                         callback, 
-                        async_=async_, 
+                        filesize=filesize, 
+                        make_reporthook=make_reporthook, 
+                        async_=False, 
                         **request_kwargs, 
                     )
                 else:
@@ -5573,8 +5797,10 @@ class P115Client:
                         bucket, 
                         object, 
                         callback, 
-                        part_size=part_size, 
-                        async_=async_, 
+                        partsize=partsize, 
+                        filesize=filesize, 
+                        make_reporthook=make_reporthook, 
+                        async_=False, 
                         **request_kwargs, 
                     )
 
@@ -5582,8 +5808,8 @@ class P115Client:
             if isinstance(file, Buffer):
                 if filesize < 0:
                     filesize = len(file)
-                if not file_sha1:
-                    file_sha1 = sha1(file).hexdigest()
+                if not filesha1:
+                    filesha1 = sha1(file).hexdigest()
                 if filesize >= 1 << 20:
                     mmv = memoryview(file)
                     def read_range_bytes_or_hash(sign_check: str):
@@ -5597,12 +5823,12 @@ class P115Client:
                     filesize = stat(path).st_size
                 if filesize < 1 << 20:
                     file = open(path, "rb", buffering=0).read()
-                    if not file_sha1:
-                        file_sha1 = sha1(file).hexdigest()
+                    if not filesha1:
+                        filesha1 = sha1(file).hexdigest()
                 else:
-                    if not file_sha1:
+                    if not filesha1:
                         _, hashobj = file_digest(open(path, "rb"), "sha1")
-                        file_sha1 = hashobj.hexdigest()
+                        filesha1 = hashobj.hexdigest()
                     def read_range_bytes_or_hash(sign_check: str):
                         start, end = map(int, sign_check.split("-"))
                         with open(path, "rb") as file:
@@ -5641,16 +5867,23 @@ class P115Client:
                                 filesize = 0
                 if 0 < filesize < 1 << 20:
                     file = file_read()
-                    if not file_sha1:
-                        file_sha1 = sha1(file).hexdigest()
+                    if not filesha1:
+                        filesha1 = sha1(file).hexdigest()
                 else:
-                    if not file_sha1:
+                    if not filesha1:
                         if not seekable:
                             return self.upload_file_sample(
-                                file, filename, pid, async_=async_, **request_kwargs)
+                                file, 
+                                filename, 
+                                pid=pid, 
+                                filesize=filesize, 
+                                make_reporthook=make_reporthook, 
+                                async_=False, 
+                                **request_kwargs, 
+                            )
                         try:
                             _, hashobj = file_digest(file, "sha1")
-                            file_sha1 = hashobj.hexdigest()
+                            filesha1 = hashobj.hexdigest()
                         finally:
                             file_seek(curpos)
                     def read_range_bytes_or_hash(sign_check: str):
@@ -5685,28 +5918,36 @@ class P115Client:
                         filesize = resp.length or 0
                     if 0 < filesize < 1 << 20:
                         file = resp.read()
-                        if not file_sha1:
-                            file_sha1 = sha1(file).hexdigest()
+                        if not filesha1:
+                            filesha1 = sha1(file).hexdigest()
                     else:
-                        if not file_sha1 or not is_ranged:
+                        if not filesha1 or not is_ranged:
                             return self.upload_file_sample(
-                                resp, filename, pid, async_=async_, **request_kwargs)
+                                resp, 
+                                filename, 
+                                pid=pid, 
+                                filesize=filesize, 
+                                make_reporthook=make_reporthook, 
+                                async_=False, 
+                                **request_kwargs, 
+                            )
                         return do_upload(resp)
-            elif file_sha1:
+            elif filesha1:
                 if filesize < 0 or filesize >= 1 << 20:
                     filesize = 0
             else:
                 return self.upload_file_sample(
-                    file, filename, pid, async_=async_, **request_kwargs)
+                    file, 
+                    filename, 
+                    pid=pid, 
+                    filesize=filesize, 
+                    make_reporthook=make_reporthook, 
+                    async_=False, 
+                    **request_kwargs, 
+                )
             if not filename:
                 filename = str(uuid4())
             return do_upload(file)
-
-    # TODO: 提供一个可断点续传的版本
-    # TODO: 支持进度条
-    # TODO: 返回 future，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait
-    def upload_file_future(self):
-        ...
 
     ########## Decompress API ##########
 

@@ -194,7 +194,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     attr["name"], 
                     pid=pid, 
                     filesize=attr["size"], 
-                    file_sha1=attr["sha1"], 
+                    filesha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
                 )
                 status = resp["status"]

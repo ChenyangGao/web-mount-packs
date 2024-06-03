@@ -964,7 +964,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 dst_name = check_response(self.client.upload_file_init)(
                     filename=dst_name, 
                     filesize=src_attr["size"], 
-                    file_sha1=src_attr["sha1"], 
+                    filesha1=src_attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
                     pid=dst_pid, 
                 )["data"]["file_name"]
@@ -1551,7 +1551,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 dst_name, 
                 pid=dst_pid, 
                 filesize=src_attr["size"], 
-                file_sha1=src_attr["sha1"], 
+                filesha1=src_attr["sha1"], 
                 read_range_bytes_or_hash=lambda rng: client.read_bytes_range(url, rng), 
             )
             status = resp["status"]
