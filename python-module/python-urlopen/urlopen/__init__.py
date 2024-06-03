@@ -35,7 +35,7 @@ def urlopen(
     params: Optional[str | Mapping | Sequence[tuple[Any, Any]]] = None, 
     data: Optional[bytes | str | Mapping | Sequence[tuple[Any, Any]]] = None, 
     json: Any = None, 
-    headers: dict[str, str] = {"User-agent": ""}, 
+    headers: Optional[dict[str, str]] = {"User-agent": ""}, 
     timeout: Optional[int | float] = None, 
     cookies: Optional[CookieJar] = None, 
     proxy: Optional[tuple[str, str]] = None, 
@@ -57,7 +57,10 @@ def urlopen(
             data = json
         else:
             data = dumps(json).encode("utf-8")
-        headers = {**headers, "Content-type": "application/json"}
+        if headers:
+            headers = {**headers, "Content-type": "application/json"}
+        else:
+            headers = {"Content-type": "application/json"}
     elif data is not None:
         if isinstance(data, bytes):
             pass
@@ -79,7 +82,7 @@ def urlopen(
     else:
         if params:
             url += "?&"["?" in url] + params
-        req = Request(url, data=data, headers=headers, method=method.upper())
+        req = Request(url, data=data, headers=headers or {}, method=method.upper())
     if proxy:
         req.set_proxy(*proxy)
     if opener is None:

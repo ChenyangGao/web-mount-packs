@@ -173,7 +173,7 @@ if predicate_code:
 else:
     predicate = None
 
-kwargs: dict = {"predicate": predicate, "files_only": True}
+kwargs: dict = {"predicate": predicate, "files_only": True, "headers": headers or {}}
 if args.show_detail or download_dir:
     kwargs["show_detail"] = True
 else:
