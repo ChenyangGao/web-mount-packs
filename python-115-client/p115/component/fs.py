@@ -390,7 +390,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             id = payload
         else:
             id = int(payload["cid"])
-        resp = check_response(self.client.fs_files(payload))
+        resp = check_response(self.client.fs_files2(payload))
         if int(resp["path"][-1]["cid"]) != id:
             raise NotADirectoryError(errno.ENOTDIR, f"{id!r} is not a directory")
         return resp
@@ -792,7 +792,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 nonlocal start, stop
                 get_files = self.fs_files
                 count = -1
-                total = -1
                 if fetch_all:
                     payload["offset"] = 0
                 else:
@@ -803,19 +802,20 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         start += count
                         if start < 0:
                             start = 0
-                    if stop is None or stop < 0:
-                        if count < 0:
-                            count = self.dirlen(id)
-                        if stop is None:
-                            stop = count
-                        else:
+                    if stop is not None:
+                        if stop < 0:
+                            if count < 0:
+                                count = self.dirlen(id)
                             stop += count
-                    if start >= stop or stop <= 0 or count >= 0 and start >= count:
+                        if start >= stop or stop <= 0:
+                            return
+                    if count >= 0 and start >= count:
                         return
                     payload["offset"] = start
-                    total = stop - start
-                    if total < page_size:
-                        payload["limit"] = total
+                    if stop is not None:
+                        if stop - start < page_size:
+                            payload["limit"] = stop - start
+                    
                     set_order_payload = {}
                     if "o" in payload:
                         set_order_payload["user_order"] = payload["o"]
@@ -833,8 +833,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 count = resp["count"]
                 for attr in resp["data"]:
                     yield normalize_attr(attr, dirname, fs=self)
-                if total < 0:
-                    total = count
+                total = count - start
                 if total <= page_size:
                     return
                 for _ in range((total - 1) // page_size + 1):
