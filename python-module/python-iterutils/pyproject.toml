@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-iterutils"
-version = "0.0.2.3"
+version = "0.0.3.1"
 description = "Python another itertools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

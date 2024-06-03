@@ -12,7 +12,8 @@ from asyncio import to_thread
 from base64 import b64encode
 from binascii import b2a_hex
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence, 
+    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterable, 
+    Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
 from contextlib import asynccontextmanager, aclosing, closing
@@ -47,6 +48,7 @@ from filewrap import (
     bytes_iter_skip, bytes_async_iter_skip, 
     bytes_to_chunk_iter, bytes_to_chunk_async_iter, 
     bytes_ensure_part_iter, bytes_ensure_part_async_iter, 
+    progress_bytes_iter, progress_bytes_async_iter, 
 )
 from hashtools import file_digest, file_digest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
@@ -4077,7 +4079,7 @@ class P115Client:
     def _oss_multipart_upload_part(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -4309,7 +4311,7 @@ class P115Client:
     def _oss_multipart_upload_part_iter(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
         bucket: str, 
         object: str, 
         url: str, 
@@ -4499,7 +4501,7 @@ class P115Client:
     def _oss_upload(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4610,7 +4612,7 @@ class P115Client:
     def _oss_multipart_upload(
         self, 
         /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
         bucket: str, 
         object: str, 
         callback: dict, 
@@ -4869,9 +4871,11 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer]), 
         filename: None | str = None, 
+        filesize: int = -1, 
         pid: int = 0, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4883,7 +4887,9 @@ class P115Client:
         file: ( str | PathLike | URL | SupportsGeturl | 
                 Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str, 
+        filesize: int, 
         pid: int, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -4894,7 +4900,9 @@ class P115Client:
         file: ( str | PathLike | URL | SupportsGeturl | 
                 Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
+        filesize: int = -1, 
         pid: int = 0, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -4907,7 +4915,7 @@ class P115Client:
             except TypeError:
                 pass
         if isinstance(file, Buffer):
-            pass
+            filesize = len(file)
         elif isinstance(file, (str, PathLike)):
             path = fsdecode(file)
             if not filename:
@@ -4916,6 +4924,8 @@ class P115Client:
                 file_will_open = ("path", path)
             else:
                 file = open(path, "rb")
+                if filesize < 0:
+                    filesize = fstat(file.fileno()).st_size
         elif isinstance(file, SupportsRead):
             if not async_ and iscoroutinefunction(file.read):
                 raise TypeError(f"{file!r} with async read in non-async mode")
@@ -4935,20 +4945,25 @@ class P115Client:
                 file = urlopen(url)
                 if not filename:
                     filename = get_filename(file)
-        else:
-            if async_:
-                file = ensure_aiter(file)
-            elif isinstance(file, AsyncIterable):
-                raise TypeError(f"async iterable {file!r} in non-async mode")
+                if filesize < 0:
+                    length = get_content_length(file)
+                    if length is not None:
+                        filesize = length
+        elif async_:
+            file = ensure_aiter(file)
+        elif isinstance(file, AsyncIterable):
+            raise TypeError(f"async iterable {file!r} in non-async mode")
         if async_:
             async def do_request(file, filename):
                 nonlocal async_
                 async_ = cast(Literal[True], async_)
-
-                file = cast(Buffer | 
-                    SupportsRead[Buffer] | 
-                    Iterable[Buffer] | 
-                    AsyncIterable[Buffer], file)
+                file = cast(Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], file)
+                if callable(make_reporthook):
+                    if isinstance(file, Buffer):
+                        file = bytes_to_chunk_async_iter(file)
+                    elif isinstance(file, SupportsRead):
+                        file = bio_chunk_async_iter(file)
+                    file = progress_bytes_async_iter(file, make_reporthook, None if filesize < 0 else filesize)
                 if not filename:
                     filename = str(uuid4())
                 resp = await self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
@@ -4966,7 +4981,7 @@ class P115Client:
                 request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
                 return await self.request(api, "POST", async_=async_, **request_kwargs)
             async def async_request():
-                nonlocal async_
+                nonlocal async_, filesize
                 async_ = cast(Literal[True], async_)
                 if file_will_open:
                     type, path = file_will_open
@@ -4975,27 +4990,39 @@ class P115Client:
                             from aiofile import async_open
                         except ImportError:
                             with open(path, "rb") as f:
+                                filesize = fstat(f.fileno()).st_size
                                 return await do_request(f, filename)
                         else:
                             async with async_open(path, "rb") as f:
+                                filesize = fstat(f.file.fileno()).st_size
                                 return await do_request(f, filename)
                     elif type == "url":
                         try:
                             from aiohttp import request
                         except ImportError:
                             with (await to_thread(urlopen, url)) as resp:
+                                size = get_content_length(resp)
+                                if size is not None:
+                                    filesize = size
                                 return await do_request(resp, filename or get_filename(resp))
                         else:
                             async with request("GET", url) as resp:
+                                size = get_content_length(resp)
+                                if size is not None:
+                                    filesize = size
                                 return await do_request(resp.content, filename or get_filename(resp))
                     else:
                         raise ValueError
                 return await do_request(file, filename)
             return async_request()
         else:
-            file = cast(Buffer | 
-                SupportsRead[Buffer] | 
-                Iterable[Buffer], file)
+            file = cast(Buffer | SupportsRead[Buffer] | Iterable[Buffer], file)
+            if callable(make_reporthook):
+                if isinstance(file, Buffer):
+                    file = bytes_to_chunk_iter(file)
+                elif isinstance(file, SupportsRead):
+                    file = bio_chunk_iter(file)
+                file = progress_bytes_iter(file, make_reporthook, None if filesize < 0 else filesize)
             if not filename:
                 filename = str(uuid4())
             resp = self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
@@ -5263,7 +5290,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
@@ -5443,7 +5470,8 @@ class P115Client:
                     else:
                         if not file_sha1:
                             if not seekable:
-                                return await self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
+                                return await self.upload_file_sample(
+                                    file, filename, pid, async_=async_, **request_kwargs)
                             try:
                                 _, hashobj = await file_digest_async(file, "sha1")
                                 file_sha1 = hashobj.hexdigest()
@@ -5497,13 +5525,15 @@ class P115Client:
                                 file_sha1 = sha1(file).hexdigest()
                         else:
                             if not file_sha1 or not is_ranged:
-                                return await self.upload_file_sample(resp, filename, pid, **request_kwargs)
+                                return await self.upload_file_sample(
+                                    resp, filename, pid, **request_kwargs)
                             return await do_upload(resp)
                 elif file_sha1:
                     if filesize < 0 or filesize >= 1 << 20:
                         filesize = 0
                 else:
-                    return await self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
+                    return await self.upload_file_sample(
+                        file, filename, pid, async_=async_, **request_kwargs)
                 if not filename:
                     filename = str(uuid4())
                 return await do_upload(file)
@@ -5616,7 +5646,8 @@ class P115Client:
                 else:
                     if not file_sha1:
                         if not seekable:
-                            return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
+                            return self.upload_file_sample(
+                                file, filename, pid, async_=async_, **request_kwargs)
                         try:
                             _, hashobj = file_digest(file, "sha1")
                             file_sha1 = hashobj.hexdigest()
@@ -5658,13 +5689,15 @@ class P115Client:
                             file_sha1 = sha1(file).hexdigest()
                     else:
                         if not file_sha1 or not is_ranged:
-                            return self.upload_file_sample(resp, filename, pid, async_=async_, **request_kwargs)
+                            return self.upload_file_sample(
+                                resp, filename, pid, async_=async_, **request_kwargs)
                         return do_upload(resp)
             elif file_sha1:
                 if filesize < 0 or filesize >= 1 << 20:
                     filesize = 0
             else:
-                return self.upload_file_sample(file, filename, pid, async_=async_, **request_kwargs)
+                return self.upload_file_sample(
+                    file, filename, pid, async_=async_, **request_kwargs)
             if not filename:
                 filename = str(uuid4())
             return do_upload(file)

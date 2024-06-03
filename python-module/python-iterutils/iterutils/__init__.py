@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
     "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", 
@@ -68,47 +68,73 @@ def wrap_iter(
     it: Iterable[T], 
     /, 
     callprev: None | Callable[[T], Any] = None, 
-    callnext: None | Callable[[T], Any] = None,  
+    callnext: None | Callable[[T], Any] = None, 
+    callenter: None | Callable[[Iterable[T]], Any] = None, 
+    callexit: None | Callable[[Iterable[T], None | BaseException], Any] = None, 
 ) -> Iterator[T]:
     if not callable(callprev):
         callprev = None
     if not callable(callnext):
         callnext = None
-    for e in it:
-        if callprev:
-            try:
-                callprev(e)
-            except (StopIteration, GeneratorExit):
-                break
-        yield e
-        if callnext:
-            try:
-                callnext(e)
-            except (StopIteration, GeneratorExit):
-                break
+    try:
+        if callable(callenter):
+            callenter(it)
+        for e in it:
+            if callprev:
+                try:
+                    callprev(e)
+                except (StopIteration, GeneratorExit):
+                    break
+            yield e
+            if callnext:
+                try:
+                    callnext(e)
+                except (StopIteration, GeneratorExit):
+                    break
+    except BaseException as e:
+        if callable(callexit):
+            if not callexit(it, e):
+                raise
+        else:
+            raise
+    finally:
+        if callable(callexit):
+            callexit(it, None)
 
 
 async def wrap_aiter(
     it: Iterable[T] | AsyncIterable[T], 
     /, 
     callprev: None | Callable[[T], Any] = None, 
-    callnext: None | Callable[[T], Any] = None,  
+    callnext: None | Callable[[T], Any] = None, 
+    callenter: None | Callable[[Iterable[T] | AsyncIterable[T]], Any] = None, 
+    callexit: None | Callable[[Iterable[T] | AsyncIterable[T], None | BaseException], Any] = None, 
     threaded: bool = True, 
 ) -> AsyncIterator[T]:
-    callprev = ensure_async(callprev) if callable(callprev) else None
-    callnext = ensure_async(callnext) if callable(callnext) else None
-    async for e in ensure_aiter(it, threaded=threaded):
-        if callprev:
-            try:
-                await callprev(e)
-            except (StopAsyncIteration, GeneratorExit):
-                break
-        yield e
-        if callnext:
-            try:
-                await callnext(e)
-            except (StopAsyncIteration, GeneratorExit):
-                break
+    callprev = ensure_async(callprev, threaded=threaded) if callable(callprev) else None
+    callnext = ensure_async(callnext, threaded=threaded) if callable(callnext) else None
+    try:
+        async for e in ensure_aiter(it, threaded=threaded):
+            if callprev:
+                try:
+                    await callprev(e)
+                except (StopAsyncIteration, GeneratorExit):
+                    break
+            yield e
+            if callnext:
+                try:
+                    await callnext(e)
+                except (StopAsyncIteration, GeneratorExit):
+                    break
+    except BaseException as e:
+        if callable(callexit):
+            if not await ensure_async(callexit, threaded=threaded)(it, e):
+                raise
+        else:
+            raise
+    finally:
+        if callable(callexit):
+            await ensure_async(callexit, threaded=threaded)(it, None)
 
 
 def acc_step(
