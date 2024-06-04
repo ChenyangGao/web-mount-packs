@@ -203,7 +203,7 @@ def relogin_wrap(func, /, *args, **kwds):
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
-    return func(*args, **kwds)
+    return relogin_wrap(func, *args, **kwds)
 
 
 @application.get("/")
@@ -434,3 +434,7 @@ def query(path: str):
 
 application.run(host=args.host, port=args.port, threaded=True)
 
+# TODO 支持挂载 115 分享，支持挂载压缩包
+# TODO 支持指定挂载某个路径或 id，而不是挂载根目录
+# TODO 支持下载到本地，而不是拉取到另一个 115
+# TODO 支持设置登录密码，不提供密码不能访问（302链接无需密码）

@@ -186,13 +186,15 @@ def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
 def relogin_wrap(func, /, *args, **kwds):
     global cookies_path_mtime
     mtime = cookies_path_mtime
+    exc: BaseException
     try:
         return func(*args, **kwds)
     except JSONDecodeError as e:
-        pass
+        exc = e
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
+        exc = e
     with lock:
         need_update = mtime == cookies_path_mtime
         if cookies_path and need_update:
@@ -205,11 +207,16 @@ def relogin_wrap(func, /, *args, **kwds):
             except FileNotFoundError:
                 pass
         if need_update:
+            logger.warn("""{emoji} {prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                emoji  = blink_mark("🤖"), 
+                prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
+                exc    = indent(highlight_exception(exc), "    ├ ")
+            ))
             client.login_another_app(device, replace=True)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
-    return func(*args, **kwds)
+    return relogin_wrap(func, *args, **kwds)
 
 
 def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
@@ -435,3 +442,4 @@ logger.addHandler(handler)
 
 pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)
 
+# TODO 支持指定路径而不是 id
