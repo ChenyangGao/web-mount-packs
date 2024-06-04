@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -35,6 +35,7 @@ cookies_path_mtime = 0
 import logging
 
 from collections.abc import Iterable
+from gzip import GzipFile
 from json import dumps, load, JSONDecodeError
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
@@ -171,11 +172,13 @@ def highlight_traceback() -> str:
 
 
 def attr(id: int = 0, base_url: str = base_url) -> dict:
-    return load(urlopen(f"{base_url}?id={id}&method=attr"))
+    with urlopen(Request(f"{base_url}?id={id}&method=attr", headers={"Accept-Encoding": "gzip"})) as resp:
+        return load(GzipFile(fileobj=resp))
 
 
 def listdir(id: int = 0, base_url: str = base_url) -> list[dict]:
-    return load(urlopen(f"{base_url}?id={id}&method=list"))
+    with urlopen(Request(f"{base_url}?id={id}&method=list", headers={"Accept-Encoding": "gzip"})) as resp:
+        return load(GzipFile(fileobj=resp))
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
@@ -220,7 +223,20 @@ def relogin_wrap(func, /, *args, **kwds):
 
 
 def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
-    stats = {"tasks": 0, "files": 0, "dirs": 0, "errors": 0, "is_success": False}
+    stats: dict = {
+        "tasks": {"total": 0, "files": 0, "dirs": 0}, 
+        "unfinished": {"total": 0, "files": 0, "dirs": 0}, 
+        "success": {"total": 0, "files": 0, "dirs": 0}, 
+        "failed": {"total": 0, "files": 0, "dirs": 0}, 
+        "errors": {"total": 0, "files": 0, "dirs": 0, "reasons": {}}, 
+        "is_completed": False, 
+    }
+    tasks: dict[str, int] = stats["tasks"]
+    success: dict[str, int] = stats["success"]
+    failed: dict[str, int] = stats["failed"]
+    unfinished: dict[str, int] = stats["unfinished"]
+    errors: dict = stats["errors"]
+    reasons: dict[str, int] = errors["reasons"]
     def pull(task, submit):
         attr, pid, dattr = task
         try:
@@ -259,9 +275,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         ))
                     finally:
                         if dattr:
-                            tasks[attr["id"]] = (attr, pid, dattr)
-                            with count_lock:
-                                stats["dirs"] += 1
+                            taskmap[attr["id"]] = (attr, pid, dattr)
                 if subdattrs is None:
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
@@ -269,7 +283,15 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     }
                 subattrs = listdir(attr["id"], base_url)
                 with count_lock:
-                    stats["tasks"] += len(subattrs)
+                    count = len(subattrs)
+                    count_dirs = sum(a["is_directory"] for a in subattrs)
+                    count_files = count - count_dirs
+                    tasks["total"] += count
+                    tasks["dirs"] += count_dirs
+                    tasks["files"] += count_files
+                    unfinished["total"] += count
+                    unfinished["dirs"] += count_dirs
+                    unfinished["files"] += count_files
                 for subattr in subattrs:
                     is_directory = subattr["is_directory"]
                     subdattr = subdattrs.get((subattr["name"], is_directory), {})
@@ -281,12 +303,10 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                                 src_path = highlight_path(subattr["path"]), 
                                 dst_path = highlight_path(subdattr["path"]), 
                             ))
-                            with count_lock:
-                                stats["dirs"] += 1
-                        subtask = tasks[subattr["id"]] = (subattr, dirid, subdattr)
+                        subtask = taskmap[subattr["id"]] = (subattr, dirid, subdattr)
                         submit(subtask)
                     elif subattr["sha1"] != subdattr.get("sha1"):
-                        subtask = tasks[subattr["id"]] = (subattr, dirid, None)
+                        subtask = taskmap[subattr["id"]] = (subattr, dirid, None)
                         submit(subtask)
                     else:
                         logger.warning("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
@@ -296,8 +316,10 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                             dst_path = highlight_path(subdattr["path"]), 
                         ))
                         with count_lock:
-                            stats["files"] += 1
-                del tasks[attr["id"]]
+                            success["total"] += 1
+                            success["files"] += 1
+                            unfinished["total"] -= 1
+                            unfinished["files"] -= 1
             else:
                 resp = client.upload_file_init(
                     attr["name"], 
@@ -335,12 +357,28 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     pid      = highlight_id(pid), 
                     resp     = highlight_as_json(resp_data), 
                 ))
-                with count_lock:
-                    stats["files"] += 1
-                del tasks[attr["id"]]
-        except BaseException as e:
             with count_lock:
-                stats["errors"] += 1
+                success["total"] += 1
+                unfinished["total"] -= 1
+                if attr["is_directory"]:
+                    success["dirs"] += 1
+                    unfinished["dirs"] -= 1
+                else:
+                    success["files"] += 1
+                    unfinished["files"] -= 1
+            del taskmap[attr["id"]]
+        except BaseException as e:
+            exctype = type(e).__module__ + "." + type(e).__qualname__
+            with count_lock:
+                errors["total"] += 1
+                if attr["is_directory"]:
+                    errors["dirs"] += 1
+                else:
+                    errors["files"] += 1
+                try:
+                    reasons[exctype] += 1
+                except KeyError:
+                    reasons[exctype] = 1
             retryable = False
             if isinstance(e, HTTPStatusError):
                 retryable = e.response.status_code == 405
@@ -360,6 +398,14 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 ))
                 submit((attr, pid, dattr))
             else:
+                with count_lock:
+                    failed["total"] += 1
+                    if attr["is_directory"]:
+                        failed["dirs"] += 1
+                        unfinished["dirs"] -= 1
+                    else:
+                        failed["files"] += 1
+                        unfinished["files"] -= 1
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("💀"), 
                     prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）：" % ("📂" if attr["is_directory"] else "📝"), "red"), 
@@ -369,30 +415,39 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
                 raise
-    tasks: dict[int, tuple[dict, int, None | dict]]
+    taskmap: dict[int, tuple[dict, int, None | dict]]
     if push_id == 0:
-        tasks = {0: ({"id": 0, "is_directory": True}, to_pid, fs.attr(to_pid))}
+        top_attr = {"id": 0, "is_directory": True}
+        taskmap = {0: (top_attr, to_pid, fs.attr(to_pid))}
     else:
-        tasks = {push_id: (attr(push_id, base_url), to_pid, None)}
-    stats["tasks"] += 1
+        top_attr = attr(push_id, base_url)
+        taskmap = {push_id: (top_attr, to_pid, None)}
+    tasks["total"] += 1
+    unfinished["total"] += 1
+    if top_attr["is_directory"]:
+        tasks["dirs"] += 1
+        unfinished["dirs"] += 1
+    else:
+        tasks["files"] += 1
+        unfinished["files"] += 1
     try:
-        is_success = False
-        thread_pool_batch(pull, tasks.values(), max_workers=max_workers)
-        is_success = stats["is_success"] = True
+        is_completed = False
+        thread_pool_batch(pull, taskmap.values(), max_workers=max_workers)
+        is_completed = stats["is_completed"] = True
     finally:
         logger.debug("""\
 {emoji} {prompt}
-    ├ statistics = {stats}
-    ├ unfinished tasks({count}) = {tasks}""".format(
+    ├ unfinished tasks({count}) = {tasks}
+    ├ statistics = {stats}""".format(
             emoji  = blink_mark("📊"), 
             prompt = (
                 highlight_prompt("[STAT] 🥳 统计信息：", "light_green")
-                if is_success else
+                if is_completed else
                 highlight_prompt("[STAT] ⛽ 统计信息：", "orange_red_1")
             ), 
+            count  = highlight_id(len(taskmap)), 
+            tasks  = highlight_object(taskmap), 
             stats  = highlight_object(stats), 
-            count  = highlight_id(len(tasks)), 
-            tasks  = highlight_object(tasks), 
         ))
 
 

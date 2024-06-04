@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10)
+__version__ = (0, 0, 11)
 __doc__ = "获取 115 文件信息和下载链接"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -68,15 +68,17 @@ if args.version:
 try:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
+    from flask_compress import Compress
     from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "httpx", "posixpatht", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "Flask-Compress", "httpx", "posixpatht", "python-115"], check=True)
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
+    from flask_compress import Compress # type: ignore
     from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem
     from posixpatht import escape
@@ -143,6 +145,7 @@ KEYS = (
     "hidden", "described", "violated", "url", "short_url", 
 )
 application = Flask(__name__)
+Compress(application)
 
 
 def get_url_with_pickcode(pickcode: str, use_web_api: bool = False):
