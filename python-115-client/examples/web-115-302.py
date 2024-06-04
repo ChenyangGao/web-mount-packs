@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 10)
 __doc__ = "获取 115 文件信息和下载链接"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -68,14 +68,16 @@ if args.version:
 try:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
+    from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "posixpatht", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "httpx", "posixpatht", "python-115"], check=True)
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
+    from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem
     from posixpatht import escape
 
@@ -174,6 +176,9 @@ def relogin_wrap(func, /, *args, **kwds):
         return func(*args, **kwds)
     except JSONDecodeError as e:
         pass
+    except HTTPStatusError as e:
+        if e.response.status_code != 405:
+            raise
     client.login_another_app(device, replace=True)
     if cookies_path:
         open(cookies_path, "w").write(client.cookies)

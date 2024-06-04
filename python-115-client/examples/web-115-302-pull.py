@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -54,7 +54,7 @@ try:
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "colored", "flask", "python-concurrenttools", "python-115", "Pygments"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "colored", "flask", "httpx", "python-concurrenttools", "python-115", "Pygments"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_pool_batch
     from httpx import HTTPStatusError, TimeoutException
@@ -187,6 +187,9 @@ def relogin_wrap(func, /, *args, **kwds):
             return func(*args, **kwds)
         except JSONDecodeError as e:
             pass
+        except HTTPStatusError as e:
+            if e.response.status_code != 405:
+                raise
         client.login_another_app(device, replace=True)
         if cookies_path:
             open(cookies_path, "w").write(client.cookies)
@@ -317,13 +320,12 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 stats["errors"] += 1
             retryable = False
             if isinstance(e, HTTPStatusError):
-                match e.response.status_code:
-                    case 405:
-                        with lock:
-                            client.login_another_app(device, replace=True)
-                            if cookies_path:
-                                open(cookies_path, "w").write(client.cookies)
-                        retryable = True
+                retryable = e.response.status_code == 405
+                if retryable:
+                    with lock:
+                        client.login_another_app(device, replace=True)
+                        if cookies_path:
+                            open(cookies_path, "w").write(client.cookies)
             if retryable or isinstance(e, (URLError, TimeoutException)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
@@ -358,7 +360,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
         logger.debug("""\
 {emoji} {prompt}
     ├ statistics = {stats}
-    ├ unfinished tasks = {tasks}""".format(
+    ├ unfinished tasks({count}) = {tasks}""".format(
             emoji  = blink_mark("📊"), 
             prompt = (
                 highlight_prompt("[STAT] 🥳 统计信息：", "light_green")
@@ -366,6 +368,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 highlight_prompt("[STAT] ⛽ 统计信息：", "orange_red_1")
             ), 
             stats  = highlight_object(stats), 
+            count  = highlight_id(len(tasks)), 
             tasks  = highlight_object(tasks), 
         ))
 
