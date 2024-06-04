@@ -206,7 +206,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     try:
                         resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
                         dirid = int(resp["file_id"])
-                        dattr = {"id": dirid}
+                        dattr = {"id": dirid, "is_directory": True}
                         logger.info("{emoji} {prompt}{src_path} ➜ {name} @ {dirid} in {pid}\n    ├ response = {resp}".format(
                             emoji    = blink_mark("🤭"), 
                             prompt   = highlight_prompt("[GOOD] 📂 创建目录：", "green"), 
@@ -233,6 +233,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         ))
                     finally:
                         if dattr:
+                            tasks[attr["id"]] = (attr, pid, dattr)
                             with count_lock:
                                 stats["dirs"] += 1
                 if subdattrs is None:
@@ -256,9 +257,11 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                             ))
                             with count_lock:
                                 stats["dirs"] += 1
-                        submit((subattr, dirid, subdattr))
+                        subtask = tasks[subattr["id"]] = (subattr, dirid, subdattr)
+                        submit(subtask)
                     elif subattr["sha1"] != subdattr.get("sha1"):
-                        submit((subattr, dirid, None))
+                        subtask = tasks[subattr["id"]] = (subattr, dirid, None)
+                        submit(subtask)
                     else:
                         logger.warning("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                             emoji    = blink_mark("🏃"), 
@@ -268,6 +271,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         ))
                         with count_lock:
                             stats["files"] += 1
+                del tasks[attr["id"]]
             else:
                 resp = client.upload_file_init(
                     attr["name"], 
@@ -307,6 +311,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 ))
                 with count_lock:
                     stats["files"] += 1
+                del tasks[attr["id"]]
         except BaseException as e:
             with count_lock:
                 stats["errors"] += 1
@@ -321,8 +326,8 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         retryable = True
             if retryable or isinstance(e, (URLError, TimeoutException)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
-                    emoji    = blink_mark("💥"), 
-                    prompt   = highlight_prompt("[FAIL] ♻️ 发生错误（将重试）：", "red"), 
+                    emoji    = blink_mark("♻️"), 
+                    prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）：" % ("📂" if attr["is_directory"] else "📝"), "red"), 
                     src_path = highlight_path(attr["path"]), 
                     name     = highlight_path(attr["name"]), 
                     pid      = highlight_id(pid), 
@@ -331,31 +336,37 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 submit((attr, pid, dattr))
             else:
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
-                    emoji    = blink_mark("⛔"), 
-                    prompt   = highlight_prompt("[RUIN] 💀 发生错误（将抛弃）：", "red"), 
+                    emoji    = blink_mark("💀"), 
+                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）：" % ("📂" if attr["is_directory"] else "📝"), "red"), 
                     src_path = highlight_path(attr["path"]), 
                     name     = highlight_path(attr["name"]), 
                     pid      = highlight_id(pid), 
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
                 raise
+    tasks: dict[int, tuple[dict, int, None | dict]]
     if push_id == 0:
-        tasks = [({"id": 0, "is_directory": True}, to_pid, fs.attr(to_pid))]
+        tasks = {0: ({"id": 0, "is_directory": True}, to_pid, fs.attr(to_pid))}
     else:
-        tasks = [(attr(push_id, base_url), to_pid, None)]
+        tasks = {push_id: (attr(push_id, base_url), to_pid, None)}
     stats["tasks"] += 1
     try:
-        thread_pool_batch(pull, tasks, max_workers=max_workers)
-        stats["is_success"] = True
+        is_success = False
+        thread_pool_batch(pull, tasks.values(), max_workers=max_workers)
+        is_success = stats["is_success"] = True
     finally:
-        logger.debug("{emoji} {prompt}\n    ├ {stats}".format(
+        logger.debug("""\
+{emoji} {prompt}
+    ├ stats = {stats}
+    ├ tasks = {tasks}""".format(
             emoji  = blink_mark("📊"), 
             prompt = (
-                highlight_prompt("[STAT] 📈 统计信息：", "light_green")
-                if stats["is_success"] else
-                highlight_prompt("[STAT] 📉 统计信息：", "orange_red_1")
+                highlight_prompt("[STAT] 🥳 统计信息：", "light_green")
+                if is_success else
+                highlight_prompt("[STAT] ⛽ 统计信息：", "orange_red_1")
             ), 
-            stats  = highlight_object(stats)
+            stats  = highlight_object(stats), 
+            tasks  = highlight_object(tasks), 
         ))
 
 
@@ -394,7 +405,7 @@ handler = logging.StreamHandler()
 formatter = ColoredLevelNameFormatter(
     "[{asctime}] (%(levelname)s) {name} {arrow} %(message)s".format(
         asctime = colored_format("%(asctime)s", styles="bold"), 
-        name    = colored_format("%(name)s", "blue", styles="bold"), 
+        name    = colored_format("%(name)s", "cyan", styles="bold"), 
         arrow   = colored_format("➜", "red")
     )
 )
