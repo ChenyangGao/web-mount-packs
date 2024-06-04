@@ -85,7 +85,9 @@ from mimetypes import guess_type
 from collections.abc import Callable, MutableMapping
 from io import BytesIO
 from json import JSONDecodeError
+from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
+from threading import Lock
 from urllib.request import urlopen, Request
 from urllib.parse import quote, unquote, urlsplit
 
@@ -103,6 +105,7 @@ except ImportError:
 
 cookies = args.cookies
 cookies_path = args.cookies_path
+cookies_path_mtime = 0
 if not cookies:
     if cookies_path:
         try:
@@ -117,9 +120,11 @@ if not cookies:
                 continue
             seen.add(dir_)
             try:
-                cookies = open(joinpath(dir_, "115-cookies.txt")).read()
+                path = joinpath(dir_, "115-cookies.txt")
+                cookies = open(path).read()
+                cookies_path_mtime = stat(path).st_mtime_ns
                 if cookies:
-                    cookies_path = joinpath(dir_, "115-cookies.txt")
+                    cookies_path = path
                     break
             except FileNotFoundError:
                 pass
@@ -130,6 +135,7 @@ if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 fs = P115FileSystem(client, path_to_id=LRUCache(65536))
 url_cache: MutableMapping[tuple[str, str], str] = TTLCache(65536, 60 * 30)
+lock = Lock()
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
@@ -172,6 +178,8 @@ def get_url_with_pickcode(pickcode: str, use_web_api: bool = False):
 
 
 def relogin_wrap(func, /, *args, **kwds):
+    global cookies_path_mtime
+    mtime = cookies_path_mtime
     try:
         return func(*args, **kwds)
     except JSONDecodeError as e:
@@ -179,9 +187,22 @@ def relogin_wrap(func, /, *args, **kwds):
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
-    client.login_another_app(device, replace=True)
-    if cookies_path:
-        open(cookies_path, "w").write(client.cookies)
+    with lock:
+        need_update = mtime == cookies_path_mtime
+        if cookies_path and need_update:
+            try:
+                mtime = stat(cookies_path).st_mtime_ns
+                if mtime != cookies_path_mtime:
+                    client.cookies = open(cookies_path).read()
+                    cookies_path_mtime = mtime
+                    need_update = False
+            except FileNotFoundError:
+                pass
+        if need_update:
+            client.login_another_app(device, replace=True)
+            if cookies_path:
+                open(cookies_path, "w").write(client.cookies)
+                cookies_path_mtime = stat(cookies_path).st_mtime_ns
     return func(*args, **kwds)
 
 

@@ -29,12 +29,14 @@ to_pid = args.to_pid
 cookies = args.cookies
 cookies_path = args.cookies_path
 max_workers = args.max_workers
+cookies_path_mtime = 0
 
 
 import logging
 
 from collections.abc import Iterable
 from json import dumps, load, JSONDecodeError
+from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from textwrap import indent
 from threading import Lock
@@ -182,18 +184,32 @@ def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    with lock:
-        try:
-            return func(*args, **kwds)
-        except JSONDecodeError as e:
-            pass
-        except HTTPStatusError as e:
-            if e.response.status_code != 405:
-                raise
-        client.login_another_app(device, replace=True)
-        if cookies_path:
-            open(cookies_path, "w").write(client.cookies)
+    global cookies_path_mtime
+    mtime = cookies_path_mtime
+    try:
         return func(*args, **kwds)
+    except JSONDecodeError as e:
+        pass
+    except HTTPStatusError as e:
+        if e.response.status_code != 405:
+            raise
+    with lock:
+        need_update = mtime == cookies_path_mtime
+        if cookies_path and need_update:
+            try:
+                mtime = stat(cookies_path).st_mtime_ns
+                if mtime != cookies_path_mtime:
+                    client.cookies = open(cookies_path).read()
+                    cookies_path_mtime = mtime
+                    need_update = False
+            except FileNotFoundError:
+                pass
+        if need_update:
+            client.login_another_app(device, replace=True)
+            if cookies_path:
+                open(cookies_path, "w").write(client.cookies)
+                cookies_path_mtime = stat(cookies_path).st_mtime_ns
+    return func(*args, **kwds)
 
 
 def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
@@ -387,9 +403,11 @@ if not cookies:
                 continue
             seen.add(dir_)
             try:
-                cookies = open(joinpath(dir_, "115-cookies.txt")).read()
+                path = joinpath(dir_, "115-cookies.txt")
+                cookies = open(path).read()
+                cookies_path_mtime = stat(path).st_mtime_ns
                 if cookies:
-                    cookies_path = joinpath(dir_, "115-cookies.txt")
+                    cookies_path = path
                     break
             except FileNotFoundError:
                 pass

@@ -61,10 +61,15 @@ def main(args):
                     pass
 
     if cookies:
+        from p115 import AuthenticationError
         from p115.tool import login_scan_cookie
 
-        client = P115Client(cookies)
-        cookies = login_scan_cookie(client, app=args.app)
+        try:
+            client = P115Client(cookies)
+            cookies = login_scan_cookie(client, app=args.app)
+        except AuthenticationError:
+            client = P115Client(app=args.app)
+            cookies = client.cookies
     else:
         client = P115Client(app=args.app)
         cookies = client.cookies
