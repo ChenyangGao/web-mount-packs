@@ -15,7 +15,7 @@ parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载
 parser.add_argument("-p", "--push-id", type=int, default=0, help="对方 115 网盘中的文件或文件夹的 id，默认值：0")
 parser.add_argument("-t", "--to-pid", type=int, default=0, help="保存到我的 115 网盘中的文件夹的 id，默认值：0")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()

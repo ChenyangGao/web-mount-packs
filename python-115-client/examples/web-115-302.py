@@ -58,7 +58,7 @@ method   | string  | 否   | 1. 'url': 【默认值】，这个文件的下载�
 parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
 parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 当前工作目录、此脚本所在目录 或 用户根目录 下")
+parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
