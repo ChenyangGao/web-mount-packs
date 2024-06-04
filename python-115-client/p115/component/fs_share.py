@@ -388,8 +388,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                     path_to_id[path] = attr["id"]
                     yield attr
-                for offset in range(page_size, data["count"], page_size):
-                    payload["offset"] = offset
+                for _ in range((data["count"] - 1) // page_size):
+                    payload["offset"] += page_size
                     data = get_files(payload)["data"]
                     for attr in map(normalize_info, data["list"]):
                         attr["fs"] = self

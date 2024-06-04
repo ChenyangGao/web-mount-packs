@@ -844,7 +844,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     yield normalize_attr(attr, dirname, fs=self)
                 if total <= page_size:
                     return
-                for _ in range((total - 1) // page_size + 1):
+                for _ in range((total - 1) // page_size):
                     payload["offset"] += page_size
                     resp = get_files(payload)
                     if resp["count"] != count:

@@ -357,8 +357,8 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
     finally:
         logger.debug("""\
 {emoji} {prompt}
-    ├ stats = {stats}
-    ├ tasks = {tasks}""".format(
+    ├ statistics = {stats}
+    ├ unfinished tasks = {tasks}""".format(
             emoji  = blink_mark("📊"), 
             prompt = (
                 highlight_prompt("[STAT] 🥳 统计信息：", "light_green")
