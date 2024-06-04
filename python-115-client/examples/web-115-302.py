@@ -235,7 +235,7 @@ def query(path: str):
     def append_url(attr):
         path_url = attr.get("path_url") or "%s%s" % (origin, quote(attr["path"], safe=":/"))
         if attr["is_directory"]:
-            attr["short_url"] = f"origin?id={attr['id']}"
+            attr["short_url"] = f"{origin}?id={attr['id']}"
             attr["url"] = f"{path_url}?id={attr['id']}"
         else:
             short_url = f"{origin}?pickcode={attr['pickcode']}"
