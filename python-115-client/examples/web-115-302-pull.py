@@ -400,6 +400,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
             else:
                 with count_lock:
                     failed["total"] += 1
+                    unfinished["total"] -= 1
                     if attr["is_directory"]:
                         failed["dirs"] += 1
                         unfinished["dirs"] -= 1
