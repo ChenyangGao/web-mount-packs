@@ -15,7 +15,7 @@ class ColoredLevelNameFormatter(logging.Formatter):
     def format(self, record):
         match record.levelno:
             case logging.DEBUG:
-                # cyan
+                # blue
                 record.levelname = f"\x1b[1;34m{record.levelname}\x1b[0m"
             case logging.INFO:
                 # green

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -33,12 +33,13 @@ max_workers = args.max_workers
 
 import logging
 
-from collections.abc import Sequence
+from collections.abc import Iterable
 from json import dumps, load, JSONDecodeError
 from os.path import expanduser, dirname, join as joinpath, realpath
 from textwrap import indent
 from threading import Lock
 from traceback import format_exc
+from typing import cast
 from urllib.error import URLError
 from urllib.request import urlopen, Request
 
@@ -78,8 +79,20 @@ class ColoredLevelNameFormatter(logging.Formatter):
             case logging.CRITICAL:
                 record.levelname = highlight_prompt(record.levelname, "magenta")
             case _:
-                record.levelname = highlight_prompt(record.levelname, "grey_62")
+                record.levelname = highlight_prompt(record.levelname, "grey")
         return super().format(record)
+
+
+COLORS_8_BIT: dict[str, int] = {
+    "dark": 0, 
+    "red": 1, 
+    "green": 2, 
+    "yellow": 3, 
+    "blue": 4, 
+    "magenta": 5, 
+    "cyan": 6, 
+    "white": 7, 
+}
 
 
 def colored_format(
@@ -87,17 +100,23 @@ def colored_format(
     /, 
     fore_color: int | str | tuple[int | str, int | str, int | str] = "", 
     back_color: int | str | tuple[int | str, int | str, int | str] = "", 
-    styles: int | str | Sequence[int | str] = "", 
+    styles: int | str | Iterable[int | str] = "", 
     reset: bool = True, 
 ) -> str:
     if fore_color != "":
-        if isinstance(fore_color, (int, str)):
+        if fore_color == "grey":
+            return "\x1b[2m"
+        elif fore_color in COLORS_8_BIT:
+            fore_color = "\x1b[%dm" % (COLORS_8_BIT[cast(str, fore_color)] + 30)
+        elif isinstance(fore_color, (int, str)):
             fore_color = Colored(fore_color).foreground()
         else:
             fore_color = fore_rgb(*fore_color)
 
     if back_color != "":
-        if isinstance(back_color, (int, str)):
+        if back_color in COLORS_8_BIT:
+            back_color = "\x1b[%dm" % (COLORS_8_BIT[cast(str, back_color)] + 40)
+        elif isinstance(back_color, (int, str)):
             back_color = Colored(back_color).background()
         else:
             back_color = back_rgb(*back_color)
@@ -121,7 +140,7 @@ def highlight_prompt(
     return colored_format(promt, color, styles="bold")
 
 
-def blink_mark(mark):
+def blink_mark(mark) -> str:
     return colored_format(mark, styles="blink")
 
 
@@ -157,6 +176,11 @@ def listdir(id: int = 0, base_url: str = base_url) -> list[dict]:
     return load(urlopen(f"{base_url}?id={id}&method=list"))
 
 
+def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
+    with urlopen(Request(url, headers={"Range": f"bytes={bytes_range}"})) as resp:
+        return resp.read()
+
+
 def relogin_wrap(func, /, *args, **kwds):
     with lock:
         try:
@@ -170,9 +194,6 @@ def relogin_wrap(func, /, *args, **kwds):
 
 
 def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
-    def read_range(url, rng):
-        with urlopen(Request(url, headers={"Range": f"bytes={rng}"})) as resp:
-            return resp.read()
     stats = {"tasks": 0, "files": 0, "dirs": 0, "errors": 0, "is_success": False}
     def pull(task, submit):
         attr, pid, dattr = task
@@ -253,7 +274,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     pid=pid, 
                     filesize=attr["size"], 
                     filesha1=attr["sha1"], 
-                    read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_range(url, rng), 
+                    read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
                 )
                 status = resp["status"]
                 statuscode = resp.get("statuscode", 0)
