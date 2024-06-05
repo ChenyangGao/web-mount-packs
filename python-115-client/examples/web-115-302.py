@@ -89,6 +89,7 @@ from io import BytesIO
 from json import JSONDecodeError
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
+from sys import exc_info
 from threading import Lock
 from urllib.request import urlopen, Request
 from urllib.parse import quote, unquote, urlsplit
@@ -172,16 +173,11 @@ def get_url_with_pickcode(pickcode: str, use_web_api: bool = False):
         return "Not Found", 404
 
 
-def relogin_wrap(func, /, *args, **kwds):
+def relogin(exc=None):
     global cookies_path_mtime
+    if exc is None:
+        exc = exc_info()[0]
     mtime = cookies_path_mtime
-    try:
-        return func(*args, **kwds)
-    except JSONDecodeError as e:
-        pass
-    except HTTPStatusError as e:
-        if e.response.status_code != 405:
-            raise
     with lock:
         need_update = mtime == cookies_path_mtime
         if cookies_path and need_update:
@@ -198,6 +194,19 @@ def relogin_wrap(func, /, *args, **kwds):
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
+
+
+def relogin_wrap(func, /, *args, **kwds):
+    exc: BaseException
+    try:
+        return func(*args, **kwds)
+    except JSONDecodeError as e:
+        exc = e
+    except HTTPStatusError as e:
+        if e.response.status_code != 405:
+            raise
+        exc = e
+    relogin(exc)
     return relogin_wrap(func, *args, **kwds)
 
 
@@ -373,7 +382,11 @@ def query(path: str):
       padding: 12px 15px;
     }
     td:nth-child(1) {
-      max-width: 400px;
+      max-width: 600px;
+      word-wrap: break-word;
+    }
+    td:nth-child(2) {
+      width: 160px;
       word-wrap: break-word;
     }
     tbody tr {

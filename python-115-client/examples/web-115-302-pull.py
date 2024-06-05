@@ -221,12 +221,12 @@ def relogin(exc=None):
                 pass
         if need_update:
             if exc is None:
-                if debug: logger.debug("""{emoji} {prompt}NO MESSAGE""".format(
+                logger.warning("""{emoji} {prompt}NO MESSAGE""".format(
                     emoji  = blink_mark("🤖"), 
                     prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
                 ))
             else:
-                if debug: logger.debug("""{emoji} {prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                logger.warning("""{emoji} {prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
                     emoji  = blink_mark("🤖"), 
                     prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
                     exc    = indent(highlight_exception(exc), "    ├ ")
