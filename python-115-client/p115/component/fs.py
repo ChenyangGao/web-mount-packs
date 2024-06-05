@@ -1308,7 +1308,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             try:
                 attr = get_attr([name], pid)
             except FileNotFoundError:
-                breakpoint()
                 exists = False
                 resp = self.fs_mkdir(name, pid)
                 pid = int(resp["cid"])

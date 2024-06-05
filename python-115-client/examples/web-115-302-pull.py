@@ -182,7 +182,9 @@ def attr(id_or_path: int | str = 0, base_url: str = base_url) -> dict:
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
     with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
-        return load(GzipFile(fileobj=resp))
+        if resp.headers.get("Content-Encoding") == "gzip":
+            resp = GzipFile(fileobj=resp)
+        return load(resp)
 
 
 def listdir(id_or_path: int | str = 0, base_url: str = base_url) -> list[dict]:
@@ -191,7 +193,9 @@ def listdir(id_or_path: int | str = 0, base_url: str = base_url) -> list[dict]:
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
     with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
-        return load(GzipFile(fileobj=resp))
+        if resp.headers.get("Content-Encoding") == "gzip":
+            resp = GzipFile(fileobj=resp)
+        return load(resp)
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
