@@ -72,17 +72,17 @@ class ColoredLevelNameFormatter(logging.Formatter):
     def format(self, record):
         match record.levelno:
             case logging.DEBUG:
-                record.levelname = highlight_prompt(record.levelname, "cyan")
+                record.levelname = colored_format(record.levelname, "cyan", styles="bold")
             case logging.INFO:
-                record.levelname = highlight_prompt(record.levelname, "green")
+                record.levelname = colored_format(record.levelname, "green", styles="bold")
             case logging.WARNING:
-                record.levelname = highlight_prompt(record.levelname, "yellow")
+                record.levelname = colored_format(record.levelname, "yellow", styles="bold")
             case logging.ERROR:
-                record.levelname = highlight_prompt(record.levelname, "red")
+                record.levelname = colored_format(record.levelname, "red", styles="bold")
             case logging.CRITICAL:
-                record.levelname = highlight_prompt(record.levelname, "magenta")
+                record.levelname = colored_format(record.levelname, "magenta", styles="bold")
             case _:
-                record.levelname = highlight_prompt(record.levelname, "grey")
+                record.levelname = colored_format(record.levelname, styles=("bold", "dim"))
         return super().format(record)
 
 
@@ -107,9 +107,7 @@ def colored_format(
     reset: bool = True, 
 ) -> str:
     if fore_color != "":
-        if fore_color == "grey":
-            return "\x1b[2m"
-        elif fore_color in COLORS_8_BIT:
+        if fore_color in COLORS_8_BIT:
             fore_color = "\x1b[%dm" % (COLORS_8_BIT[cast(str, fore_color)] + 30)
         elif isinstance(fore_color, (int, str)):
             fore_color = Colored(fore_color).foreground()
@@ -346,6 +344,8 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         resp     = highlight_as_json(resp), 
                     ))
                     resp = client.upload_file_sample(urlopen(attr["url"]), attr["name"], pid=pid)
+                elif status == 0 and statuscode == 413:
+                    raise URLError(resp)
                 else:
                     raise OSError(resp)
                 resp_data = resp["data"]
