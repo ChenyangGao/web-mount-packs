@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 10)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -12,11 +12,13 @@ parser = ArgumentParser(
     description=__doc__, 
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
-parser.add_argument("-p", "--push-id", type=int, default=0, help="对方 115 网盘中的文件或文件夹的 id，默认值：0")
-parser.add_argument("-t", "--to-pid", type=int, default=0, help="保存到我的 115 网盘中的文件夹的 id，默认值：0")
+parser.add_argument("-p", "--push-id", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值：0")
+parser.add_argument("-t", "--to-pid", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值：0")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
+parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
+parser.add_argument("-s", "--stats-interval", type=float, default=30, help="输出统计信息的时间间隔，单位 秒，默认值：30，如果小于等于 0 则不输出")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -29,6 +31,8 @@ to_pid = args.to_pid
 cookies = args.cookies
 cookies_path = args.cookies_path
 max_workers = args.max_workers
+debug = args.debug
+stats_interval = args.stats_interval
 cookies_path_mtime = 0
 
 
@@ -39,11 +43,14 @@ from gzip import GzipFile
 from json import dumps, load, JSONDecodeError
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
+from sys import exc_info
 from textwrap import indent
-from threading import Lock
+from threading import Lock, Thread
+from time import sleep
 from traceback import format_exc
 from typing import cast
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen, Request
 
 try:
@@ -169,13 +176,21 @@ def highlight_traceback() -> str:
     return highlight(format_exc(), Python3TracebackLexer(), TerminalFormatter()).rstrip()
 
 
-def attr(id: int = 0, base_url: str = base_url) -> dict:
-    with urlopen(Request(f"{base_url}?id={id}&method=attr", headers={"Accept-Encoding": "gzip"})) as resp:
+def attr(id_or_path: int | str = 0, base_url: str = base_url) -> dict:
+    if isinstance(id_or_path, int):
+        url = f"{base_url}?id={id_or_path}&method=attr"
+    else:
+        url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
+    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
         return load(GzipFile(fileobj=resp))
 
 
-def listdir(id: int = 0, base_url: str = base_url) -> list[dict]:
-    with urlopen(Request(f"{base_url}?id={id}&method=list", headers={"Accept-Encoding": "gzip"})) as resp:
+def listdir(id_or_path: int | str = 0, base_url: str = base_url) -> list[dict]:
+    if isinstance(id_or_path, int):
+        url = f"{base_url}?id={id_or_path}&method=list"
+    else:
+        url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
+    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
         return load(GzipFile(fileobj=resp))
 
 
@@ -184,18 +199,11 @@ def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
         return resp.read()
 
 
-def relogin_wrap(func, /, *args, **kwds):
+def relogin(exc=None):
     global cookies_path_mtime
+    if exc is None:
+        exc = exc_info()[0]
     mtime = cookies_path_mtime
-    exc: BaseException
-    try:
-        return func(*args, **kwds)
-    except JSONDecodeError as e:
-        exc = e
-    except HTTPStatusError as e:
-        if e.response.status_code != 405:
-            raise
-        exc = e
     with lock:
         need_update = mtime == cookies_path_mtime
         if cookies_path and need_update:
@@ -208,19 +216,43 @@ def relogin_wrap(func, /, *args, **kwds):
             except FileNotFoundError:
                 pass
         if need_update:
-            logger.warn("""{emoji} {prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
-                emoji  = blink_mark("🤖"), 
-                prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
-                exc    = indent(highlight_exception(exc), "    ├ ")
-            ))
+            if exc is None:
+                if debug: logger.debug("""{emoji} {prompt}NO MESSAGE""".format(
+                    emoji  = blink_mark("🤖"), 
+                    prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
+                ))
+            else:
+                if debug: logger.debug("""{emoji} {prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                    emoji  = blink_mark("🤖"), 
+                    prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
+                    exc    = indent(highlight_exception(exc), "    ├ ")
+                ))
             client.login_another_app(device, replace=True)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
+
+
+def relogin_wrap(func, /, *args, **kwds):
+    exc: BaseException
+    try:
+        return func(*args, **kwds)
+    except JSONDecodeError as e:
+        exc = e
+    except HTTPStatusError as e:
+        if e.response.status_code != 405:
+            raise
+        exc = e
+    relogin(exc)
     return relogin_wrap(func, *args, **kwds)
 
 
-def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
+def pull(
+    push_id: int | str = 0, 
+    to_pid: int | str = 0, 
+    base_url: str = base_url, 
+    max_workers: int = 1, 
+) -> dict:
     stats: dict = {
         "tasks": {"total": 0, "files": 0, "dirs": 0}, 
         "unfinished": {"total": 0, "files": 0, "dirs": 0}, 
@@ -247,7 +279,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
                         dirid = int(resp["file_id"])
                         dattr = {"id": dirid, "is_directory": True}
-                        logger.info("{emoji} {prompt}{src_path} ➜ {name} @ {dirid} in {pid}\n    ├ response = {resp}".format(
+                        if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} @ {dirid} in {pid}\n    ├ response = {resp}".format(
                             emoji    = blink_mark("🤭"), 
                             prompt   = highlight_prompt("[GOOD] 📂 创建目录：", "green"), 
                             src_path = highlight_path(attr["path"]), 
@@ -265,7 +297,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                             raise FileNotFoundError(f"{name!r} in {pid}")
                         dattr = finddir(pid, attr["name"])
                         dirid = dattr["id"]
-                        logger.warning("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
+                        if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                             emoji    = blink_mark("🏃"), 
                             prompt   = highlight_prompt("[SKIP] 📂 目录存在：", "yellow"), 
                             src_path = highlight_path(attr["path"]), 
@@ -295,7 +327,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     subdattr = subdattrs.get((subattr["name"], is_directory), {})
                     if is_directory:
                         if subdattr:
-                            logger.warning("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
+                            if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                                 emoji    = blink_mark("🏃"), 
                                 prompt   = highlight_prompt("[SKIP] 📂 目录存在：", "yellow"), 
                                 src_path = highlight_path(subattr["path"]), 
@@ -307,7 +339,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                         subtask = taskmap[subattr["id"]] = (subattr, dirid, None)
                         submit(subtask)
                     else:
-                        logger.warning("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
+                        if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                             emoji    = blink_mark("🏃"), 
                             prompt   = highlight_prompt("[SKIP] 📝 文件存在：", "yellow"), 
                             src_path = highlight_path(subattr["path"]), 
@@ -331,7 +363,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 if status == 2 and statuscode == 0:
                     pass
                 elif status == 1 and statuscode == 0:
-                    logger.warning("""\
+                    if debug: logger.debug("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
     ├ attr = {attr}
     ├ response = {resp}""".format(
@@ -349,7 +381,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                 else:
                     raise OSError(resp)
                 resp_data = resp["data"]
-                logger.info("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n    ├ response = {resp}".format(
+                if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n    ├ response = {resp}".format(
                     emoji    = blink_mark("🤭"), 
                     prompt   = highlight_prompt("[GOOD] 📝 接收文件：", "green"), 
                     src_path = highlight_path(attr["path"]), 
@@ -383,10 +415,7 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
             if isinstance(e, HTTPStatusError):
                 retryable = e.response.status_code == 405
                 if retryable:
-                    with lock:
-                        client.login_another_app(device, replace=True)
-                        if cookies_path:
-                            open(cookies_path, "w").write(client.cookies)
+                    relogin()
             if retryable or isinstance(e, (URLError, TimeoutException)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
@@ -416,16 +445,37 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
                 raise
-    taskmap: dict[int, tuple[dict, int, None | dict]]
+    stats_flag = True
+    def show_stats(interval: float = 30):
+        while stats_flag:
+            with count_lock:
+                logger.info("""{emoji} {prompt}\n    ├ statistics = {stats}""".format(
+                    emoji  = blink_mark("📊"), 
+                    prompt = highlight_prompt("[STAT] 📈 执行统计：", "magenta"), 
+                    stats  = highlight_object(stats), 
+                ))
+            sleep(interval)
+    if isinstance(push_id, str):
+        if not push_id.strip("/"):
+            push_id = 0
+        elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
+            push_id = int(push_id)
+    if isinstance(to_pid, str):
+        if not to_pid.strip("/"):
+            to_pid = 0
+        elif not to_pid.startswith("0") and to_pid.isascii() and to_pid.isdecimal():
+            to_pid = int(to_pid)
+        else:
+            to_pid = fs.makedirs(to_pid, exist_ok=True)["id"]
     if push_id == 0:
-        top_attr = {"id": 0, "is_directory": True}
-        taskmap = {0: (top_attr, to_pid, fs.attr(to_pid))}
+        push_attr = {"id": 0, "is_directory": True}
     else:
-        top_attr = attr(push_id, base_url)
-        taskmap = {push_id: (top_attr, to_pid, None)}
+        push_attr = attr(push_id, base_url)
+    taskmap: dict[int, tuple[dict, int, None | dict]] = {
+        cast(int, push_attr["id"]): (push_attr, cast(int, to_pid), None)}
     tasks["total"] += 1
     unfinished["total"] += 1
-    if top_attr["is_directory"]:
+    if push_attr["is_directory"]:
         tasks["dirs"] += 1
         unfinished["dirs"] += 1
     else:
@@ -433,23 +483,27 @@ def pull(push_id=0, to_pid=0, base_url=base_url, max_workers=1):
         unfinished["files"] += 1
     try:
         is_completed = False
+        if stats_interval > 0:
+            Thread(target=show_stats, args=(stats_interval,), daemon=True).start()
         thread_pool_batch(pull, taskmap.values(), max_workers=max_workers)
         is_completed = stats["is_completed"] = True
     finally:
-        logger.debug("""\
+        stats_flag = False
+        logger.info("""\
 {emoji} {prompt}
     ├ unfinished tasks({count}) = {tasks}
     ├ statistics = {stats}""".format(
             emoji  = blink_mark("📊"), 
             prompt = (
-                highlight_prompt("[STAT] 🥳 统计信息：", "light_green")
+                highlight_prompt("[STAT] 🥳 统计信息：", "green")
                 if is_completed else
-                highlight_prompt("[STAT] ⛽ 统计信息：", "orange_red_1")
+                highlight_prompt("[STAT] ⛽ 统计信息：", "red")
             ), 
             count  = highlight_id(len(taskmap)), 
             tasks  = highlight_object(taskmap), 
             stats  = highlight_object(stats), 
         ))
+        return stats
 
 
 if not cookies:
@@ -484,7 +538,7 @@ fs = client.fs
 lock = Lock()
 count_lock = Lock()
 
-logger = logging.Logger("115-pull", logging.DEBUG)
+logger = logging.Logger("115-pull", logging.DEBUG if debug else logging.INFO)
 handler = logging.StreamHandler()
 formatter = ColoredLevelNameFormatter(
     "[{asctime}] (%(levelname)s) {name} {arrow} %(message)s".format(
@@ -498,4 +552,3 @@ logger.addHandler(handler)
 
 pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)
 
-# TODO 支持指定路径而不是 id
