@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["urlopen", "download"]
 
 import errno
@@ -17,7 +17,7 @@ from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
 from ssl import SSLContext, _create_unverified_context
-from typing import cast, Any, Optional
+from typing import cast, Any
 from urllib.parse import urlencode, urlsplit
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, OpenerDirector, Request
 
@@ -32,16 +32,16 @@ if "__del__" not in HTTPResponse.__dict__:
 def urlopen(
     url: str | Request, 
     method: str = "GET", 
-    params: Optional[str | Mapping | Sequence[tuple[Any, Any]]] = None, 
-    data: Optional[bytes | str | Mapping | Sequence[tuple[Any, Any]]] = None, 
+    params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
+    data: None | bytes | str | Mapping | Sequence[tuple[Any, Any]] = None, 
     json: Any = None, 
-    headers: Optional[dict[str, str]] = {"User-agent": ""}, 
-    timeout: Optional[int | float] = None, 
-    cookies: Optional[CookieJar] = None, 
-    proxy: Optional[tuple[str, str]] = None, 
+    headers: None | dict[str, str] = {"User-agent": ""}, 
+    timeout: None | int | float = None, 
+    cookies: None | CookieJar = None, 
+    proxy: None | tuple[str, str] = None, 
     opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context())), 
-    context: Optional[SSLContext] = None, 
-    origin: Optional[str] = None, 
+    context: None | SSLContext = None, 
+    origin: None | str = None, 
 ) -> HTTPResponse:
     if isinstance(url, str) and not urlsplit(url).scheme:
         if origin:
@@ -51,7 +51,7 @@ def urlopen(
     if params:
         if not isinstance(params, str):
             params = urlencode(params)
-    params = cast(Optional[str], params)
+    params = cast(None | str, params)
     if json is not None:
         if isinstance(json, bytes):
             data = json
@@ -68,7 +68,7 @@ def urlopen(
             data = data.encode("utf-8")
         else:
             data = urlencode(data).encode("latin-1")
-    data = cast(Optional[bytes], data)
+    data = cast(None | bytes, data)
     if isinstance(url, Request):
         req = url
         if params:
@@ -102,8 +102,8 @@ def download(
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
-    headers: Optional[dict[str, str]] = None, 
-    make_reporthook: Optional[Callable[[Optional[int]], Callable[[int], Any] | Generator[int, Any, Any]]] = None, 
+    headers: None | dict[str, str] = None, 
+    make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
     **urlopen_kwargs, 
 ) -> str | SupportsWrite[bytes]:
     """Download a URL into a file.
@@ -153,9 +153,9 @@ def download(
         chunksize = COPY_BUFSIZE
 
     resp: HTTPResponse = urlopen(url, headers=headers, **urlopen_kwargs)
-    length = get_length(resp)
-    if length == 0 and is_chunked(resp):
-        length = None
+    content_length = get_length(resp)
+    if content_length == 0 and is_chunked(resp):
+        content_length = None
 
     fdst: SupportsWrite[bytes]
     if hasattr(file, "write"):
@@ -173,23 +173,31 @@ def download(
     filesize = 0
     if resume:
         try:
-            filesize = fstat(fdst.fileno()).st_size # type: ignore
+            fileno = getattr(fdst, "fileno")()
+            filesize = fstat(fileno).st_size
         except (AttributeError, OSError):
             pass
         else:
-            if filesize == length:
+            if filesize == content_length:
                 return file
             if filesize and is_range_request(resp):
-                if filesize == length:
+                if filesize == content_length:
                     return file
-            elif length is not None and filesize > length:
-                raise OSError(errno.EIO, f"file {file!r} is larger than url {url!r}: {filesize} > {length} (in bytes)")
+            elif content_length is not None and filesize > content_length:
+                raise OSError(
+                    errno.EIO, 
+                    f"file {file!r} is larger than url {url!r}: {filesize} > {content_length} (in bytes)", 
+                )
 
-    if make_reporthook:
-        reporthook = make_reporthook(length)
+    reporthook_close: None | Callable = None
+    if callable(make_reporthook):
+        reporthook = make_reporthook(content_length)
         if isgenerator(reporthook):
+            reporthook_close = reporthook.close
             next(reporthook)
             reporthook = reporthook.send
+        else:
+            reporthook_close = getattr(reporthook, "close", None)
         reporthook = cast(Callable[[int], Any], reporthook)
     else:
         reporthook = None
@@ -201,7 +209,7 @@ def download(
                 resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **urlopen_kwargs)
                 if not is_range_request(resp):
                     raise OSError(errno.EIO, f"range request failed: {url!r}")
-                if reporthook:
+                if reporthook is not None:
                     reporthook(filesize)
             elif resume:
                 for _ in bio_skip_iter(resp, filesize, callback=reporthook):
@@ -211,10 +219,12 @@ def download(
         fdst_write = fdst.write
         while (chunk := fsrc_read(chunksize)):
             fdst_write(chunk)
-            if reporthook:
+            if reporthook is not None:
                 reporthook(len(chunk))
     finally:
         resp.close()
+        if callable(reporthook_close):
+            reporthook_close()
 
     return file
 

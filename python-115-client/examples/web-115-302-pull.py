@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10)
+__version__ = (0, 0, 11)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -49,7 +49,7 @@ from threading import Lock, Thread
 from time import sleep
 from traceback import format_exc
 from typing import cast
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen, Request
 
@@ -415,12 +415,14 @@ def pull(
                     reasons[exctype] += 1
                 except KeyError:
                     reasons[exctype] = 1
-            retryable = False
+            retryable = True
             if isinstance(e, HTTPStatusError):
                 retryable = e.response.status_code == 405
                 if retryable:
                     relogin()
-            if retryable or isinstance(e, (URLError, TimeoutException)):
+            elif isinstance(e, HTTPError):
+                retryable = e.status != 404
+            if retryable and isinstance(e, (URLError, TimeoutException)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
                     prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）：" % ("📂" if attr["is_directory"] else "📝"), "red"), 
