@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 11)
+__version__ = (0, 1)
 __doc__ = "获取 115 文件信息和下载链接"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -59,6 +59,7 @@ parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，�
 parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
+parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -93,6 +94,9 @@ from threading import Lock
 from urllib.request import urlopen, Request
 from urllib.parse import quote, unquote, urlsplit
 
+
+login_lock = Lock()
+fs_lock = Lock() if args.lock_dir_methods else None
 
 dumps: Callable[..., bytes]
 try:
@@ -136,15 +140,32 @@ device = client.login_device()["icon"]
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 fs = P115FileSystem(client, path_to_id=LRUCache(65536))
-lock = Lock()
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
     "size", "ctime", "mtime", "atime", "thumb", "star", "labels", "score", 
-    "hidden", "described", "violated", "url", "short_url", 
+    "hidden", "described", "violated", "url", "short_url", "format_size", 
 )
 application = Flask(__name__)
 Compress(application)
+
+
+def format_bytes(
+    n: int, 
+    /, 
+    unit: str = "", 
+    precision: int = 2, 
+) -> str:
+    "scale bytes to its proper byte format"
+    if unit == "B" or not unit and n < 1024:
+        return f"{n} B"
+    b = 1
+    b2 = 1024
+    for u in ["K", "M", "G", "T", "P", "E", "Z", "Y"]:
+        b, b2 = b2, b2 << 10
+        if u == unit if unit else n < b2:
+            break
+    return f"%.{precision}f {u}B" % (n / b)
 
 
 def get_url_with_pickcode(pickcode: str, use_web_api: bool = False):
@@ -177,7 +198,7 @@ def relogin(exc=None):
     if exc is None:
         exc = exc_info()[0]
     mtime = cookies_path_mtime
-    with lock:
+    with login_lock:
         need_update = mtime == cookies_path_mtime
         if cookies_path and need_update:
             try:
@@ -204,7 +225,11 @@ def relogin(exc=None):
 
 def relogin_wrap(func, /, *args, **kwds):
     try:
-        return func(*args, **kwds)
+        if fs_lock is None:
+            return func(*args, **kwds)
+        else:
+            with fs_lock:
+                return func(*args, **kwds)
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
@@ -249,7 +274,7 @@ def query(path: str):
     scheme = request.environ.get("HTTP_X_FORWARDED_PROTO") or "http"
     netloc = urlsplit(unquote(request.url)).netloc
     origin = f"{scheme}://{netloc}"
-    def append_url(attr):
+    def update_attr(attr):
         path_url = attr.get("path_url") or "%s%s" % (origin, quote(attr["path"], safe=":/"))
         if attr["is_directory"]:
             attr["short_url"] = f"{origin}?id={attr['id']}"
@@ -262,6 +287,7 @@ def query(path: str):
                 url += "&web=true"
             attr["short_url"] = short_url
             attr["url"] = url
+            attr["format_size"] = format_bytes(attr["size"])
         return attr
     if method == "attr":
         try:
@@ -274,7 +300,7 @@ def query(path: str):
                 attr = relogin_wrap(fs.attr, path)
         except FileNotFoundError:
             return "Not Found", 404
-        append_url(attr)
+        update_attr(attr)
         json_str = dumps({k: attr.get(k) for k in KEYS})
         return Response(json_str, content_type='application/json; charset=utf-8')
     elif method == "list":
@@ -292,7 +318,7 @@ def query(path: str):
             return f"Bad Request: {exc}", 400
         json_str = dumps([
             {k: attr.get(k) for k in KEYS} 
-            for attr in map(append_url, children)
+            for attr in map(update_attr, children)
         ])
         return Response(json_str, content_type='application/json; charset=utf-8')
     elif method == "desc":
@@ -324,7 +350,7 @@ def query(path: str):
         return f"Bad Request: {exc}", 400
     for subattr in children:
         subattr["path_url"] = "%s%s" % (origin, quote(subattr["path"], safe=":/"))
-        append_url(subattr)
+        update_attr(subattr)
     fid = attr["id"]
     if fid == 0:
         header = f'<strong><a href="{origin}?id=0&method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
@@ -507,7 +533,7 @@ def query(path: str):
         {%- if attr["is_directory"] %}
         <td style="text-align: center;">--</td>
         {%- else %}
-        <td style="text-align: right;">{{ attr["size"] }}</td>
+        <td style="text-align: right;"><span class="popup">{{ attr["format_size"] }}<span class="popuptext">{{ attr["size"] }}</span></span></td>
         {%- endif %}
         <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=attr">attr</a></td>
         <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=desc">desc</a></td>

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 11)
+__version__ = (0, 1)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -11,14 +11,15 @@ parser = ArgumentParser(
     formatter_class=RawTextHelpFormatter, 
     description=__doc__, 
 )
-parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
-parser.add_argument("-p", "--push-id", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值：0")
-parser.add_argument("-t", "--to-pid", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值：0")
+parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值: http://localhost")
+parser.add_argument("-p", "--push-id", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: 0")
+parser.add_argument("-t", "--to-pid", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: 0")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
+parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
-parser.add_argument("-s", "--stats-interval", type=float, default=30, help="输出统计信息的时间间隔，单位 秒，默认值：30，如果小于等于 0 则不输出")
+parser.add_argument("-s", "--stats-interval", type=float, default=30, help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -31,14 +32,16 @@ to_pid = args.to_pid
 cookies = args.cookies
 cookies_path = args.cookies_path
 max_workers = args.max_workers
+if max_workers <= 0:
+    max_workers = 1
 debug = args.debug
 stats_interval = args.stats_interval
-cookies_path_mtime = 0
 
 
 import logging
 
 from collections.abc import Iterable
+from contextlib import contextmanager
 from gzip import GzipFile
 from json import dumps, load
 from os import stat
@@ -48,14 +51,14 @@ from textwrap import indent
 from threading import Lock, Thread
 from time import sleep
 from traceback import format_exc
-from typing import cast
+from typing import cast, ContextManager
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen, Request
 
 try:
     from colored.colored import back_rgb, fore_rgb, Colored
-    from concurrenttools import thread_pool_batch
+    from concurrenttools import thread_batch
     from httpx import HTTPStatusError, TimeoutException
     from p115 import P115Client, check_response
     from pygments import highlight
@@ -66,12 +69,33 @@ except ImportError:
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "colored", "flask", "httpx", "python-concurrenttools", "python-115", "Pygments"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
-    from concurrenttools import thread_pool_batch
+    from concurrenttools import thread_batch
     from httpx import HTTPStatusError, TimeoutException
     from p115 import P115Client, check_response
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
+
+
+COLORS_8_BIT: dict[str, int] = {
+    "dark": 0, 
+    "red": 1, 
+    "green": 2, 
+    "yellow": 3, 
+    "blue": 4, 
+    "magenta": 5, 
+    "cyan": 6, 
+    "white": 7, 
+}
+login_lock: None | ContextManager = None
+count_lock: None | ContextManager = None
+fs_lock: None | ContextManager = None
+if max_workers > 1:
+    login_lock = Lock()
+    count_lock = Lock()
+    if args.lock_dir_methods:
+        fs_lock = Lock()
+cookies_path_mtime = 0
 
 
 class ColoredLevelNameFormatter(logging.Formatter):
@@ -91,18 +115,6 @@ class ColoredLevelNameFormatter(logging.Formatter):
             case _:
                 record.levelname = colored_format(record.levelname, styles=("bold", "dim"))
         return super().format(record)
-
-
-COLORS_8_BIT: dict[str, int] = {
-    "dark": 0, 
-    "red": 1, 
-    "green": 2, 
-    "yellow": 3, 
-    "blue": 4, 
-    "magenta": 5, 
-    "cyan": 6, 
-    "white": 7, 
-}
 
 
 def colored_format(
@@ -176,6 +188,15 @@ def highlight_traceback() -> str:
     return highlight(format_exc(), Python3TracebackLexer(), TerminalFormatter()).rstrip()
 
 
+@contextmanager
+def ensure_cm(cm):
+    if isinstance(cm, ContextManager):
+        with cm as val:
+            yield val
+    else:
+        yield cm
+
+
 def attr(id_or_path: int | str = 0, base_url: str = base_url) -> dict:
     if isinstance(id_or_path, int):
         url = f"{base_url}?id={id_or_path}&method=attr"
@@ -208,7 +229,7 @@ def relogin(exc=None):
     if exc is None:
         exc = exc_info()[0]
     mtime = cookies_path_mtime
-    with lock:
+    with ensure_cm(login_lock):
         need_update = mtime == cookies_path_mtime
         if cookies_path and need_update:
             try:
@@ -217,18 +238,22 @@ def relogin(exc=None):
                     client.cookies = open(cookies_path).read()
                     cookies_path_mtime = mtime
                     need_update = False
-            except FileNotFoundError:
-                pass
+            except (FileNotFoundError, ValueError):
+                logger.warning("""{emoji} {prompt}{file}""".format(
+                    emoji  = blink_mark("🔥"), 
+                    prompt = highlight_prompt("[SCAN] 🦾 文件不见: ", "yellow"), 
+                    file   = highlight_path(cookies_path), 
+                ))
         if need_update:
             if exc is None:
                 logger.warning("""{emoji} {prompt}NO MESSAGE""".format(
                     emoji  = blink_mark("🤖"), 
-                    prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
+                    prompt = highlight_prompt("[SCAN] 🦾 重新扫码: ", "yellow"), 
                 ))
             else:
                 logger.warning("""{emoji} {prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
                     emoji  = blink_mark("🤖"), 
-                    prompt = highlight_prompt("[SCAN] 🦾 重新扫码：", "yellow"), 
+                    prompt = highlight_prompt("[SCAN] 🦾 重新扫码: ", "yellow"), 
                     exc    = indent(highlight_exception(exc), "    ├ ")
                 ))
             client.login_another_app(device, replace=True)
@@ -239,7 +264,8 @@ def relogin(exc=None):
 
 def relogin_wrap(func, /, *args, **kwds):
     try:
-        return func(*args, **kwds)
+        with ensure_cm(fs_lock):
+            return func(*args, **kwds)
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
@@ -282,7 +308,7 @@ def pull(
                         dattr = {"id": dirid, "is_directory": True}
                         if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} @ {dirid} in {pid}\n    ├ response = {resp}".format(
                             emoji    = blink_mark("🤭"), 
-                            prompt   = highlight_prompt("[GOOD] 📂 创建目录：", "green"), 
+                            prompt   = highlight_prompt("[GOOD] 📂 创建目录: ", "green"), 
                             src_path = highlight_path(attr["path"]), 
                             dirid    = highlight_id(dirid), 
                             name     = highlight_path(resp["file_name"]), 
@@ -300,7 +326,7 @@ def pull(
                         dirid = dattr["id"]
                         if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                             emoji    = blink_mark("🏃"), 
-                            prompt   = highlight_prompt("[SKIP] 📂 目录存在：", "yellow"), 
+                            prompt   = highlight_prompt("[SKIP] 📂 目录存在: ", "yellow"), 
                             src_path = highlight_path(attr["path"]), 
                             dst_path = highlight_path(dattr["path"]), 
                         ))
@@ -316,7 +342,7 @@ def pull(
                 count = len(subattrs)
                 count_dirs = sum(a["is_directory"] for a in subattrs)
                 count_files = count - count_dirs
-                with count_lock:
+                with ensure_cm(count_lock):
                     tasks["total"] += count
                     tasks["dirs"] += count_dirs
                     tasks["files"] += count_files
@@ -330,7 +356,7 @@ def pull(
                         if subdattr:
                             if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                                 emoji    = blink_mark("🏃"), 
-                                prompt   = highlight_prompt("[SKIP] 📂 目录存在：", "yellow"), 
+                                prompt   = highlight_prompt("[SKIP] 📂 目录存在: ", "yellow"), 
                                 src_path = highlight_path(subattr["path"]), 
                                 dst_path = highlight_path(subdattr["path"]), 
                             ))
@@ -342,11 +368,11 @@ def pull(
                     else:
                         if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
                             emoji    = blink_mark("🏃"), 
-                            prompt   = highlight_prompt("[SKIP] 📝 文件存在：", "yellow"), 
+                            prompt   = highlight_prompt("[SKIP] 📝 文件存在: ", "yellow"), 
                             src_path = highlight_path(subattr["path"]), 
                             dst_path = highlight_path(subdattr["path"]), 
                         ))
-                        with count_lock:
+                        with ensure_cm(count_lock):
                             success["total"] += 1
                             success["files"] += 1
                             unfinished["total"] -= 1
@@ -369,7 +395,7 @@ def pull(
     ├ attr = {attr}
     ├ response = {resp}""".format(
                         emoji    = blink_mark("🥹"), 
-                        prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（直接上传）：", "yellow"), 
+                        prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（直接上传）: ", "yellow"), 
                         src_path = highlight_path(attr["path"]), 
                         name     = highlight_path(attr["name"]), 
                         pid      = highlight_id(pid), 
@@ -384,13 +410,13 @@ def pull(
                 resp_data = resp["data"]
                 if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n    ├ response = {resp}".format(
                     emoji    = blink_mark("🤭"), 
-                    prompt   = highlight_prompt("[GOOD] 📝 接收文件：", "green"), 
+                    prompt   = highlight_prompt("[GOOD] 📝 接收文件: ", "green"), 
                     src_path = highlight_path(attr["path"]), 
                     name     = highlight_path(resp_data["file_name"]), 
                     pid      = highlight_id(pid), 
                     resp     = highlight_as_json(resp_data), 
                 ))
-            with count_lock:
+            with ensure_cm(count_lock):
                 success["total"] += 1
                 unfinished["total"] -= 1
                 if attr["is_directory"]:
@@ -402,7 +428,7 @@ def pull(
             del taskmap[attr["id"]]
         except BaseException as e:
             exctype = type(e).__module__ + "." + type(e).__qualname__
-            with count_lock:
+            with ensure_cm(count_lock):
                 errors["total"] += 1
                 if attr["is_directory"]:
                     errors["dirs"] += 1
@@ -419,10 +445,10 @@ def pull(
                     relogin()
             elif isinstance(e, HTTPError):
                 retryable = e.status != 404
-            if retryable and isinstance(e, (URLError, TimeoutException)):
+            if retryable and isinstance(e, (URLError, HTTPStatusError, TimeoutException)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
-                    prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）：" % ("📂" if attr["is_directory"] else "📝"), "red"), 
+                    prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
                     src_path = highlight_path(attr["path"]), 
                     name     = highlight_path(attr["name"]), 
                     pid      = highlight_id(pid), 
@@ -430,7 +456,7 @@ def pull(
                 ))
                 submit((attr, pid, dattr))
             else:
-                with count_lock:
+                with ensure_cm(count_lock):
                     failed["total"] += 1
                     unfinished["total"] -= 1
                     if attr["is_directory"]:
@@ -441,7 +467,7 @@ def pull(
                         unfinished["files"] -= 1
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("💀"), 
-                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）：" % ("📂" if attr["is_directory"] else "📝"), "red"), 
+                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
                     src_path = highlight_path(attr["path"]), 
                     name     = highlight_path(attr["name"]), 
                     pid      = highlight_id(pid), 
@@ -451,10 +477,10 @@ def pull(
     stats_flag = True
     def show_stats(interval: float = 30):
         while stats_flag:
-            with count_lock:
+            with ensure_cm(count_lock):
                 logger.info("""{emoji} {prompt}\n    ├ statistics = {stats}""".format(
                     emoji  = blink_mark("📊"), 
-                    prompt = highlight_prompt("[STAT] 📈 执行统计：", "magenta"), 
+                    prompt = highlight_prompt("[STAT] 📈 执行统计: ", "magenta"), 
                     stats  = highlight_object(stats), 
                 ))
             sleep(interval)
@@ -488,7 +514,7 @@ def pull(
         is_completed = False
         if stats_interval > 0:
             Thread(target=show_stats, args=(stats_interval,), daemon=True).start()
-        thread_pool_batch(pull, taskmap.values(), max_workers=max_workers)
+        thread_batch(pull, taskmap.values(), max_workers=max_workers)
         is_completed = stats["is_completed"] = True
     finally:
         stats_flag = False
@@ -498,9 +524,9 @@ def pull(
     ├ statistics = {stats}""".format(
             emoji  = blink_mark("📊"), 
             prompt = (
-                highlight_prompt("[STAT] 🥳 统计信息：", "green")
+                highlight_prompt("[STAT] 🥳 统计信息: ", "green")
                 if is_completed else
-                highlight_prompt("[STAT] ⛽ 统计信息：", "red")
+                highlight_prompt("[STAT] ⛽ 统计信息: ", "red")
             ), 
             count  = highlight_id(len(taskmap)), 
             tasks  = highlight_object(taskmap), 
@@ -537,9 +563,6 @@ device = client.login_device()["icon"]
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 fs = client.fs
-
-lock = Lock()
-count_lock = Lock()
 
 logger = logging.Logger("115-pull", logging.DEBUG if debug else logging.INFO)
 handler = logging.StreamHandler()

@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-concurrenttools"
-version = "0.0.1"
+version = "0.0.2.1"
 description = "Python concurrent tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-concurrenttools"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-concurrenttools"
-keywords = ["http", "request"]
+keywords = ["concurrent", "tools"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",

@@ -41,7 +41,7 @@ from urllib.parse import quote
 from urllib.request import urlopen, Request
 
 try:
-    from concurrenttools import thread_pool_batch
+    from concurrenttools import thread_batch
     from rich.progress import Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     from urlopen import download
     from wcwidth import wcwidth, wcswidth
@@ -49,7 +49,7 @@ except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "python-concurrenttools", "python-urlopen", "rich", "wcwidth"], check=True)
-    from concurrenttools import thread_pool_batch
+    from concurrenttools import thread_batch
     from rich.progress import Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     from urlopen import download
     from wcwidth import wcwidth, wcswidth # type: ignore
@@ -372,7 +372,7 @@ def main() -> dict:
         print = progress.console.print
         closed = False
         try:
-            thread_pool_batch(pull, taskmap.values(), max_workers=max_workers)
+            thread_batch(pull, taskmap.values(), max_workers=max_workers)
             stats["is_completed"] = True
         finally:
             closed = True
