@@ -381,14 +381,6 @@ def query(path: str):
     th, td {
       padding: 12px 15px;
     }
-    td:nth-child(1) {
-      max-width: 600px;
-      word-wrap: break-word;
-    }
-    td:nth-child(2) {
-      width: 160px;
-      word-wrap: break-word;
-    }
     tbody tr {
       border-bottom: 1px solid #dddddd;
       background-color: #fff;
@@ -486,21 +478,18 @@ def query(path: str):
       </tr>
     </thead>
     <tbody>
-      {% if attr["id"] != 0 %}
+      {%- if attr["id"] != 0 %}
       <tr>
         <td colspan="6"><a href="/?id={{ attr["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
       </tr>
-      {% endif %}
-      {% for attr in children %}
+      {%- endif %}
+      {%- for attr in children %}
       <tr>
-        {% set name = attr["name"] %}
-        {% set url = attr["url"] %}
-        <td><i class="file-type tp-{{ attr.get("ico", "folder") }}"></i><a href="{{ url }}">{{ name }}</a></td>
-        {% if attr["is_directory"] %}
-        <td></td>
-        <td>--</td>
-        {% else %}
-        <td>
+        {%- set name = attr["name"] %}
+        {%- set url = attr["url"] %}
+        <td style="max-width: 600px; word-wrap: break-word"><i class="file-type tp-{{ attr.get("ico", "folder") }}"></i><a href="{{ url }}">{{ name }}</a></td>
+        <td style="width: 160px; word-wrap: break-word;">
+          {%- if not attr["is_directory"] %}
           <a class="popup" href="iina://weblink?url={{ url }}"><img class="icon" src="/?pic=iina" /><span class="popuptext">IINA</span></a>
           <a class="popup" href="potplayer://{{ url }}"><img class="icon" src="/?pic=potplayer" /><span class="popuptext">PotPlayer</span></a>
           <a class="popup" href="vlc://{{ url }}"><img class="icon" src="/?pic=vlc" /><span class="popuptext">VLC</span></a>
@@ -510,15 +499,18 @@ def query(path: str):
           <a class="popup" href="omniplayer://weblink?url={{ url }}"><img class="icon" src="/?pic=omniplayer" /><span class="popuptext">OmniPlayer</span></a>
           <a class="popup" href="figplayer://weblink?url={{ url }}"><img class="icon" src="/?pic=figplayer" /><span class="popuptext">Fig Player</span></a>
           <a class="popup" href="mpv://{{ url }}"><img class="icon" src="/?pic=mpv" /><span class="popuptext">MPV</span></a>
+          {%- endif %}
         </td>
-        </td>
-        <td>{{ attr["size"] }}</td>
-        {% endif %}
+        {%- if attr["is_directory"] %}
+        <td style="text-align: center;">--</td>
+        {%- else %}
+        <td style="text-align: right;">{{ attr["size"] }}</td>
+        {%- endif %}
         <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=attr">attr</a></td>
         <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=desc">desc</a></td>
         <td>{{ attr["etime"] }}</td>
       </tr>
-      {% endfor %}
+      {%- endfor %}
     </tbody>
   </table>
 </body>

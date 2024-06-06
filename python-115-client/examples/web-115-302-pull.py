@@ -316,10 +316,10 @@ def pull(
                         for attr in relogin_wrap(fs.listdir_attr, dirid)
                     }
                 subattrs = listdir(attr["id"], base_url)
+                count = len(subattrs)
+                count_dirs = sum(a["is_directory"] for a in subattrs)
+                count_files = count - count_dirs
                 with count_lock:
-                    count = len(subattrs)
-                    count_dirs = sum(a["is_directory"] for a in subattrs)
-                    count_files = count - count_dirs
                     tasks["total"] += count
                     tasks["dirs"] += count_dirs
                     tasks["files"] += count_files
@@ -478,7 +478,7 @@ def pull(
     else:
         push_attr = attr(push_id, base_url)
     taskmap: dict[int, tuple[dict, int, None | dict]] = {
-        cast(int, push_attr["id"]): (push_attr, cast(int, to_pid), None)}
+        push_attr["id"]: (push_attr, cast(int, to_pid), None)}
     tasks["total"] += 1
     unfinished["total"] += 1
     if push_attr["is_directory"]:
@@ -509,7 +509,7 @@ def pull(
             tasks  = highlight_object(taskmap), 
             stats  = highlight_object(stats), 
         ))
-        return stats
+    return stats
 
 
 if not cookies:
