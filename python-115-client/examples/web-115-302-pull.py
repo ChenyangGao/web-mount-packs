@@ -40,7 +40,7 @@ import logging
 
 from collections.abc import Iterable
 from gzip import GzipFile
-from json import dumps, load, JSONDecodeError
+from json import dumps, load
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import exc_info
@@ -238,11 +238,8 @@ def relogin(exc=None):
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    exc: BaseException
     try:
         return func(*args, **kwds)
-    except JSONDecodeError as e:
-        exc = e
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise

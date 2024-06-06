@@ -86,7 +86,6 @@ except ImportError:
 from mimetypes import guess_type
 from collections.abc import Callable, MutableMapping
 from io import BytesIO
-from json import JSONDecodeError
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import exc_info
@@ -190,6 +189,13 @@ def relogin(exc=None):
             except FileNotFoundError:
                 pass
         if need_update:
+            if exc is None:
+                application.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码：\x1b[0m")
+            else:
+                application.logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                    prompt = "\x1b[1m\x1b[33m[SCAN] 🤖 重新扫码：\x1b[0m", 
+                    exc    = f"    ├ \x1b[31m{type(exc).__qualname__}\x1b[0m: {exc}")
+                )
             client.login_another_app(device, replace=True)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
@@ -197,11 +203,8 @@ def relogin(exc=None):
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    exc: BaseException
     try:
         return func(*args, **kwds)
-    except JSONDecodeError as e:
-        exc = e
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
