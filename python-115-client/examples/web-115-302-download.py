@@ -367,7 +367,7 @@ def main() -> dict:
         TransferSpeedColumn(), 
         FileSizeColumn(), 
     ) as progress:
-        update_stats_desc = cycle_text(("...", "..", ".", ".."), prefix="📊 [cyan bold]statistics[/cyan bold] ", min_length=43, interval=0.1).__next__
+        update_stats_desc = cycle_text(("...", "..", ".", ".."), prefix="📊 [cyan bold]statistics[/cyan bold] ", min_length=32 + 23, interval=0.1).__next__
         statistics_bar = progress.add_task(update_stats_desc(), total=1)
         print = progress.console.print
         closed = False
@@ -376,6 +376,7 @@ def main() -> dict:
             stats["is_completed"] = True
         finally:
             closed = True
+            progress.remove_task(statistics_bar)
             print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
     return stats
 
