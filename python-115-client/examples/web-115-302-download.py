@@ -258,7 +258,7 @@ def main() -> dict:
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
                         elif is_directory:
-                            print(f"[bold yellow][SKIP][/bold yellow] 📂 跳过目录: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
                         elif resume and not is_directory and subattr["size"] == entry.stat().st_size:
                             print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
                             with count_lock:
