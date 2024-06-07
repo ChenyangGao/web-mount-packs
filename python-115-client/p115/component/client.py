@@ -351,7 +351,7 @@ class P115Client:
     @overload
     def login_status(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bool:
@@ -359,14 +359,14 @@ class P115Client:
     @overload
     def login_status(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bool]:
         ...
     def login_status(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bool | Awaitable[bool]:
@@ -385,7 +385,7 @@ class P115Client:
     @overload
     def login_check(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -393,14 +393,14 @@ class P115Client:
     @overload
     def login_check(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def login_check(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -414,7 +414,7 @@ class P115Client:
     @overload
     def login_device(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> None | dict:
@@ -422,14 +422,14 @@ class P115Client:
     @overload
     def login_device(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[None | dict]:
         ...
     def login_device(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> None | dict | Awaitable[None | dict]:
@@ -446,7 +446,7 @@ class P115Client:
     @overload
     def login_devices(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -454,21 +454,50 @@ class P115Client:
     @overload
     def login_devices(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def login_devices(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """获取所有的已登录设备的信息，不过当前必须未登录失效
-        GET https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices
+        GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices
         """
-        api = "https://passportapi.115.com/app/1.0/web/9.2/login_log/login_devices"
+        api = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices"
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
+    def login_online(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def login_online(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def login_online(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """当前登录的设备总数和最近登录的设备
+        GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online
+        """
+        api = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online"
+        request_kwargs.pop("parse", None)
         return self.request(api, async_=async_, **request_kwargs)
 
     @overload
@@ -827,7 +856,7 @@ class P115Client:
     def login_qrcode_scan(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -836,7 +865,7 @@ class P115Client:
     def login_qrcode_scan(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -844,7 +873,7 @@ class P115Client:
     def login_qrcode_scan(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -863,7 +892,7 @@ class P115Client:
     def login_qrcode_scan_confirm(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -872,7 +901,7 @@ class P115Client:
     def login_qrcode_scan_confirm(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -880,7 +909,7 @@ class P115Client:
     def login_qrcode_scan_confirm(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -901,7 +930,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_scan_cancel(
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -910,7 +939,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_scan_cancel(
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -918,7 +947,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_scan_cancel(
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -939,7 +968,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_status(
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -948,7 +977,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_status(
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -956,7 +985,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_status(
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -975,7 +1004,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_result(
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -984,7 +1013,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_result(
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -992,7 +1021,7 @@ class P115Client:
     @staticmethod
     def login_qrcode_result(
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1071,7 +1100,7 @@ class P115Client:
     @overload
     def logout(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> None:
@@ -1079,14 +1108,14 @@ class P115Client:
     @overload
     def logout(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[None]:
         ...
     def logout(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> None | Awaitable[None]:
@@ -1183,7 +1212,7 @@ class P115Client:
     def logout_by_ssoent(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1192,7 +1221,7 @@ class P115Client:
     def logout_by_ssoent(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1200,7 +1229,7 @@ class P115Client:
     def logout_by_ssoent(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1248,7 +1277,7 @@ class P115Client:
     @overload
     def user_info(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1256,14 +1285,14 @@ class P115Client:
     @overload
     def user_info(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def user_info(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1277,7 +1306,7 @@ class P115Client:
     @overload
     def user_info2(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1285,14 +1314,14 @@ class P115Client:
     @overload
     def user_info2(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def user_info2(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1306,8 +1335,7 @@ class P115Client:
     @overload
     def user_setting(
         self, 
-        payload: dict = {}, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1315,20 +1343,50 @@ class P115Client:
     @overload
     def user_setting(
         self, 
-        payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def user_setting(
         self, 
-        payload: dict = {}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
-        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
+        """获取此账户的网页版设置（提示：较为复杂，自己抓包研究）
+        GET https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
+        """
+        api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
+        request_kwargs.pop("parse", None)
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_setting_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """修改此账户的网页版设置（提示：较为复杂，自己抓包研究）
         POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
         api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
@@ -1336,9 +1394,70 @@ class P115Client:
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
+    def user_setting2(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting2(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_setting2(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
+        GET https://proapi.115.com/android/1.0/user/setting
+        """
+        api = "https://proapi.115.com/android/1.0/user/setting"
+        request_kwargs.pop("parse", None)
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting2_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting2_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_setting2_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
+        POST https://proapi.115.com/android/1.0/user/setting
+        """
+        api = "https://proapi.115.com/android/1.0/user/setting"
+        request_kwargs.pop("parse", None)
+        return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
     def user_points_sign(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1346,14 +1465,14 @@ class P115Client:
     @overload
     def user_points_sign(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def user_points_sign(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1367,7 +1486,7 @@ class P115Client:
     @overload
     def user_points_sign_post(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1375,14 +1494,14 @@ class P115Client:
     @overload
     def user_points_sign_post(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def user_points_sign_post(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1429,9 +1548,38 @@ class P115Client:
     ########## File System API ##########
 
     @overload
+    def fs_space_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_space_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_space_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取使用空间的统计数据（较为简略，更推荐使用 `P115Client.fs_index_info`）
+        GET https://proapi.115.com/android/1.0/user/space_info
+        """
+        api = "https://proapi.115.com/android/1.0/user/space_info"
+        request_kwargs.pop("parse", None)
+        return self.request(api, async_=async_, **request_kwargs)
+
+    @overload
     def fs_space_summury(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1439,14 +1587,14 @@ class P115Client:
     @overload
     def fs_space_summury(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def fs_space_summury(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1508,7 +1656,7 @@ class P115Client:
     def fs_batch_delete(
         self, 
         payload: dict | Iterable[int | str], 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1517,7 +1665,7 @@ class P115Client:
     def fs_batch_delete(
         self, 
         payload: dict | Iterable[int | str], 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1525,7 +1673,7 @@ class P115Client:
     def fs_batch_delete(
         self, 
         payload: dict | Iterable[int | str], 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1595,7 +1743,7 @@ class P115Client:
     def fs_batch_rename(
         self, 
         payload: dict | Iterable[tuple[int | str, str]], 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1604,7 +1752,7 @@ class P115Client:
     def fs_batch_rename(
         self, 
         payload: dict | Iterable[tuple[int | str, str]], 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1612,7 +1760,7 @@ class P115Client:
     def fs_batch_rename(
         self, 
         payload: dict | Iterable[tuple[int | str, str]], 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1669,7 +1817,7 @@ class P115Client:
     def fs_delete(
         self, 
         id: int | str, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1678,7 +1826,7 @@ class P115Client:
     def fs_delete(
         self, 
         id: int | str, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1686,7 +1834,7 @@ class P115Client:
     def fs_delete(
         self, 
         id: int | str, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1702,7 +1850,7 @@ class P115Client:
     def fs_file(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1711,7 +1859,7 @@ class P115Client:
     def fs_file(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1719,7 +1867,7 @@ class P115Client:
     def fs_file(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1738,7 +1886,7 @@ class P115Client:
     def fs_files(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1747,7 +1895,7 @@ class P115Client:
     def fs_files(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1755,7 +1903,7 @@ class P115Client:
     def fs_files(
         self, 
         payload: int | dict = 0, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1820,7 +1968,7 @@ class P115Client:
     def fs_files2(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1829,7 +1977,7 @@ class P115Client:
     def fs_files2(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1837,7 +1985,7 @@ class P115Client:
     def fs_files2(
         self, 
         payload: int | dict = 0, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1902,7 +2050,7 @@ class P115Client:
     def fs_files_order(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1911,7 +2059,7 @@ class P115Client:
     def fs_files_order(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1919,7 +2067,7 @@ class P115Client:
     def fs_files_order(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1950,7 +2098,7 @@ class P115Client:
     def fs_files_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1959,7 +2107,7 @@ class P115Client:
     def fs_files_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -1967,7 +2115,7 @@ class P115Client:
     def fs_files_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict = 1, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -1996,7 +2144,7 @@ class P115Client:
     def fs_files_edit(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2005,7 +2153,7 @@ class P115Client:
     def fs_files_edit(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2013,7 +2161,7 @@ class P115Client:
     def fs_files_edit(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2050,7 +2198,7 @@ class P115Client:
     def fs_files_batch_edit(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2059,7 +2207,7 @@ class P115Client:
     def fs_files_batch_edit(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2067,7 +2215,7 @@ class P115Client:
     def fs_files_batch_edit(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2094,7 +2242,7 @@ class P115Client:
     def fs_files_hidden(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2103,7 +2251,7 @@ class P115Client:
     def fs_files_hidden(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2111,7 +2259,7 @@ class P115Client:
     def fs_files_hidden(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2140,7 +2288,7 @@ class P115Client:
     def fs_hidden_switch(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2149,7 +2297,7 @@ class P115Client:
     def fs_hidden_switch(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2157,7 +2305,7 @@ class P115Client:
     def fs_hidden_switch(
         self, 
         payload: str | dict = "", 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2181,7 +2329,7 @@ class P115Client:
     def fs_statistic(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2190,7 +2338,7 @@ class P115Client:
     def fs_statistic(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2198,7 +2346,7 @@ class P115Client:
     def fs_statistic(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2218,7 +2366,7 @@ class P115Client:
     def fs_get_repeat(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2227,7 +2375,7 @@ class P115Client:
     def fs_get_repeat(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2235,7 +2383,7 @@ class P115Client:
     def fs_get_repeat(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2259,7 +2407,8 @@ class P115Client:
     @overload
     def fs_index_info(
         self, 
-        /,
+        payload: Literal[0, 1] | dict = 0, 
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2267,29 +2416,35 @@ class P115Client:
     @overload
     def fs_index_info(
         self, 
-        /,
+        payload: Literal[0, 1] | dict, 
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def fs_index_info(
         self, 
-        /,
+        payload: Literal[0, 1] | dict = 0, 
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """获取当前已用空间、可用空间、登录设备等信息
         GET https://webapi.115.com/files/index_info
+        payload:
+            count_space_nums: 0 | 1 = 0 # 如果为 0，包含各种类型文件的数量统计；如果为 1，包含登录设备列表
         """
         api = "https://webapi.115.com/files/index_info"
+        if not isinstance(payload, dict):
+            payload = {"count_space_nums": payload}
         request_kwargs.pop("parse", None)
-        return self.request(api, async_=async_, **request_kwargs)
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_info(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2298,7 +2453,7 @@ class P115Client:
     def fs_info(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2306,7 +2461,7 @@ class P115Client:
     def fs_info(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2325,7 +2480,7 @@ class P115Client:
     def fs_mkdir(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2334,7 +2489,7 @@ class P115Client:
     def fs_mkdir(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2342,7 +2497,7 @@ class P115Client:
     def fs_mkdir(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2401,7 +2556,7 @@ class P115Client:
         self, 
         id: int, 
         name: str, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2411,7 +2566,7 @@ class P115Client:
         self, 
         id: int, 
         name: str, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2420,7 +2575,7 @@ class P115Client:
         self, 
         id: int, 
         name: str, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2436,7 +2591,7 @@ class P115Client:
     def fs_search(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2445,7 +2600,7 @@ class P115Client:
     def fs_search(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2453,7 +2608,7 @@ class P115Client:
     def fs_search(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2513,7 +2668,7 @@ class P115Client:
     def fs_export_dir(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2522,7 +2677,7 @@ class P115Client:
     def fs_export_dir(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2530,7 +2685,7 @@ class P115Client:
     def fs_export_dir(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2551,7 +2706,7 @@ class P115Client:
     def fs_export_dir_status(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2560,7 +2715,7 @@ class P115Client:
     def fs_export_dir_status(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2568,7 +2723,7 @@ class P115Client:
     def fs_export_dir_status(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2588,7 +2743,7 @@ class P115Client:
     def fs_export_dir_future(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> ExportDirStatus:
@@ -2597,7 +2752,7 @@ class P115Client:
     def fs_export_dir_future(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[ExportDirStatus]:
@@ -2605,7 +2760,7 @@ class P115Client:
     def fs_export_dir_future(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> ExportDirStatus | Awaitable[ExportDirStatus]:
@@ -2622,7 +2777,7 @@ class P115Client:
     def fs_shortcut_get(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2631,7 +2786,7 @@ class P115Client:
     def fs_shortcut_get(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2639,7 +2794,7 @@ class P115Client:
     def fs_shortcut_get(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2654,7 +2809,7 @@ class P115Client:
     def fs_shortcut_set(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2663,7 +2818,7 @@ class P115Client:
     def fs_shortcut_set(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2671,7 +2826,7 @@ class P115Client:
     def fs_shortcut_set(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2735,7 +2890,7 @@ class P115Client:
     def fs_desc_get(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2744,7 +2899,7 @@ class P115Client:
     def fs_desc_get(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2752,7 +2907,7 @@ class P115Client:
     def fs_desc_get(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -2862,7 +3017,7 @@ class P115Client:
     def fs_label_batch(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2871,7 +3026,7 @@ class P115Client:
     def fs_label_batch(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -2879,7 +3034,7 @@ class P115Client:
     def fs_label_batch(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3030,7 +3185,7 @@ class P115Client:
     def label_del(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3039,7 +3194,7 @@ class P115Client:
     def label_del(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3047,7 +3202,7 @@ class P115Client:
     def label_del(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3066,7 +3221,7 @@ class P115Client:
     def label_edit(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3075,7 +3230,7 @@ class P115Client:
     def label_edit(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3083,7 +3238,7 @@ class P115Client:
     def label_edit(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3103,7 +3258,7 @@ class P115Client:
     def label_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3112,7 +3267,7 @@ class P115Client:
     def label_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3120,7 +3275,7 @@ class P115Client:
     def label_list(
         self, 
         payload: dict = {}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3146,7 +3301,7 @@ class P115Client:
     def life_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3155,7 +3310,7 @@ class P115Client:
     def life_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3163,7 +3318,7 @@ class P115Client:
     def life_list(
         self, 
         payload: dict = {}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3209,7 +3364,7 @@ class P115Client:
     def behavior_detail(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3218,7 +3373,7 @@ class P115Client:
     def behavior_detail(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3226,7 +3381,7 @@ class P115Client:
     def behavior_detail(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3260,7 +3415,7 @@ class P115Client:
     def share_send(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3269,7 +3424,7 @@ class P115Client:
     def share_send(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3277,7 +3432,7 @@ class P115Client:
     def share_send(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3309,7 +3464,7 @@ class P115Client:
     def share_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3318,7 +3473,7 @@ class P115Client:
     def share_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3326,7 +3481,7 @@ class P115Client:
     def share_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3345,7 +3500,7 @@ class P115Client:
     def share_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3354,7 +3509,7 @@ class P115Client:
     def share_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3362,7 +3517,7 @@ class P115Client:
     def share_list(
         self, 
         payload: dict = {}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3382,7 +3537,7 @@ class P115Client:
     def share_update(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3391,7 +3546,7 @@ class P115Client:
     def share_update(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3399,7 +3554,7 @@ class P115Client:
     def share_update(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3422,7 +3577,7 @@ class P115Client:
     @staticmethod
     def share_snap(
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3431,7 +3586,7 @@ class P115Client:
     @staticmethod
     def share_snap(
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3439,7 +3594,7 @@ class P115Client:
     @staticmethod
     def share_snap(
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3470,7 +3625,7 @@ class P115Client:
     def share_downlist(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3479,7 +3634,7 @@ class P115Client:
     def share_downlist(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3487,7 +3642,7 @@ class P115Client:
     def share_downlist(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3506,7 +3661,7 @@ class P115Client:
     def share_receive(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3515,7 +3670,7 @@ class P115Client:
     def share_receive(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3523,7 +3678,7 @@ class P115Client:
     def share_receive(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3615,7 +3770,7 @@ class P115Client:
     def share_download_url_app(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3624,7 +3779,7 @@ class P115Client:
     def share_download_url_app(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3632,7 +3787,7 @@ class P115Client:
     def share_download_url_app(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3658,7 +3813,7 @@ class P115Client:
     def share_download_url_web(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3667,7 +3822,7 @@ class P115Client:
     def share_download_url_web(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3675,7 +3830,7 @@ class P115Client:
     def share_download_url_web(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3785,7 +3940,7 @@ class P115Client:
     def download_url_app(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3794,7 +3949,7 @@ class P115Client:
     def download_url_app(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3802,7 +3957,7 @@ class P115Client:
     def download_url_app(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -3841,7 +3996,7 @@ class P115Client:
     def download_url_web(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3850,7 +4005,7 @@ class P115Client:
     def download_url_web(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -3858,7 +4013,7 @@ class P115Client:
     def download_url_web(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5166,7 +5321,7 @@ class P115Client:
     @overload
     def upload_init(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5174,14 +5329,14 @@ class P115Client:
     @overload
     def upload_init(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def upload_init(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5907,7 +6062,7 @@ class P115Client:
     def extract_push(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5916,7 +6071,7 @@ class P115Client:
     def extract_push(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5924,7 +6079,7 @@ class P115Client:
     def extract_push(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5944,7 +6099,7 @@ class P115Client:
     def extract_push_progress(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5953,7 +6108,7 @@ class P115Client:
     def extract_push_progress(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5961,7 +6116,7 @@ class P115Client:
     def extract_push_progress(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5980,7 +6135,7 @@ class P115Client:
     def extract_info(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5989,7 +6144,7 @@ class P115Client:
     def extract_info(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5997,7 +6152,7 @@ class P115Client:
     def extract_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6069,7 +6224,7 @@ class P115Client:
     def extract_add_file(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6078,7 +6233,7 @@ class P115Client:
     def extract_add_file(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6086,7 +6241,7 @@ class P115Client:
     def extract_add_file(
         self, 
         payload: list | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6119,7 +6274,7 @@ class P115Client:
     def extract_progress(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6128,7 +6283,7 @@ class P115Client:
     def extract_progress(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6136,7 +6291,7 @@ class P115Client:
     def extract_progress(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6315,7 +6470,7 @@ class P115Client:
     def extract_download_url_web(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6437,7 +6592,7 @@ class P115Client:
     @overload
     def offline_info(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6445,14 +6600,14 @@ class P115Client:
     @overload
     def offline_info(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def offline_info(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6466,7 +6621,7 @@ class P115Client:
     @overload
     def offline_quota_info(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6474,14 +6629,14 @@ class P115Client:
     @overload
     def offline_quota_info(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def offline_quota_info(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6495,7 +6650,7 @@ class P115Client:
     @overload
     def offline_quota_package_info(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6503,14 +6658,14 @@ class P115Client:
     @overload
     def offline_quota_package_info(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def offline_quota_package_info(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6524,7 +6679,7 @@ class P115Client:
     @overload
     def offline_download_path(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6532,14 +6687,14 @@ class P115Client:
     @overload
     def offline_download_path(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def offline_download_path(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6553,7 +6708,7 @@ class P115Client:
     @overload
     def offline_upload_torrent_path(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6561,14 +6716,14 @@ class P115Client:
     @overload
     def offline_upload_torrent_path(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def offline_upload_torrent_path(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6583,7 +6738,7 @@ class P115Client:
     def offline_add_url(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6592,7 +6747,7 @@ class P115Client:
     def offline_add_url(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6600,7 +6755,7 @@ class P115Client:
     def offline_add_url(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6627,7 +6782,7 @@ class P115Client:
     def offline_add_urls(
         self, 
         payload: Iterable[str] | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6636,7 +6791,7 @@ class P115Client:
     def offline_add_urls(
         self, 
         payload: Iterable[str] | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6644,7 +6799,7 @@ class P115Client:
     def offline_add_urls(
         self, 
         payload: Iterable[str] | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6675,7 +6830,7 @@ class P115Client:
     def offline_add_torrent(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6684,7 +6839,7 @@ class P115Client:
     def offline_add_torrent(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6692,7 +6847,7 @@ class P115Client:
     def offline_add_torrent(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6718,7 +6873,7 @@ class P115Client:
     def offline_torrent_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6727,7 +6882,7 @@ class P115Client:
     def offline_torrent_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6735,7 +6890,7 @@ class P115Client:
     def offline_torrent_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6754,7 +6909,7 @@ class P115Client:
     def offline_remove(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6763,7 +6918,7 @@ class P115Client:
     def offline_remove(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6771,7 +6926,7 @@ class P115Client:
     def offline_remove(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6799,7 +6954,7 @@ class P115Client:
     def offline_list(
         self, 
         payload: int | dict = 1, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6808,7 +6963,7 @@ class P115Client:
     def offline_list(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6816,7 +6971,7 @@ class P115Client:
     def offline_list(
         self, 
         payload: int | dict = 1, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6835,7 +6990,7 @@ class P115Client:
     def offline_clear(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6844,7 +6999,7 @@ class P115Client:
     def offline_clear(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6852,7 +7007,7 @@ class P115Client:
     def offline_clear(
         self, 
         payload: int | dict = {"flag": 0}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6884,7 +7039,7 @@ class P115Client:
     def recyclebin_info(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6893,7 +7048,7 @@ class P115Client:
     def recyclebin_info(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6901,7 +7056,7 @@ class P115Client:
     def recyclebin_info(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6920,7 +7075,7 @@ class P115Client:
     def recyclebin_clean(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6929,7 +7084,7 @@ class P115Client:
     def recyclebin_clean(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6937,7 +7092,7 @@ class P115Client:
     def recyclebin_clean(
         self, 
         payload: int | str | Iterable[int | str] | dict = {}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6961,7 +7116,7 @@ class P115Client:
     def recyclebin_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -6970,7 +7125,7 @@ class P115Client:
     def recyclebin_list(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6978,7 +7133,7 @@ class P115Client:
     def recyclebin_list(
         self, 
         payload: dict = {"limit": 32, "offset": 0}, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7001,7 +7156,7 @@ class P115Client:
     def recyclebin_revert(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7010,7 +7165,7 @@ class P115Client:
     def recyclebin_revert(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7018,7 +7173,7 @@ class P115Client:
     def recyclebin_revert(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7042,7 +7197,7 @@ class P115Client:
     @overload
     def captcha_sign(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7050,14 +7205,14 @@ class P115Client:
     @overload
     def captcha_sign(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def captcha_sign(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7071,7 +7226,7 @@ class P115Client:
     @overload
     def captcha_code(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -7079,14 +7234,14 @@ class P115Client:
     @overload
     def captcha_code(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
         ...
     def captcha_code(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
@@ -7100,7 +7255,7 @@ class P115Client:
     @overload
     def captcha_all(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -7108,14 +7263,14 @@ class P115Client:
     @overload
     def captcha_all(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
         ...
     def captcha_all(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
@@ -7130,7 +7285,7 @@ class P115Client:
     def captcha_single(
         self, 
         id: int, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -7139,7 +7294,7 @@ class P115Client:
     def captcha_single(
         self, 
         id: int, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -7147,7 +7302,7 @@ class P115Client:
     def captcha_single(
         self, 
         id: int, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
@@ -7164,7 +7319,7 @@ class P115Client:
     def captcha_verify(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7173,7 +7328,7 @@ class P115Client:
     def captcha_verify(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7181,7 +7336,7 @@ class P115Client:
     def captcha_verify(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7210,7 +7365,7 @@ class P115Client:
     @overload
     def act_xys_get_act_info(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7218,14 +7373,14 @@ class P115Client:
     @overload
     def act_xys_get_act_info(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def act_xys_get_act_info(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7239,7 +7394,7 @@ class P115Client:
     @overload
     def act_xys_home_list(
         self, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7247,14 +7402,14 @@ class P115Client:
     @overload
     def act_xys_home_list(
         self, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     def act_xys_home_list(
         self, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7269,7 +7424,7 @@ class P115Client:
     def act_xys_my_desire(
         self, 
         payload: int | dict = 0, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7278,7 +7433,7 @@ class P115Client:
     def act_xys_my_desire(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7286,7 +7441,7 @@ class P115Client:
     def act_xys_my_desire(
         self, 
         payload: int | dict = 0, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7314,7 +7469,7 @@ class P115Client:
     def act_xys_my_aid_desire(
         self, 
         payload: int | dict = 0, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7323,7 +7478,7 @@ class P115Client:
     def act_xys_my_aid_desire(
         self, 
         payload: int | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7331,7 +7486,7 @@ class P115Client:
     def act_xys_my_aid_desire(
         self, 
         payload: int | dict = 0, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7359,7 +7514,7 @@ class P115Client:
     def act_xys_wish(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7368,7 +7523,7 @@ class P115Client:
     def act_xys_wish(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7376,7 +7531,7 @@ class P115Client:
     def act_xys_wish(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7399,7 +7554,7 @@ class P115Client:
     def act_xys_wish_del(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7408,7 +7563,7 @@ class P115Client:
     def act_xys_wish_del(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7416,7 +7571,7 @@ class P115Client:
     def act_xys_wish_del(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7435,7 +7590,7 @@ class P115Client:
     def act_xys_aid_desire(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7444,7 +7599,7 @@ class P115Client:
     def act_xys_aid_desire(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7452,7 +7607,7 @@ class P115Client:
     def act_xys_aid_desire(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7472,7 +7627,7 @@ class P115Client:
     def act_xys_aid_desire_del(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7481,7 +7636,7 @@ class P115Client:
     def act_xys_aid_desire_del(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7489,7 +7644,7 @@ class P115Client:
     def act_xys_aid_desire_del(
         self, 
         payload: int | str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7508,7 +7663,7 @@ class P115Client:
     def act_xys_get_desire_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7517,7 +7672,7 @@ class P115Client:
     def act_xys_get_desire_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7525,7 +7680,7 @@ class P115Client:
     def act_xys_get_desire_info(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7544,7 +7699,7 @@ class P115Client:
     def act_xys_desire_aid_list(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7553,7 +7708,7 @@ class P115Client:
     def act_xys_desire_aid_list(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7561,7 +7716,7 @@ class P115Client:
     def act_xys_desire_aid_list(
         self, 
         payload: str | dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -7586,7 +7741,7 @@ class P115Client:
     def act_xys_adopt(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7595,7 +7750,7 @@ class P115Client:
     def act_xys_adopt(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -7603,7 +7758,7 @@ class P115Client:
     def act_xys_adopt(
         self, 
         payload: dict, 
-        /,
+        /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:

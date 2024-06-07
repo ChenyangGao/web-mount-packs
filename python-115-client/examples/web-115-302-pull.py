@@ -203,7 +203,7 @@ def attr(id_or_path: int | str = 0, base_url: str = base_url) -> dict:
         url = f"{base_url}?id={id_or_path}&method=attr"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
+    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
         if resp.headers.get("Content-Encoding") == "gzip":
             resp = GzipFile(fileobj=resp)
         return load(resp)
@@ -214,14 +214,14 @@ def listdir(id_or_path: int | str = 0, base_url: str = base_url) -> list[dict]:
         url = f"{base_url}?id={id_or_path}&method=list"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
+    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
         if resp.headers.get("Content-Encoding") == "gzip":
             resp = GzipFile(fileobj=resp)
         return load(resp)
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
-    with urlopen(Request(url, headers={"Range": f"bytes={bytes_range}"})) as resp:
+    with urlopen(Request(url, headers={"Range": f"bytes={bytes_range}"}), timeout=10) as resp:
         return resp.read()
 
 
@@ -242,7 +242,7 @@ def relogin(exc=None):
             except (FileNotFoundError, ValueError):
                 logger.warning("""{emoji} {prompt}{file}""".format(
                     emoji  = blink_mark("🔥"), 
-                    prompt = highlight_prompt("[SCAN] 🦾 文件不见: ", "yellow"), 
+                    prompt = highlight_prompt("[SCAN] 🦾 文件空缺: ", "yellow"), 
                     file   = highlight_path(cookies_path), 
                 ))
         if need_update:
@@ -408,7 +408,8 @@ def pull(
                         attr     = highlight_object(attr), 
                         resp     = highlight_as_json(resp), 
                     ))
-                    resp = client.upload_file_sample(urlopen(attr["url"]), attr["name"], pid=pid)
+                    with urlopen(attr["url"], timeout=10) as resp:
+                        resp = client.upload_file_sample(resp, attr["name"], pid=pid)
                 elif status == 0 and statuscode == 413:
                     raise URLError(resp)
                 else:
@@ -525,25 +526,32 @@ def pull(
     try:
         is_completed = False
         if stats_interval > 0:
-            start_new_thread(show_stats, args=(stats_interval,))
+            start_new_thread(show_stats, (stats_interval,))
         thread_batch(pull, taskmap.values(), max_workers=max_workers)
         is_completed = stats["is_completed"] = True
     finally:
         stats_flag = False
-        logger.info("""\
+        if is_completed and not taskmap:
+            logger.info("{emoji} {prompt}\n    ├ statistics = {stats}".format(
+                emoji  = blink_mark("📊"), 
+                prompt = highlight_prompt("[STAT] 🥳 统计信息: ", "green"), 
+                stats  = highlight_object(stats), 
+            ))
+        else:
+            logger.info("""\
 {emoji} {prompt}
     ├ unfinished tasks({count}) = {tasks}
     ├ statistics = {stats}""".format(
-            emoji  = blink_mark("📊"), 
-            prompt = (
-                highlight_prompt("[STAT] 🥳 统计信息: ", "green")
-                if is_completed else
-                highlight_prompt("[STAT] ⛽ 统计信息: ", "red")
-            ), 
-            count  = highlight_id(len(taskmap)), 
-            tasks  = highlight_object(taskmap), 
-            stats  = highlight_object(stats), 
-        ))
+                emoji  = blink_mark("⭕" if is_completed else "❌"), 
+                prompt = (
+                    highlight_prompt("[STAT] 🐶 统计信息: ", "yellow")
+                    if is_completed else
+                    highlight_prompt("[STAT] 🤯 统计信息: ", "red")
+                ), 
+                count  = highlight_id(len(taskmap)), 
+                tasks  = highlight_object(taskmap), 
+                stats  = highlight_object(stats), 
+            ))
     return stats
 
 

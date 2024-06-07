@@ -64,7 +64,7 @@ def attr(
         url = f"{base_url}?id={id_or_path}&method=attr"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
+    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
         if resp.headers.get("Content-Encoding") == "gzip":
             resp = GzipFile(fileobj=resp)
         return load(resp)
@@ -79,7 +79,7 @@ def listdir(
         url = f"{base_url}?id={id_or_path}&method=list"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"})) as resp:
+    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
         if resp.headers.get("Content-Encoding") == "gzip":
             resp = GzipFile(fileobj=resp)
         return load(resp)

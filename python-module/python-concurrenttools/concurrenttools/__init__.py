@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["thread_batch", "thread_pool_batch", "async_batch", "threaded", "run_as_thread"]
 
 from asyncio import CancelledError, Semaphore as AsyncSemaphore, TaskGroup
@@ -11,7 +11,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from inspect import isawaitable
 from os import cpu_count
-from queue import Queue
+from queue import Queue, Empty
 from _thread import start_new_thread
 from threading import Event, Lock, Semaphore, Thread
 from typing import cast, Any, ContextManager, Optional, ParamSpec, TypeVar
@@ -37,13 +37,24 @@ def thread_batch(
     with_submit = ac > 1
     if max_workers is None or max_workers <= 0:
         max_workers = min(32, (cpu_count() or 1) + 4)
-    sentinal = object()
+
     q: Queue[T | object] = Queue()
     get, put, task_done = q.get, q.put, q.task_done
+    sentinal = object()
     lock = Lock()
+    nthreads = 0
+    running = True
+
     def worker():
         task: T | object
-        while (task := get()) is not sentinal:
+        while running:
+            try:
+                task = get(timeout=1)
+            except Empty:
+                continue
+            if task is sentinal:
+                put(sentinal)
+                break
             task = cast(T, task)
             try:
                 if with_submit:
@@ -54,9 +65,9 @@ def thread_batch(
                     callback(r)
             except BaseException:
                 pass
-            task_done()
-        put(sentinal)
-    nthreads = 0
+            finally:
+                task_done()
+
     def submit(task):
         nonlocal nthreads
         if nthreads < max_workers:
@@ -65,11 +76,13 @@ def thread_batch(
                     start_new_thread(worker, ())
                     nthreads += 1
         put(task)
+
     for task in tasks:
         submit(task)
     try:
         q.join()
     finally:
+        running = False
         q.queue.clear()
         put(sentinal)
 
@@ -86,9 +99,11 @@ def thread_pool_batch(
     with_submit = ac > 1
     if max_workers is None or max_workers <= 0:
         max_workers = min(32, (cpu_count() or 1) + 4)
+
     ntasks = 0
     lock = Lock()
     done_evt = Event()
+
     def works(task):
         nonlocal ntasks
         try:
@@ -103,11 +118,13 @@ def thread_pool_batch(
                 ntasks -= 1
             if not ntasks:
                 done_evt.set()
+
     def submit(task):
         nonlocal ntasks
         with lock:
            ntasks += 1
         return create_task(works, task)
+
     pool = ThreadPoolExecutor(max_workers)
     try:
         create_task = pool.submit
