@@ -48,7 +48,8 @@ from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import exc_info
 from textwrap import indent
-from threading import Lock, Thread
+from _thread import start_new_thread
+from threading import Lock
 from time import sleep
 from traceback import format_exc
 from typing import cast, ContextManager
@@ -281,10 +282,10 @@ def pull(
     max_workers: int = 1, 
 ) -> dict:
     stats: dict = {
-        "tasks": {"total": 0, "files": 0, "dirs": 0}, 
-        "unfinished": {"total": 0, "files": 0, "dirs": 0}, 
-        "success": {"total": 0, "files": 0, "dirs": 0}, 
-        "failed": {"total": 0, "files": 0, "dirs": 0}, 
+        "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "unfinished": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "success": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "failed": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         "errors": {"total": 0, "files": 0, "dirs": 0, "reasons": {}}, 
         "is_completed": False, 
     }
@@ -342,13 +343,16 @@ def pull(
                 count = len(subattrs)
                 count_dirs = sum(a["is_directory"] for a in subattrs)
                 count_files = count - count_dirs
+                count_size = sum(a["size"] for a in subattrs if not a["is_directory"])
                 with ensure_cm(count_lock):
                     tasks["total"] += count
                     tasks["dirs"] += count_dirs
                     tasks["files"] += count_files
+                    tasks["size"] += count_size
                     unfinished["total"] += count
                     unfinished["dirs"] += count_dirs
                     unfinished["files"] += count_files
+                    unfinished["size"] += count_size
                 for subattr in subattrs:
                     is_directory = subattr["is_directory"]
                     subdattr = subdattrs.get((subattr["name"], is_directory), {})
@@ -375,8 +379,10 @@ def pull(
                         with ensure_cm(count_lock):
                             success["total"] += 1
                             success["files"] += 1
+                            success["size"] += subattr["size"]
                             unfinished["total"] -= 1
                             unfinished["files"] -= 1
+                            unfinished["size"] -= subattr["size"]
             else:
                 resp = client.upload_file_init(
                     attr["name"], 
@@ -424,7 +430,9 @@ def pull(
                     unfinished["dirs"] -= 1
                 else:
                     success["files"] += 1
+                    success["size"] += attr["size"]
                     unfinished["files"] -= 1
+                    unfinished["size"] -= attr["size"]
             del taskmap[attr["id"]]
         except BaseException as e:
             exctype = type(e).__module__ + "." + type(e).__qualname__
@@ -464,7 +472,9 @@ def pull(
                         unfinished["dirs"] -= 1
                     else:
                         failed["files"] += 1
+                        failed["size"] += attr["size"]
                         unfinished["files"] -= 1
+                        unfinished["size"] -= attr["size"]
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("💀"), 
                     prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
@@ -510,10 +520,12 @@ def pull(
     else:
         tasks["files"] += 1
         unfinished["files"] += 1
+        tasks["size"] += push_attr["size"]
+        unfinished["size"] += push_attr["size"]
     try:
         is_completed = False
         if stats_interval > 0:
-            Thread(target=show_stats, args=(stats_interval,), daemon=True).start()
+            start_new_thread(show_stats, args=(stats_interval,))
         thread_batch(pull, taskmap.values(), max_workers=max_workers)
         is_completed = stats["is_completed"] = True
     finally:

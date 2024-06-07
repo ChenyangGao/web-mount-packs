@@ -19,7 +19,7 @@ from posixpath import join as joinpath
 from re import compile as re_compile
 from stat import S_IFDIR, S_IFREG
 from time import time
-from typing import cast, Never, Optional, Self
+from typing import cast, Never, Self
 
 from posixpatht import escape, joins
 
@@ -76,12 +76,13 @@ class P115SharePath(P115PathBase):
     fs: P115ShareFileSystem
 
 
-# TODO: 默认应该是没有缓存
+# TODO: 可以关闭缓存，默认应该没有缓存
 class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     share_link: str
     share_code: str
     receive_code: str
     path_to_id: MutableMapping[str, int]
+    # TODO: 下面这 2 个字典合并成一个
     id_to_attr: MutableMapping[int, AttrDict]
     attr_cache: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
@@ -191,6 +192,18 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         "获取分享信息"
         return self.sharedata["shareinfo"]
 
+    def _search_item(self, id: int, /) -> AttrDict:
+        dq = deque((self.attr(0),))
+        get, put = dq.popleft, dq.append
+        while dq:
+            for attr in self.iterdir(get()):
+                if attr["id"] == id:
+                    return attr
+                if attr["is_directory"]:
+                    put(attr)
+        self.__dict__["full_loaded"] = True
+        raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
+
     def _attr(self, id: int = 0, /) -> AttrDict:
         try:
             return self.id_to_attr[id]
@@ -207,24 +220,24 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "is_directory": True, 
                 "time": self.create_time, 
                 "fs": self, 
+                "ancestors": [{"id": 0, "name": ""}], 
             }
             return attr
-        dq = deque((0,))
-        while dq:
-            pid = dq.popleft()
-            for attr in self.iterdir(pid):
-                if attr["id"] == id:
-                    return attr
-                if attr["is_directory"]:
-                    dq.append(attr["id"])
-        self.__dict__["full_loaded"] = True
-        raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
+        self.client.share_download_url(
+            {
+                "share_code": self.share_code, 
+                "receive_code": self.receive_code, 
+                "file_id": id, 
+            }, 
+            strict=False, 
+        )
+        return self._search_item(id)
 
     def _attr_path(
         self, 
         path: str | PathLike[str] | Sequence[str], 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
@@ -257,7 +270,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> AttrDict:
         "获取属性"
         path_class = type(self).path_class
@@ -273,12 +286,31 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         else:
             return self._attr_path(id_or_path, pid)
 
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+    ) -> int:
+        "文件夹中的项目数（直属的文件和目录计数）"
+        return self.fs_files({"cid": self.get_id(id_or_path, pid), "limit": 1})["data"]["count"]
+
+    def get_ancestors(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+    ) -> list[dict]:
+        "获取各个上级目录的少量信息（从根目录到当前目录）"
+        return self.attr(id_or_path, pid)["ancestors"]
+
     def get_url(
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        pid: Optional[int] = None, 
-        headers: Optional[Mapping] = None, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
+        detail: bool = False, 
     ) -> str:
         "获取下载链接"
         path_class = type(self).path_class
@@ -293,17 +325,21 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             if attr["is_directory"]:
                 raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
             id = attr["id"]
-        return self.client.share_download_url({
-            "share_code": self.share_code, 
-            "receive_code": self.receive_code, 
-            "file_id": id, 
-        }, headers=headers)
+        return self.client.share_download_url(
+            {
+                "share_code": self.share_code, 
+                "receive_code": self.receive_code, 
+                "file_id": id, 
+            }, 
+            headers=headers, 
+            detail=detail, 
+        )
 
     def iterdir(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
@@ -342,6 +378,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
             )
         id = attr["id"]
+        ancestors = attr["ancestors"]
         children: Sequence[AttrDict]
         try:
             children = self.attr_cache[id]
@@ -385,6 +422,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 data = get_files(payload)["data"]
                 for attr in map(normalize_info, data["list"]):
                     attr["fs"] = self
+                    attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                     path_to_id[path] = attr["id"]
                     yield attr
@@ -393,6 +431,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     data = get_files(payload)["data"]
                     for attr in map(normalize_info, data["list"]):
                         attr["fs"] = self
+                        attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                         path_to_id[path] = attr["id"]
                         yield attr
@@ -428,7 +467,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        pid: Optional[int] = None, 
+        pid: None | int = None, 
     ) -> stat_result:
         "检查路径的属性，就像 `os.stat`"
         attr = self.attr(id_or_path, pid)

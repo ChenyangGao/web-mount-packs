@@ -2,12 +2,11 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 0, 1)
 __doc__ = """\
-    🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
+    🕸️ 获取你的 115 网盘账号上的某个压缩包中的文件信息和下载链接 🕷️
 
-🚫 注意事项：请求头需要携带 User-Agent。
-如果使用 web 的下载接口，则有如下限制：
+🚫 注意事项：这些限制以前没有，现在受限了：
     - 大于等于 115 MB 时不能下载
     - 不能直接请求直链，需要携带特定的 Cookie 和 User-Agent
 """
@@ -30,14 +29,6 @@ parser = ArgumentParser(
 
     GET ?path={path}
 
-也可以通过 pickcode 查询
-
-    GET ?pickcode={pickcode}
-
-也可以通过 id 查询
-
-    GET ?id={id}
-
 2. 查询文件或文件夹的信息，返回 json
 
     GET ?method=attr
@@ -50,23 +41,17 @@ parser = ArgumentParser(
 
     GET ?method=url
 
-5. 查询文件或文件夹的备注
-
-    GET ?method=desc
-
-6. 支持的查询参数
+5. 支持的查询参数
 
  参数    | 类型    | 必填 | 说明
 -------  | ------- | ---- | ----------
-pickcode | string  | 否   | 文件或文件夹的 pickcode，优先级高于 id
-id       | integer | 否   | 文件或文件夹的 id，优先级高于 path
 path     | string  | 否   | 文件或文件夹的路径，优先级高于 url 中的路径部分
 method   | string  | 否   | 0. '':     缺省值，直接下载
-         |         |      | 2. 'url':  这个文件的下载链接和请求头，JSON 格式
+         |         |      | 1. 'url':  这个文件的下载链接，JSON 格式
          |         |      | 2. 'attr': 这个文件或文件夹的信息，JSON 格式
          |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息，JSON 格式
-         |         |      | 4. 'desc': 这个文件或文件夹的备注，text/html
 """)
+parser.add_argument("code", help="115 的压缩包（.zip、.rar 或 .7z）的 id、pickcode 或 路径")
 parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
 parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
@@ -79,25 +64,24 @@ if args.version:
     raise SystemExit(0)
 
 try:
-    from cachetools import LRUCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
     from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem
-    from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "Flask-Compress", "httpx", "posixpatht", "python-115"], check=True)
-    from cachetools import LRUCache
+    run([executable, "-m", "pip", "install", "-U", "flask", "Flask-Compress", "httpx", "python-115"], check=True)
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
     from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem
-    from posixpatht import escape
 
-from collections.abc import Callable, MutableMapping
+import posixpath
+
+from collections.abc import Callable
 from functools import update_wrapper
+from html import escape
 from io import BytesIO
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
@@ -125,6 +109,7 @@ except ImportError:
         from json import dumps as odumps
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
 
+code = args.code
 cookies = args.cookies
 cookies_path = args.cookies_path
 cookies_path_mtime = 0
@@ -155,12 +140,20 @@ client = P115Client(cookies, app="qandroid")
 device = client.login_device()["icon"]
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
-fs = P115FileSystem(client, path_to_id=LRUCache(65536))
+
+if code.startswith("/"):
+    pickcode = client.fs.get_pickcode(code)
+elif not code.startswith("0") and code.isascii() and code.isdecimal():
+    pickcode = client.fs.get_pickcode(int(code))
+elif code.isalnum() and 15 <= len(code) <= 20:
+    pickcode = code
+else:
+    pickcode = client.fs.get_pickcode(code)
+fs = client.get_zip_fs(pickcode)
 
 KEYS = (
-    "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
-    "size", "format_size", "ctime", "mtime", "atime", "thumb", "star", "labels", 
-    "score", "hidden", "described", "violated", "url", "short_url", 
+    "name", "path", "is_directory", "size", "format_size", "time", 
+    "timestamp", "url", 
 )
 application = Flask(__name__)
 Compress(application)
@@ -199,36 +192,32 @@ def redirect_exception_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-def get_url(pickcode: str):
-    use_web_api = False if request.args.get("web") in (None, "false") else True
+def get_url(path: str):
     request_headers = request.headers
     url = relogin_wrap(
-        fs.get_url_from_pickcode, 
-        pickcode, 
+        fs.get_url, 
+        path, 
         detail=True, 
         headers={"User-Agent": request_headers.get("User-Agent") or ""}, 
-        use_web_api=use_web_api, 
     )
     headers = url["headers"]
     if request.args.get("method") == "url":
         return {"url": url, "headers": headers}
-    if use_web_api:
-        bytes_range = request_headers.get("Range")
-        if bytes_range:
-            headers["Range"] = bytes_range
-            resp = urlopen(Request(url, headers=headers))
-            return Response(
-                urlopen(Request(url, headers=headers)), 
-                headers=dict(request_headers), 
-                status=206, 
-                mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
-            )
+    bytes_range = request_headers.get("Range")
+    if bytes_range:
+        headers["Range"] = bytes_range
         resp = urlopen(Request(url, headers=headers))
-        return send_file(
+        return Response(
             urlopen(Request(url, headers=headers)), 
+            headers=dict(request_headers), 
+            status=206, 
             mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
         )
-    return redirect(url)
+    resp = urlopen(Request(url, headers=headers))
+    return send_file(
+        urlopen(Request(url, headers=headers)), 
+        mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
+    )
 
 
 def relogin(exc=None):
@@ -310,79 +299,47 @@ def query(path: str):
     scheme = request.environ.get("HTTP_X_FORWARDED_PROTO") or "http"
     netloc = unquote(urlsplit(request.url).netloc)
     origin = f"{scheme}://{netloc}"
-    pickcode = request.args.get("pickcode")
-    fid = request.args.get("id")
     def update_attr(attr):
-        path_url = attr.get("path_url") or "%s%s" % (origin, quote(attr["path"], safe=":/"))
-        if attr["is_directory"]:
-            attr["short_url"] = f"{origin}?id={attr['id']}"
-            attr["url"] = f"{path_url}?id={attr['id']}"
-        else:
-            short_url = f"{origin}?pickcode={attr['pickcode']}"
-            url = f"{path_url}?pickcode={attr['pickcode']}"
-            if attr["violated"] and attr["size"] < 1024 * 1024 * 115:
-                short_url += "&web=true"
-                url += "&web=true"
-            attr["short_url"] = short_url
-            attr["url"] = url
-            attr["format_size"] = format_bytes(attr["size"])
+        attr["url"] = "%s%s" % (origin, quote(attr["path"], safe=":/"))
+        attr["format_size"] = format_bytes(attr["size"])
         return attr
     match request.args.get("method"):
         case "attr":
-            if pickcode:
-                fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
-            if fid is not None:
-                attr = relogin_wrap(fs.attr, int(fid))
-            else:
-                path = unquote(request.args.get("path") or path)
-                attr = relogin_wrap(fs.attr, path)
+            path = unquote(request.args.get("path") or path)
+            attr = relogin_wrap(fs.attr, path)
             update_attr(attr)
             json_str = dumps({k: attr.get(k) for k in KEYS})
             return Response(json_str, content_type='application/json; charset=utf-8')
         case "list":
-            if pickcode:
-                fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
-            if fid is not None:
-                children = relogin_wrap(fs.listdir_attr, int(fid))
-            else:
-                path = unquote(request.args.get("path") or path)
-                children = relogin_wrap(fs.listdir_attr, path)
+            path = unquote(request.args.get("path") or path)
+            children = relogin_wrap(fs.listdir_attr, path)
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
             ])
             return Response(json_str, content_type='application/json; charset=utf-8')
-        case "desc":
-            if pickcode:
-                fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
-            if fid is not None:
-                return relogin_wrap(fs.desc, int(fid))
-            else:
-                path = unquote(request.args.get("path") or path)
-                return relogin_wrap(fs.desc, path)
-    if pickcode:
-        return get_url(pickcode)
-    if fid is not None:
-        attr = relogin_wrap(fs.attr, int(fid))
-    else:
-        path = unquote(request.args.get("path") or path)
-        attr = relogin_wrap(fs.attr, path)
+    path = unquote(request.args.get("path") or path)
+    attr = fs.attr(path)
+    path = attr["path"]
     if not attr["is_directory"]:
-        return get_url(attr["pickcode"])
-    children = relogin_wrap(fs.listdir_attr, attr["id"])
+        return get_url(path)
+    children = relogin_wrap(fs.listdir_attr, path)
     for subattr in children:
-        subattr["path_url"] = "%s%s" % (origin, quote(subattr["path"], safe=":/"))
         update_attr(subattr)
-    fid = attr["id"]
-    if fid == 0:
-        header = f'<strong><a href="{origin}?id=0&method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
+    if path == "/":
+        header = f'<strong><a href="{origin}?method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
     else:
-        ancestors = fs.get_ancestors(int(attr["id"]))
-        info = ancestors[-1]
-        header = f'<strong><a href="{origin}?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
-                f'<strong><a href="{origin}?id={info["id"]}" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>/' 
-                for info in ancestors[1:-1]
-            ) + f'<strong><a href="{origin}?id={info["id"]}&method=list" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>'
+        ancestors = []
+        dir_ = path
+        while dir_ != "/":
+            subdir, name = posixpath.split(dir_)
+            ancestors.append((dir_, name))
+            dir_ = subdir
+        info = ancestors[0]
+        header = f'<strong><a href="{origin}" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
+                f'<strong><a href="{origin}{quote(path, safe=":/")}" style="border: 1px solid black; text-decoration: none">{escape(name)}</a></strong>/' 
+                for path, name in reversed(ancestors[1:])
+            ) + f'<strong><a href="{origin}{quote(path, safe=":/")}?method=list" style="border: 1px solid black; text-decoration: none">{escape(attr["name"])}</a></strong>'
     return render_template_string(
         """\
 <!DOCTYPE html>
@@ -524,21 +481,20 @@ def query(path: str):
         <th>Open</th>
         <th>Size</th>
         <th>Attr</th>
-        <th>Desc</th>
         <th>Last Modified</th>
       </tr>
     </thead>
     <tbody>
-      {%- if attr["id"] != 0 %}
+      {%- if path != "/" %}
       <tr>
-        <td colspan="6"><a href="/?id={{ attr["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
+        <td colspan="6"><a href="{{ path }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
       </tr>
       {%- endif %}
       {%- for attr in children %}
       <tr>
         {%- set name = attr["name"] %}
         {%- set url = attr["url"] %}
-        <td style="max-width: 600px; word-wrap: break-word"><i class="file-type tp-{{ attr.get("ico") or "folder" }}"></i><a href="{{ url }}">{{ name }}</a></td>
+        <td style="max-width: 800px; word-wrap: break-word"><i class="file-type tp-{{ attr.get("ico") or "folder" }}"></i><a href="{{ url }}">{{ name }}</a></td>
         <td style="width: 160px; word-wrap: break-word;">
           {%- if not attr["is_directory"] %}
           <a class="popup" href="iina://weblink?url={{ url }}"><img class="icon" src="/?pic=iina" /><span class="popuptext">IINA</span></a>
@@ -557,16 +513,15 @@ def query(path: str):
         {%- else %}
         <td style="text-align: right;"><span class="popup">{{ attr["format_size"] }}<span class="popuptext">{{ attr["size"] }}</span></span></td>
         {%- endif %}
-        <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=attr">attr</a></td>
-        <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=desc">desc</a></td>
-        <td>{{ attr["etime"] }}</td>
+        <td><a href="{{ attr["path"] }}?method=attr">attr</a></td>
+        <td>{{ attr["time"] }}</td>
       </tr>
       {%- endfor %}
     </tbody>
   </table>
 </body>
 </html>""", 
-        attr=attr, 
+        path=path, 
         children=children, 
         origin=origin, 
         header=header, 
@@ -575,5 +530,3 @@ def query(path: str):
 
 application.run(host=args.host, port=args.port, threaded=True)
 
-# TODO 支持指定挂载某个路径或 id，而不是挂载根目录
-# TODO 支持设置登录密码，不提供密码不能访问（302链接无需密码）

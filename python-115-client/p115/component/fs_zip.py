@@ -144,13 +144,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             }
             return attr
         dq = deque((0,))
+        get, put = dq.popleft, dq.append
         while dq:
-            pid = dq.popleft()
-            for attr in self.iterdir(pid):
+            for attr in self.iterdir(get()):
                 if attr["id"] == id:
                     return attr
                 if attr["is_directory"]:
-                    dq.append(attr["id"])
+                    put(attr["id"])
         self.__dict__["full_loaded"] = True
         raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
 
@@ -223,12 +223,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         pid: None | int = None, 
         headers: None | Mapping = None, 
+        detail: bool = False, 
     ) -> str:
         "获取下载链接"
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-        return self.client.extract_download_url(self.pickcode, attr["path"], headers=headers)
+        return self.client.extract_download_url(self.pickcode, attr["path"], headers=headers, detail=detail)
 
     def iterdir(
         self, 

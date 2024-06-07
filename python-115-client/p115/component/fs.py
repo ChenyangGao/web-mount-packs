@@ -23,7 +23,7 @@ from pathlib import Path
 from posixpath import join as joinpath, splitext
 from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
-from typing import cast, Literal, Optional, Self
+from typing import cast, Literal, Self
 from uuid import uuid4
 from warnings import warn
 from yarl import URL
@@ -236,9 +236,9 @@ class P115Path(P115PathBase):
 
 
 class P115FileSystem(P115FileSystemBase[P115Path]):
-    attr_cache: Optional[MutableMapping[int, dict]]
-    path_to_id: Optional[MutableMapping[str, int]]
-    get_version: Optional[Callable]
+    attr_cache: None | MutableMapping[int, dict]
+    path_to_id: None | MutableMapping[str, int]
+    get_version: None | Callable
     path_class = P115Path
 
     def __init__(
@@ -246,9 +246,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         client: str | P115Client, 
         password: str = "", 
-        attr_cache: Optional[MutableMapping[int, dict]] = None, 
-        path_to_id: Optional[MutableMapping[str, int]] = None, 
-        get_version: Optional[Callable] = lambda attr: attr.get("mtime", 0), 
+        attr_cache: None | MutableMapping[int, dict] = None, 
+        path_to_id: None | MutableMapping[str, int] = None, 
+        get_version: None | Callable = lambda attr: attr.get("mtime", 0), 
     ):
         if isinstance(client, str):
             client = P115Client(client)
@@ -1106,6 +1106,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         else:
             return check_response(self.client.fs_desc(fid, desc))["file_description"]
 
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+    ) -> int:
+        "文件夹中的项目数（直属的文件和目录计数）"
+        return self.fs_files({"cid": self.get_id(id_or_path, pid), "limit": 1})["count"]
+
     def get_ancestors(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -1117,15 +1126,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ls = self._dir_get_ancestors(attr["parent_id"])
         ls.append({"name": attr["name"], "id": attr["id"], "parent_id": attr["parent_id"], "is_directory": attr["is_directory"]})
         return ls
-
-    def dirlen(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        pid: None | int = None, 
-    ) -> int:
-        "文件夹中的项目数（直属的文件和目录计数）"
-        return self.fs_files({"cid": self.get_id(id_or_path, pid), "limit": 1})["count"]
 
     def get_id_from_pickcode(self, /, pickcode: str = "") -> int:
         "由 pickcode 获取 id"
@@ -1151,7 +1151,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType, 
         /, 
         pid: None | int = None, 
-        headers: Optional[Mapping] = None, 
+        headers: None | Mapping = None, 
         detail: bool = False, 
     ) -> str:
         "获取下载链接"
@@ -1171,7 +1171,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pickcode: str, 
         detail: bool = False, 
         use_web_api: bool = False, 
-        headers: Optional[Mapping] = None, 
+        headers: None | Mapping = None, 
     ) -> str:
         "由 pickcode 获取下载链接"
         return self.client.download_url(

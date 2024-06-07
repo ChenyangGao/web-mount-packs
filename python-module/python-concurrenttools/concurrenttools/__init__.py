@@ -12,6 +12,7 @@ from functools import partial, update_wrapper
 from inspect import isawaitable
 from os import cpu_count
 from queue import Queue
+from _thread import start_new_thread
 from threading import Event, Lock, Semaphore, Thread
 from typing import cast, Any, ContextManager, Optional, ParamSpec, TypeVar
 
@@ -61,7 +62,7 @@ def thread_batch(
         if nthreads < max_workers:
             with lock:
                 if nthreads < max_workers:
-                    Thread(target=worker, daemon=True).start()
+                    start_new_thread(worker, ())
                     nthreads += 1
         put(task)
     for task in tasks:

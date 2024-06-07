@@ -191,10 +191,10 @@ def main() -> dict:
     no_root = args.no_root
 
     stats: dict = {
-        "tasks": {"total": 0, "files": 0, "dirs": 0}, 
-        "unfinished": {"total": 0, "files": 0, "dirs": 0}, 
-        "success": {"total": 0, "files": 0, "dirs": 0}, 
-        "failed": {"total": 0, "files": 0, "dirs": 0}, 
+        "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "unfinished": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "success": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "failed": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         "errors": {"total": 0, "files": 0, "dirs": 0, "reasons": {}}, 
         "is_completed": False, 
     }
@@ -230,13 +230,16 @@ def main() -> dict:
                 count = len(subattrs)
                 count_dirs = sum(a["is_directory"] for a in subattrs)
                 count_files = count - count_dirs
+                count_size = sum(a["size"] for a in subattrs if not a["is_directory"])
                 with count_lock:
                     tasks["total"] += count
                     tasks["dirs"] += count_dirs
                     tasks["files"] += count_files
+                    tasks["size"] += count_size
                     unfinished["total"] += count
                     unfinished["dirs"] += count_dirs
                     unfinished["files"] += count_files
+                    unfinished["size"] += count_size
                 progress.update(statistics_bar, total=tasks["total"], description=update_stats_desc())
                 for subattr in subattrs:
                     name = subattr["name"]
@@ -254,7 +257,9 @@ def main() -> dict:
                                     unfinished["dirs"] -= 1
                                 else:
                                     failed["files"] += 1
+                                    failed["size"] += subattr["size"]
                                     unfinished["files"] -= 1
+                                    unfinished["size"] -= subattr["size"]
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
                         elif is_directory:
@@ -264,8 +269,10 @@ def main() -> dict:
                             with count_lock:
                                 success["total"] += 1
                                 success["files"] += 1
+                                success["size"] += subattr["size"]
                                 unfinished["total"] -= 1
                                 unfinished["files"] -= 1
+                                unfinished["size"] -= subattr["size"]
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
                     subtask = taskmap[subattr["id"]] = (subattr, joinpath(dst_path, name))
@@ -286,7 +293,9 @@ def main() -> dict:
                     unfinished["dirs"] -= 1
                 else:
                     success["files"] += 1
+                    success["size"] += attr["size"]
                     unfinished["files"] -= 1
+                    unfinished["size"] -= attr["size"]
             progress.update(statistics_bar, advance=1, description=update_stats_desc())
             del taskmap[attr["id"]]
         except BaseException as e:
@@ -321,7 +330,9 @@ def main() -> dict:
                         unfinished["dirs"] -= 1
                     else:
                         failed["files"] += 1
+                        failed["size"] += attr["size"]
                         unfinished["files"] -= 1
+                        unfinished["size"] -= attr["size"]
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 raise
 
@@ -358,7 +369,9 @@ def main() -> dict:
         unfinished["dirs"] += 1
     else:
         tasks["files"] += 1
+        tasks["size"] += push_attr["size"]
         unfinished["files"] += 1
+        unfinished["size"] += push_attr["size"]
     with Progress(
         SpinnerColumn(), 
         *Progress.get_default_columns(), 

@@ -12,8 +12,8 @@ from asyncio import to_thread
 from base64 import b64encode
 from binascii import b2a_hex
 from collections.abc import (
-    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterable, 
-    Iterator, Mapping, Sequence, 
+    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, ItemsView, 
+    Iterable, Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
 from contextlib import asynccontextmanager, aclosing, closing
@@ -30,6 +30,7 @@ from json import dumps, loads
 from os import fsdecode, fspath, fstat, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
+from socket import getdefaulttimeout, setdefaulttimeout
 from threading import Condition, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
@@ -76,6 +77,8 @@ APP_VERSION: Final = "99.99.99.99"
 
 # TODO: 一部分 POST 请求也要在 ReadTimeout时重试
 request = partial(httpx_request, parse=lambda _, content: loads(content), timeout=(5, 60, 60, 5), raise_for_status=True)
+if getdefaulttimeout() is None:
+    setdefaulttimeout(30)
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -3539,41 +3542,74 @@ class P115Client:
         return self.request(api, "POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def share_download_url_web(
+    def share_download_url(
         self, 
         payload: dict, 
-        /,
+        /, 
+        detail: bool = False, 
+        strict: bool = True, 
+        use_web_api: bool = False, 
         async_: Literal[False] = False, 
         **request_kwargs, 
-    ) -> dict:
+    ) -> str:
         ...
     @overload
-    def share_download_url_web(
+    def share_download_url(
         self, 
         payload: dict, 
-        /,
+        /, 
+        detail: bool, 
+        strict: bool, 
+        use_web_api: bool, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Awaitable[str]:
         ...
-    def share_download_url_web(
+    def share_download_url(
         self, 
         payload: dict, 
-        /,
+        /, 
+        detail: bool = False, 
+        strict: bool = True, 
+        use_web_api: bool = False, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
-        """获取分享链接中某个文件的下载链接（网页版接口，不推荐使用）
-        GET https://webapi.115.com/share/downurl
+    ) -> str | Awaitable[str]:
+        """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
+        POST https://proapi.115.com/app/share/downurl
         payload:
             - file_id: int | str
             - receive_code: str
             - share_code: str
             - user_id: int | str = <default>
         """
-        api = "https://webapi.115.com/share/downurl"
-        request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, async_=async_, **request_kwargs)
+        file_id = payload["file_id"]
+        if use_web_api:
+            resp = self.share_download_url_web(payload, async_=async_, **request_kwargs)
+        else:
+            resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
+        def get_url(resp: dict) -> str:
+            info = check_response(resp)["data"]
+            if not info:
+                raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}")
+            url = info["url"]
+            if strict and not url:
+                raise IsADirectoryError(errno.EISDIR, f"{file_id} is a directory")
+            if not detail:
+                return url["url"] if url else ""
+            return UrlStr(
+                url["url"] if url else "", 
+                id=int(info["fid"]), 
+                file_name=info["fn"], 
+                file_size=int(info["fs"]), 
+                is_directory=not url, 
+            )
+        if async_:
+            async def async_request() -> str:
+                return get_url(await cast(Awaitable[dict], resp)) 
+            return async_request()
+        else:
+            return get_url(cast(dict, resp))
 
     @overload
     def share_download_url_app(
@@ -3615,157 +3651,47 @@ class P115Client:
                 resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
             return resp
         request_kwargs["parse"] = parse
-        request_kwargs["data"] = RSA_ENCODER.encode(dumps(payload)).decode("ascii")
+        request_kwargs["data"] = {"data": RSA_ENCODER.encode(dumps(payload)).decode()}
         return self.request(api, "POST", async_=async_, **request_kwargs)
 
     @overload
-    def share_download_url(
+    def share_download_url_web(
         self, 
         payload: dict, 
-        /, 
-        detail: bool = False, 
-        strict: bool = True,
+        /,
         async_: Literal[False] = False, 
         **request_kwargs, 
-    ) -> str:
+    ) -> dict:
         ...
     @overload
-    def share_download_url(
+    def share_download_url_web(
         self, 
         payload: dict, 
-        /, 
-        detail: bool, 
-        strict: bool,
+        /,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[str]:
+    ) -> Awaitable[dict]:
         ...
-    def share_download_url(
+    def share_download_url_web(
         self, 
         payload: dict, 
-        /, 
-        detail: bool = False, 
-        strict: bool = True,
+        /,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> str | Awaitable[str]:
-        """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
-        POST https://proapi.115.com/app/share/downurl
+    ) -> dict | Awaitable[dict]:
+        """获取分享链接中某个文件的下载链接（网页版接口，不推荐使用）
+        GET https://webapi.115.com/share/downurl
         payload:
             - file_id: int | str
             - receive_code: str
             - share_code: str
             - user_id: int | str = <default>
         """
-        file_id = payload["file_id"]
-        resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
-        def get_url(resp: dict) -> str:
-            info = check_response(resp)["data"]
-            if not info:
-                raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}")
-            url = info["url"]
-            if strict and not url:
-                raise IsADirectoryError(errno.EISDIR, f"{file_id} is a directory")
-            if not detail:
-                return url["url"] if url else ""
-            return UrlStr(
-                url["url"] if url else "", 
-                id=int(info["fid"]), 
-                file_name=info["fn"], 
-                file_size=int(info["fs"]), 
-                is_directory=not url, 
-            )
-        if async_:
-            async def async_request() -> str:
-                return get_url(await cast(Awaitable[dict], resp)) 
-            return async_request()
-        else:
-            return get_url(cast(dict, resp))
-
-    ########## Download API ##########
-
-    @overload
-    def download_url_web(
-        self, 
-        payload: str | dict, 
-        /,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def download_url_web(
-        self, 
-        payload: str | dict, 
-        /,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Awaitable[dict]:
-        ...
-    def download_url_web(
-        self, 
-        payload: str | dict, 
-        /,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
-        """获取文件的下载链接（网页版接口，不推荐使用）
-        GET https://webapi.115.com/files/download
-        payload:
-            - pickcode: str
-        """
-        api = "https://webapi.115.com/files/download"
-        if isinstance(payload, str):
-            payload = {"pickcode": payload}
+        api = "https://webapi.115.com/share/downurl"
         request_kwargs.pop("parse", None)
         return self.request(api, params=payload, async_=async_, **request_kwargs)
 
-    @overload
-    def download_url_app(
-        self, 
-        payload: str | dict, 
-        /,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def download_url_app(
-        self, 
-        payload: str | dict, 
-        /,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Awaitable[dict]:
-        ...
-    def download_url_app(
-        self, 
-        payload: str | dict, 
-        /,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
-        """获取文件的下载链接
-        POST https://proapi.115.com/app/chrome/downurl
-        payload:
-            - pickcode: str
-        """
-        api = "https://proapi.115.com/app/chrome/downurl"
-        if isinstance(payload, str):
-            payload = {"pickcode": payload}
-        def parse(resp, content: bytes) -> dict:
-            resp = loads(content)
-            if resp["state"]:
-                resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
-            return resp
-        request_kwargs["parse"] = parse
-        request_kwargs["data"] = {"data": RSA_ENCODER.encode(dumps(payload)).decode("ascii")}
-        return self.request(
-            api, 
-            "POST", 
-            async_=async_, 
-            **request_kwargs, 
-        )
+    ########## Download API ##########
 
     @overload
     def download_url(
@@ -3820,6 +3746,7 @@ class P115Client:
                         file_name=resp["file_name"], 
                         file_size=int(resp["file_size"]), 
                         is_directory=not resp["state"], 
+                        headers=resp["headers"], 
                     )
                 return resp.get("file_url", "")
         else:
@@ -3844,6 +3771,7 @@ class P115Client:
                         file_name=info["file_name"], 
                         file_size=int(info["file_size"]), 
                         is_directory=not url,
+                        headers=resp["headers"], 
                     )
                 raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
         if async_:
@@ -3852,6 +3780,112 @@ class P115Client:
             return async_request()
         else:
             return get_url(cast(dict, resp))
+
+    @overload
+    def download_url_app(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def download_url_app(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def download_url_app(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取文件的下载链接
+        POST https://proapi.115.com/app/chrome/downurl
+        payload:
+            - pickcode: str
+        """
+        api = "https://proapi.115.com/app/chrome/downurl"
+        if isinstance(payload, str):
+            payload = {"pickcode": payload}
+        request_headers = request_kwargs.get("headers")
+        if request_headers:
+            if isinstance(request_headers, Mapping):
+                request_headers = ItemsView(request_headers)
+            headers = request_kwargs["headers"] = {
+                "User-Agent": next((v for k, v in request_headers if k.lower() == "user-agent" and v), "")}
+        else:
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
+        def parse(resp, content: bytes) -> dict:
+            json = loads(content)
+            if json["state"]:
+                json["data"] = loads(RSA_ENCODER.decode(json["data"]))
+            json["headers"] = headers
+            return json
+        request_kwargs["parse"] = parse
+        request_kwargs["data"] = {"data": RSA_ENCODER.encode(dumps(payload)).decode("ascii")}
+        return self.request(
+            api, 
+            "POST", 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def download_url_web(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def download_url_web(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def download_url_web(
+        self, 
+        payload: str | dict, 
+        /,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取文件的下载链接（网页版接口，不推荐使用）
+        GET https://webapi.115.com/files/download
+        payload:
+            - pickcode: str
+        """
+        api = "https://webapi.115.com/files/download"
+        if isinstance(payload, str):
+            payload = {"pickcode": payload}
+        request_headers = request_kwargs.get("headers")
+        if request_headers:
+            if isinstance(request_headers, Mapping):
+                request_headers = ItemsView(request_headers)
+            headers = request_kwargs["headers"] = {
+                "User-Agent": next((v for k, v in request_headers if k.lower() == "user-agent" and v), "")}
+        else:
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
+        def parse(resp, content: bytes) -> dict:
+            json = loads(content)
+            if "Set-Cookie" in resp.headers:
+                headers["Cookie"] = resp.headers["Set-Cookie"]
+            json["headers"] = headers
+            return json
+        request_kwargs["parse"] = parse
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     ########## Upload API ##########
 
@@ -6218,6 +6252,57 @@ class P115Client:
             return self.extract_add_file(data, async_=async_, **request_kwargs)
 
     @overload
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> str:
+        ...
+    @overload
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[str]:
+        ...
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str,
+        async_: Literal[False, True] = False, 
+        detail: bool = False, 
+        **request_kwargs, 
+    ) -> str | Awaitable[str]:
+        """获取压缩包中文件的下载链接
+        GET https://webapi.115.com/files/extract_down_file
+        payload:
+            - pick_code: str
+            - full_name: str
+        """
+        resp = self.extract_download_url_web(
+            {"pick_code": pickcode, "full_name": path.strip("/")}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+        def get_url(resp: dict) -> str:
+            data = check_response(resp)["data"]
+            url = quote(data["url"], safe=":/?&=%#")
+            return UrlStr(url, headers=resp["headers"])
+        if async_:
+            async def async_request() -> str:
+                return get_url(await cast(Awaitable[dict], resp))
+            return async_request()
+        else:
+            return get_url(cast(dict, resp))
+
+    @overload
     def extract_download_url_web(
         self, 
         payload: dict, 
@@ -6249,53 +6334,22 @@ class P115Client:
             - full_name: str
         """
         api = "https://webapi.115.com/files/extract_down_file"
-        request_kwargs.pop("parse", None)
-        return self.request(api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def extract_download_url(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> str:
-        ...
-    @overload
-    def extract_download_url(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Awaitable[str]:
-        ...
-    def extract_download_url(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> str | Awaitable[str]:
-        """获取压缩包中文件的下载链接，此接口是对 `extract_download_url_web` 的封装
-        """
-        resp = self.extract_download_url_web(
-            {"pick_code": pickcode, "full_name": path.strip("/")}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-        def get_url(resp: dict) -> str:
-            data = check_response(resp)["data"]
-            return quote(data["url"], safe=":/?&=%#")
-        if async_:
-            async def async_request() -> str:
-                return get_url(await cast(Awaitable[dict], resp)) 
-            return async_request()
+        request_headers = request_kwargs.get("headers")
+        if request_headers:
+            if isinstance(request_headers, Mapping):
+                request_headers = ItemsView(request_headers)
+            headers = request_kwargs["headers"] = {
+                "User-Agent": next((v for k, v in request_headers if k.lower() == "user-agent" and v), "")}
         else:
-            return get_url(cast(dict, resp))
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
+        def parse(resp, content: bytes):
+            json = loads(content)
+            if "Set-Cookie" in resp.headers:
+                headers["Cookie"] = resp.headers["Set-Cookie"]
+            json["headers"] = headers
+            return json
+        request_kwargs["parse"] = parse
+        return self.request(api, params=payload, async_=async_, **request_kwargs)
 
     # TODO 支持异步
     @overload
