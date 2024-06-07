@@ -431,17 +431,16 @@ def pull(
                             unfinished["files"] -= 1
                             unfinished["size"] -= subattr["size"]
             else:
-                with ctx_monitor_call("上传占用: "):
-                    resp = client.upload_file_init(
-                        attr["name"], 
-                        pid=pid, 
-                        filesize=attr["size"], 
-                        filesha1=attr["sha1"], 
-                        read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
-                        timeout=5, 
-                        request=request, 
-                        session=Session(), 
-                    )
+                resp = client.upload_file_init(
+                    attr["name"], 
+                    pid=pid, 
+                    filesize=attr["size"], 
+                    filesha1=attr["sha1"], 
+                    read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
+                    timeout=5, 
+                    request=request, 
+                    session=Session(), 
+                )
                 status = resp["status"]
                 statuscode = resp.get("statuscode", 0)
                 if status == 2 and statuscode == 0:
