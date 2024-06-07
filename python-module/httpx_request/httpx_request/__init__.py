@@ -2,10 +2,10 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = ["request"]
 
-from asyncio import get_running_loop, run, run_coroutine_threadsafe
+from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Awaitable, Callable
 from json import loads
 from typing import cast, overload, Any, Literal, TypeVar
@@ -70,6 +70,7 @@ def request_sync(
         url=url, 
         **request_kwargs, 
     )
+    exc: None | BaseException = None
     for _ in range(5):
         try:
             resp = session.send(
@@ -78,12 +79,16 @@ def request_sync(
                 follow_redirects=follow_redirects,
                 stream=stream,
             )
+            exc = None
             break
-        except (ConnectTimeout, PoolTimeout):
-            pass
-        except ReadTimeout:
+        except (ConnectTimeout, PoolTimeout) as e:
+            exc = e
+        except ReadTimeout as e:
             if method != "GET":
                 raise
+            exc = e
+    if exc is not None:
+        raise exc
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
@@ -126,6 +131,7 @@ async def request_async(
         url=url, 
         **request_kwargs, 
     )
+    exc: None | BaseException = None
     for _ in range(5):
         try:
             resp = await session.send(
@@ -134,12 +140,16 @@ async def request_async(
                 follow_redirects=follow_redirects,
                 stream=stream,
             )
+            exc = None
             break
-        except (ConnectTimeout, PoolTimeout):
-            pass
-        except ReadTimeout:
+        except (ConnectTimeout, PoolTimeout) as e:
+            exc = e
+        except ReadTimeout as e:
             if method != "GET":
                 raise
+            exc = e
+    if exc is not None:
+        raise exc
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:

@@ -246,10 +246,10 @@ def relogin(exc=None):
                     cookies_path_mtime = mtime
                     need_update = False
             except FileNotFoundError:
-                pass
+                application.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺\x1b[0m")
         if need_update:
             if exc is None:
-                application.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码：\x1b[0m")
+                application.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码\x1b[0m")
             else:
                 application.logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
                     prompt = "\x1b[1m\x1b[33m[SCAN] 🤖 重新扫码：\x1b[0m", 

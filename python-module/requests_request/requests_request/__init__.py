@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["request"]
 
 from collections.abc import Callable
@@ -40,15 +40,20 @@ def request(
             )
     method = method.upper()
     request_kwargs.setdefault("stream", True)
-    while True:
+    exc: None | BaseException = None
+    for _ in range(5):
         try:
             resp = session.request(method, url, **request_kwargs)
+            exc = None
             break
-        except ConnectTimeout:
-            pass
-        except ReadTimeout:
+        except ConnectTimeout as e:
+            exc = e
+        except ReadTimeout as e:
             if method != "GET":
                 raise
+            exc = e
+    if exc is not None:
+        raise exc
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:

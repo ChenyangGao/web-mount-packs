@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1)
+__version__ = (0, 1, 1)
 __doc__ = "从 115 的挂载拉取文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -42,6 +42,7 @@ import logging
 
 from collections.abc import Iterable
 from contextlib import contextmanager
+from datetime import datetime
 from gzip import GzipFile
 from json import dumps, load
 from os import stat
@@ -49,8 +50,8 @@ from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import exc_info
 from textwrap import indent
 from _thread import start_new_thread
-from threading import Lock
-from time import sleep
+from threading import Lock, current_thread
+from time import perf_counter, sleep
 from traceback import format_exc
 from typing import cast, ContextManager
 from urllib.error import HTTPError, URLError
@@ -60,22 +61,31 @@ from urllib.request import urlopen, Request
 try:
     from colored.colored import back_rgb, fore_rgb, Colored
     from concurrenttools import thread_batch
-    from httpx import HTTPStatusError, TimeoutException
+    from httpx import HTTPStatusError, RequestError
     from p115 import P115Client, check_response
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
+    from requests import Session
+    from requests.exceptions import HTTPError as RequestsHTTPError, Timeout as RequestsTimeout
+    from requests_request import request
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "colored", "flask", "httpx", "python-concurrenttools", "python-115", "Pygments"], check=True)
+    run([
+        executable, "-m", "pip", "install", "-U", 
+        "colored", "flask", "httpx", "python-concurrenttools", "python-115", 
+        "Pygments", "requests", "requests_request"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
-    from httpx import HTTPStatusError, TimeoutException
+    from httpx import HTTPStatusError, RequestError
     from p115 import P115Client, check_response
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
+    from requests import Session
+    from requests.exceptions import HTTPError as RequestsHTTPError, Timeout as RequestsTimeout
+    from requests_request import request
 
 
 COLORS_8_BIT: dict[str, int] = {
@@ -225,14 +235,21 @@ def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
         return resp.read()
 
 
-def relogin(exc=None):
+def relogin(
+    exc: None | BaseException = None, 
+    force: bool = False, 
+):
     global cookies_path_mtime
+    logger.debug("""{emoji} {prompt}""".format(
+        emoji  = blink_mark("🤖"), 
+        prompt = highlight_prompt("[SCAN] ⚙️ 排队扫码", "green"), 
+    ))
     if exc is None:
-        exc = exc_info()[0]
+        exc = exc_info()[1]
     mtime = cookies_path_mtime
     with ensure_cm(login_lock):
-        need_update = mtime == cookies_path_mtime
-        if cookies_path and need_update:
+        need_update = force or mtime == cookies_path_mtime
+        if not force and cookies_path and need_update:
             try:
                 mtime = stat(cookies_path).st_mtime_ns
                 if mtime != cookies_path_mtime:
@@ -245,9 +262,9 @@ def relogin(exc=None):
                     prompt = highlight_prompt("[SCAN] 🦾 文件空缺: ", "yellow"), 
                     file   = highlight_path(cookies_path), 
                 ))
-        if need_update:
+        if force or need_update:
             if exc is None:
-                logger.warning("""{emoji} {prompt}NO MESSAGE""".format(
+                logger.warning("""{emoji} {prompt}轮到扫码""".format(
                     emoji  = blink_mark("🤖"), 
                     prompt = highlight_prompt("[SCAN] 🦾 重新扫码: ", "yellow"), 
                 ))
@@ -257,10 +274,35 @@ def relogin(exc=None):
                     prompt = highlight_prompt("[SCAN] 🦾 重新扫码: ", "yellow"), 
                     exc    = indent(highlight_exception(exc), "    ├ ")
                 ))
-            client.login_another_app(device, replace=True)
+            client.login_another_app(device, replace=True, timeout=10)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
+            logger.debug("""{emoji} {prompt}""".format(
+                emoji  = blink_mark("🤖"), 
+                prompt = highlight_prompt("[SCAN] 🎉 扫码成功", "green"), 
+            ))
+        else:
+            logger.debug("""{emoji} {prompt}""".format(
+                emoji  = blink_mark("🤖"), 
+                prompt = highlight_prompt("[SCAN] 🙏 不用扫码", "green"), 
+            ))
+
+
+@contextmanager
+def ctx_monitor_call(prefix: str = "", interval: float = 1):
+    def loop_print():
+        while running:
+            print(f"{prefix}{cur_thread}: {perf_counter() - start_t} s")
+            sleep(interval)
+    cur_thread = current_thread()
+    start_t = perf_counter()
+    try:
+        running = True
+        start_new_thread(loop_print, ())
+        yield
+    finally:
+        running = False
 
 
 def relogin_wrap(func, /, *args, **kwds):
@@ -283,9 +325,10 @@ def pull(
 ) -> dict:
     stats: dict = {
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
-        "unfinished": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         "success": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         "failed": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "unfinished": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        "retry": {"total": 0, "files": 0, "dirs": 0}, 
         "errors": {"total": 0, "files": 0, "dirs": 0, "reasons": {}}, 
         "is_completed": False, 
     }
@@ -293,10 +336,14 @@ def pull(
     success: dict[str, int] = stats["success"]
     failed: dict[str, int] = stats["failed"]
     unfinished: dict[str, int] = stats["unfinished"]
+    retry: dict[str, int] = stats["retry"]
     errors: dict = stats["errors"]
     reasons: dict[str, int] = errors["reasons"]
+    thread_stats: dict = {}
     def pull(task, submit):
         attr, pid, dattr = task
+        cur_thread = current_thread()
+        thread_stats[cur_thread] = {"task_id": attr["id"], "start_time": datetime.now()}
         try:
             if attr["is_directory"]:
                 subdattrs: None | dict = None
@@ -384,13 +431,17 @@ def pull(
                             unfinished["files"] -= 1
                             unfinished["size"] -= subattr["size"]
             else:
-                resp = client.upload_file_init(
-                    attr["name"], 
-                    pid=pid, 
-                    filesize=attr["size"], 
-                    filesha1=attr["sha1"], 
-                    read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
-                )
+                with ctx_monitor_call("上传占用: "):
+                    resp = client.upload_file_init(
+                        attr["name"], 
+                        pid=pid, 
+                        filesize=attr["size"], 
+                        filesha1=attr["sha1"], 
+                        read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
+                        timeout=5, 
+                        request=request, 
+                        session=Session(), 
+                    )
                 status = resp["status"]
                 statuscode = resp.get("statuscode", 0)
                 if status == 2 and statuscode == 0:
@@ -448,13 +499,16 @@ def pull(
                 except KeyError:
                     reasons[exctype] = 1
             retryable = True
-            if isinstance(e, HTTPStatusError):
+            if isinstance(e, (HTTPStatusError, RequestsHTTPError)):
                 retryable = e.response.status_code == 405
                 if retryable:
-                    relogin()
+                    try:
+                        relogin()
+                    except:
+                        pass
             elif isinstance(e, HTTPError):
                 retryable = e.status != 404
-            if retryable and isinstance(e, (URLError, HTTPStatusError, TimeoutException)):
+            if retryable and isinstance(e, (URLError, HTTPStatusError, RequestError, RequestsHTTPError, RequestsTimeout)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
                     prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
@@ -463,8 +517,22 @@ def pull(
                     pid      = highlight_id(pid), 
                     exc      = indent(highlight_exception(e), "    ├ ")
                 ))
+                with ensure_cm(count_lock):
+                    retry["total"] += 1
+                    if attr["is_directory"]:
+                        retry["dirs"] += 1
+                    else:
+                        retry["files"] += 1
                 submit((attr, pid, dattr))
             else:
+                logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
+                    emoji    = blink_mark("💀"), 
+                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
+                    src_path = highlight_path(attr["path"]), 
+                    name     = highlight_path(attr["name"]), 
+                    pid      = highlight_id(pid), 
+                    exc      = indent(highlight_traceback(), "    ├ ")
+                ))
                 with ensure_cm(count_lock):
                     failed["total"] += 1
                     unfinished["total"] -= 1
@@ -476,23 +544,21 @@ def pull(
                         failed["size"] += attr["size"]
                         unfinished["files"] -= 1
                         unfinished["size"] -= attr["size"]
-                logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
-                    emoji    = blink_mark("💀"), 
-                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
-                    src_path = highlight_path(attr["path"]), 
-                    name     = highlight_path(attr["name"]), 
-                    pid      = highlight_id(pid), 
-                    exc      = indent(highlight_traceback(), "    ├ ")
-                ))
                 raise
+        finally:
+            del thread_stats[cur_thread]
     stats_flag = True
     def show_stats(interval: float = 30):
         while stats_flag:
             with ensure_cm(count_lock):
-                logger.info("""{emoji} {prompt}\n    ├ statistics = {stats}""".format(
+                logger.info("""\
+{emoji} {prompt}
+    ├ statistics = {stats}
+    ├ worker thread stats = {thread}""".format(
                     emoji  = blink_mark("📊"), 
                     prompt = highlight_prompt("[STAT] 📈 执行统计: ", "magenta"), 
                     stats  = highlight_object(stats), 
+                    thread = highlight_object(thread_stats), 
                 ))
             sleep(interval)
     if isinstance(push_id, str):
@@ -587,10 +653,11 @@ fs = client.fs
 logger = logging.Logger("115-pull", logging.DEBUG if debug else logging.INFO)
 handler = logging.StreamHandler()
 formatter = ColoredLevelNameFormatter(
-    "[{asctime}] (%(levelname)s) {name} {arrow} %(message)s".format(
+    "[{asctime}] (%(levelname)s) {name}:({thread}) {arrow} %(message)s".format(
         asctime = colored_format("%(asctime)s", styles="bold"), 
         name    = colored_format("%(name)s", "cyan", styles="bold"), 
-        arrow   = colored_format("➜", "red")
+        thread  = colored_format("%(threadName)s", "red", styles="bold"), 
+        arrow   = colored_format("➜", "red"), 
     )
 )
 handler.setFormatter(formatter)
