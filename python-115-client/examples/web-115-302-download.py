@@ -218,11 +218,11 @@ def main() -> Result:
     def update_retry(total=1, files=0):
         dirs = total - files
         with ensure_cm(count_lock):
-            success["total"] += total
+            retry["total"] += total
             if dirs:
-                success["dirs"] += dirs
+                retry["dirs"] += dirs
             if files:
-                success["files"] += files
+                retry["files"] += files
 
     def update_errors(e, is_directory=False):
         exctype = type(e).__module__ + "." + type(e).__qualname__
