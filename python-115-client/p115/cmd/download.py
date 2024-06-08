@@ -58,6 +58,7 @@ def main(args) -> Result:
     from urllib.error import HTTPError, URLError
     from urllib.parse import quote
     from urllib.request import urlopen, Request
+    from warnings import warn
 
     from concurrenttools import thread_batch
     from httpx import HTTPStatusError
@@ -172,6 +173,13 @@ def main(args) -> Result:
 
     client = P115Client(cookies, app=args.app)
     device = client.login_device()["icon"]
+    if device not in AVAILABLE_APPS:
+        # 115 浏览器版
+        if device == "desktop":
+            device = "web"
+        else:
+            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+            device = "qandroid"
     if cookies_path and cookies != client.cookies:
         open(cookies_path, "w").write(client.cookies)
 
@@ -429,9 +437,12 @@ def main(args) -> Result:
         finally:
             closed = True
             progress.remove_task(statistics_bar)
+            stats["elapsed"] = str(datetime.now() - start_time)
             print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
     return Result(stats, taskmap)
 
+
+from p115 import AVAILABLE_APPS
 
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
@@ -441,9 +452,7 @@ parser.add_argument("-cp", "--cookies-path", help="""\
     3. 此脚本所在目录""")
 parser.add_argument(
     "-a", "--app", default="qandroid", 
-    choices=(
-        "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
-        "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+    choices=AVAILABLE_APPS, 
     help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-p", "--push-id", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
 parser.add_argument("-t", "--to-path", default=".", help="本地的路径，默认是当前工作目录")

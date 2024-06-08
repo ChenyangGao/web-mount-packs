@@ -77,11 +77,11 @@ def main(args):
     print(client.cookies, file=file)
 
 
+from p115 import AVAILABLE_APPS
+
 parser.add_argument(
     "app", nargs="?", default="qandroid", 
-    choices=(
-        "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
-        "windows", "mac", "linux", "wechatmini", "alipaymini"),        
+    choices=AVAILABLE_APPS,        
     help="选择一个 app 进行登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-o", "--output-file", help="保存到文件，未指定时输出到 stdout")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")

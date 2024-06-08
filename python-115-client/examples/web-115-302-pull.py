@@ -54,12 +54,13 @@ from typing import cast, ContextManager, NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen, Request
+from warnings import warn
 
 try:
     from colored.colored import back_rgb, fore_rgb, Colored
     from concurrenttools import thread_batch
     from httpx import HTTPStatusError, RequestError
-    from p115 import P115Client, check_response
+    from p115 import check_response, P115Client, AVAILABLE_APPS
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
@@ -76,7 +77,7 @@ except ImportError:
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
     from httpx import HTTPStatusError, RequestError
-    from p115 import P115Client, check_response
+    from p115 import check_response, P115Client, AVAILABLE_APPS
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
@@ -729,6 +730,13 @@ if not cookies:
 
 client = P115Client(cookies, app="qandroid")
 device = client.login_device()["icon"]
+if device not in AVAILABLE_APPS:
+    # 115 浏览器版
+    if device == "desktop":
+        device = "web"
+    else:
+        warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+        device = "qandroid"
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 fs = client.fs

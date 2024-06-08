@@ -67,7 +67,7 @@ try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
     from httpx import HTTPStatusError
-    from p115 import P115Client, P115FileSystem
+    from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
 except ImportError:
     from sys import executable
     from subprocess import run
@@ -75,7 +75,7 @@ except ImportError:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
     from httpx import HTTPStatusError
-    from p115 import P115Client, P115FileSystem
+    from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
 
 import posixpath
 
@@ -90,6 +90,7 @@ from sys import exc_info
 from threading import Lock
 from urllib.request import urlopen, Request
 from urllib.parse import quote, unquote, urlsplit
+from warnings import warn
 
 
 if getdefaulttimeout() is None:
@@ -138,6 +139,13 @@ if not cookies:
 
 client = P115Client(cookies, app="qandroid")
 device = client.login_device()["icon"]
+if device not in AVAILABLE_APPS:
+    # 115 浏览器版
+    if device == "desktop":
+        device = "web"
+    else:
+        warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+        device = "qandroid"
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 

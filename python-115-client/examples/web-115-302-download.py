@@ -370,6 +370,7 @@ def main() -> Result:
         finally:
             closed = True
             progress.remove_task(statistics_bar)
+            stats["elapsed"] = str(datetime.now() - start_time)
             print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
     return Result(stats, taskmap)
 

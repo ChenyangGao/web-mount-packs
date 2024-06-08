@@ -232,6 +232,8 @@ def main(args):
         file.close()
 
 
+from p115 import AVAILABLE_APPS
+
 parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
@@ -241,9 +243,7 @@ parser.add_argument("-cp", "--cookies-path", help="""\
     3. 此脚本所在目录""")
 parser.add_argument(
     "-a", "--app", default="qandroid", 
-    choices=(
-        "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
-        "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+    choices=AVAILABLE_APPS, 
     help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-p", "--password", help="密码，用于进入隐藏模式，罗列隐藏文件")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 p115.P115Path），用于对路径进行筛选")
