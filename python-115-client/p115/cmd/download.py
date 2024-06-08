@@ -379,37 +379,6 @@ def main(args) -> Result:
         elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
             push_id = int(push_id)
 
-    push_attr: dict = fs.attr(push_id)
-    name = escape_name(push_attr["name"])
-    to_path = normpath(to_path)
-    if exists(to_path):
-        to_path_isdir = isdir(to_path)
-        if push_attr["is_directory"]:
-            if not to_path_isdir:
-                raise NotADirectoryError(errno.ENOTDIR, f"{to_path!r} is not directory")
-            elif not no_root:
-                to_path = joinpath(to_path, name)
-                makedirs(to_path, exist_ok=True)
-        elif to_path_isdir:
-            to_path = joinpath(to_path, name)
-            if isdir(to_path):
-                raise IsADirectoryError(errno.EISDIR, f"{to_path!r} is directory")
-    elif no_root:
-        makedirs(to_path)
-    else:
-        to_path = joinpath(to_path, name)
-        makedirs(to_path)
-    taskmap: dict[int, Task] = {push_attr["id"]: Task(push_attr, to_path)}
-    tasks["total"] += 1
-    unfinished["total"] += 1
-    if push_attr["is_directory"]:
-        tasks["dirs"] += 1
-        unfinished["dirs"] += 1
-    else:
-        tasks["files"] += 1
-        tasks["size"] += push_attr["size"]
-        unfinished["files"] += 1
-        unfinished["size"] += push_attr["size"]
     with Progress(
         SpinnerColumn(), 
         *Progress.get_default_columns(), 
@@ -418,9 +387,41 @@ def main(args) -> Result:
         TransferSpeedColumn(), 
         FileSizeColumn(), 
     ) as progress:
+        print = progress.console.print
+        push_attr: dict = relogin_wrap(fs.attr, push_id)
+        name = escape_name(push_attr["name"])
+        to_path = normpath(to_path)
+        if exists(to_path):
+            to_path_isdir = isdir(to_path)
+            if push_attr["is_directory"]:
+                if not to_path_isdir:
+                    raise NotADirectoryError(errno.ENOTDIR, f"{to_path!r} is not directory")
+                elif not no_root:
+                    to_path = joinpath(to_path, name)
+                    makedirs(to_path, exist_ok=True)
+            elif to_path_isdir:
+                to_path = joinpath(to_path, name)
+                if isdir(to_path):
+                    raise IsADirectoryError(errno.EISDIR, f"{to_path!r} is directory")
+        elif no_root:
+            makedirs(to_path)
+        else:
+            to_path = joinpath(to_path, name)
+            makedirs(to_path)
+        taskmap: dict[int, Task] = {push_attr["id"]: Task(push_attr, to_path)}
+        tasks["total"] += 1
+        unfinished["total"] += 1
+        if push_attr["is_directory"]:
+            tasks["dirs"] += 1
+            unfinished["dirs"] += 1
+        else:
+            tasks["files"] += 1
+            tasks["size"] += push_attr["size"]
+            unfinished["files"] += 1
+            unfinished["size"] += push_attr["size"]
+
         update_stats_desc = cycle_text(("...", "..", ".", ".."), prefix="📊 [cyan bold]statistics[/cyan bold] ", min_length=32 + 23, interval=0.1).__next__
         statistics_bar = progress.add_task(update_stats_desc(), total=1)
-        print = progress.console.print
         closed = False
         try:
             thread_batch(pull, taskmap.values(), max_workers=max_workers)
