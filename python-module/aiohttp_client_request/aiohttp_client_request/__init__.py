@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["request"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
@@ -47,39 +47,32 @@ async def request(
     **request_kwargs, 
 ):
     if session is None:
-        async with ClientSession() as session:
-            return await request(
-                url, 
-                method, 
-                parse=parse, 
-                raise_for_status=raise_for_status, 
-                session=session, 
-                **request_kwargs, 
-            )
+        session = ClientSession()
     request_kwargs.pop("stream", None)
     resp = await session.request(method, url, **request_kwargs)
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
         return resp
-    elif parse is False:
-        return await resp.read()
-    elif parse is True:
-        content_type = resp.headers.get("Content-Type", "")
-        if content_type == "application/json":
-            return await resp.json()
-        elif content_type.startswith("application/json;"):
-            return loads(await resp.text())
-        elif content_type.startswith("text/"):
-            return await resp.text()
-        return await resp.read()
-    else:
-        ac = argcount(parse)
-        if ac == 1:
-            ret = parse(resp)
+    async with resp:
+        if parse is False:
+            return await resp.read()
+        elif parse is True:
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type == "application/json":
+                return await resp.json()
+            elif content_type.startswith("application/json;"):
+                return loads(await resp.text())
+            elif content_type.startswith("text/"):
+                return await resp.text()
+            return await resp.read()
         else:
-            ret = parse(resp, (await resp.read()))
-        if isawaitable(ret):
-            ret = await ret
-        return ret
+            ac = argcount(parse)
+            if ac == 1:
+                ret = parse(resp)
+            else:
+                ret = parse(resp, (await resp.read()))
+            if isawaitable(ret):
+                ret = await ret
+            return ret
 

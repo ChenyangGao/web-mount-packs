@@ -2,8 +2,8 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
-__doc__ = "从 115 的挂载拉取文件"
+__version__ = (0, 1, 2)
+__doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 
@@ -15,36 +15,33 @@ parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载
 parser.add_argument("-p", "--push-id", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: 0")
 parser.add_argument("-t", "--to-pid", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: 0")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
+parser.add_argument("-cp", "--cookies-path", help="""\
+存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
+    1. 当前工作目录
+    2. 用户根目录
+    3. 此脚本所在目录""")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
-parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
+parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
+                    help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
+parser.add_argument("-s", "--stats-interval", type=float, default=30, 
+                    help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
 parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
-parser.add_argument("-s", "--stats-interval", type=float, default=30, help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
+parser.add_argument("-ur", "--use-requests", action="store_true", help="使用 requests 执行请求，而不是默认的 httpx")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
     print(".".join(map(str, __version__)))
     raise SystemExit(0)
 
-base_url = args.base_url
-push_id = args.push_id
-to_pid = args.to_pid
-cookies = args.cookies
-cookies_path = args.cookies_path
-max_workers = args.max_workers
-if max_workers <= 0:
-    max_workers = 1
-debug = args.debug
-stats_interval = args.stats_interval
-
-
 import logging
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from datetime import datetime
+from functools import partial
 from gzip import GzipFile
-from json import dumps, load
+from inspect import currentframe, getframeinfo
+from json import dumps, load, loads
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import exc_info
@@ -67,8 +64,8 @@ try:
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
     from requests import Session
-    from requests.exceptions import HTTPError as RequestsHTTPError, Timeout as RequestsTimeout
-    from requests_request import request
+    from requests.exceptions import HTTPError as RequestsHTTPError, RequestException
+    from requests_request import request as requests_request
 except ImportError:
     from sys import executable
     from subprocess import run
@@ -84,8 +81,8 @@ except ImportError:
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
     from requests import Session
-    from requests.exceptions import HTTPError as RequestsHTTPError, Timeout as RequestsTimeout
-    from requests_request import request
+    from requests.exceptions import HTTPError as RequestsHTTPError, RequestException
+    from requests_request import request as requests_request
 
 
 COLORS_8_BIT: dict[str, int] = {
@@ -98,15 +95,40 @@ COLORS_8_BIT: dict[str, int] = {
     "cyan": 6, 
     "white": 7, 
 }
+
+base_url = args.base_url
+push_id = args.push_id
+to_pid = args.to_pid
+cookies = args.cookies
+cookies_path = args.cookies_path
+max_workers = args.max_workers
+if max_workers <= 0:
+    max_workers = 1
+lock_dir_methods = args.lock_dir_methods
+stats_interval = args.stats_interval
+use_requests = args.use_requests
+debug = args.debug
+
 login_lock: None | ContextManager = None
 count_lock: None | ContextManager = None
 fs_lock: None | ContextManager = None
 if max_workers > 1:
     login_lock = Lock()
     count_lock = Lock()
-    if args.lock_dir_methods:
+    if lock_dir_methods:
         fs_lock = Lock()
 cookies_path_mtime = 0
+
+request: None | Callable
+if use_requests:
+    request = partial(
+        requests_request, 
+        timeout=5, 
+        session=Session(), 
+        parse=lambda resp, content: loads(content), 
+    )
+else:
+    request = None
 
 
 class ColoredLevelNameFormatter(logging.Formatter):
@@ -208,7 +230,10 @@ def ensure_cm(cm):
         yield cm
 
 
-def attr(id_or_path: int | str = 0, base_url: str = base_url) -> dict:
+def attr(
+    id_or_path: int | str = 0, 
+    base_url: str = base_url, 
+) -> dict:
     if isinstance(id_or_path, int):
         url = f"{base_url}?id={id_or_path}&method=attr"
     else:
@@ -219,7 +244,10 @@ def attr(id_or_path: int | str = 0, base_url: str = base_url) -> dict:
         return load(resp)
 
 
-def listdir(id_or_path: int | str = 0, base_url: str = base_url) -> list[dict]:
+def listdir(
+    id_or_path: int | str = 0, 
+    base_url: str = base_url, 
+) -> list[dict]:
     if isinstance(id_or_path, int):
         url = f"{base_url}?id={id_or_path}&method=list"
     else:
@@ -233,6 +261,34 @@ def listdir(id_or_path: int | str = 0, base_url: str = base_url) -> list[dict]:
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
     with urlopen(Request(url, headers={"Range": f"bytes={bytes_range}"}), timeout=10) as resp:
         return resp.read()
+
+
+@contextmanager
+def ctx_monitor(
+    call: None | Callable = None, 
+    interval: float = 1, 
+):
+    if call is None:
+        frame = getframeinfo(currentframe().f_back) # type: ignore
+        start_t = perf_counter()
+        prefix = "{thread_p} {thread}, {filename_p} {filename}, {lineno_p} {lineno}".format(
+            thread_p   = colored_format("thread", "red", styles="bold"), 
+            thread     = highlight_object(current_thread()), 
+            filename_p = colored_format("file", "red", styles="bold"), 
+            filename   = highlight_path(frame.filename), 
+            lineno_p   = colored_format("lineno", "red", styles="bold"), 
+            lineno     = highlight_id(frame.lineno), 
+        )
+        call = lambda: print(f"{prefix}: {perf_counter() - start_t} s")
+    def loop_print(call):
+        while running:
+            call()
+            sleep(interval)
+    try:
+        running = True
+        yield start_new_thread(loop_print, (call,))
+    finally:
+        running = False
 
 
 def relogin(
@@ -274,7 +330,7 @@ def relogin(
                     prompt = highlight_prompt("[SCAN] 🦾 重新扫码: ", "yellow"), 
                     exc    = indent(highlight_exception(exc), "    ├ ")
                 ))
-            client.login_another_app(device, replace=True, timeout=10)
+            client.login_another_app(device, replace=True, request=request, timeout=5)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
@@ -289,23 +345,8 @@ def relogin(
             ))
 
 
-@contextmanager
-def ctx_monitor_call(prefix: str = "", interval: float = 1):
-    def loop_print():
-        while running:
-            print(f"{prefix}{cur_thread}: {perf_counter() - start_t} s")
-            sleep(interval)
-    cur_thread = current_thread()
-    start_t = perf_counter()
-    try:
-        running = True
-        start_new_thread(loop_print, ())
-        yield
-    finally:
-        running = False
-
-
 def relogin_wrap(func, /, *args, **kwds):
+    kwds.setdefault("request", request)
     try:
         with ensure_cm(fs_lock):
             return func(*args, **kwds)
@@ -323,24 +364,125 @@ def pull(
     base_url: str = base_url, 
     max_workers: int = 1, 
 ) -> dict:
+    # 统计信息
     stats: dict = {
+        # 开始时间
+        "start_time": datetime.now(), 
+        # 总耗时
+        "elapsed": "", 
+        # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        # 成功任务数
         "success": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        # 失败任务数（发生错误但已抛弃）
         "failed": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
-        "unfinished": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        # 重试任务数（发生错误但可重试），一个任务可以重试多次
         "retry": {"total": 0, "files": 0, "dirs": 0}, 
+        # 未完成任务数：未运行、重试中或运行中
+        "unfinished": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
+        # 各种错误数量和分类汇总
         "errors": {"total": 0, "files": 0, "dirs": 0, "reasons": {}}, 
+        # 是否执行完成：如果是 False，说明是被人为终止
         "is_completed": False, 
     }
+    # 任务总数
     tasks: dict[str, int] = stats["tasks"]
+    # 成功任务数
     success: dict[str, int] = stats["success"]
+    # 失败任务数（发生错误但已抛弃）
     failed: dict[str, int] = stats["failed"]
-    unfinished: dict[str, int] = stats["unfinished"]
+    # 重试任务数（发生错误但可重试），一个任务可以重试多次
     retry: dict[str, int] = stats["retry"]
+    # 未完成任务数：未运行、重试中或运行中
+    unfinished: dict[str, int] = stats["unfinished"]
+    # 各种错误数量和分类汇总
     errors: dict = stats["errors"]
+    # 各种错误的分类汇总
     reasons: dict[str, int] = errors["reasons"]
+    # 开始时间
+    start_time = stats["start_time"]
+    # 各个工作线程当前执行任务的统计信息
     thread_stats: dict = {}
-    def pull(task, submit):
+
+    def update_tasks(total=1, files=0, size=0):
+        dirs = total - files
+        with ensure_cm(count_lock):
+            tasks["total"] += total
+            unfinished["total"] += total
+            if dirs:
+                tasks["dirs"] += dirs
+                unfinished["dirs"] += dirs
+            if files:
+                tasks["files"] += files
+                tasks["size"] += size
+                unfinished["files"] += files
+                unfinished["size"] += size
+
+    def update_success(total=1, files=0, size=0):
+        dirs = total - files
+        with ensure_cm(count_lock):
+            success["total"] += total
+            unfinished["total"] -= total
+            if dirs:
+                success["dirs"] += dirs
+                unfinished["dirs"] -= dirs
+            if files:
+                success["files"] += files
+                success["size"] += size
+                unfinished["files"] -= files
+                unfinished["size"] -= size
+
+    def update_failed(total=1, files=0, size=0):
+        dirs = total - files
+        with ensure_cm(count_lock):
+            failed["total"] += total
+            unfinished["total"] -= total
+            if dirs:
+                failed["dirs"] += dirs
+                unfinished["dirs"] -= dirs
+            if files:
+                failed["files"] += files
+                failed["size"] += size
+                unfinished["files"] -= files
+                unfinished["size"] -= size
+
+    def update_retry(total=1, files=0):
+        dirs = total - files
+        with ensure_cm(count_lock):
+            success["total"] += total
+            if dirs:
+                success["dirs"] += dirs
+            if files:
+                success["files"] += files
+
+    def update_errors(e, is_directory=False):
+        exctype = type(e).__module__ + "." + type(e).__qualname__
+        with ensure_cm(count_lock):
+            errors["total"] += 1
+            if is_directory:
+                errors["dirs"] += 1
+            else:
+                errors["files"] += 1
+            try:
+                reasons[exctype] += 1
+            except KeyError:
+                reasons[exctype] = 1
+
+    def show_stats():
+        with ensure_cm(count_lock):
+            stats["elapsed"] = str(datetime.now() - start_time)
+            logger.info("""\
+{emoji} {prompt}
+    ├ statistics = {stats}
+    ├ work thread stats({count}) = {thread}""".format(
+            emoji  = blink_mark("📊"), 
+            prompt = highlight_prompt("[STAT] 📈 执行统计: ", "magenta"), 
+            stats  = highlight_object(stats), 
+            count  = highlight_id(len(thread_stats)), 
+            thread = highlight_object(thread_stats), 
+        ))
+
+    def work(task, submit):
         attr, pid, dattr = task
         cur_thread = current_thread()
         thread_stats[cur_thread] = {"task_id": attr["id"], "start_time": datetime.now()}
@@ -387,19 +529,11 @@ def pull(
                         for attr in relogin_wrap(fs.listdir_attr, dirid)
                     }
                 subattrs = listdir(attr["id"], base_url)
-                count = len(subattrs)
-                count_dirs = sum(a["is_directory"] for a in subattrs)
-                count_files = count - count_dirs
-                count_size = sum(a["size"] for a in subattrs if not a["is_directory"])
-                with ensure_cm(count_lock):
-                    tasks["total"] += count
-                    tasks["dirs"] += count_dirs
-                    tasks["files"] += count_files
-                    tasks["size"] += count_size
-                    unfinished["total"] += count
-                    unfinished["dirs"] += count_dirs
-                    unfinished["files"] += count_files
-                    unfinished["size"] += count_size
+                update_tasks(
+                    total=len(subattrs), 
+                    files=sum(not a["is_directory"] for a in subattrs), 
+                    size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
+                )
                 for subattr in subattrs:
                     is_directory = subattr["is_directory"]
                     subdattr = subdattrs.get((subattr["name"], is_directory), {})
@@ -423,13 +557,8 @@ def pull(
                             src_path = highlight_path(subattr["path"]), 
                             dst_path = highlight_path(subdattr["path"]), 
                         ))
-                        with ensure_cm(count_lock):
-                            success["total"] += 1
-                            success["files"] += 1
-                            success["size"] += subattr["size"]
-                            unfinished["total"] -= 1
-                            unfinished["files"] -= 1
-                            unfinished["size"] -= subattr["size"]
+                        update_success(1, 1, subattr["size"])
+                update_success(1)
             else:
                 resp = client.upload_file_init(
                     attr["name"], 
@@ -437,9 +566,7 @@ def pull(
                     filesize=attr["size"], 
                     filesha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
-                    timeout=5, 
                     request=request, 
-                    session=Session(), 
                 )
                 status = resp["status"]
                 statuscode = resp.get("statuscode", 0)
@@ -459,8 +586,8 @@ def pull(
                         resp     = highlight_as_json(resp), 
                     ))
                     with urlopen(attr["url"], timeout=10) as resp:
-                        resp = client.upload_file_sample(resp, attr["name"], pid=pid)
-                elif status == 0 and statuscode == 413:
+                        resp = client.upload_file_sample(resp, attr["name"], pid=pid, request=request)
+                elif status == 0 and statuscode in (0, 413):
                     raise URLError(resp)
                 else:
                     raise OSError(resp)
@@ -473,30 +600,10 @@ def pull(
                     pid      = highlight_id(pid), 
                     resp     = highlight_as_json(resp_data), 
                 ))
-            with ensure_cm(count_lock):
-                success["total"] += 1
-                unfinished["total"] -= 1
-                if attr["is_directory"]:
-                    success["dirs"] += 1
-                    unfinished["dirs"] -= 1
-                else:
-                    success["files"] += 1
-                    success["size"] += attr["size"]
-                    unfinished["files"] -= 1
-                    unfinished["size"] -= attr["size"]
+                update_success(1, 1, attr["size"])
             del taskmap[attr["id"]]
         except BaseException as e:
-            exctype = type(e).__module__ + "." + type(e).__qualname__
-            with ensure_cm(count_lock):
-                errors["total"] += 1
-                if attr["is_directory"]:
-                    errors["dirs"] += 1
-                else:
-                    errors["files"] += 1
-                try:
-                    reasons[exctype] += 1
-                except KeyError:
-                    reasons[exctype] = 1
+            update_errors(e, attr["is_directory"])
             retryable = True
             if isinstance(e, (HTTPStatusError, RequestsHTTPError)):
                 retryable = e.response.status_code == 405
@@ -507,7 +614,7 @@ def pull(
                         pass
             elif isinstance(e, HTTPError):
                 retryable = e.status != 404
-            if retryable and isinstance(e, (URLError, HTTPStatusError, RequestError, RequestsHTTPError, RequestsTimeout)):
+            if retryable and isinstance(e, (HTTPStatusError, RequestError, RequestsHTTPError, RequestException, URLError, TimeoutError)):
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
                     prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
@@ -516,12 +623,7 @@ def pull(
                     pid      = highlight_id(pid), 
                     exc      = indent(highlight_exception(e), "    ├ ")
                 ))
-                with ensure_cm(count_lock):
-                    retry["total"] += 1
-                    if attr["is_directory"]:
-                        retry["dirs"] += 1
-                    else:
-                        retry["files"] += 1
+                update_retry(1, not attr["is_directory"])
                 submit((attr, pid, dattr))
             else:
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
@@ -532,34 +634,11 @@ def pull(
                     pid      = highlight_id(pid), 
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
-                with ensure_cm(count_lock):
-                    failed["total"] += 1
-                    unfinished["total"] -= 1
-                    if attr["is_directory"]:
-                        failed["dirs"] += 1
-                        unfinished["dirs"] -= 1
-                    else:
-                        failed["files"] += 1
-                        failed["size"] += attr["size"]
-                        unfinished["files"] -= 1
-                        unfinished["size"] -= attr["size"]
+                update_failed(1, not attr["is_directory"], attr.get("size"))
                 raise
         finally:
             del thread_stats[cur_thread]
-    stats_flag = True
-    def show_stats(interval: float = 30):
-        while stats_flag:
-            with ensure_cm(count_lock):
-                logger.info("""\
-{emoji} {prompt}
-    ├ statistics = {stats}
-    ├ worker thread stats = {thread}""".format(
-                    emoji  = blink_mark("📊"), 
-                    prompt = highlight_prompt("[STAT] 📈 执行统计: ", "magenta"), 
-                    stats  = highlight_object(stats), 
-                    thread = highlight_object(thread_stats), 
-                ))
-            sleep(interval)
+
     if isinstance(push_id, str):
         if not push_id.strip("/"):
             push_id = 0
@@ -578,24 +657,17 @@ def pull(
         push_attr = attr(push_id, base_url)
     taskmap: dict[int, tuple[dict, int, None | dict]] = {
         push_attr["id"]: (push_attr, cast(int, to_pid), None)}
-    tasks["total"] += 1
-    unfinished["total"] += 1
-    if push_attr["is_directory"]:
-        tasks["dirs"] += 1
-        unfinished["dirs"] += 1
-    else:
-        tasks["files"] += 1
-        unfinished["files"] += 1
-        tasks["size"] += push_attr["size"]
-        unfinished["size"] += push_attr["size"]
+    update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
     try:
         is_completed = False
-        if stats_interval > 0:
-            start_new_thread(show_stats, (stats_interval,))
-        thread_batch(pull, taskmap.values(), max_workers=max_workers)
+        if stats_interval:
+            with ctx_monitor(show_stats, interval=stats_interval):
+                thread_batch(work, taskmap.values(), max_workers=max_workers)
+        else:
+            thread_batch(work, taskmap.values(), max_workers=max_workers)
         is_completed = stats["is_completed"] = True
     finally:
-        stats_flag = False
+        stats["elapsed"] = str(datetime.now() - start_time)
         if is_completed and not taskmap:
             logger.info("{emoji} {prompt}\n    ├ statistics = {stats}".format(
                 emoji  = blink_mark("📊"), 
@@ -643,6 +715,7 @@ if not cookies:
             except FileNotFoundError:
                 pass
 
+
 client = P115Client(cookies, app="qandroid")
 device = client.login_device()["icon"]
 if cookies_path and cookies != client.cookies:
@@ -661,6 +734,7 @@ formatter = ColoredLevelNameFormatter(
 )
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
 
 pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)
 

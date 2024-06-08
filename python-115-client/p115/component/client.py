@@ -56,7 +56,7 @@ from hashtools import file_digest, file_digest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_range_request
 from httpfile import HTTPFileReader
-from httpx import AsyncClient, Client, Cookies, TimeoutException
+from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport, TimeoutException
 from httpx_request import request
 from iterutils import through, async_through, wrap_iter, wrap_aiter
 from multidict import CIMultiDict
@@ -69,16 +69,16 @@ from .cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
 from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 
 
+if getdefaulttimeout() is None:
+    setdefaulttimeout(30)
+
 RequestVarT = TypeVar("RequestVarT", dict, Callable)
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
 
-# TODO: 一部分 POST 请求也要在 ReadTimeout时重试
-httpx_request = partial(request, parse=lambda _, content: loads(content), timeout=(5, 60, 60, 5), raise_for_status=True)
-if getdefaulttimeout() is None:
-    setdefaulttimeout(30)
+httpx_request = partial(request, parse=lambda _, content: loads(content), timeout=(5, 60, 60, 5))
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -263,7 +263,7 @@ class P115Client:
         """同步请求的 session
         """
         ns = self.__dict__
-        session = Client(verify=False)
+        session = Client(transport=HTTPTransport(retries=5), verify=False)
         session._headers = ns["headers"]
         session._cookies = ns["cookies"]
         return session
@@ -273,7 +273,7 @@ class P115Client:
         """异步请求的 session
         """
         ns = self.__dict__
-        session = AsyncClient(verify=False)
+        session = AsyncClient(transport=AsyncHTTPTransport(retries=5), verify=False)
         session._headers = ns["headers"]
         session._cookies = ns["cookies"]
         return session

@@ -2,13 +2,14 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = ["request"]
 
 from collections.abc import Callable
 from json import loads
 
 from argtools import argcount
+from requests import adapters
 from requests.exceptions import ConnectTimeout, ReadTimeout
 from requests.models import Response
 from requests.sessions import Session
@@ -19,6 +20,8 @@ if "__del__" not in Response.__dict__:
 if "__del__" not in Session.__dict__:
     setattr(Session, "__del__", Session.close)
 
+adapters.DEFAULT_RETRIES = 5
+
 
 def request(
     url: str, 
@@ -26,55 +29,41 @@ def request(
     parse: None | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Session = None, 
+    stream: bool = True, 
+    timeout: None | float | tuple[float, float] = (5, 60), 
     **request_kwargs, 
 ):
     if session is None:
-        with Session() as session:
-            return request(
-                url, 
-                method, 
-                parse=parse, 
-                raise_for_status=raise_for_status, 
-                session=session, 
-                **request_kwargs, 
-            )
-    method = method.upper()
-    request_kwargs.setdefault("stream", True)
-    exc: None | BaseException = None
-    for _ in range(5):
-        try:
-            resp = session.request(method, url, **request_kwargs)
-            exc = None
-            break
-        except ConnectTimeout as e:
-            exc = e
-        except ReadTimeout as e:
-            if method != "GET":
-                raise
-            exc = e
-    if exc is not None:
-        raise exc
+        session = Session()
+    resp = session.request(
+        method=method, 
+        url=url, 
+        stream=stream, 
+        timeout=timeout, 
+        **request_kwargs, 
+    )
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
         return resp
-    elif parse is False:
-        return resp.content
-    elif parse is True:
-        with resp:
-            content_type = resp.headers.get("Content-Type", "")
-            if content_type == "application/json":
-                return resp.json()
-            elif content_type.startswith("application/json;"):
-                return loads(resp.text)
-            elif content_type.startswith("text/"):
-                return resp.text
+    with resp:
+        if parse is False:
             return resp.content
-    else:
-        ac = argcount(parse)
-        with resp:
-            if ac == 1:
-                return parse(resp)
-            else:
-                return parse(resp, resp.content)
+        elif parse is True:
+            with resp:
+                content_type = resp.headers.get("Content-Type", "")
+                if content_type == "application/json":
+                    return resp.json()
+                elif content_type.startswith("application/json;"):
+                    return loads(resp.text)
+                elif content_type.startswith("text/"):
+                    return resp.text
+                return resp.content
+        else:
+            ac = argcount(parse)
+            with resp:
+                if ac == 1:
+                    return parse(resp)
+                else:
+                    return parse(resp, resp.content)
 

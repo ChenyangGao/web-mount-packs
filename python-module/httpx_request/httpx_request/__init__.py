@@ -2,17 +2,19 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
-__all__ = ["request"]
+__version__ = (0, 0, 8)
+__all__ = ["request", "request_sync", "request_async"]
 
 from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Awaitable, Callable
+from contextlib import aclosing, closing
+from inspect import isawaitable
 from json import loads
 from typing import cast, overload, Any, Literal, TypeVar
 
 from argtools import argcount
-from httpx import ConnectTimeout, PoolTimeout, ReadTimeout
-from httpx._types import AuthTypes, SyncByteStream, URLTypes
+from httpx import AsyncHTTPTransport, HTTPTransport
+from httpx._types import AuthTypes, CertTypes, ProxyTypes, ProxiesTypes, SyncByteStream, URLTypes, VerifyTypes
 from httpx._client import AsyncClient, Client, Response, UseClientDefault, USE_CLIENT_DEFAULT
 
 
@@ -54,124 +56,139 @@ if "__del__" not in Response.__dict__:
 def request_sync(
     url: URLTypes, 
     method: str = "GET", 
+    # determine how to parse response data
     parse: None | bool | Callable = None, 
-    raise_for_status: bool = False, 
+    # raise for status
+    raise_for_status: bool = True, 
+    # pass in a custom session instance
     session: None | Client = None, 
+    # Client.send params
     auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
     follow_redirects: bool | UseClientDefault = USE_CLIENT_DEFAULT, 
+    # use Client.stream xor Client.request
     stream: bool = True, 
+    # Client.__init__ params
+    cert: None | CertTypes = None, 
+    proxy: None | ProxyTypes = None, 
+    proxies: None | ProxiesTypes = None, 
+    trust_env: bool = True, 
+    verify: VerifyTypes = True, 
+    # Client.request params
     **request_kwargs, 
 ):
     if session is None:
-        session = Client()
-    method = method.upper()
+        session = Client(
+            cert=cert, 
+            proxy=proxy, 
+            proxies=proxies, 
+            trust_env=trust_env, 
+            verify=verify, 
+            transport=HTTPTransport(http2=True, retries=5), 
+        )
     request = session.build_request(
         method=method, 
         url=url, 
         **request_kwargs, 
     )
-    exc: None | BaseException = None
-    for _ in range(5):
-        try:
-            resp = session.send(
-                request=request,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                stream=stream,
-            )
-            exc = None
-            break
-        except (ConnectTimeout, PoolTimeout) as e:
-            exc = e
-        except ReadTimeout as e:
-            if method != "GET":
-                raise
-            exc = e
-    if exc is not None:
-        raise exc
+    resp = session.send(
+        request=request, 
+        auth=auth, 
+        follow_redirects=follow_redirects, 
+        stream=stream, 
+    )
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
         return resp
-    elif parse is False:
-        return resp.read()
-    elif parse is True:
-        resp.read()
-        content_type = resp.headers.get("Content-Type", "")
-        if content_type == "application/json":
-            return resp.json()
-        elif content_type.startswith("application/json;"):
-            return loads(resp.text)
-        elif content_type.startswith("text/"):
-            return resp.text
-        return resp.content
-    else:
-        ac = argcount(parse)
-        if ac == 1:
-            return parse(resp)
+    with closing(resp):
+        if parse is False:
+            return resp.read()
+        elif parse is True:
+            resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type == "application/json":
+                return resp.json()
+            elif content_type.startswith("application/json;"):
+                return loads(resp.text)
+            elif content_type.startswith("text/"):
+                return resp.text
+            return resp.content
         else:
-            return parse(resp, resp.read())
+            ac = argcount(parse)
+            if ac == 1:
+                return parse(resp)
+            else:
+                return parse(resp, resp.read())
 
 
 async def request_async(
     url: URLTypes, 
     method: str = "GET", 
+    # determine how to parse response data
     parse: None | bool | Callable = None, 
+    # raise for status
     raise_for_status: bool = False, 
+    # pass in a custom session instance
     session: None | AsyncClient = None, 
+    # AsyncClient.send params
     auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
     follow_redirects: bool | UseClientDefault = USE_CLIENT_DEFAULT, 
+    # use AsyncClient.stream xor AsyncClient.request
     stream: bool = True, 
+    # Client.__init__ params
+    cert: None | CertTypes = None, 
+    proxy: None | ProxyTypes = None, 
+    proxies: None | ProxiesTypes = None, 
+    trust_env: bool = True, 
+    verify: VerifyTypes = True, 
     **request_kwargs, 
 ):
     if session is None:
-        session = AsyncClient()
+        session = AsyncClient(
+            cert=cert, 
+            proxy=proxy, 
+            proxies=proxies, 
+            trust_env=trust_env, 
+            verify=verify, 
+            transport=AsyncHTTPTransport(http2=True, retries=5), 
+        )
     request = session.build_request(
         method=method, 
         url=url, 
         **request_kwargs, 
     )
-    exc: None | BaseException = None
-    for _ in range(5):
-        try:
-            resp = await session.send(
-                request=request,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                stream=stream,
-            )
-            exc = None
-            break
-        except (ConnectTimeout, PoolTimeout) as e:
-            exc = e
-        except ReadTimeout as e:
-            if method != "GET":
-                raise
-            exc = e
-    if exc is not None:
-        raise exc
+    resp = await session.send(
+        request=request, 
+        auth=auth, 
+        follow_redirects=follow_redirects, 
+        stream=stream, 
+    )
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
         return resp
-    elif parse is False:
-        return await resp.aread()
-    elif parse is True:
-        await resp.aread()
-        content_type = resp.headers.get("Content-Type", "")
-        if content_type == "application/json":
-            return resp.json()
-        elif content_type.startswith("application/json;"):
-            return loads(resp.text)
-        elif content_type.startswith("text/"):
-            return resp.text
-        return resp.content
-    else:
-        ac = argcount(parse)
-        if ac == 1:
-            return parse(resp)
+    async with aclosing(resp):
+        if parse is False:
+            return await resp.aread()
+        elif parse is True:
+            await resp.aread()
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type == "application/json":
+                return resp.json()
+            elif content_type.startswith("application/json;"):
+                return loads(resp.text)
+            elif content_type.startswith("text/"):
+                return resp.text
+            return resp.content
         else:
-            return parse(resp, await resp.aread())
+            ac = argcount(parse)
+            if ac == 1:
+                ret = parse(resp)
+            else:
+                ret = parse(resp, await resp.aread())
+            if isawaitable(ret):
+                ret = await ret
+            return ret
 
 
 @overload
@@ -207,7 +224,7 @@ def request(
 ):
     if async_:
         return request_async(
-            url, 
+            url=url, 
             method=method, 
             parse=parse, 
             raise_for_status=raise_for_status, 
@@ -216,7 +233,7 @@ def request(
         )
     else:
         return request_sync(
-            url, 
+            url=url, 
             method=method, 
             parse=parse, 
             raise_for_status=raise_for_status, 
