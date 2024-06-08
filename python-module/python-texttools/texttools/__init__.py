@@ -2,8 +2,11 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 
-from .text import *
-from .text_find import *
 from .half_width import *
+from .text import *
+from .text_cycle import *
+from .text_find import *
+from .text_format import *
+

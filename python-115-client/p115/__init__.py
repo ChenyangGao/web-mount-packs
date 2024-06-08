@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9, 1)
+__version__ = (0, 0, 9, 3)
 
 def __getattr__(attr):
     from importlib import import_module

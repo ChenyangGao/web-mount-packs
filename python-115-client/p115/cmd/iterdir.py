@@ -234,7 +234,11 @@ def main(args):
 
 parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
+parser.add_argument("-cp", "--cookies-path", help="""\
+存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
+    1. 当前工作目录
+    2. 用户根目录
+    3. 此脚本所在目录""")
 parser.add_argument(
     "-a", "--app", default="qandroid", 
     choices=(

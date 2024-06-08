@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-texttools"
-version = "0.0.1.1"
+version = "0.0.2"
 description = "Python texttools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-texttools"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-texttools"
-keywords = ["http", "response"]
+keywords = ["text", "tools"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,6 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+wcwidth = "*"
 
 [build-system]
 requires = ["poetry-core"]

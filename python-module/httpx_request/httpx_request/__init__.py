@@ -127,7 +127,7 @@ async def request_async(
     # determine how to parse response data
     parse: None | bool | Callable = None, 
     # raise for status
-    raise_for_status: bool = False, 
+    raise_for_status: bool = True, 
     # pass in a custom session instance
     session: None | AsyncClient = None, 
     # AsyncClient.send params
@@ -196,7 +196,7 @@ def request(
     url: URLTypes, 
     method: str = "GET", 
     parse: None | bool | Callable = None, 
-    raise_for_status: bool = False, 
+    raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
     async_: Literal[False] = False, 
     **request_kwargs, 
@@ -217,7 +217,7 @@ def request(
     url: URLTypes, 
     method: str = "GET", 
     parse: None | bool | Callable = None, 
-    raise_for_status: bool = False, 
+    raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 

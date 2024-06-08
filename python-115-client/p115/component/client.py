@@ -177,6 +177,9 @@ class UrlStr(str):
     def __repr__(self, /) -> str:
         return f"{type(self).__qualname__}({str(self)!r}, {self.__dict__})"
 
+    def get(self, key, /, default=None):
+        return self.__dict__.get(key, default)
+
     def geturl(self) -> str:
         return str(self)
 

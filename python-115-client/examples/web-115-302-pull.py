@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -35,7 +35,7 @@ if args.version:
 
 import logging
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from functools import partial
@@ -50,7 +50,7 @@ from _thread import start_new_thread
 from threading import Lock, current_thread
 from time import perf_counter, sleep
 from traceback import format_exc
-from typing import cast, ContextManager
+from typing import cast, ContextManager, NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen, Request
@@ -129,6 +129,17 @@ if use_requests:
     )
 else:
     request = None
+
+
+class Task(NamedTuple):
+    src_attr: Mapping
+    dst_pid: int
+    dst_attr: None | Mapping = None
+
+
+class Result(NamedTuple):
+    stats: dict
+    unfinished_tasks: dict[int, Task]
 
 
 class ColoredLevelNameFormatter(logging.Formatter):
@@ -363,7 +374,7 @@ def pull(
     to_pid: int | str = 0, 
     base_url: str = base_url, 
     max_workers: int = 1, 
-) -> dict:
+) -> Result:
     # 统计信息
     stats: dict = {
         # 开始时间
@@ -522,7 +533,7 @@ def pull(
                         ))
                     finally:
                         if dattr:
-                            taskmap[attr["id"]] = (attr, pid, dattr)
+                            taskmap[attr["id"]] = Task(attr, pid, dattr)
                 if subdattrs is None:
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
@@ -545,10 +556,10 @@ def pull(
                                 src_path = highlight_path(subattr["path"]), 
                                 dst_path = highlight_path(subdattr["path"]), 
                             ))
-                        subtask = taskmap[subattr["id"]] = (subattr, dirid, subdattr)
+                        subtask = taskmap[subattr["id"]] = Task(subattr, dirid, subdattr)
                         submit(subtask)
                     elif subattr["sha1"] != subdattr.get("sha1"):
-                        subtask = taskmap[subattr["id"]] = (subattr, dirid, None)
+                        subtask = taskmap[subattr["id"]] = Task(subattr, dirid, None)
                         submit(subtask)
                     else:
                         if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
@@ -655,8 +666,8 @@ def pull(
         push_attr = {"id": 0, "is_directory": True}
     else:
         push_attr = attr(push_id, base_url)
-    taskmap: dict[int, tuple[dict, int, None | dict]] = {
-        push_attr["id"]: (push_attr, cast(int, to_pid), None)}
+    taskmap: dict[int, Task] = {
+        push_attr["id"]: Task(push_attr, cast(int, to_pid), None)}
     update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
     try:
         is_completed = False
@@ -689,7 +700,7 @@ def pull(
                 tasks  = highlight_object(taskmap), 
                 stats  = highlight_object(stats), 
             ))
-    return stats
+    return Result(stats, taskmap)
 
 
 if not cookies:
