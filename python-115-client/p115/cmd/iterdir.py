@@ -54,14 +54,14 @@ def main(args):
                 try:
                     cookies = open(joinpath(dir_, "115-cookies.txt")).read()
                     if cookies:
-                        cookie_path = joinpath(dir_, "115-cookies.txt")
+                        cookies_path = joinpath(dir_, "115-cookies.txt")
                         break
                 except FileNotFoundError:
                     pass
 
     client = P115Client(cookies, app=args.app)
-    if cookie_path and cookies != client.cookies:
-        open(cookie_path, "w").write(client.cookies)
+    if cookies_path and cookies != client.cookies:
+        open(cookies_path, "w").write(client.cookies)
 
     fs = client.fs
 

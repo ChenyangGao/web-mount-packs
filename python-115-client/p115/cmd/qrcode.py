@@ -55,7 +55,7 @@ def main(args):
                 try:
                     cookies = open(joinpath(dir_, "115-cookies.txt")).read()
                     if cookies:
-                        cookie_path = joinpath(dir_, "115-cookies.txt")
+                        cookies_path = joinpath(dir_, "115-cookies.txt")
                         break
                 except FileNotFoundError:
                     pass

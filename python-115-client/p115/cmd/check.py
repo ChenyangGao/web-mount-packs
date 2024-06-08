@@ -47,13 +47,13 @@ def main(args):
                 try:
                     cookies = open(joinpath(dir_, "115-cookies.txt")).read()
                     if cookies:
-                        cookie_path = joinpath(dir_, "115-cookies.txt")
+                        cookies_path = joinpath(dir_, "115-cookies.txt")
                         break
                 except FileNotFoundError:
                     pass
 
     client = P115Client(cookies, app=args.app)
-    if cookie_path and client.cookies != cookies:
+    if cookies_path and client.cookies != cookies:
         open("115-cookies.txt", "w").write(client.cookies)
     print(client.user_points_sign_post())
 
