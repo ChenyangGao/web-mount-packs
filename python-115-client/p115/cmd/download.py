@@ -26,6 +26,7 @@ from typing import NamedTuple, TypedDict
 class Task(NamedTuple):
     src_attr: Mapping
     dst_path: str
+    reason: None | BaseException = None
 
 
 class Tasks(TypedDict):
@@ -54,6 +55,7 @@ def main(args) -> Result:
     from json import load
     from os import makedirs, scandir, stat
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
+    from pathlib import Path
     from platform import system
     from sys import exc_info
     from textwrap import indent
@@ -392,7 +394,7 @@ def main(args) -> Result:
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 update_failed(1, not attr["is_directory"], attr.get("size"))
-                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
+                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])._replace(reason=e)
                 raise
 
     with Progress(

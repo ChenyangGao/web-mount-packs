@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-download"
-version = "0.0.1"
-description = "Python functions for download."
+version = "0.0.1.1"
+description = "Python for download."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-download"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-download"
-keywords = ["python-download", "posixpath"]
+keywords = ["download"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",

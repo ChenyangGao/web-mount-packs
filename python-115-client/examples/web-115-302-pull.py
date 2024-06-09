@@ -136,6 +136,7 @@ class Task(NamedTuple):
     src_attr: Mapping
     dst_pid: int
     dst_attr: None | Mapping = None
+    reason: None | BaseException = None
 
 
 class Tasks(TypedDict):
@@ -660,7 +661,7 @@ def pull(
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
                 update_failed(1, not attr["is_directory"], attr.get("size"))
-                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
+                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])._replace(reason=e)
                 raise
         finally:
             del thread_stats[cur_thread]

@@ -66,6 +66,7 @@ except ImportError:
 class Task(NamedTuple):
     src_attr: Mapping
     dst_path: str
+    reason: None | BaseException = None
 
 
 class Tasks(TypedDict):
@@ -328,7 +329,7 @@ def main() -> Result:
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 update_failed(1, not attr["is_directory"], attr.get("size"))
-                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
+                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])._replace(reason=e)
                 raise
 
     if isinstance(push_id, str):

@@ -84,7 +84,12 @@ class DownloadTask:
         self._done_event = Event()
 
     def __repr__(self, /) -> str:
-        return f"<{type(self).__qualname__} :: state={self.state!r} progress={self.progress!r}>"
+        match state := self.state:
+            case "FINISHED":
+                return f"<{type(self).__qualname__} :: state={state!r} result={self.result} progress={self.progress!r}>"
+            case "FAILED":
+                return f"<{type(self).__qualname__} :: state={state!r} reason={self.result} progress={self.progress!r}>"
+        return f"<{type(self).__qualname__} :: state={state!r} progress={self.progress!r}>"
 
     @classmethod
     def create_task(
