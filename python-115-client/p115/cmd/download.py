@@ -51,6 +51,7 @@ def main(args) -> Result:
 
     import errno
 
+    from collections.abc import Callable
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
@@ -71,7 +72,6 @@ def main(args) -> Result:
     from warnings import warn
 
     from concurrenttools import thread_batch
-    from httpx import HTTPStatusError
     from p115 import P115Client
     from rich.progress import (
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
@@ -85,6 +85,7 @@ def main(args) -> Result:
     to_path = args.to_path
     share_link = args.share_link
     lock_dir_methods = args.lock_dir_methods
+    use_requests = args.use_requests
     max_workers = args.max_workers
     max_retries = args.max_retries
     resume = args.resume
@@ -100,6 +101,30 @@ def main(args) -> Result:
         if lock_dir_methods:
             fs_lock = Lock()
     cookies_path_mtime = 0
+
+    request: None | Callable
+    if use_requests:
+        from json import loads
+        try:
+            from requests import Session
+            from requests.exceptions import HTTPError as StatusError, RequestException as RequestError
+            from requests_request import request as requests_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
+            from requests import Session
+            from requests.exceptions import HTTPError as StatusError, RequestException as RequestError
+            from requests_request import request as requests_request
+        request = partial(
+            requests_request, 
+            timeout=60, 
+            session=Session(), 
+            parse=lambda resp, content: loads(content), 
+        )
+    else:
+        from httpx import HTTPStatusError as StatusError, RequestError # type: ignore
+        request = None
 
     match system():
         case "Windows":
@@ -167,16 +192,17 @@ def main(args) -> Result:
                         prompt = "[bold yellow][SCAN] 🤖 重新扫码：[/bold yellow]", 
                         exc    = f"    ├ [red]{type(exc).__qualname__}[/red]: {exc}")
                     )
-                client.login_another_app(device, replace=True)
+                client.login_another_app(device, request=request, replace=True, timeout=5)
                 if cookies_path:
                     open(cookies_path, "w").write(client.cookies)
                     cookies_path_mtime = stat(cookies_path).st_mtime_ns
 
     def relogin_wrap(func, /, *args, **kwds):
+        kwds.setdefault("request", request)
         try:
             with ensure_cm(fs_lock):
                 return func(*args, **kwds)
-        except HTTPStatusError as e:
+        except StatusError as e:
             if e.response.status_code != 405:
                 raise
             relogin(e)
@@ -387,7 +413,19 @@ def main(args) -> Result:
             task.reasons.append(e)
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
-                retryable = e.status != 404 if isinstance(e, HTTPError) else isinstance(e, URLError)
+                retryable = True
+                if isinstance(e, StatusError):
+                    retryable = e.response.status_code == 405
+                    if retryable:
+                        try:
+                            relogin()
+                        except:
+                            pass
+                if retryable:
+                    retryable = (
+                        isinstance(e, HTTPError) and e.status != 404
+                        and isinstance(e, (StatusError, RequestError, URLError, TimeoutError))
+                    )
             else:
                 retryable = task.times <= max_retries
             if retryable:
@@ -500,6 +538,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
+parser.add_argument("-ur", "--use-requests", action="store_true", help="使用 requests 执行请求，而不是默认的 httpx")
 parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")

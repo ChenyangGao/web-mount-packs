@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 5)
+__version__ = (0, 1, 6)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -28,10 +28,10 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
+parser.add_argument("-ur", "--use-requests", action="store_true", help="使用 requests 执行请求，而不是默认的 httpx")
 parser.add_argument("-s", "--stats-interval", type=float, default=30, 
                     help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
 parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
-parser.add_argument("-ur", "--use-requests", action="store_true", help="使用 requests 执行请求，而不是默认的 httpx")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -44,7 +44,6 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import partial
 from gzip import GzipFile
 from inspect import currentframe, getframeinfo
 from json import dumps, load, loads
@@ -65,31 +64,21 @@ from warnings import warn
 try:
     from colored.colored import back_rgb, fore_rgb, Colored
     from concurrenttools import thread_batch
-    from httpx import HTTPStatusError, RequestError
     from p115 import check_response, P115Client, AVAILABLE_APPS
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
-    from requests import Session
-    from requests.exceptions import HTTPError as RequestsHTTPError, RequestException
-    from requests_request import request as requests_request
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([
-        executable, "-m", "pip", "install", "-U", 
-        "colored", "flask", "httpx", "python-concurrenttools", "python-115", 
-        "Pygments", "requests", "requests_request"], check=True)
+    run([executable, "-m", "pip", "install", "-U", 
+         "colored", "python-concurrenttools", "python-115", "Pygments"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
-    from httpx import HTTPStatusError, RequestError
     from p115 import check_response, P115Client, AVAILABLE_APPS
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
-    from requests import Session
-    from requests.exceptions import HTTPError as RequestsHTTPError, RequestException
-    from requests_request import request as requests_request
 
 
 COLORS_8_BIT: dict[str, int] = {
@@ -113,8 +102,8 @@ if max_workers <= 0:
     max_workers = 1
 max_retries = args.max_retries
 lock_dir_methods = args.lock_dir_methods
-stats_interval = args.stats_interval
 use_requests = args.use_requests
+stats_interval = args.stats_interval
 debug = args.debug
 
 login_lock: None | ContextManager = None
@@ -129,13 +118,26 @@ cookies_path_mtime = 0
 
 request: None | Callable
 if use_requests:
+    from functools import partial
+    try:
+        from requests import Session
+        from requests.exceptions import HTTPError as StatusError, RequestException as RequestError
+        from requests_request import request as requests_request
+    except ImportError:
+        from sys import executable
+        from subprocess import run
+        run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
+        from requests import Session
+        from requests.exceptions import HTTPError as StatusError, RequestException as RequestError
+        from requests_request import request as requests_request
     request = partial(
         requests_request, 
-        timeout=5, 
+        timeout=60, 
         session=Session(), 
         parse=lambda resp, content: loads(content), 
     )
 else:
+    from httpx import HTTPStatusError as StatusError, RequestError # type: ignore
     request = None
 
 
@@ -378,7 +380,7 @@ def relogin_wrap(func, /, *args, **kwds):
     try:
         with ensure_cm(fs_lock):
             return func(*args, **kwds)
-    except HTTPStatusError as e:
+    except StatusError as e:
         if e.response.status_code != 405:
             raise
         relogin(e)
@@ -644,17 +646,18 @@ def pull(
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
                 retryable = True
-                if isinstance(e, (HTTPStatusError, RequestsHTTPError)):
+                if isinstance(e, StatusError):
                     retryable = e.response.status_code == 405
                     if retryable:
                         try:
                             relogin()
                         except:
                             pass
-                if retryable and isinstance(e, HTTPError):
-                    retryable = e.status != 404
                 if retryable:
-                    retryable = isinstance(e, (HTTPStatusError, RequestError, RequestsHTTPError, RequestException, URLError, TimeoutError))
+                    retryable = (
+                        isinstance(e, HTTPError) and e.status != 404
+                        and isinstance(e, (StatusError, RequestError, URLError, TimeoutError))
+                    )
             else:
                 retryable = task.times <= max_retries
             if retryable:

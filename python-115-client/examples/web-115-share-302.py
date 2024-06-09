@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __doc__ = """\
     🕸️ 获取 115 分享上的文件信息和下载链接 🕷️
 
@@ -60,6 +60,7 @@ parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默�
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
+parser.add_argument("-ur", "--use-requests", action="store_true", help="使用 requests 执行请求，而不是默认的 httpx")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -69,7 +70,6 @@ if args.version:
 try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
     from posixpatht import escape
 except ImportError:
@@ -78,7 +78,6 @@ except ImportError:
     run([executable, "-m", "pip", "install", "-U", "flask", "Flask-Compress", "httpx", "posixpatht", "python-115"], check=True)
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from httpx import HTTPStatusError
     from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
     from posixpatht import escape
 
@@ -98,24 +97,52 @@ from warnings import warn
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
-login_lock = Lock()
-fs_lock = Lock() if args.lock_dir_methods else None
-
-dumps: Callable[..., bytes]
-try:
-    from orjson import dumps
-except ImportError:
-    odumps: Callable[..., str]
-    try:
-        from ujson import dumps as odumps
-    except ImportError:
-        from json import dumps as odumps
-    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
-
 share_link = args.share_link.replace("\\", "")
 cookies = args.cookies
 cookies_path = args.cookies_path
 cookies_path_mtime = 0
+lock_dir_methods = args.lock_dir_methods
+use_requests = args.use_requests
+
+login_lock = Lock()
+fs_lock = Lock() if lock_dir_methods else None
+
+dumps: Callable[..., bytes]
+loads: Callable
+try:
+    from orjson import dumps, loads
+except ImportError:
+    odumps: Callable[..., str]
+    try:
+        from ujson import dumps as odumps, loads
+    except ImportError:
+        from json import dumps as odumps, loads
+    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+
+do_request: None | Callable
+if use_requests:
+    from functools import partial
+    try:
+        from requests import Session
+        from requests.exceptions import HTTPError as StatusError
+        from requests_request import request as requests_request
+    except ImportError:
+        from sys import executable
+        from subprocess import run
+        run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
+        from requests import Session
+        from requests.exceptions import HTTPError as StatusError
+        from requests_request import request as requests_request
+    do_request = partial(
+        requests_request, 
+        timeout=60, 
+        session=Session(), 
+        parse=lambda resp, content: loads(content), 
+    )
+else:
+    from httpx import HTTPStatusError as StatusError # type: ignore
+    do_request = None
+
 if not cookies:
     if cookies_path:
         try:
@@ -182,7 +209,7 @@ def redirect_exception_response(func, /):
     def wrapper(*args, **kwds):
         try:
             return func(*args, **kwds)
-        except HTTPStatusError as exc:
+        except StatusError as exc:
             return str(exc), exc.response.status_code
         except FileNotFoundError as exc:
             return str(exc), 404 # Not Found
@@ -225,20 +252,21 @@ def relogin(exc=None):
                     prompt = "\x1b[1m\x1b[33m[SCAN] 🤖 重新扫码：\x1b[0m", 
                     exc    = f"    ├ \x1b[31m{type(exc).__qualname__}\x1b[0m: {exc}")
                 )
-            client.login_another_app(device, replace=True)
+            client.login_another_app(device, replace=True, request=do_request, timeout=5)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
 
 
 def relogin_wrap(func, /, *args, **kwds):
+    kwds.setdefault("request", do_request)
     try:
         if fs_lock is None:
             return func(*args, **kwds)
         else:
             with fs_lock:
                 return func(*args, **kwds)
-    except HTTPStatusError as e:
+    except StatusError as e:
         if e.response.status_code != 405:
             raise
         relogin(e)
@@ -322,7 +350,7 @@ def query(path: str):
     if fid == 0:
         header = f'<strong><a href="{origin}?id=0&method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
     else:
-        ancestors = fs.get_ancestors(int(attr["id"]))
+        ancestors = relogin_wrap(fs.get_ancestors, int(attr["id"]))
         info = ancestors[-1]
         header = f'<strong><a href="{origin}?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
                 f'<strong><a href="{origin}?id={info["id"]}" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>/' 
