@@ -203,7 +203,7 @@ def main(args) -> Result:
                         prompt = "[bold yellow][SCAN] 🤖 重新扫码：[/bold yellow]", 
                         exc    = f"    ├ [red]{type(exc).__qualname__}[/red]: {exc}")
                     )
-                client.login_another_app(device, do_request=do_request, replace=True, timeout=5)
+                client.login_another_app(device, request=do_request, replace=True, timeout=5)
                 if cookies_path:
                     open(cookies_path, "w").write(client.cookies)
                     cookies_path_mtime = stat(cookies_path).st_mtime_ns
@@ -231,9 +231,9 @@ def main(args) -> Result:
         open(cookies_path, "w").write(client.cookies)
 
     if share_link:
-        fs = client.get_share_fs(share_link, do_request=do_request)
+        fs = client.get_share_fs(share_link, request=do_request)
     else:
-        fs = client.get_fs(do_request=do_request)
+        fs = client.get_fs(request=do_request)
 
     stats: dict = {
         # 开始时间
