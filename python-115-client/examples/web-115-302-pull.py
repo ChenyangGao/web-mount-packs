@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 4)
+__version__ = (0, 1, 5)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -23,8 +23,8 @@ parser.add_argument("-cp", "--cookies-path", help="""\
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
                     help="""最大重试次数。
-    - 如果小于 0（默认），则发生错误就抛出
-    - 如果等于 0，则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
+    - 如果小于 0（默认），则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
+    - 如果等于 0，则发生错误就抛出
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
