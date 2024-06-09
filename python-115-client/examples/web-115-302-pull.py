@@ -28,7 +28,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-r", "--request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-s", "--stats-interval", type=float, default=30, 
                     help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
 parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
@@ -103,7 +103,7 @@ if max_workers <= 0:
     max_workers = 1
 max_retries = args.max_retries
 lock_dir_methods = args.lock_dir_methods
-use_request = args.request
+use_request = args.use_request
 stats_interval = args.stats_interval
 debug = args.debug
 

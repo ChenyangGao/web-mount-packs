@@ -85,7 +85,7 @@ def main(args) -> Result:
     to_path = args.to_path
     share_link = args.share_link
     lock_dir_methods = args.lock_dir_methods
-    use_request = args.request
+    use_request = args.use_request
     max_workers = args.max_workers
     max_retries = args.max_retries
     resume = args.resume
@@ -548,7 +548,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-r", "--do_request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
