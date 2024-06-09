@@ -9,7 +9,7 @@ __all__ = ["P115ZipPath", "P115ZipFileSystem"]
 import errno
 
 from collections import deque
-from collections.abc import Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from datetime import datetime
 from functools import cached_property
 from itertools import count, islice
@@ -62,22 +62,24 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         client: str | P115Client, 
         id_or_pickcode: int | str, 
+        request: None | Callable = None, 
     ):
-        if isinstance(client, str):
-            client = P115Client(client)
+        super().__init__(client, request)
+        client = self.client
+        request = self.request
+        tempfs = client.get_fs(request=request)
         if isinstance(id_or_pickcode, int):
             file_id = id_or_pickcode
-            attr = client.fs.attr(file_id)
+            attr = tempfs.attr(file_id)
             pickcode = attr["pickcode"]
             self.__dict__["create_time"] = attr["ptime"]
         else:
             pickcode = id_or_pickcode
-            file_id = client.fs.get_id_from_pickcode(pickcode)
-        resp = check_response(client.extract_push_progress(pickcode))
+            file_id = tempfs.get_id_from_pickcode(pickcode)
+        resp = check_response(client.extract_push_progress(pickcode, request=request))
         if resp["data"]["extract_status"]["unzip_status"] != 4:
             raise OSError(errno.EIO, "file was not decompressed")
         self.__dict__.update(
-            client=client, 
             id=0, 
             path="/", 
             file_id=file_id, 
@@ -115,12 +117,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             path=path, 
             next_marker=next_marker, 
             page_count=page_count, 
+            request=self.request, 
         )
 
     @cached_property
     def create_time(self, /) -> datetime:
         "创建时间"
-        return self.client.fs.attr(self.file_id)["ptime"]
+        return self.client.get_fs(request=self.request).attr(self.file_id)["ptime"]
 
     def _attr(self, id: int = 0, /) -> AttrDict:
         try:
@@ -277,7 +280,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         to_pid: int | str = 0, 
     ) -> ExtractProgress:
         "解压缩到网盘"
-        return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid)
+        return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid, request=self.request)
 
     def get_url(
         self, 
@@ -291,7 +294,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
             raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-        return self.client.extract_download_url(self.pickcode, attr["path"], headers=headers, detail=detail)
+        return self.client.extract_download_url(
+            self.pickcode, 
+            attr["path"], 
+            headers=headers, 
+            detail=detail, 
+            request=self.request, 
+        )
 
     def iterdir(
         self, 

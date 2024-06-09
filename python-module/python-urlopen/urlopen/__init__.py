@@ -2,25 +2,28 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
-__all__ = ["urlopen", "download"]
+__version__ = (0, 0, 5)
+__all__ = ["urlopen", "request", "download"]
 
 import errno
 
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from copy import copy
 from http.client import HTTPResponse
 from http.cookiejar import CookieJar
 from inspect import isgenerator
-from json import dumps
+from json import dumps, loads
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
+from re import compile as re_compile
 from shutil import COPY_BUFSIZE # type: ignore
 from ssl import SSLContext, _create_unverified_context
 from typing import cast, Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, OpenerDirector, Request
 
+from argtools import argcount
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
 
@@ -28,12 +31,14 @@ from http_response import get_filename, get_length, is_chunked, is_range_request
 if "__del__" not in HTTPResponse.__dict__:
     setattr(HTTPResponse, "__del__", HTTPResponse.close)
 
+CRE_search_charset = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
+
 
 def urlopen(
     url: str | Request, 
     method: str = "GET", 
     params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
-    data: None | bytes | str | Mapping | Sequence[tuple[Any, Any]] = None, 
+    data: None | bytes | str | Mapping | Sequence[tuple[Any, Any]] | Iterable[bytes] = None, 
     json: Any = None, 
     headers: None | dict[str, str] = {"User-agent": ""}, 
     timeout: None | int | float = None, 
@@ -66,9 +71,13 @@ def urlopen(
             pass
         elif isinstance(data, str):
             data = data.encode("utf-8")
-        else:
-            data = urlencode(data).encode("latin-1")
-    data = cast(None | bytes, data)
+        elif isinstance(data, (Mapping, Sequence)):
+            data = urlencode(cast(Mapping | Sequence, data)).encode("latin-1")
+            if headers:
+                headers = {**headers, "Content-type": "application/x-www-form-urlencoded"}
+            else:
+                headers = {"Content-type": "application/x-www-form-urlencoded"}
+    data = cast(None | bytes | Iterable[bytes], data)
     if isinstance(url, Request):
         req = url
         if params:
@@ -95,6 +104,57 @@ def urlopen(
         return opener.open(req)
     else:
         return opener.open(req, timeout=timeout)
+
+
+def get_charset(content_type: str, default="utf-8") -> str:
+    match = CRE_search_charset(content_type)
+    if match is None:
+        return "utf-8"
+    return match["charset"]
+
+
+def request(
+    url: str | Request, 
+    method: str = "GET", 
+    parse: None | bool | Callable = None, 
+    raise_for_status: bool = True, 
+    timeout: None | float = 60, 
+    **request_kwargs, 
+):
+    request_kwargs.pop("stream", None)
+    try:
+        resp = urlopen(
+            url=url, 
+            method=method, 
+            timeout=timeout, 
+            **request_kwargs, 
+        )
+    except HTTPError as e:
+        if raise_for_status:
+            raise
+        resp = getattr(e, "file")
+    if parse is None:
+        return resp
+    with resp:
+        if parse is False:
+            return resp.read()
+        elif parse is True:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type == "application/json":
+                return loads(data)
+            elif content_type.startswith("application/json;"):
+                return loads(data.decode(get_charset(content_type)))
+            elif content_type.startswith("text/"):
+                return data.decode(get_charset(content_type))
+            return data
+        else:
+            ac = argcount(parse)
+            with resp:
+                if ac == 1:
+                    return parse(resp)
+                else:
+                    return parse(resp, resp.read())
 
 
 def download(

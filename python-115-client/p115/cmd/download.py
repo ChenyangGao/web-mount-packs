@@ -198,7 +198,6 @@ def main(args) -> Result:
                     cookies_path_mtime = stat(cookies_path).st_mtime_ns
 
     def relogin_wrap(func, /, *args, **kwds):
-        kwds.setdefault("request", request)
         try:
             with ensure_cm(fs_lock):
                 return func(*args, **kwds)
@@ -221,9 +220,9 @@ def main(args) -> Result:
         open(cookies_path, "w").write(client.cookies)
 
     if share_link:
-        fs = client.get_share_fs(share_link)
+        fs = client.get_share_fs(share_link, request=request)
     else:
-        fs = client.fs
+        fs = client.get_fs(request=request)
 
     stats: dict = {
         # 开始时间

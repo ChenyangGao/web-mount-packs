@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上的某个压缩包中的文件信息和下载链接 🕷️
 
@@ -67,14 +67,14 @@ if args.version:
 try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "flask", "Flask-Compress", "httpx", "python-115"], check=True)
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS
 
 import posixpath
 
@@ -166,7 +166,7 @@ if not cookies:
                 pass
 
 client = P115Client(cookies, app="qandroid")
-device = client.login_device()["icon"]
+device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
     if device == "desktop":
@@ -185,7 +185,7 @@ elif code.isalnum() and 15 <= len(code) <= 20:
     pickcode = code
 else:
     pickcode = client.fs.get_pickcode(code)
-fs = client.get_zip_fs(pickcode)
+fs = client.get_zip_fs(pickcode, request=do_request)
 
 KEYS = (
     "name", "path", "is_directory", "size", "format_size", "time", 
@@ -287,7 +287,6 @@ def relogin(exc=None):
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    kwds.setdefault("request", do_request)
     try:
         if fs_lock is None:
             return func(*args, **kwds)

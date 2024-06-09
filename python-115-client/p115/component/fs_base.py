@@ -543,6 +543,20 @@ class P115FileSystemBase(Generic[P115PathType]):
     id: int
     path: str
     path_class: type[P115PathType]
+    request: None | Callable = None
+
+    def __init__(
+        self, 
+        /, 
+        client: str | P115Client, 
+        request: None | Callable = None, 
+    ):
+        if isinstance(client, str):
+            client = P115Client(client)
+        ns = self.__dict__
+        ns["client"] = client
+        if request is not None:
+            ns["request"] = request
 
     def __contains__(self, id_or_path: IDOrPathType, /) -> bool:
         return self.exists(id_or_path)

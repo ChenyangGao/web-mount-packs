@@ -249,9 +249,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         attr_cache: None | MutableMapping[int, AttrDict] = None, 
         path_to_id: None | MutableMapping[str, int] = None, 
         get_version: None | Callable = lambda attr: attr.get("mtime", 0), 
+        request: None | Callable = None, 
     ):
-        if isinstance(client, str):
-            client = P115Client(client)
+        super().__init__(client, request)
         if attr_cache is not None:
             attr_cache = {}
         if type(path_to_id) is dict:
@@ -259,7 +259,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         elif path_to_id is not None:
             path_to_id = ChainMap(path_to_id, {"/": 0})
         self.__dict__.update(
-            client = client, 
             id = 0, 
             path = "/", 
             password = password, 
@@ -322,23 +321,23 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     @check_response
     def fs_mkdir(self, name: str, /, pid: int = 0) -> AttrDict:
-        return self.client.fs_mkdir({"cname": name, "pid": pid})
+        return self.client.fs_mkdir({"cname": name, "pid": pid}, request=self.request)
 
     @check_response
     def fs_copy(self, id: int, /, pid: int = 0) -> AttrDict:
-        return self.client.fs_copy(id, pid)
+        return self.client.fs_copy(id, pid, request=self.request)
 
     @check_response
     def fs_delete(self, id: int, /) -> AttrDict:
-        return self.client.fs_delete(id)
+        return self.client.fs_delete(id, request=self.request)
 
     @check_response
     def fs_move(self, id: int, /, pid: int = 0) -> AttrDict:
-        return self.client.fs_move(id, pid)
+        return self.client.fs_move(id, pid, request=self.request)
 
     @check_response
     def fs_rename(self, id: int, name: str, /) -> AttrDict:
-        return self.client.fs_rename(id, name)
+        return self.client.fs_rename(id, name, request=self.request)
 
     @check_response
     def fs_batch_copy(
@@ -347,7 +346,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: int = 0, 
     ) -> AttrDict:
-        return self.client.fs_batch_copy(payload, pid)
+        return self.client.fs_batch_copy(payload, pid, request=self.request)
 
     @check_response
     def fs_batch_delete(
@@ -355,7 +354,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: dict | Iterable[int | str], 
         /, 
     ) -> AttrDict:
-        return self.client.fs_batch_delete(payload)
+        return self.client.fs_batch_delete(payload, request=self.request)
 
     @check_response
     def fs_batch_move(
@@ -364,7 +363,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: int = 0, 
     ) -> AttrDict:
-        return self.client.fs_batch_move(payload, pid)
+        return self.client.fs_batch_move(payload, pid, request=self.request)
 
     @check_response
     def fs_batch_rename(
@@ -372,10 +371,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: dict | Iterable[tuple[int | str, str]], 
         /, 
     ) -> AttrDict:
-        return self.client.fs_batch_rename(payload)
+        return self.client.fs_batch_rename(payload, request=self.request)
 
     def fs_info(self, id: int, /) -> AttrDict:
-        result = self.client.fs_info({"file_id": id})
+        result = self.client.fs_info({"file_id": id}, request=self.request)
         if result["state"]:
             return result
         match result["code"]:
@@ -399,7 +398,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             id = payload
         else:
             id = int(payload["cid"])
-        resp = check_response(self.client.fs_files(payload))
+        resp = check_response(self.client.fs_files(payload, request=self.request))
         if int(resp["path"][-1]["cid"]) != id:
             raise NotADirectoryError(errno.ENOTDIR, f"{id!r} is not a directory")
         return resp
@@ -408,11 +407,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def fs_search(self, payload: str | dict, /) -> AttrDict:
         if isinstance(payload, str):
             payload = {"cid": self.id, "search_value": payload}
-        return self.client.fs_search(payload)
+        return self.client.fs_search(payload, request=self.request)
 
     @check_response
     def space_summury(self, /) -> AttrDict:
-        return self.client.fs_space_summury()
+        return self.client.fs_space_summury(request=self.request)
 
     def _upload(
         self, 
@@ -424,7 +423,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> AttrDict:
         if pid is None:
             pid = self.id
-        data = check_response(self.client.upload_file(file, name, pid))["data"]
+        data = check_response(self.client.upload_file(file, name, pid, request=self.request))["data"]
         if "file_id" in data:
             file_id = int(data["file_id"])
             try:
@@ -923,7 +922,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         set_order_payload["file_id"] = id
                         if "fc_mix" in payload:
                             set_order_payload["fc_mix"] = payload["fc_mix"]
-                        self.client.fs_files_order(set_order_payload)
+                        self.client.fs_files_order(set_order_payload, request=self.request)
                 resp = get_files(payload)
                 if len(resp["path"]) == 1:
                     dirname = "/"
@@ -1065,6 +1064,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     filesha1=src_attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng: self.read_bytes_range(src_id, rng), 
                     pid=dst_pid, 
+                    request=self.request, 
                 )["data"]["file_name"]
                 return self.attr([dst_name], dst_pid)
             elif src_name == dst_name:
@@ -1200,9 +1200,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if fid == 0:
             return ""
         if desc is None:
-            return check_response(self.client.fs_desc_get(fid))["desc"]
+            return check_response(self.client.fs_desc_get(fid, request=self.request))["desc"]
         else:
-            return check_response(self.client.fs_desc(fid, desc))["file_description"]
+            return check_response(self.client.fs_desc(fid, desc, request=self.request))["file_description"]
 
     def dirlen(
         self, 
@@ -1233,7 +1233,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def get_info_from_pickcode(self, /, pickcode: str) -> AttrDict:
         "由 pickcode 获取一些目录信息"
-        return self.client.download_url(pickcode, strict=False, detail=True).__dict__
+        return self.client.download_url(pickcode, strict=False, detail=True, request=self.request).__dict__
 
     def get_pickcode(
         self, 
@@ -1261,6 +1261,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             use_web_api=attr.get("violated", False) and attr["size"] < 1024 * 1024 * 115, 
             detail=detail, 
             headers=headers, 
+            request=self.request, 
         )
 
     def get_url_from_pickcode(
@@ -1277,6 +1278,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             detail=detail, 
             use_web_api=use_web_api, 
             headers=headers, 
+            request=self.request, 
         )
 
     # TODO: 如果超过 5 万个文件，则需要分批进入隐藏模式
@@ -1295,13 +1297,16 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             if fid == 0:
                 return False
             hidden = not show
-            check_response(self.client.fs_files_hidden({"hidden": int(hidden), "fid[0]": fid}))
+            check_response(self.client.fs_files_hidden(
+                {"hidden": int(hidden), "fid[0]": fid}, 
+                request=self.request, 
+            ))
             return hidden
 
     @property
     def hidden_mode(self, /) -> bool:
         "是否进入隐藏模式"
-        return self.client.user_setting()["data"]["show"] == "1"
+        return self.client.user_setting(request=self.request)["data"]["show"] == "1"
 
     def hidden_switch(
         self, 
@@ -1312,7 +1317,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         "切换隐藏模式，如果需要进入隐藏模式，需要提供密码"
         if show is None:
             show = not self.hidden_mode
-        check_response(self.client.fs_hidden_switch({"show": int(show), "safe_pwd": password or self.password}))
+        check_response(self.client.fs_hidden_switch(
+            {"show": int(show), "safe_pwd": password or self.password}, 
+            request=self.request, 
+        ))
 
     def is_empty(
         self, 
@@ -1350,7 +1358,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             "format": "json", 
         }
         while True:
-            data = check_response(self.client.fs_get_repeat(payload))["data"]
+            data = check_response(self.client.fs_get_repeat(payload, request=self.request))["data"]
             yield from data
             if len(data) < page_size:
                 break
@@ -1642,7 +1650,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 pid=dst_pid, 
                 filesize=src_attr["size"], 
                 filesha1=src_attr["sha1"], 
-                read_range_bytes_or_hash=lambda rng: client.read_bytes_range(url, rng), 
+                read_range_bytes_or_hash=lambda rng: client.read_bytes_range(url, rng, request=self.request), 
+                request=self.request, 
             )
             status = resp["status"]
             statuscode = resp.get("statuscode", 0)
@@ -1650,7 +1659,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 pass
             elif status == 1 and statuscode == 0:
                 warn(f"wrong sha1 {src_attr['sha1']!r} found, will attempt to upload directly: {src_attr!r}")
-                resp = client.upload_file_sample(client.open(url), dst_name, pid=dst_pid)
+                resp = client.upload_file_sample(
+                    client.open(url=url), 
+                    dst_name, 
+                    pid=dst_pid, 
+                    request=self.request, 
+                )
             else:
                 raise OSError(resp)
             self.fs_delete(src_id)
@@ -1747,7 +1761,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             fid = self.get_id(id_or_path, pid)
             if fid == 0:
                 return 0
-            self.client.fs_score(fid, score)
+            self.client.fs_score(fid, score, request=self.request)
             return score
 
     def search(
@@ -1833,7 +1847,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             fid = self.get_id(id_or_path, pid)
             if fid == 0:
                 return False
-            check_response(self.client.fs_star(fid, star))
+            check_response(self.client.fs_star(fid, star, request=self.request))
             return star
 
     def stat(

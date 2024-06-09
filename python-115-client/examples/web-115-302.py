@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -83,7 +83,7 @@ try:
     from cachetools import LRUCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS
     from posixpatht import escape
 except ImportError:
     from sys import executable
@@ -92,7 +92,7 @@ except ImportError:
     from cachetools import LRUCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from p115 import P115Client, P115FileSystem, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS
     from posixpatht import escape
 
 from collections.abc import Callable, MutableMapping
@@ -180,7 +180,7 @@ if not cookies:
                 pass
 
 client = P115Client(cookies, app="qandroid")
-device = client.login_device()["icon"]
+device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
     if device == "desktop":
@@ -190,7 +190,7 @@ if device not in AVAILABLE_APPS:
         device = "qandroid"
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
-fs = P115FileSystem(client, path_to_id=LRUCache(65536))
+fs = client.get_fs(client, path_to_id=LRUCache(65536), request=do_request)
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
@@ -297,7 +297,6 @@ def relogin(exc=None):
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    kwds.setdefault("request", do_request)
     try:
         if fs_lock is None:
             return func(*args, **kwds)

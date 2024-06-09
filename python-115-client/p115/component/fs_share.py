@@ -92,14 +92,13 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         /, 
         client: str | P115Client, 
         share_link: str, 
+        request: None | Callable = None, 
     ):
         m = CRE_SHARE_LINK_search(share_link)
         if m is None:
             raise ValueError("not a valid 115 share link")
-        if isinstance(client, str):
-            client = P115Client(client)
+        super().__init__(client, request)
         self.__dict__.update(
-            client=client, 
             id=0, 
             path="/", 
             share_link=share_link, 
@@ -149,21 +148,23 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
         """
-        return self.client.share_snap({
+        payload = {
             **payload, 
             "share_code": self.share_code, 
             "receive_code": self.receive_code, 
-        })
+        }
+        return self.client.share_snap(payload, request=self.request)
 
     @check_response
     def downlist(self, /, id: int = 0) -> dict:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         """
-        return self.client.share_downlist({
+        payload = {
             "share_code": self.share_code, 
             "receive_code": self.receive_code, 
             "cid": id, 
-        })
+        }
+        return self.client.share_downlist(payload, request=self.request)
 
     @cached_property
     def create_time(self, /) -> datetime:
@@ -228,6 +229,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "file_id": id, 
             }, 
             strict=False, 
+            request=self.request, 
         )
         return self._search_item(id)
 
@@ -393,6 +395,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             }, 
             headers=headers, 
             detail=detail, 
+            request=self.request, 
         )
 
     def iterdir(
@@ -499,6 +502,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             self.id_to_attr.update((attr["id"], attr) for attr in children)
         return iter(children[start:stop])
 
+    @check_response
     def receive(
         self, 
         ids: int | str | Iterable[int | str], 
@@ -521,7 +525,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             "file_id": ids, 
             "cid": to_pid, 
         }
-        return check_response(self.client.share_receive)(payload)
+        return self.client.share_receive(payload, request=self.request)
 
     def stat(
         self, 

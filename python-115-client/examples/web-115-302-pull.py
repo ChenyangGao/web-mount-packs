@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 6)
+__version__ = (0, 1, 7)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -376,7 +376,6 @@ def relogin(
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    kwds.setdefault("request", request)
     try:
         with ensure_cm(fs_lock):
             return func(*args, **kwds)
@@ -532,7 +531,11 @@ def pull(
                     dirid = dattr["id"]
                 else:
                     try:
-                        resp = check_response(relogin_wrap(client.fs_mkdir, {"cname": attr["name"], "pid": pid}))
+                        resp = check_response(relogin_wrap(
+                            client.fs_mkdir, 
+                            {"cname": attr["name"], "pid": pid}, 
+                            request=request, 
+                        ))
                         dirid = int(resp["file_id"])
                         dattr = {"id": dirid, "is_directory": True}
                         if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} @ {dirid} in {pid}\n    ├ response = {resp}".format(
@@ -781,7 +784,7 @@ if not cookies:
 
 
 client = P115Client(cookies, app="qandroid")
-device = client.login_device()["icon"]
+device = client.login_device(request=request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
     if device == "desktop":
