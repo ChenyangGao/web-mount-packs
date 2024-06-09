@@ -21,7 +21,7 @@ from stat import S_IFDIR, S_IFREG
 from time import time
 from typing import cast, Never, Self
 
-from posixpatht import escape, joins
+from posixpatht import escape, joins, splits
 
 from .client import check_response, P115Client
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
@@ -34,7 +34,7 @@ def normalize_info(
     info: Mapping, 
     keep_raw: bool = False, 
     **extra_data, 
-) -> dict:
+) -> AttrDict:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -76,13 +76,12 @@ class P115SharePath(P115PathBase):
     fs: P115ShareFileSystem
 
 
-# TODO: 可以关闭缓存，默认应该没有缓存
 class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     share_link: str
     share_code: str
     receive_code: str
     path_to_id: MutableMapping[str, int]
-    # TODO: 下面这 2 个字典合并成一个
+    # TODO: 优化缓存，下面这 2 个字典合并成一个 attr_cache
     id_to_attr: MutableMapping[int, AttrDict]
     attr_cache: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
@@ -130,9 +129,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         share_link: str, 
         cookie = None, 
         app: str = "web", 
-        **kwargs, 
     ) -> Self:
-        return cls(P115Client(cookie, app=app), share_link, **kwargs)
+        return cls(P115Client(cookie, app=app), share_link)
 
     @check_response
     def fs_files(self, /, payload: dict) -> dict:
@@ -238,6 +236,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
     ) -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
@@ -245,46 +244,107 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             pid = self.id
         if not path or path == ".":
             return self._attr(pid)
-        patht = self.get_patht(path, pid)
+        if isinstance(path, str):
+            if not force_directory:
+                force_directory = path.endswith(("/", "/.", "/.."))
+            if path.startswith("/"):
+                pid = 0
+            patht, parents = splits(path)
+        else:
+            if not force_directory:
+                force_directory = path[-1] == ""
+            patht = [path[0], *(p for p in path if p)]
+            parents = 0
+            if patht[0] == "":
+                pid = 0
+        if patht == [""]:
+            return self._attr(0)
+
+        pattr = None
+        if pid == 0:
+            if patht[0] != "":
+                patht.insert(0, "")
+        else:
+            pattr = self._attr(pid)
+            ppatht = self.get_patht(pattr["path"])
+            if parents:
+                pattr = None
+                patht = ["", *ppatht[1:-parents], *patht]
+            else:
+                patht = [*ppatht, *patht]
         fullpath = joins(patht)
+
         path_to_id = self.path_to_id
-        if fullpath in path_to_id:
-            id = path_to_id[fullpath]
+        if not force_directory and (id := path_to_id.get(fullpath)):
+            return self._attr(id)
+        if (id := path_to_id.get(fullpath + "/")):
             return self._attr(id)
         if self.full_loaded:
-            raise FileNotFoundError(errno.ENOENT, f"no such file {path!r} (in {pid!r})")
-        attr = self._attr(pid)
-        for name in patht[len(self.get_patht(pid)):]:
-            if not attr["is_directory"]:
-                raise NotADirectoryError(
-                    errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
+            raise FileNotFoundError(
+                errno.ENOENT, 
+                f"no such file {path!r} (in {pid!r})", 
+            )
+
+        if pattr:
+            attr = pattr
+        else:
+            attr = pattr = self._attr(pid)
+        if not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"`pid` does not point to a directory: {pid!r}", 
+            )
+        for name in patht[len(self.get_patht(pid)):-1]:
             for attr in self.iterdir(pid):
-                if attr["name"] == name:
+                if attr["name"] == name and attr["is_directory"]:
+                    pattr = attr
                     pid = cast(int, attr["id"])
                     break
             else:
-                raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} (in {pid!r})")
-        return attr
+                raise FileNotFoundError(
+                    errno.ENOENT, 
+                    f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+                )
+        name = patht[-1]
+        for attr in self.iterdir(pid):
+            if attr["name"] == name:
+                if force_directory and not attr["is_directory"]:
+                    continue
+                return attr
+        else:
+            raise FileNotFoundError(
+                errno.ENOENT, 
+                f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+            )
 
     def attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        refresh: bool = True, 
+        force_directory: bool = False, 
     ) -> AttrDict:
         "获取属性"
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
-            return self._attr(id_or_path["id"])
-        elif isinstance(id_or_path, dict):
+            attr = id_or_path.__dict__
+            if refresh:
+                attr = self._attr(attr["id"])
+        elif isinstance(id_or_path, AttrDict):
             attr = id_or_path
-            if "id" in attr:
-                return self._attr(attr["id"])
-            return self._attr_path(attr["path"])
+            if refresh:
+                attr = self._attr(attr["id"])
         elif isinstance(id_or_path, int):
-            return self._attr(id_or_path)
+            attr = self._attr(id_or_path)
         else:
-            return self._attr_path(id_or_path, pid)
+            return self._attr_path(id_or_path, pid, force_directory=force_directory)
+        if force_directory and not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"{attr['id']} (id={attr['id']}) is not directory"
+            )
+        return attr
 
     def dirlen(
         self, 
@@ -365,13 +425,13 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             page_size = 1_000
         path_class = type(self).path_class
         if isinstance(id_or_path, int):
-            attr = self.attr(id_or_path)
-        elif isinstance(id_or_path, dict):
+            attr = self._attr(id_or_path)
+        elif isinstance(id_or_path, AttrDict):
             attr = id_or_path
         elif isinstance(id_or_path, path_class):
             attr = id_or_path.__dict__
         else:
-            attr = self.attr(id_or_path, pid)
+            attr = self._attr_path(id_or_path, pid, force_directory=True)
         if not attr["is_directory"]:
             raise NotADirectoryError(
                 errno.ENOTDIR, 
@@ -424,7 +484,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     attr["fs"] = self
                     attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
-                    path_to_id[path] = attr["id"]
+                    path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                     yield attr
                 for _ in range((data["count"] - 1) // page_size):
                     payload["offset"] += page_size
@@ -433,7 +493,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                         attr["fs"] = self
                         attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
-                        path_to_id[path] = attr["id"]
+                        path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                         yield attr
             children = self.attr_cache[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in children)

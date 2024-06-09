@@ -20,7 +20,7 @@ else:
 
 
 from collections.abc import Mapping
-from typing import NamedTuple
+from typing import NamedTuple, TypedDict
 
 
 class Task(NamedTuple):
@@ -28,16 +28,21 @@ class Task(NamedTuple):
     dst_path: str
 
 
+class Tasks(TypedDict):
+    success: dict[int, Task]
+    failed: dict[int, Task]
+    unfinished: dict[int, Task]
+
+
 class Result(NamedTuple):
     stats: dict
-    unfinished_tasks: dict[int, Task]
+    tasks: Tasks
 
 
 def main(args) -> Result:
-    from p115 import P115Client, __version__
-
     if args.version:
-        globals()["print"](".".join(map(str, __version__)))
+        from p115 import __version__
+        print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
     import errno
@@ -54,7 +59,7 @@ def main(args) -> Result:
     from textwrap import indent
     from threading import Lock
     from traceback import format_exc
-    from typing import ContextManager
+    from typing import cast, ContextManager
     from urllib.error import HTTPError, URLError
     from urllib.parse import quote
     from urllib.request import urlopen, Request
@@ -62,6 +67,7 @@ def main(args) -> Result:
 
     from concurrenttools import thread_batch
     from httpx import HTTPStatusError
+    from p115 import P115Client
     from rich.progress import (
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     )
@@ -146,12 +152,12 @@ def main(args) -> Result:
                         cookies_path_mtime = mtime
                         need_update = False
                 except FileNotFoundError:
-                    print("[bold yellow][SCAN] 🦾 文件空缺[/bold yellow]")
+                    console_print("[bold yellow][SCAN] 🦾 文件空缺[/bold yellow]")
             if need_update:
                 if exc is None:
-                    print("[bold yellow][SCAN] 🦾 重新扫码[/bold yellow]")
+                    console_print("[bold yellow][SCAN] 🦾 重新扫码[/bold yellow]")
                 else:
-                    print("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                    console_print("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
                         prompt = "[bold yellow][SCAN] 🤖 重新扫码：[/bold yellow]", 
                         exc    = f"    ├ [red]{type(exc).__qualname__}[/red]: {exc}")
                     )
@@ -167,8 +173,7 @@ def main(args) -> Result:
         except HTTPStatusError as e:
             if e.response.status_code != 405:
                 raise
-            exc = e
-        relogin(exc)
+            relogin(e)
         return relogin_wrap(func, *args, **kwds)
 
     client = P115Client(cookies, app=args.app)
@@ -193,6 +198,14 @@ def main(args) -> Result:
         "start_time": datetime.now(), 
         # 总耗时
         "elapsed": "", 
+        # 源路径
+        "src_path": "", 
+        # 源路径属性
+        "src_attr": {}, 
+        # 目标路径
+        "dst_path": "", 
+        # 目标路径对象
+        "dst_object": None, 
         # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         # 成功任务数
@@ -308,7 +321,7 @@ def main(args) -> Result:
         else:
             return fs.get_url_from_pickcode(attr["pickcode"], detail=True)
 
-    def pull(task, submit):
+    def work(task, submit):
         attr, dst_path = task
         try:
             if attr["is_directory"]:
@@ -317,7 +330,7 @@ def main(args) -> Result:
                 except FileNotFoundError:
                     makedirs(dst_path, exist_ok=True)
                     sub_entries = {}
-                    print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
+                    console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
 
                 subattrs = relogin_wrap(fs.listdir_attr, attr["id"])
                 update_tasks(
@@ -333,20 +346,20 @@ def main(args) -> Result:
                         subpath = subattr["path"]
                         is_directory = subattr["is_directory"]
                         if is_directory != entry.is_dir(follow_symlinks=True):
-                            print(f"[bold red][FAIL][/bold red] 💩 类型失配（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold red][FAIL][/bold red] 💩 类型失配（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
                             update_failed(1, not is_directory, subattr.get("size"))
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
                         elif is_directory:
-                            print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
                         elif resume and not is_directory and subattr["size"] == entry.stat().st_size:
-                            print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
                             update_success(1, 1, subattr["size"])
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
-                    subtask = taskmap[subattr["id"]] = Task(subattr, joinpath(dst_path, name))
+                    subtask = unfinished_tasks[subattr["id"]] = Task(subattr, joinpath(dst_path, name))
                     submit(subtask)
-                    update_success(1)
+                update_success(1)
             else:
                 url = get_url(attr)
                 if not url:
@@ -358,34 +371,29 @@ def main(args) -> Result:
                     headers=url.get("headers"), # type: ignore
                     make_reporthook=partial(add_report, attr=attr), 
                 )
-                print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
+                console_print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
             progress.update(statistics_bar, advance=1, description=update_stats_desc())
-            del taskmap[attr["id"]]
+            success_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
         except BaseException as e:
             update_errors(e, attr["is_directory"])
             retryable = True
             if isinstance(e, HTTPError):
                 retryable = e.status != 404
             if retryable and isinstance(e, URLError):
-                print(f"""\
+                console_print(f"""\
 [bold red][FAIL][/bold red] ♻️ 发生错误（将重试）: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]
     ├ {type(e).__qualname__}: {e}""")
                 update_retry(1, not attr["is_directory"])
                 submit(task)
             else:
-                print(f"""\
+                console_print(f"""\
 [bold red][FAIL][/bold red] 💀 发生错误（将抛弃）: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 update_failed(1, not attr["is_directory"], attr.get("size"))
+                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
                 raise
-
-    if isinstance(push_id, str):
-        if not push_id.strip("/"):
-            push_id = 0
-        elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
-            push_id = int(push_id)
 
     with Progress(
         SpinnerColumn(), 
@@ -395,8 +403,13 @@ def main(args) -> Result:
         TransferSpeedColumn(), 
         FileSizeColumn(), 
     ) as progress:
-        print = progress.console.print
-        push_attr: dict = relogin_wrap(fs.attr, push_id)
+        console_print = progress.console.print
+        if isinstance(push_id, str):
+            if not push_id.strip("/"):
+                push_id = 0
+            elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
+                push_id = int(push_id)
+        push_attr = relogin_wrap(fs.attr, push_id)
         name = escape_name(push_attr["name"])
         to_path = normpath(to_path)
         if exists(to_path):
@@ -404,42 +417,48 @@ def main(args) -> Result:
             if push_attr["is_directory"]:
                 if not to_path_isdir:
                     raise NotADirectoryError(errno.ENOTDIR, f"{to_path!r} is not directory")
-                elif not no_root:
+                elif name and not no_root:
                     to_path = joinpath(to_path, name)
                     makedirs(to_path, exist_ok=True)
-            elif to_path_isdir:
+            elif name and to_path_isdir:
                 to_path = joinpath(to_path, name)
                 if isdir(to_path):
                     raise IsADirectoryError(errno.EISDIR, f"{to_path!r} is directory")
         elif no_root:
             makedirs(to_path)
-        else:
+        elif name:
             to_path = joinpath(to_path, name)
             makedirs(to_path)
-        taskmap: dict[int, Task] = {push_attr["id"]: Task(push_attr, to_path)}
-        tasks["total"] += 1
-        unfinished["total"] += 1
-        if push_attr["is_directory"]:
-            tasks["dirs"] += 1
-            unfinished["dirs"] += 1
-        else:
-            tasks["files"] += 1
-            tasks["size"] += push_attr["size"]
-            unfinished["files"] += 1
-            unfinished["size"] += push_attr["size"]
-
-        update_stats_desc = cycle_text(("...", "..", ".", ".."), prefix="📊 [cyan bold]statistics[/cyan bold] ", min_length=32 + 23, interval=0.1).__next__
+        unfinished_tasks: dict[int, Task] = {cast(int, push_attr["id"]): Task(push_attr, to_path)}
+        success_tasks: dict[int, Task] = {}
+        failed_tasks: dict[int, Task] = {}
+        all_tasks: Tasks = {
+            "success": success_tasks, 
+            "failed": failed_tasks, 
+            "unfinished": unfinished_tasks, 
+        }
+        stats["src_path"] = push_attr["path"]
+        stats["src_attr"] = push_attr
+        stats["dst_path"] = to_path
+        stats["dst_object"] = Path(to_path)
+        update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
+        update_stats_desc = cycle_text(
+            ("...", "..", ".", ".."), 
+            prefix="📊 [cyan bold]statistics[/cyan bold] ", 
+            min_length=32 + 23, 
+            interval=0.1, 
+        ).__next__
         statistics_bar = progress.add_task(update_stats_desc(), total=1)
         closed = False
         try:
-            thread_batch(pull, taskmap.values(), max_workers=max_workers)
+            thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
             stats["is_completed"] = True
         finally:
             closed = True
             progress.remove_task(statistics_bar)
             stats["elapsed"] = str(datetime.now() - start_time)
-            print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
-    return Result(stats, taskmap)
+            console_print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
+    return Result(stats, all_tasks)
 
 
 from p115 import AVAILABLE_APPS

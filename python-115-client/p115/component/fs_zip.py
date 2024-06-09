@@ -18,7 +18,7 @@ from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
 from typing import cast, Never, Self
 
-from posixpatht import escape, joins
+from posixpatht import escape, joins, splits
 
 from .client import check_response, P115Client, ExtractProgress
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
@@ -27,7 +27,7 @@ from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 def normalize_info(
     info: Mapping, 
     **extra_data, 
-) -> dict:
+) -> AttrDict:
     timestamp = info.get("time") or 0
     return {
         "name": info["file_name"], 
@@ -159,6 +159,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
     ) -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
@@ -166,46 +167,107 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             pid = self.id
         if not path or path == ".":
             return self._attr(pid)
-        patht = self.get_patht(path, pid)
+        if isinstance(path, str):
+            if not force_directory:
+                force_directory = path.endswith(("/", "/.", "/.."))
+            if path.startswith("/"):
+                pid = 0
+            patht, parents = splits(path)
+        else:
+            if not force_directory:
+                force_directory = path[-1] == ""
+            patht = [path[0], *(p for p in path if p)]
+            parents = 0
+            if patht[0] == "":
+                pid = 0
+        if patht == [""]:
+            return self._attr(0)
+
+        pattr = None
+        if pid == 0:
+            if patht[0] != "":
+                patht.insert(0, "")
+        else:
+            pattr = self._attr(pid)
+            ppatht = self.get_patht(pattr["path"])
+            if parents:
+                pattr = None
+                patht = ["", *ppatht[1:-parents], *patht]
+            else:
+                patht = [*ppatht, *patht]
         fullpath = joins(patht)
+
         path_to_id = self.path_to_id
-        if fullpath in path_to_id:
-            id = path_to_id[fullpath]
+        if not force_directory and (id := path_to_id.get(fullpath)):
+            return self._attr(id)
+        if (id := path_to_id.get(fullpath + "/")):
             return self._attr(id)
         if self.full_loaded:
-            raise FileNotFoundError(errno.ENOENT, f"no such file {path!r} (in {pid!r})")
-        attr = self._attr(pid)
-        for name in patht[len(self.get_patht(pid)):]:
-            if not attr["is_directory"]:
-                raise NotADirectoryError(
-                    errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
+            raise FileNotFoundError(
+                errno.ENOENT, 
+                f"no such file {path!r} (in {pid!r})", 
+            )
+
+        if pattr:
+            attr = pattr
+        else:
+            attr = pattr = self._attr(pid)
+        if not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"`pid` does not point to a directory: {pid!r}", 
+            )
+        for name in patht[len(self.get_patht(pid)):-1]:
             for attr in self.iterdir(pid):
-                if attr["name"] == name:
+                if attr["name"] == name and attr["is_directory"]:
+                    pattr = attr
                     pid = cast(int, attr["id"])
                     break
             else:
-                raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} (in {pid!r})")
-        return attr
+                raise FileNotFoundError(
+                    errno.ENOENT, 
+                    f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+                )
+        name = patht[-1]
+        for attr in self.iterdir(pid):
+            if attr["name"] == name:
+                if force_directory and not attr["is_directory"]:
+                    continue
+                return attr
+        else:
+            raise FileNotFoundError(
+                errno.ENOENT, 
+                f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+            )
 
     def attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        refresh: bool = True, 
+        force_directory: bool = False, 
     ) -> AttrDict:
         "获取属性"
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
-            return self._attr(id_or_path["id"])
-        elif isinstance(id_or_path, dict):
+            attr = id_or_path.__dict__
+            if refresh:
+                attr = self._attr(attr["id"])
+        elif isinstance(id_or_path, AttrDict):
             attr = id_or_path
-            if "id" in attr:
-                return self._attr(attr["id"])
-            return self._attr_path(attr["path"])
+            if refresh:
+                attr = self._attr(attr["id"])
         elif isinstance(id_or_path, int):
-            return self._attr(id_or_path)
+            attr = self._attr(id_or_path)
         else:
-            return self._attr_path(id_or_path, pid)
+            return self._attr_path(id_or_path, pid, force_directory=force_directory)
+        if force_directory and not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"{attr['id']} (id={attr['id']}) is not directory"
+            )
+        return attr
 
     def extract(
         self, 
@@ -247,7 +309,15 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             return iter(())
         if page_size <= 0 or page_size > 999:
             page_size = 999
-        attr = self.attr(id_or_path, pid)
+        path_class = type(self).path_class
+        if isinstance(id_or_path, int):
+            attr = self._attr(id_or_path)
+        elif isinstance(id_or_path, AttrDict):
+            attr = id_or_path
+        elif isinstance(id_or_path, path_class):
+            attr = id_or_path.__dict__
+        else:
+            attr = self._attr_path(id_or_path, pid, force_directory=True)
         if not attr["is_directory"]:
             raise NotADirectoryError(
                 errno.ENOTDIR, 
@@ -267,7 +337,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     attr = normalize_info(info, fs=self)
                     path = joinpath(dirname, escape(attr["name"]))
                     attr.update(id=nextid(), parent_id=id, path=path)
-                    path_to_id[path] = attr["id"]
+                    path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                     yield attr
                 next_marker = data["next_marker"]
                 while next_marker:
@@ -276,7 +346,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                         attr = normalize_info(info, fs=self)
                         path = joinpath(dirname, escape(attr["name"]))
                         attr.update(id=nextid(), parent_id=id, path=path)
-                        path_to_id[path] = attr["id"]
+                        path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                         yield attr
                     next_marker = data["next_marker"]
             children = self.attr_cache[id] = tuple(iterdir())

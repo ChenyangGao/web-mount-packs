@@ -5,7 +5,7 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 1)
 __all__ = [
     "altsep", "curdir", "extsep", "pardir", "pathsep", "sep", "escape", "unescape", 
-    "abspath, ""basename", "commonpath", "commonpatht", "commonprefix", "dirname", 
+    "abspath", "basename", "commonpath", "commonpatht", "commonprefix", "dirname", 
     "isabs", "join", "joinpath", "joins", "normcase", "normpath", "normpatht", 
     "split", "splitdrive", "splitext", "splits", "realpath", "relpath", 
 ]

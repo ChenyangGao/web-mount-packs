@@ -20,14 +20,15 @@ else:
 
 
 def main(args):
-    from p115 import P115Client, __version__
-
     if args.version:
+        from p115 import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
     from os.path import expanduser, dirname, join as joinpath, realpath
     from sys import stdout
+
+    from p115 import P115Client
 
     cookies = args.cookies
     cookies_path = args.cookies_path

@@ -236,7 +236,7 @@ class P115Path(P115PathBase):
 
 
 class P115FileSystem(P115FileSystemBase[P115Path]):
-    attr_cache: None | MutableMapping[int, dict]
+    attr_cache: None | MutableMapping[int, AttrDict]
     path_to_id: None | MutableMapping[str, int]
     get_version: None | Callable
     path_class = P115Path
@@ -246,7 +246,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         client: str | P115Client, 
         password: str = "", 
-        attr_cache: None | MutableMapping[int, dict] = None, 
+        attr_cache: None | MutableMapping[int, AttrDict] = None, 
         path_to_id: None | MutableMapping[str, int] = None, 
         get_version: None | Callable = lambda attr: attr.get("mtime", 0), 
     ):
@@ -299,10 +299,18 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         cookie = None, 
         app: str = "web", 
-        **kwargs, 
+        password: str = "", 
+        attr_cache: None | MutableMapping[int, AttrDict] = None, 
+        path_to_id: None | MutableMapping[str, int] = None, 
+        get_version: None | Callable = lambda attr: attr.get("mtime", 0), 
     ) -> Self:
-        kwargs["client"] = P115Client(cookie, app=app)
-        return cls(**kwargs)
+        return cls(
+            P115Client(cookie, app=app), 
+            password=password, 
+            attr_cache=attr_cache, 
+            path_to_id=path_to_id, 
+            get_version=get_version, 
+        )
 
     @property
     def password(self, /) -> str:
@@ -445,9 +453,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 pass
         if attr["is_directory"]:
             path_to_id = self.path_to_id
-            if path_to_id is None:
-                pop_path = None
-            else:
+            if path_to_id:
                 def pop_path(path):
                     try:
                         del path_to_id[path]
@@ -465,14 +471,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     pass
                 else:
                     for subid, subattr in cache["children"].items():
-                        if pop_path is not None:
-                            pop_path(subattr["path"])
-                        if subattr["is_directory"]:
+                        is_directory = subattr["is_directory"]
+                        if path_to_id:
+                            pop_path(subattr["path"] + "/"[:is_directory])
+                        if is_directory:
                             put(subid)
-            if path_to_id is not None and pop_path is not None:
-                dirname = attr["path"]
+            if path_to_id:
+                dirname = attr["path"] + "/"
                 pop_path(dirname)
-                dirname += "/"
                 for k in tuple(k for k in path_to_id if startswith(k, dirname)):
                     pop_path(k)
 
@@ -494,23 +500,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 pass
         if attr["is_directory"]:
             path_to_id = self.path_to_id
-            if path_to_id is None:
-                pop_path = None
-            else:
+            if path_to_id:
                 def pop_path(path):
                     try:
                         del path_to_id[path]
                     except:
                         pass
             startswith = str.startswith
-            old_path = attr["path"]
-            new_path = new_attr["path"]
-            if pop_path is not None:
+            old_path = attr["path"] + "/"
+            new_path = new_attr["path"] + "/"
+            if path_to_id:
                 pop_path(old_path)
             if path_to_id is not None:
                 path_to_id[new_path] = id
-            old_path += "/"
-            new_path += "/"
             len_old_path = len(old_path)
             dq = deque((id,))
             get, put = dq.popleft, dq.append
@@ -523,16 +525,17 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     pass
                 else:
                     for subid, subattr in cache["children"].items():
+                        is_directory = subattr["is_directory"]
                         subpath = subattr["path"]
                         if startswith(subpath, old_path):
                             new_subpath = subattr["path"] = new_path + subpath[len_old_path:]
-                            if pop_path is not None:
-                                pop_path(subpath)
+                            if path_to_id:
+                                pop_path(subpath + "/"[:is_directory])
                             if path_to_id is not None:
-                                path_to_id[new_subpath] = subid
+                                path_to_id[new_subpath + "/"[:is_directory]] = subid
                         if subattr["is_directory"]:
                             put(subid)
-            if path_to_id is not None and pop_path is not None:
+            if path_to_id:
                 for k in tuple(k for k in path_to_id if startswith(k, old_path)):
                     pop_path(k)
 
@@ -565,7 +568,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
         attr = normalize_info(data, fs=self)
         pid = attr["parent_id"]
-        attr_old = None
+        old_path = ""
         if attr_cache is not None:
             if get_version is None:
                 version = None
@@ -587,6 +590,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 children[id] = attr
             else:
                 attr_old = attrs["attr"]
+                old_path = attr_old["path"]
                 if version != attrs.get("version"):
                     attrs.pop("version", None)
                 attr_old.update(attr)
@@ -599,10 +603,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 path = attr["path"] = "/" + escape(attr["name"])
             path_to_id = self.path_to_id
             if path_to_id is not None:
-                path_to_id[path] = id
-                if attr_old and path != attr_old["path"]:
+                is_directory = attr["is_directory"]
+                path_to_id[path + "/"[:is_directory]] = id
+                if old_path and old_path != path:
                     try:
-                        del path_to_id[attr_old["path"]]
+                        del path_to_id[old_path + "/"[:is_directory]]
                     except LookupError:
                         pass
         return attr
@@ -612,53 +617,124 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
     )  -> AttrDict:
         if isinstance(path, PathLike):
             path = fspath(path)
-        if isinstance(path, str):
-            if path.startswith("/"):
-                pid = 0
-        elif path and path[0] == "":
-            pid = 0
         if pid is None:
             pid = self.id
         if not path or path == ".":
             return self._attr(pid)
-        patht = self.get_patht(path, pid)
+        if isinstance(path, str):
+            if not force_directory:
+                force_directory = path.endswith(("/", "/.", "/.."))
+            if path.startswith("/"):
+                pid = 0
+            patht, parents = splits(path)
+        else:
+            if not force_directory:
+                force_directory = path[-1] == ""
+            patht = list(path)
+            parents = 0
+            if patht[0] == "":
+                pid = 0
+        if patht == [""]:
+            return self._attr(0)
+
+        pattr = None
+        if pid == 0:
+            if patht[0] != "":
+                patht.insert(0, "")
+        else:
+            pattr = self._attr(pid)
+            ppatht = self.get_patht(pattr["path"])
+            if parents:
+                pattr = None
+                patht = ["", *ppatht[1:-parents], *patht]
+            else:
+                patht = [*ppatht, *patht]
         fullpath = joins(patht)
+
         path_to_id = self.path_to_id
-        if path_to_id is not None and fullpath in path_to_id:
-            id = path_to_id[fullpath]
-            try:
-                attr = self._attr(id)
-                if attr["path"] == fullpath:
-                    return attr
-            except FileNotFoundError:
-                pass
-            try:
-                del path_to_id[fullpath]
-            except:
-                pass
-        attr = self._attr(pid)
-        for name in patht[len(self.get_patht(attr["path"])):]:
-            if not attr["is_directory"]:
-                raise NotADirectoryError(
-                    errno.ENOTDIR, f"`pid` does not point to a directory: {pid!r}")
+        if path_to_id:
+            if not force_directory and (id := path_to_id.get(fullpath)):
+                try:
+                    attr = self._attr(id)
+                    if attr["path"] == fullpath:
+                        return attr
+                    else:
+                        del path_to_id[fullpath]
+                except FileNotFoundError:
+                    pass
+            if (id := path_to_id.get(fullpath + "/")):
+                try:
+                    attr = self._attr(id)
+                    if attr["path"] == fullpath:
+                        return attr
+                    else:
+                        del path_to_id[fullpath + "/"]
+                except FileNotFoundError:
+                    pass
+            if pattr:
+                dirname = pattr["path"]
+                start = len(self.get_patht(dirname))
+                dirname += "/"
+            else:
+                start = 1
+                dirname = "/"
+            parents_ls = [(dirname := f"{dirname}{escape(name)}/") for name in patht[start:-1]]
+            for dirname in reversed(parents_ls):
+                if id := path_to_id.get(dirname):
+                    try:
+                        pattr = self._attr(id)
+                        if pattr["path"] == dirname[:-1]:
+                            break
+                        else:
+                            del path_to_id[dirname]
+                    except FileNotFoundError:
+                        pass
+
+        if pattr:
+            attr = pattr
+        else:
+            attr = pattr = self._attr(pid)
+        if not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"`pid` does not point to a directory: {pid!r}", 
+            )
+        for name in patht[len(self.get_patht(attr["path"])):-1]:
             for attr in self.iterdir(pid):
-                if attr["name"] == name:
+                if attr["name"] == name and attr["is_directory"]:
+                    pattr = attr
                     pid = cast(int, attr["id"])
                     break
             else:
-                raise FileNotFoundError(errno.ENOENT, f"no such file {name!r} (in {pid!r})")
-        return attr
+                raise FileNotFoundError(
+                    errno.ENOENT, 
+                    f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+                )
+        name = patht[-1]
+        for attr in self.iterdir(pid):
+            if attr["name"] == name:
+                if force_directory and not attr["is_directory"]:
+                    continue
+                return attr
+        else:
+            raise FileNotFoundError(
+                errno.ENOENT, 
+                f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+            )
 
     def _dir_get_ancestors(self, id: int, /) -> list[dict]:
         ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
         if id:
-            ls.extend(
-                {"name": p["name"], "id": int(p["cid"]), "parent_id": int(p["pid"]), "is_directory": True} 
-                for p in self.fs_files({"cid": id, "limit": 1})["path"][1:]
-            )
+            ls.extend({
+                "name": p["name"], 
+                "id": int(p["cid"]), 
+                "parent_id": int(p["pid"]), 
+                "is_directory": True, 
+            } for p in self.fs_files({"cid": id, "limit": 1})["path"][1:])
         return ls
 
     def attr(
@@ -666,16 +742,29 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        refresh: bool = True, 
+        force_directory: bool = False, 
     )  -> AttrDict:
         "获取属性"
-        if isinstance(id_or_path, P115Path):
-            return id_or_path.__dict__
-        elif isinstance(id_or_path, dict):
-            return id_or_path
+        path_class = type(self).path_class
+        if isinstance(id_or_path, path_class):
+            attr = id_or_path.__dict__
+            if refresh:
+                attr = self._attr(attr["id"])
+        elif isinstance(id_or_path, AttrDict):
+            attr = id_or_path
+            if refresh:
+                attr = self._attr(attr["id"])
         elif isinstance(id_or_path, int):
-            return self._attr(id_or_path)
+            attr = self._attr(id_or_path)
         else:
-            return self._attr_path(id_or_path, pid)
+            return self._attr_path(id_or_path, pid, force_directory=force_directory)
+        if force_directory and not attr["is_directory"]:
+            raise NotADirectoryError(
+                errno.ENOTDIR, 
+                f"{attr['id']} (id={attr['id']}) is not directory"
+            )
+        return attr
 
     def iterdir(
         self, 
@@ -737,14 +826,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             id = id_or_path
         else:
             attr = None
+            path_class = type(self).path_class
             if not refresh:
-                path_class = type(self).path_class
-                if isinstance(id_or_path, dict):
+                if isinstance(id_or_path, AttrDict):
                     attr = id_or_path
                 elif isinstance(id_or_path, path_class):
                     attr = id_or_path.__dict__
             if attr is None:
-                attr = self.attr(id_or_path, pid)
+                if isinstance(id_or_path, int):
+                    attr = self._attr(id_or_path)
+                elif isinstance(id_or_path, (AttrDict, path_class)):
+                    attr = self._attr(id_or_path["id"])
+                else:
+                    attr = self._attr_path(id_or_path, pid, force_directory=True)
             if not attr["is_directory"]:
                 raise NotADirectoryError(
                     errno.ENOTDIR, 
@@ -770,9 +864,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ):
             def normalize_attr(attr, dirname, /, **extra):
                 attr = normalize_info(attr, **extra)
-                path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                is_directory = attr["is_directory"]
+                path = attr["path"] = dirname + escape(attr["name"])
                 if path_to_id is not None:
-                    path_to_id[path] = attr["id"]
+                    path_to_id[path + "/"[:is_directory]] = attr["id"]
                 if attr_cache is not None:
                     try:
                         id_attrs = attr_cache[attr["id"]]
@@ -784,14 +879,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         except LookupError:
                             id_attrs["attr"] = attr
                         else:
-                            if path != old_attr["path"] and path_to_id is not None:
+                            if path_to_id and path != old_attr["path"]:
                                 try:
-                                    del path_to_id[old_attr["path"]]
+                                    del path_to_id[old_attr["path"] + "/"[:is_directory]]
                                 except LookupError:
                                     pass
                             old_attr.update(attr)
                 return attr
-            def iterdir(fetch_all: bool = True) -> Iterator[dict]:
+            def iterdir(fetch_all: bool = True) -> Iterator[AttrDict]:
                 nonlocal start, stop
                 get_files = self.fs_files
                 if fetch_all:
@@ -830,7 +925,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             set_order_payload["fc_mix"] = payload["fc_mix"]
                         self.client.fs_files_order(set_order_payload)
                 resp = get_files(payload)
-                dirname = joins(("", *(a["name"] for a in resp["path"][1:])))
+                if len(resp["path"]) == 1:
+                    dirname = "/"
+                else:
+                    dirname = joins(("", *(a["name"] for a in resp["path"][1:]))) + "/"
                 if path_to_id is not None:
                     path_to_id[dirname] = id
                 count = resp["count"]
@@ -1223,7 +1321,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
     ) -> bool:
         "路径是否为空文件或空目录"
-        attr: dict | P115Path
+        attr: AttrDict | P115Path
         if isinstance(id_or_path, P115Path):
             attr = id_or_path
         else:
@@ -1280,7 +1378,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             if attr["is_directory"]:
                 return attr
             raise NotADirectoryError(
-                errno.ENOTDIR, f"{attr['path']!r} is not a directory")
+                errno.ENOTDIR, 
+                f"{attr['path']!r} (id={attr['id']}) is not a directory", 
+            )
         path_class = type(self).path_class
         if isinstance(path, (AttrDict, path_class)):
             path = path["path"]
@@ -1294,31 +1394,25 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             pid = self.id
         elif patht[0] == "":
             pid = 0
-        get_attr = self.attr
         if not patht:
             if parents:
                 ancestors = self.get_ancestors(pid)
                 idx = min(parents-1, len(ancestors))
                 pid = cast(int, ancestors[-idx]["id"])
-            return get_attr(pid)
+            return self._attr(pid)
         elif patht == [""]:
-            return get_attr(0)
+            return self._attr(0)
         exists = False
         for name in patht:
             try:
-                attr = get_attr([name], pid)
+                attr = self._attr_path([name], pid, force_directory=True)
             except FileNotFoundError:
                 exists = False
                 resp = self.fs_mkdir(name, pid)
                 pid = int(resp["cid"])
-                attr = get_attr(pid)
+                attr = self._attr(pid)
             else:
                 exists = True
-                if not attr["is_directory"]:
-                    raise NotADirectoryError(
-                        errno.ENOTDIR, 
-                        f"{path!r} (in {pid!r}): there is a superior non-directory", 
-                    )
                 pid = attr["id"]
         if not exist_ok and exists:
             raise FileExistsError(errno.EEXIST, f"{path!r} (in {pid!r}) exists")
@@ -1334,9 +1428,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if isinstance(path, int):
             attr = self.attr(path)
             if attr["is_directory"]:
-                raise FileExistsError(errno.EEXIST, f"{attr['path']!r} already exists")
+                raise FileExistsError(
+                    errno.EEXIST, 
+                    f"{attr['path']!r} (id={attr['id']}) already exists", 
+                )
             raise NotADirectoryError(
-                errno.ENOTDIR, f"{attr['path']!r} is not a directory")
+                errno.ENOTDIR, 
+                f"{attr['path']!r} (id={attr['id']}) is not a directory", 
+            )
         path_class = type(self).path_class
         if isinstance(path, (AttrDict, path_class)):
             path = path["path"]
@@ -1359,19 +1458,16 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         get_attr = self._attr_path
         for i, name in enumerate(patht, 1):
             try:
-                attr = get_attr([name], pid)
+                attr = get_attr([name], pid, force_directory=True)
             except FileNotFoundError:
                 break
             else:
-                if not attr["is_directory"]:
-                    raise NotADirectoryError(
-                        errno.ENOTDIR, 
-                        f"{attr['id']!r} ({name!r} in {pid!r}) is not a directory", 
-                    )
                 pid = attr["id"]
         else:
             raise FileExistsError(
-                errno.EEXIST, f"{path!r} (in {pid!r}) already exists")
+                errno.EEXIST, 
+                f"{path!r} (in {pid!r}) already exists", 
+            )
         if i < len(patht):
             raise FileNotFoundError(
                 errno.ENOENT, 
@@ -1445,18 +1541,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
     ) -> AttrDict:
         "逐级往上尝试删除空目录"
-        attr = self.attr(id_or_path, pid)
+        attr = self.attr(id_or_path, pid, force_directory=True)
         id = attr["id"]
-        if not attr["is_directory"]:
-            raise NotADirectoryError(
-                errno.ENOTDIR, 
-                f"{attr['path']!r} (id={id!r}) is not a directory", 
-            )
         delid = 0
         pattr = attr
         get_files = self.fs_files
         while id:
-            files = get_files({"id": id, "limit": 1})
+            files = get_files({"cid": id, "limit": 1})
             if files["count"] > 1:
                 break
             delid = id
@@ -1615,14 +1706,18 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
     ) -> AttrDict:
         "删除空目录"
-        attr = self.attr(id_or_path, pid)
+        attr = self.attr(id_or_path, pid, force_directory=True)
         id = attr["id"]
         if id == 0:
-            raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
-        elif not attr["is_directory"]:
-            raise NotADirectoryError(errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
-        elif self.fs_files({"id": id, "limit": 1})["count"]:
-            raise OSError(errno.ENOTEMPTY, f"directory is not empty: {id_or_path!r} (in {pid!r})")
+            raise PermissionError(
+                errno.EPERM, 
+                "remove the root directory is not allowed", 
+            )
+        elif self.dirlen(id):
+            raise OSError(
+                errno.ENOTEMPTY, 
+                f"directory is not empty: {attr['path']!r} (id={attr['id']!r})", 
+            )
         self.fs_delete(id)
         self._clear_cache(attr) 
         return attr
@@ -1857,7 +1952,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         onerror: None | bool | Callable[[OSError], bool] = True, 
     ) -> Iterator[AttrDict]:
         "上传到路径"
-        remote_path_attr_map: None | dict[str, dict] = None
+        remote_path_attr_map: None | dict[str, AttrDict] = None
         try:
             attr = self.attr(path, pid)
         except FileNotFoundError:

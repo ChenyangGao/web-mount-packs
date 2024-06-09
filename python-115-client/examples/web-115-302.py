@@ -279,8 +279,7 @@ def relogin_wrap(func, /, *args, **kwds):
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
-        exc = e
-    relogin(exc)
+        relogin(e)
     return relogin_wrap(func, *args, **kwds)
 
 

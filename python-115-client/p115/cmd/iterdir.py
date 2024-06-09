@@ -26,15 +26,16 @@ else:
 
 
 def main(args):
-    from p115 import P115Client, P115Path, __version__
-
     if args.version:
+        from p115 import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
     from collections.abc import Callable, Sequence
     from os.path import expanduser, dirname, join as joinpath, realpath
     from sys import stdout
+
+    from p115 import P115Client, P115Path
 
     cookies = args.cookies
     cookies_path = args.cookies_path

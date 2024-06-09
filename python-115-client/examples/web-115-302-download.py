@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __doc__ = "从 115 的挂载下载文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -33,13 +33,14 @@ from gzip import GzipFile
 from json import load
 from os import makedirs, scandir
 from os.path import exists, isdir, join as joinpath, normpath
+from pathlib import Path
 from platform import system
 from textwrap import indent
 from threading import Lock
 from traceback import format_exc
-from typing import ContextManager, NamedTuple
+from typing import cast, ContextManager, NamedTuple, TypedDict
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from urllib.request import urlopen, Request
 
 try:
@@ -67,9 +68,15 @@ class Task(NamedTuple):
     dst_path: str
 
 
+class Tasks(TypedDict):
+    success: dict[int, Task]
+    failed: dict[int, Task]
+    unfinished: dict[int, Task]
+
+
 class Result(NamedTuple):
     stats: dict
-    unfinished_tasks: dict[int, Task]
+    tasks: Tasks
 
 
 match system():
@@ -141,6 +148,14 @@ def main() -> Result:
         "start_time": datetime.now(), 
         # 总耗时
         "elapsed": "", 
+        # 源路径
+        "src_path": "", 
+        # 源路径属性
+        "src_attr": {}, 
+        # 目标路径
+        "dst_path": "", 
+        # 目标路径对象
+        "dst_object": None, 
         # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         # 成功任务数
@@ -282,9 +297,9 @@ def main() -> Result:
                             update_success(1, 1, subattr["size"])
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
-                    subtask = taskmap[subattr["id"]] = Task(subattr, joinpath(dst_path, name))
+                    subtask = unfinished_tasks[subattr["id"]] = Task(subattr, joinpath(dst_path, name))
                     submit(subtask)
-                    update_success(1)
+                update_success(1)
             else:
                 download(
                     attr["url"], 
@@ -295,7 +310,7 @@ def main() -> Result:
                 print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
             progress.update(statistics_bar, advance=1, description=update_stats_desc())
-            del taskmap[attr["id"]]
+            success_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
         except BaseException as e:
             update_errors(e, attr["is_directory"])
             retryable = True
@@ -313,6 +328,7 @@ def main() -> Result:
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 update_failed(1, not attr["is_directory"], attr.get("size"))
+                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
                 raise
 
     if isinstance(push_id, str):
@@ -320,8 +336,7 @@ def main() -> Result:
             push_id = 0
         elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
             push_id = int(push_id)
-
-    push_attr: dict = attr(push_id, base_url)
+    push_attr = attr(push_id, base_url)
     name = escape_name(push_attr["name"])
     to_path = normpath(to_path)
     if exists(to_path):
@@ -329,29 +344,32 @@ def main() -> Result:
         if push_attr["is_directory"]:
             if not to_path_isdir:
                 raise NotADirectoryError(errno.ENOTDIR, f"{to_path!r} is not directory")
-            elif not no_root:
+            elif name and not no_root:
                 to_path = joinpath(to_path, name)
                 makedirs(to_path, exist_ok=True)
-        elif to_path_isdir:
+        elif name and to_path_isdir:
             to_path = joinpath(to_path, name)
             if isdir(to_path):
                 raise IsADirectoryError(errno.EISDIR, f"{to_path!r} is directory")
     elif no_root:
         makedirs(to_path)
-    else:
+    elif name:
         to_path = joinpath(to_path, name)
         makedirs(to_path)
-    taskmap: dict[int, Task] = {push_attr["id"]: Task(push_attr, to_path)}
-    tasks["total"] += 1
-    unfinished["total"] += 1
-    if push_attr["is_directory"]:
-        tasks["dirs"] += 1
-        unfinished["dirs"] += 1
-    else:
-        tasks["files"] += 1
-        tasks["size"] += push_attr["size"]
-        unfinished["files"] += 1
-        unfinished["size"] += push_attr["size"]
+    unfinished_tasks: dict[int, Task] = {cast(int, push_attr["id"]): Task(push_attr, to_path)}
+    success_tasks: dict[int, Task] = {}
+    failed_tasks: dict[int, Task] = {}
+    all_tasks: Tasks = {
+        "success": success_tasks, 
+        "failed": failed_tasks, 
+        "unfinished": unfinished_tasks, 
+    }
+    stats["src_path"] = urljoin(base_url, cast(str, push_attr["path"]))
+    stats["src_attr"] = push_attr
+    stats["dst_path"] = to_path
+    stats["dst_object"] = Path(to_path)
+    update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
+
     with Progress(
         SpinnerColumn(), 
         *Progress.get_default_columns(), 
@@ -360,19 +378,24 @@ def main() -> Result:
         TransferSpeedColumn(), 
         FileSizeColumn(), 
     ) as progress:
-        update_stats_desc = cycle_text(("...", "..", ".", ".."), prefix="📊 [cyan bold]statistics[/cyan bold] ", min_length=32 + 23, interval=0.1).__next__
+        update_stats_desc = cycle_text(
+            ("...", "..", ".", ".."), 
+            prefix="📊 [cyan bold]statistics[/cyan bold] ", 
+            min_length=32 + 23, 
+            interval=0.1, 
+        ).__next__
         statistics_bar = progress.add_task(update_stats_desc(), total=1)
         print = progress.console.print
         closed = False
         try:
-            thread_batch(work, taskmap.values(), max_workers=max_workers)
+            thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
             stats["is_completed"] = True
         finally:
             closed = True
             progress.remove_task(statistics_bar)
             stats["elapsed"] = str(datetime.now() - start_time)
             print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
-    return Result(stats, taskmap)
+    return Result(stats, all_tasks)
 
 
 if __name__ == "__main__":

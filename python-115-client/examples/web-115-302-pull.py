@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -50,9 +50,9 @@ from _thread import start_new_thread
 from threading import Lock, current_thread
 from time import perf_counter, sleep
 from traceback import format_exc
-from typing import cast, ContextManager, NamedTuple
+from typing import cast, ContextManager, NamedTuple, TypedDict
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from urllib.request import urlopen, Request
 from warnings import warn
 
@@ -138,9 +138,15 @@ class Task(NamedTuple):
     dst_attr: None | Mapping = None
 
 
+class Tasks(TypedDict):
+    success: dict[int, Task]
+    failed: dict[int, Task]
+    unfinished: dict[int, Task]
+
+
 class Result(NamedTuple):
     stats: dict
-    unfinished_tasks: dict[int, Task]
+    tasks: Tasks
 
 
 class ColoredLevelNameFormatter(logging.Formatter):
@@ -365,8 +371,7 @@ def relogin_wrap(func, /, *args, **kwds):
     except HTTPStatusError as e:
         if e.response.status_code != 405:
             raise
-        exc = e
-    relogin(exc)
+        relogin(e)
     return relogin_wrap(func, *args, **kwds)
 
 
@@ -382,6 +387,14 @@ def pull(
         "start_time": datetime.now(), 
         # 总耗时
         "elapsed": "", 
+        # 源路径
+        "src_path": "", 
+        # 源路径属性
+        "src_attr": {}, 
+        # 目标路径
+        "dst_path": "", 
+        # 目标路径属性
+        "dst_attr": {}, 
         # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         # 成功任务数
@@ -534,7 +547,7 @@ def pull(
                         ))
                     finally:
                         if dattr:
-                            taskmap[attr["id"]] = Task(attr, pid, dattr)
+                            unfinished_tasks[attr["id"]] = Task(attr, pid, dattr)
                 if subdattrs is None:
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
@@ -557,10 +570,10 @@ def pull(
                                 src_path = highlight_path(subattr["path"]), 
                                 dst_path = highlight_path(subdattr["path"]), 
                             ))
-                        subtask = taskmap[subattr["id"]] = Task(subattr, dirid, subdattr)
+                        subtask = unfinished_tasks[subattr["id"]] = Task(subattr, dirid, subdattr)
                         submit(subtask)
                     elif subattr["sha1"] != subdattr.get("sha1"):
-                        subtask = taskmap[subattr["id"]] = Task(subattr, dirid, None)
+                        subtask = unfinished_tasks[subattr["id"]] = Task(subattr, dirid, None)
                         submit(subtask)
                     else:
                         if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
@@ -613,7 +626,7 @@ def pull(
                     resp     = highlight_as_json(resp_data), 
                 ))
                 update_success(1, 1, attr["size"])
-            del taskmap[attr["id"]]
+            success_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
         except BaseException as e:
             update_errors(e, attr["is_directory"])
             retryable = True
@@ -647,40 +660,55 @@ def pull(
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
                 update_failed(1, not attr["is_directory"], attr.get("size"))
+                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
                 raise
         finally:
             del thread_stats[cur_thread]
 
+    to_attr = None
     if isinstance(push_id, str):
         if not push_id.strip("/"):
             push_id = 0
         elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
             push_id = int(push_id)
+    push_attr = attr(push_id, base_url)
     if isinstance(to_pid, str):
         if not to_pid.strip("/"):
             to_pid = 0
         elif not to_pid.startswith("0") and to_pid.isascii() and to_pid.isdecimal():
             to_pid = int(to_pid)
         else:
-            to_pid = fs.makedirs(to_pid, exist_ok=True)["id"]
-    if push_id == 0:
-        push_attr = {"id": 0, "is_directory": True}
-    else:
-        push_attr = attr(push_id, base_url)
-    taskmap: dict[int, Task] = {
-        push_attr["id"]: Task(push_attr, cast(int, to_pid), None)}
+            to_attr = fs.makedirs(to_pid, exist_ok=True)
+            to_pid = to_attr["id"]
+    if not to_attr:
+        to_attr = fs.attr(to_pid)
+
+    unfinished_tasks: dict[int, Task] = {
+        cast(int, push_attr["id"]): Task(push_attr, cast(int, to_pid), to_attr)}
+    success_tasks: dict[int, Task] = {}
+    failed_tasks: dict[int, Task] = {}
+    all_tasks: Tasks = {
+        "success": success_tasks, 
+        "failed": failed_tasks, 
+        "unfinished": unfinished_tasks, 
+    }
+    stats["src_path"] = urljoin(base_url, cast(str, push_attr["path"]))
+    stats["src_attr"] = push_attr
+    stats["dst_path"] = to_attr["path"]
+    stats["dst_attr"] = to_attr
     update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
+
     try:
         is_completed = False
         if stats_interval:
             with ctx_monitor(show_stats, interval=stats_interval):
-                thread_batch(work, taskmap.values(), max_workers=max_workers)
+                thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
         else:
-            thread_batch(work, taskmap.values(), max_workers=max_workers)
+            thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
         is_completed = stats["is_completed"] = True
     finally:
         stats["elapsed"] = str(datetime.now() - start_time)
-        if is_completed and not taskmap:
+        if is_completed and not unfinished_tasks:
             logger.info("{emoji} {prompt}\n    ├ statistics = {stats}".format(
                 emoji  = blink_mark("📊"), 
                 prompt = highlight_prompt("[STAT] 🥳 统计信息: ", "green"), 
@@ -697,11 +725,11 @@ def pull(
                     if is_completed else
                     highlight_prompt("[STAT] 🤯 统计信息: ", "red")
                 ), 
-                count  = highlight_id(len(taskmap)), 
-                tasks  = highlight_object(taskmap), 
+                count  = highlight_id(len(unfinished_tasks)), 
+                tasks  = highlight_object(unfinished_tasks), 
                 stats  = highlight_object(stats), 
             ))
-    return Result(stats, taskmap)
+    return Result(stats, all_tasks)
 
 
 if not cookies:
