@@ -324,7 +324,7 @@ def main(args) -> Result:
             return fs.get_url_from_pickcode(attr["pickcode"], detail=True)
 
     def work(task, submit):
-        attr, dst_path = task
+        attr, dst_path, *_ = task
         try:
             if attr["is_directory"]:
                 try:

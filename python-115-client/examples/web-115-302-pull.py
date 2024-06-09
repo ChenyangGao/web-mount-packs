@@ -509,7 +509,7 @@ def pull(
         ))
 
     def work(task, submit):
-        attr, pid, dattr = task
+        attr, pid, dattr, *_ = task
         cur_thread = current_thread()
         thread_stats[cur_thread] = {"task_id": attr["id"], "start_time": datetime.now()}
         try:
@@ -548,7 +548,7 @@ def pull(
                         ))
                     finally:
                         if dattr:
-                            unfinished_tasks[attr["id"]] = Task(attr, pid, dattr)
+                            unfinished_tasks[attr["id"]] = task._replace(dst_attr=dattr)
                 if subdattrs is None:
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
