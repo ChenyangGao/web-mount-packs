@@ -15,6 +15,11 @@ parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载
 parser.add_argument("-p", "--push-id", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
 parser.add_argument("-t", "--to-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
+parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
+                    help="""最大重试次数。
+    - 如果小于 0（默认），则发生错误就抛出
+    - 如果等于 0，则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
+    - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
@@ -27,6 +32,7 @@ import errno
 
 from collections.abc import Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
 from gzip import GzipFile
@@ -63,10 +69,12 @@ except ImportError:
     from urlopen import download
 
 
-class Task(NamedTuple):
+@dataclass
+class Task:
     src_attr: Mapping
     dst_path: str
-    reason: None | BaseException = None
+    times: int = 0
+    reasons: list[BaseException] = field(default_factory=list)
 
 
 class Tasks(TypedDict):
@@ -138,6 +146,7 @@ def main() -> Result:
     push_id = args.push_id
     to_path = args.to_path
     max_workers = args.max_workers
+    max_retries = args.max_retries
     resume = args.resume
     no_root = args.no_root
     if max_workers <= 0:
@@ -262,9 +271,11 @@ def main() -> Result:
         finally:
             progress.remove_task(task)
 
-    def work(task, submit):
-        attr, dst_path, *_ = task
+    def work(task: Task, submit):
+        attr, dst_path = task.src_attr, task.dst_path
+        task_id = attr["id"]
         try:
+            task.times += 1
             if attr["is_directory"]:
                 try:
                     sub_entries = {entry.name: entry for entry in scandir(dst_path)}
@@ -273,7 +284,7 @@ def main() -> Result:
                     sub_entries = {}
                     print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
 
-                subattrs = listdir(attr["id"], base_url)
+                subattrs = listdir(task_id, base_url)
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -311,13 +322,15 @@ def main() -> Result:
                 print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
             progress.update(statistics_bar, advance=1, description=update_stats_desc())
-            success_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
+            success_tasks[task_id] = unfinished_tasks.pop(task_id)
         except BaseException as e:
+            task.reasons.append(e)
             update_errors(e, attr["is_directory"])
-            retryable = True
-            if isinstance(e, HTTPError):
-                retryable = e.status != 404
-            if retryable and isinstance(e, URLError):
+            if max_retries < 0:
+                retryable = e.status != 404 if isinstance(e, HTTPError) else isinstance(e, URLError)
+            else:
+                retryable = task.times <= max_retries
+            if retryable:
                 print(f"""\
 [bold red][FAIL][/bold red] ♻️ 发生错误（将重试）: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]
     ├ {type(e).__qualname__}: {e}""")
@@ -329,8 +342,11 @@ def main() -> Result:
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 update_failed(1, not attr["is_directory"], attr.get("size"))
-                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])._replace(reason=e)
-                raise
+                failed_tasks[task_id] = unfinished_tasks.pop(task_id)
+                if len(task.reasons) == 1:
+                    raise
+                else:
+                    raise BaseExceptionGroup('max retries exceed', task.reasons)
 
     if isinstance(push_id, str):
         if not push_id.strip("/"):

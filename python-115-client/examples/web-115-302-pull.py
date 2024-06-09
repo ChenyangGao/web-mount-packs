@@ -21,6 +21,11 @@ parser.add_argument("-cp", "--cookies-path", help="""\
     2. 用户根目录
     3. 此脚本所在目录""")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
+parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
+                    help="""最大重试次数。
+    - 如果小于 0（默认），则发生错误就抛出
+    - 如果等于 0，则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
+    - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-s", "--stats-interval", type=float, default=30, 
@@ -37,6 +42,7 @@ import logging
 
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
 from gzip import GzipFile
@@ -105,6 +111,7 @@ cookies_path = args.cookies_path
 max_workers = args.max_workers
 if max_workers <= 0:
     max_workers = 1
+max_retries = args.max_retries
 lock_dir_methods = args.lock_dir_methods
 stats_interval = args.stats_interval
 use_requests = args.use_requests
@@ -132,11 +139,13 @@ else:
     request = None
 
 
-class Task(NamedTuple):
+@dataclass
+class Task:
     src_attr: Mapping
     dst_pid: int
     dst_attr: None | Mapping = None
-    reason: None | BaseException = None
+    times: int = 0
+    reasons: list[BaseException] = field(default_factory=list)
 
 
 class Tasks(TypedDict):
@@ -508,11 +517,13 @@ def pull(
             thread = highlight_object(thread_stats), 
         ))
 
-    def work(task, submit):
-        attr, pid, dattr, *_ = task
+    def work(task: Task, submit):
+        attr, pid, dattr = task.src_attr, task.dst_pid, task.dst_attr
+        task_id = attr["id"]
         cur_thread = current_thread()
-        thread_stats[cur_thread] = {"task_id": attr["id"], "start_time": datetime.now()}
+        thread_stats[cur_thread] = {"task_id": task_id, "start_time": datetime.now()}
         try:
+            task.times += 1
             if attr["is_directory"]:
                 subdattrs: None | dict = None
                 if dattr:
@@ -533,7 +544,7 @@ def pull(
                         ))
                         subdattrs = {}
                     except FileExistsError:
-                        def finddir(pid, name):
+                        def finddir(pid, name) -> Mapping:
                             for attr in relogin_wrap(fs.listdir_attr, pid):
                                 if attr["is_directory"] and attr["name"] == name:
                                     return attr
@@ -548,13 +559,13 @@ def pull(
                         ))
                     finally:
                         if dattr:
-                            unfinished_tasks[attr["id"]] = task._replace(dst_attr=dattr)
+                            task.dst_attr = dattr
                 if subdattrs is None:
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
                         for attr in relogin_wrap(fs.listdir_attr, dirid)
                     }
-                subattrs = listdir(attr["id"], base_url)
+                subattrs = listdir(task_id, base_url)
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -627,20 +638,26 @@ def pull(
                     resp     = highlight_as_json(resp_data), 
                 ))
                 update_success(1, 1, attr["size"])
-            success_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
+            success_tasks[task_id] = unfinished_tasks.pop(task_id)
         except BaseException as e:
+            task.reasons.append(e)
             update_errors(e, attr["is_directory"])
-            retryable = True
-            if isinstance(e, (HTTPStatusError, RequestsHTTPError)):
-                retryable = e.response.status_code == 405
+            if max_retries < 0:
+                retryable = True
+                if isinstance(e, (HTTPStatusError, RequestsHTTPError)):
+                    retryable = e.response.status_code == 405
+                    if retryable:
+                        try:
+                            relogin()
+                        except:
+                            pass
+                if retryable and isinstance(e, HTTPError):
+                    retryable = e.status != 404
                 if retryable:
-                    try:
-                        relogin()
-                    except:
-                        pass
-            elif isinstance(e, HTTPError):
-                retryable = e.status != 404
-            if retryable and isinstance(e, (HTTPStatusError, RequestError, RequestsHTTPError, RequestException, URLError, TimeoutError)):
+                    retryable = isinstance(e, (HTTPStatusError, RequestError, RequestsHTTPError, RequestException, URLError, TimeoutError))
+            else:
+                retryable = task.times <= max_retries
+            if retryable:
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
                     prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
@@ -650,7 +667,7 @@ def pull(
                     exc      = indent(highlight_exception(e), "    ├ ")
                 ))
                 update_retry(1, not attr["is_directory"])
-                submit((attr, pid, dattr))
+                submit(task)
             else:
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("💀"), 
@@ -661,8 +678,11 @@ def pull(
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
                 update_failed(1, not attr["is_directory"], attr.get("size"))
-                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])._replace(reason=e)
-                raise
+                failed_tasks[task_id] = unfinished_tasks.pop(task_id)
+                if len(task.reasons) == 1:
+                    raise
+                else:
+                    raise BaseExceptionGroup('max retries exceed', task.reasons)
         finally:
             del thread_stats[cur_thread]
 

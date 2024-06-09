@@ -20,13 +20,16 @@ else:
 
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import NamedTuple, TypedDict
 
 
-class Task(NamedTuple):
+@dataclass
+class Task:
     src_attr: Mapping
     dst_path: str
-    reason: None | BaseException = None
+    times: int = 0
+    reasons: list[BaseException] = field(default_factory=list)
 
 
 class Tasks(TypedDict):
@@ -83,6 +86,7 @@ def main(args) -> Result:
     share_link = args.share_link
     lock_dir_methods = args.lock_dir_methods
     max_workers = args.max_workers
+    max_retries = args.max_retries
     resume = args.resume
     no_root = args.no_root
     if max_workers <= 0:
@@ -323,9 +327,11 @@ def main(args) -> Result:
         else:
             return fs.get_url_from_pickcode(attr["pickcode"], detail=True)
 
-    def work(task, submit):
-        attr, dst_path, *_ = task
+    def work(task: Task, submit):
+        attr, dst_path = task.src_attr, task.dst_path
+        task_id = attr["id"]
         try:
+            task.times += 1
             if attr["is_directory"]:
                 try:
                     sub_entries = {entry.name: entry for entry in scandir(dst_path)}
@@ -334,7 +340,7 @@ def main(args) -> Result:
                     sub_entries = {}
                     console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
 
-                subattrs = relogin_wrap(fs.listdir_attr, attr["id"])
+                subattrs = relogin_wrap(fs.listdir_attr, task_id)
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -376,13 +382,15 @@ def main(args) -> Result:
                 console_print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
             progress.update(statistics_bar, advance=1, description=update_stats_desc())
-            success_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])
+            success_tasks[task_id] = unfinished_tasks.pop(task_id)
         except BaseException as e:
+            task.reasons.append(e)
             update_errors(e, attr["is_directory"])
-            retryable = True
-            if isinstance(e, HTTPError):
-                retryable = e.status != 404
-            if retryable and isinstance(e, URLError):
+            if max_retries < 0:
+                retryable = e.status != 404 if isinstance(e, HTTPError) else isinstance(e, URLError)
+            else:
+                retryable = task.times <= max_retries
+            if retryable:
                 console_print(f"""\
 [bold red][FAIL][/bold red] ♻️ 发生错误（将重试）: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]
     ├ {type(e).__qualname__}: {e}""")
@@ -394,8 +402,11 @@ def main(args) -> Result:
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
                 update_failed(1, not attr["is_directory"], attr.get("size"))
-                failed_tasks[attr["id"]] = unfinished_tasks.pop(attr["id"])._replace(reason=e)
-                raise
+                failed_tasks[task_id] = unfinished_tasks.pop(task_id)
+                if len(task.reasons) == 1:
+                    raise
+                else:
+                    raise BaseExceptionGroup('max retries exceed', task.reasons)
 
     with Progress(
         SpinnerColumn(), 
@@ -482,6 +493,11 @@ parser.add_argument("-s", "--share-link", nargs="?", help="""\
     1. 指定了则从分享链接下载
     2. 不指定则从 115 网盘下载""")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
+parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
+                    help="""最大重试次数。
+    - 如果小于 0（默认），则发生错误就抛出
+    - 如果等于 0，则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
+    - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
