@@ -102,6 +102,29 @@ def main(args) -> Result:
             fs_lock = Lock()
     cookies_path_mtime = 0
 
+    if not cookies:
+        if cookies_path:
+            try:
+                cookies = open(cookies_path).read()
+            except FileNotFoundError:
+                pass
+        else:
+            seen = set()
+            for dir_ in (".", expanduser("~"), dirname(__file__)):
+                dir_ = realpath(dir_)
+                if dir_ in seen:
+                    continue
+                seen.add(dir_)
+                try:
+                    cookies = open(joinpath(dir_, "115-cookies.txt")).read()
+                    if cookies:
+                        cookies_path = joinpath(dir_, "115-cookies.txt")
+                        break
+                except FileNotFoundError:
+                    pass
+
+    client = P115Client(cookies, app=args.app)
+
     do_request: None | Callable
     match use_request:
         case "httpx":
@@ -133,9 +156,25 @@ def main(args) -> Result:
                 from subprocess import run
                 run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
                 from urlopen import request as urlopen_request
-            do_request = partial(urlopen_request, timeout=60)
+            do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
             def get_status_code(e):
                 return e.status
+
+    device = client.login_device(request=do_request)["icon"]
+    if device not in AVAILABLE_APPS:
+        # 115 浏览器版
+        if device == "desktop":
+            device = "web"
+        else:
+            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+            device = "qandroid"
+    if cookies_path and cookies != client.cookies:
+        open(cookies_path, "w").write(client.cookies)
+
+    if share_link:
+        fs = client.get_share_fs(share_link, request=do_request)
+    else:
+        fs = client.get_fs(request=do_request)
 
     match system():
         case "Windows":
@@ -157,27 +196,6 @@ def main(args) -> Result:
                 yield val
         else:
             yield cm
-
-    if not cookies:
-        if cookies_path:
-            try:
-                cookies = open(cookies_path).read()
-            except FileNotFoundError:
-                pass
-        else:
-            seen = set()
-            for dir_ in (".", expanduser("~"), dirname(__file__)):
-                dir_ = realpath(dir_)
-                if dir_ in seen:
-                    continue
-                seen.add(dir_)
-                try:
-                    cookies = open(joinpath(dir_, "115-cookies.txt")).read()
-                    if cookies:
-                        cookies_path = joinpath(dir_, "115-cookies.txt")
-                        break
-                except FileNotFoundError:
-                    pass
 
     def relogin(exc=None):
         nonlocal cookies_path_mtime
@@ -217,23 +235,6 @@ def main(args) -> Result:
                 raise
             relogin(e)
         return relogin_wrap(func, *args, **kwds)
-
-    client = P115Client(cookies, app=args.app)
-    device = client.login_device()["icon"]
-    if device not in AVAILABLE_APPS:
-        # 115 浏览器版
-        if device == "desktop":
-            device = "web"
-        else:
-            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
-            device = "qandroid"
-    if cookies_path and cookies != client.cookies:
-        open(cookies_path, "w").write(client.cookies)
-
-    if share_link:
-        fs = client.get_share_fs(share_link, request=do_request)
-    else:
-        fs = client.get_fs(request=do_request)
 
     stats: dict = {
         # 开始时间

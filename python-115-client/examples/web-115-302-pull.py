@@ -117,6 +117,7 @@ if max_workers > 1:
         fs_lock = Lock()
 cookies_path_mtime = 0
 
+client = P115Client(cookies, app="qandroid")
 
 do_request: None | Callable
 match use_request:
@@ -149,9 +150,21 @@ match use_request:
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
             from urlopen import request as urlopen_request
-        do_request = partial(urlopen_request, timeout=60)
+        do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
         def get_status_code(e):
             return e.status
+
+device = client.login_device(request=do_request)["icon"]
+if device not in AVAILABLE_APPS:
+    # 115 浏览器版
+    if device == "desktop":
+        device = "web"
+    else:
+        warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+        device = "qandroid"
+if cookies_path and cookies != client.cookies:
+    open(cookies_path, "w").write(client.cookies)
+fs = client.get_fs(request=do_request)
 
 
 @dataclass
@@ -795,19 +808,6 @@ if not cookies:
             except FileNotFoundError:
                 pass
 
-
-client = P115Client(cookies, app="qandroid")
-device = client.login_device(request=do_request)["icon"]
-if device not in AVAILABLE_APPS:
-    # 115 浏览器版
-    if device == "desktop":
-        device = "web"
-    else:
-        warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
-        device = "qandroid"
-if cookies_path and cookies != client.cookies:
-    open(cookies_path, "w").write(client.cookies)
-fs = client.fs
 
 logger = logging.Logger("115-pull", logging.DEBUG if debug else logging.INFO)
 handler = logging.StreamHandler()

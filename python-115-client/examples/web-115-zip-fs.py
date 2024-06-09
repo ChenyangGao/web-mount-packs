@@ -117,6 +117,8 @@ except ImportError:
         from json import dumps as odumps, loads
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
 
+client = P115Client(cookies, app="qandroid")
+
 do_request: None | Callable
 match use_request:
     case "httpx":
@@ -148,7 +150,7 @@ match use_request:
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
             from urlopen import request as urlopen_request
-        do_request = partial(urlopen_request, timeout=60)
+        do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
         def get_status_code(e):
             return e.status
 
@@ -175,7 +177,6 @@ if not cookies:
             except FileNotFoundError:
                 pass
 
-client = P115Client(cookies, app="qandroid")
 device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版

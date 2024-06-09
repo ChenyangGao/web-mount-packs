@@ -132,6 +132,31 @@ except ImportError:
         from json import dumps as odumps, loads
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
 
+if not cookies:
+    if cookies_path:
+        try:
+            cookies = open(cookies_path).read()
+        except FileNotFoundError:
+            pass
+    else:
+        seen = set()
+        for dir_ in (".", expanduser("~"), dirname(__file__)):
+            dir_ = realpath(dir_)
+            if dir_ in seen:
+                continue
+            seen.add(dir_)
+            try:
+                path = joinpath(dir_, "115-cookies.txt")
+                cookies = open(path).read()
+                cookies_path_mtime = stat(path).st_mtime_ns
+                if cookies:
+                    cookies_path = path
+                    break
+            except FileNotFoundError:
+                pass
+
+client = P115Client(cookies, app="qandroid")
+
 do_request: None | Callable
 match use_request:
     case "httpx":
@@ -163,34 +188,10 @@ match use_request:
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
             from urlopen import request as urlopen_request
-        do_request = partial(urlopen_request, timeout=60)
+        do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
         def get_status_code(e):
             return e.status
 
-if not cookies:
-    if cookies_path:
-        try:
-            cookies = open(cookies_path).read()
-        except FileNotFoundError:
-            pass
-    else:
-        seen = set()
-        for dir_ in (".", expanduser("~"), dirname(__file__)):
-            dir_ = realpath(dir_)
-            if dir_ in seen:
-                continue
-            seen.add(dir_)
-            try:
-                path = joinpath(dir_, "115-cookies.txt")
-                cookies = open(path).read()
-                cookies_path_mtime = stat(path).st_mtime_ns
-                if cookies:
-                    cookies_path = path
-                    break
-            except FileNotFoundError:
-                pass
-
-client = P115Client(cookies, app="qandroid")
 device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
