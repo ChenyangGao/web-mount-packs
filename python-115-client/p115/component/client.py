@@ -78,7 +78,8 @@ ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 APP_VERSION: Final = "99.99.99.99"
 
-httpx_request = partial(request, parse=lambda _, content: loads(content), timeout=(5, 60, 60, 5))
+parse_json = lambda _, content: loads(content)
+httpx_request = partial(request, timeout=(5, 60, 60, 5))
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -346,6 +347,7 @@ class P115Client:
     ):
         """帮助函数：可执行同步和异步的网络请求
         """
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
             return httpx_request(
@@ -427,7 +429,6 @@ class P115Client:
         GET https://passportapi.115.com/app/1.0/web/1.0/check/sso
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/check/sso"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -516,7 +517,6 @@ class P115Client:
         GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -904,7 +904,6 @@ class P115Client:
         api = "https://qrcodeapi.115.com/api/2.0/prompt.php"
         if isinstance(payload, str):
             payload = {"uid": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -942,7 +941,6 @@ class P115Client:
         api = "https://hnqrcodeapi.115.com/api/2.0/slogin.php"
         if isinstance(payload, str):
             payload = {"key": payload, "uid": payload, "client": 0}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -983,7 +981,7 @@ class P115Client:
         api = "https://hnqrcodeapi.115.com/api/2.0/cancel.php"
         if isinstance(payload, str):
             payload = {"key": payload, "uid": payload, "client": 0}
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, params=payload, async_=async_, **request_kwargs)
         else:
@@ -1025,7 +1023,7 @@ class P115Client:
             - sign: str
         """
         api = "https://qrcodeapi.115.com/get/status/"
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, params=payload, async_=async_, **request_kwargs)
         else:
@@ -1070,7 +1068,7 @@ class P115Client:
         else:
             payload = {"app": "web", **payload}
         api = f"https://passportapi.115.com/app/1.0/{payload['app']}/1.0/login/qrcode/"
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
         else:
@@ -1102,7 +1100,7 @@ class P115Client:
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/token/
         """
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, async_=async_, **request_kwargs)
         else:
@@ -1324,7 +1322,6 @@ class P115Client:
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/mange"
         if isinstance(payload, str):
             payload = {"ssoent": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Account API ##########
@@ -1355,7 +1352,6 @@ class P115Client:
         GET https://my.115.com/?ct=ajax&ac=nav
         """
         api = "https://my.115.com/?ct=ajax&ac=nav"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1384,7 +1380,6 @@ class P115Client:
         GET https://my.115.com/?ct=ajax&ac=get_user_aq
         """
         api = "https://my.115.com/?ct=ajax&ac=get_user_aq"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1413,7 +1408,6 @@ class P115Client:
         GET https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
         api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1445,7 +1439,6 @@ class P115Client:
         POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
         api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1474,7 +1467,6 @@ class P115Client:
         GET https://proapi.115.com/android/1.0/user/setting
         """
         api = "https://proapi.115.com/android/1.0/user/setting"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1506,7 +1498,6 @@ class P115Client:
         POST https://proapi.115.com/android/1.0/user/setting
         """
         api = "https://proapi.115.com/android/1.0/user/setting"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1535,7 +1526,6 @@ class P115Client:
         GET https://proapi.115.com/android/2.0/user/points_sign
         """
         api = "https://proapi.115.com/android/2.0/user/points_sign"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1569,7 +1559,6 @@ class P115Client:
             "token": sha1(b"%d-Points_Sign@#115-%d" % (self.user_id, t)).hexdigest(), 
             "token_time": t, 
         }
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", async_=async_, **request_kwargs)
 
     ########## App API ##########
@@ -1600,7 +1589,7 @@ class P115Client:
         GET https://appversion.115.com/1/web/1.0/api/chrome
         """
         api = "https://appversion.115.com/1/web/1.0/api/chrome"
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, async_=async_, **request_kwargs)
         else:
@@ -1634,7 +1623,6 @@ class P115Client:
         GET https://proapi.115.com/android/1.0/user/space_info
         """
         api = "https://proapi.115.com/android/1.0/user/space_info"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1663,7 +1651,6 @@ class P115Client:
         POST https://webapi.115.com/user/space_summury
         """
         api = "https://webapi.115.com/user/space_summury"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", async_=async_, **request_kwargs)
 
     @overload
@@ -1710,7 +1697,6 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
             payload["pid"] = pid
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1750,7 +1736,6 @@ class P115Client:
             payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
         if not payload:
             return {"state": False, "message": "no op"}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1797,7 +1782,6 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
             payload["pid"] = pid
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1835,7 +1819,6 @@ class P115Client:
             payload = {f"files_new_name[{fid}]": name for fid, name in payload}
         if not payload:
             return {"state": False, "message": "no op"}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1940,7 +1923,6 @@ class P115Client:
         api = "https://webapi.115.com/files/file"
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2022,7 +2004,6 @@ class P115Client:
                 "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
                 "record_open_time": 1, "show_dir": 1, **payload, 
             }
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2104,7 +2085,6 @@ class P115Client:
                 "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
                 "record_open_time": 1, "show_dir": 1, **payload, 
             }
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2152,7 +2132,6 @@ class P115Client:
             payload = {"file_id": 0, "user_order": payload}
         else:
             payload = {"file_id": 0, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2198,7 +2177,6 @@ class P115Client:
         api = "https://webapi.115.com/files/get_second_type"
         if isinstance(payload, int):
             payload = {"cid": 0, "type": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2246,7 +2224,6 @@ class P115Client:
         else:
             headers = request_kwargs["headers"] = {}
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request_kwargs.pop("parse", None)
         return self.request(
             api, 
             "POST", 
@@ -2290,7 +2267,6 @@ class P115Client:
         else:
             headers = request_kwargs["headers"] = {}
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request_kwargs.pop("parse", None)
         return self.request(
             api, 
             "POST", 
@@ -2342,7 +2318,6 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
             payload["hidden"] = 1
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2383,7 +2358,6 @@ class P115Client:
                 payload = {"valid_type": 1, "show": 1, "safe_pwd": payload}
             else:
                 payload = {"valid_type": 1, "show": 0}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2420,7 +2394,6 @@ class P115Client:
         api = "https://webapi.115.com/category/get"
         if isinstance(payload, (int, str)):
             payload = {"cid": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2462,7 +2435,6 @@ class P115Client:
             payload = {"offset": 0, "limit": 1150, "format": "json", "file_id": payload}
         else:
             payload = {"offset": 0, "limit": 1150, "format": "json", **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2498,7 +2470,6 @@ class P115Client:
         api = "https://webapi.115.com/files/index_info"
         if not isinstance(payload, dict):
             payload = {"count_space_nums": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2534,7 +2505,6 @@ class P115Client:
         api = "https://webapi.115.com/files/get_info"
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2573,7 +2543,6 @@ class P115Client:
             payload = {"pid": 0, "cname": payload}
         else:
             payload = {"pid": 0, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2722,7 +2691,6 @@ class P115Client:
                 "aid": 1, "cid": 0, "format": "json", "limit": 32, "offset": 0, 
                 "show_dir": 1, **payload, 
             }
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2760,7 +2728,6 @@ class P115Client:
         api = "https://webapi.115.com/files/export_dir"
         if isinstance(payload, (int, str)):
             payload = {"file_ids": payload, "target": "U_1_0"}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2796,7 +2763,6 @@ class P115Client:
         api = "https://webapi.115.com/files/export_dir"
         if isinstance(payload, (int, str)):
             payload = {"export_id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     # TODO 支持异步
@@ -2863,7 +2829,6 @@ class P115Client:
         GET https://webapi.115.com/category/shortcut
         """
         api = "https://webapi.115.com/category/shortcut"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -2900,7 +2865,6 @@ class P115Client:
         api = "https://webapi.115.com/category/shortcut"
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2944,7 +2908,6 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("fid_cover", fid_cover))
-        request_kwargs.pop("parse", None)
         return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2985,7 +2948,6 @@ class P115Client:
             payload = {"format": "json", "compat": 1, "new_html": 1, "file_id": payload}
         else:
             payload = {"format": "json", "compat": 1, "new_html": 1, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3028,7 +2990,6 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("file_desc", file_desc))
-        request_kwargs.pop("parse", None)
         return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3071,7 +3032,6 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("file_label", file_label))
-        request_kwargs.pop("parse", None)
         return self.fs_files_edit(payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3113,7 +3073,6 @@ class P115Client:
             - file_label[{file_label}]: int | str = <default> # action 为 replace 时使用此参数，file_label[{原标签id}]: {目标标签id}，例如 file_label[123]: 456，就是把 id 是 123 的标签替换为 id 是 456 的标签
         """
         api = "https://webapi.115.com/files/batch_label"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3152,7 +3111,6 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/score"
         payload = {"file_id": file_id, "score": score}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3191,7 +3149,6 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/star"
         payload = {"file_id": file_id, "star": int(star)}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3233,7 +3190,6 @@ class P115Client:
         else:
             headers = request_kwargs["headers"] = {}
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request_kwargs.pop("parse", None)
         return self.request(
             api, 
             "POST", 
@@ -3275,7 +3231,6 @@ class P115Client:
         api = "https://webapi.115.com/label/delete"
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3312,7 +3267,6 @@ class P115Client:
             - sort: int = <default>  # 序号
         """
         api = "https://webapi.115.com/label/edit"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3355,7 +3309,6 @@ class P115Client:
         """
         api = "https://webapi.115.com/label/list"
         payload = {"offset": 0, "limit": 11500, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3418,7 +3371,6 @@ class P115Client:
             "end_time": int(datetime.combine(now.date(), now.time().max).timestamp()), 
             **payload, 
         }
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3467,7 +3419,6 @@ class P115Client:
             payload = {"limit": 32, "offset": 0, "date": str(date.today()), "type": payload}
         else:
             payload = {"limit": 32, "offset": 0, "date": str(date.today()), **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     ########## Share API ##########
@@ -3518,7 +3469,6 @@ class P115Client:
             payload = {"ignore_warn": 1, "is_asc": 1, "order": "file_name", "file_ids": payload}
         else:
             payload = {"ignore_warn": 1, "is_asc": 1, "order": "file_name", **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3554,7 +3504,6 @@ class P115Client:
         api = "https://webapi.115.com/share/shareinfo"
         if isinstance(payload, str):
             payload = {"share_code": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3591,7 +3540,6 @@ class P115Client:
         """
         api = "https://webapi.115.com/share/slist"
         payload = {"offset": 0, "limit": 32, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3631,7 +3579,6 @@ class P115Client:
             - action: str = <default>               # 操作: 取消分享 "cancel"
         """
         api = "https://webapi.115.com/share/updateshare"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3682,7 +3629,7 @@ class P115Client:
         """
         api = "https://webapi.115.com/share/snap"
         payload = {"cid": 0, "limit": 32, "offset": 0, **payload}
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, params=payload, async_=async_, **request_kwargs)
         else:
@@ -3721,7 +3668,6 @@ class P115Client:
             - cid: int | str = 0
         """
         api = "https://proapi.115.com/app/share/downlist"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3760,7 +3706,6 @@ class P115Client:
         """
         api = "https://webapi.115.com/share/receive"
         payload = {"cid": 0, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3910,7 +3855,6 @@ class P115Client:
             - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/downurl"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     ########## Download API ##########
@@ -4432,7 +4376,6 @@ class P115Client:
             "<Part><PartNumber>{PartNumber}</PartNumber><ETag>{ETag}</ETag></Part>".format_map, 
             parts, 
         ))).encode("utf-8")
-        request_kwargs.pop("parse", None)
         return self._oss_upload_request(
             bucket, 
             object, 
@@ -5176,7 +5119,7 @@ class P115Client:
         GET https://uplb.115.com/3.0/gettoken.php
         """
         api = "https://uplb.115.com/3.0/gettoken.php"
-        request_kwargs.pop("parse", None)
+        request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, async_=async_, **request_kwargs)
         else:
@@ -5215,7 +5158,6 @@ class P115Client:
         """
         api = "https://uplb.115.com/3.0/sampleinitupload.php"
         payload = {"filename": filename, "target": f"U_1_{pid}"}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6167,7 +6109,6 @@ class P115Client:
         api = "https://webapi.115.com/files/push_extract"
         if isinstance(payload, str):
             payload = {"pick_code": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6203,7 +6144,6 @@ class P115Client:
         api = "https://webapi.115.com/files/push_extract"
         if isinstance(payload, str):
             payload = {"pick_code": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6245,7 +6185,6 @@ class P115Client:
             payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", "pick_code": payload}
         else:
             payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6336,7 +6275,6 @@ class P115Client:
         else:
             headers = request_kwargs["headers"] = {}
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request_kwargs.pop("parse", None)
         return self.request(
             api, 
             "POST", 
@@ -6378,7 +6316,6 @@ class P115Client:
         api = "https://webapi.115.com/files/add_extract_file"
         if isinstance(payload, (int, str)):
             payload = {"extract_id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6691,7 +6628,6 @@ class P115Client:
         GET https://115.com/?ct=offline&ac=space
         """
         api = "https://115.com/?ct=offline&ac=space"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -6720,7 +6656,6 @@ class P115Client:
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -6749,7 +6684,6 @@ class P115Client:
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -6778,7 +6712,6 @@ class P115Client:
         GET https://webapi.115.com/offine/downpath
         """
         api = "https://webapi.115.com/offine/downpath"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -6807,7 +6740,6 @@ class P115Client:
         GET https://115.com/?ct=lixian&ac=get_id&torrent=1
         """
         api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -6851,7 +6783,6 @@ class P115Client:
             info = self.offline_info()
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6899,7 +6830,6 @@ class P115Client:
             info = self.offline_info()
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6942,7 +6872,6 @@ class P115Client:
             info = self.offline_info()
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -6978,7 +6907,6 @@ class P115Client:
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=torrent"
         if isinstance(payload, str):
             payload = {"sha1": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7023,7 +6951,6 @@ class P115Client:
             info = self.offline_info()
             payload["sign"] = info["sign"]
             payload["time"] = info["time"]
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7059,7 +6986,6 @@ class P115Client:
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_lists"
         if isinstance(payload, int):
             payload = {"page": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7106,7 +7032,6 @@ class P115Client:
             elif flag > 5:
                 flag = 5
             payload = {"flag": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Recyclebin API ##########
@@ -7144,7 +7069,6 @@ class P115Client:
         api = "https://webapi.115.com/rb/rb_info"
         if isinstance(payload, (int, str)):
             payload = {"rid": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7185,7 +7109,6 @@ class P115Client:
             payload = {"rid[0]": payload}
         elif not isinstance(payload, dict):
             payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7225,7 +7148,6 @@ class P115Client:
         """ 
         api = "https://webapi.115.com/rb"
         payload = {"aid": 7, "cid": 0, "limit": 32, "offset": 0, "format": "json", **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7265,7 +7187,6 @@ class P115Client:
             payload = {"rid[0]": payload}
         elif not isinstance(payload, dict):
             payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Captcha System API ##########
@@ -7296,7 +7217,6 @@ class P115Client:
         GET https://captchaapi.115.com/?ac=code&t=sign
         """
         api = "https://captchaapi.115.com/?ac=code&t=sign"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -7433,7 +7353,6 @@ class P115Client:
         if "sign" not in payload:
             payload["sign"] = self.captcha_sign()["sign"]
         api = "https://webapi.115.com/user/captcha"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Activities API ##########
@@ -7464,7 +7383,6 @@ class P115Client:
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -7493,7 +7411,6 @@ class P115Client:
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/home_list
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/home_list"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -7538,7 +7455,6 @@ class P115Client:
             payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
         else:
             payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7583,7 +7499,6 @@ class P115Client:
             payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
         else:
             payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7623,7 +7538,6 @@ class P115Client:
             payload = {"rewardSpace": 5, "content": payload}
         else:
             payload = {"rewardSpace": 5, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7659,7 +7573,6 @@ class P115Client:
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish"
         if isinstance(payload, str):
             payload = {"ids": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7696,7 +7609,6 @@ class P115Client:
             - file_ids: int | str = <default> # 文件在你的网盘的 id，多个用逗号 "," 隔开
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7732,7 +7644,6 @@ class P115Client:
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire"
         if isinstance(payload, (int, str)):
             payload = {"ids": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7768,7 +7679,6 @@ class P115Client:
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info"
         if isinstance(payload, str):
             payload = {"id": payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7810,7 +7720,6 @@ class P115Client:
             payload = {"start": 0, "page": 1, "limit": 10, "id": payload}
         else:
             payload = {"start": 0, "page": 1, "limit": 10, **payload}
-        request_kwargs.pop("parse", None)
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -7846,7 +7755,6 @@ class P115Client:
             - to_cid: int = <default> # 助愿中的分享链接转存到你的网盘中目录的 id
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/adopt"
-        request_kwargs.pop("parse", None)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########

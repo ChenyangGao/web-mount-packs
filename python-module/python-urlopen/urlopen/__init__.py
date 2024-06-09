@@ -9,6 +9,7 @@ import errno
 
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from copy import copy
+from gzip import decompress as decompress_gzip
 from http.client import HTTPResponse
 from http.cookiejar import CookieJar
 from inspect import isgenerator
@@ -22,16 +23,56 @@ from typing import cast, Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, OpenerDirector, Request
+from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
+from brotli import decompress as decompress_br # type: ignore
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
+from zstandard import decompress as decompress_zstd
 
 
 if "__del__" not in HTTPResponse.__dict__:
     setattr(HTTPResponse, "__del__", HTTPResponse.close)
 
 CRE_search_charset = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
+
+
+def decompress_deflate(data, compresslevel=9):
+    # Fork from: https://stackoverflow.com/questions/1089662/python-inflate-and-deflate-implementations#answer-1089787
+    compress = compressobj(
+            compresslevel,  # level: 0-9
+            DEFLATED,       # method: must be DEFLATED
+            -MAX_WBITS,     # window size in bits:
+                            #   -15..-8: negate, suppress header
+                            #   8..15: normal
+                            #   16..30: subtract 16, gzip header
+            DEF_MEM_LEVEL,  # mem level: 1..8/9
+            0               # strategy:
+                            #   0 = Z_DEFAULT_STRATEGY
+                            #   1 = Z_FILTERED
+                            #   2 = Z_HUFFMAN_ONLY
+                            #   3 = Z_RLE
+                            #   4 = Z_FIXED
+    )
+    deflated = compress.compress(data)
+    deflated += compress.flush()
+    return deflated
+
+
+def decompress_response(resp: HTTPResponse) -> bytes:
+    data = resp.read()
+    content_encoding = resp.headers.get("Content-Encoding")
+    match content_encoding:
+        case "gzip":
+            data = decompress_gzip(data)
+        case "deflate":
+            data = decompress_deflate(data)
+        case "br":
+            data = decompress_br(data)
+        case "zstd":
+            data = decompress_zstd(data)
+    return data
 
 
 def urlopen(
@@ -136,17 +177,16 @@ def request(
     if parse is None:
         return resp
     with resp:
-        if parse is False:
-            return resp.read()
-        elif parse is True:
-            data = resp.read()
-            content_type = resp.headers.get("Content-Type", "")
-            if content_type == "application/json":
-                return loads(data)
-            elif content_type.startswith("application/json;"):
-                return loads(data.decode(get_charset(content_type)))
-            elif content_type.startswith("text/"):
-                return data.decode(get_charset(content_type))
+        if isinstance(parse, bool):
+            data = decompress_response(resp)
+            if parse is True:
+                content_type = resp.headers.get("Content-Type", "")
+                if content_type == "application/json":
+                    return loads(data)
+                elif content_type.startswith("application/json;"):
+                    return loads(data.decode(get_charset(content_type)))
+                elif content_type.startswith("text/"):
+                    return data.decode(get_charset(content_type))
             return data
         else:
             ac = argcount(parse)
@@ -154,7 +194,7 @@ def request(
                 if ac == 1:
                     return parse(resp)
                 else:
-                    return parse(resp, resp.read())
+                    return parse(resp, decompress_response(resp))
 
 
 def download(

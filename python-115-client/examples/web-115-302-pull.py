@@ -28,7 +28,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-ur", "--use-requests", action="store_true", help="使用 requests 执行请求，而不是默认的 httpx")
+parser.add_argument("-r", "--request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-s", "--stats-interval", type=float, default=30, 
                     help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
 parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
@@ -44,6 +44,7 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from gzip import GzipFile
 from inspect import currentframe, getframeinfo
 from json import dumps, load, loads
@@ -102,7 +103,7 @@ if max_workers <= 0:
     max_workers = 1
 max_retries = args.max_retries
 lock_dir_methods = args.lock_dir_methods
-use_requests = args.use_requests
+use_request = args.request
 stats_interval = args.stats_interval
 debug = args.debug
 
@@ -116,29 +117,41 @@ if max_workers > 1:
         fs_lock = Lock()
 cookies_path_mtime = 0
 
-request: None | Callable
-if use_requests:
-    from functools import partial
-    try:
-        from requests import Session
-        from requests.exceptions import HTTPError as StatusError, RequestException as RequestError
-        from requests_request import request as requests_request
-    except ImportError:
-        from sys import executable
-        from subprocess import run
-        run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
-        from requests import Session
-        from requests.exceptions import HTTPError as StatusError, RequestException as RequestError
-        from requests_request import request as requests_request
-    request = partial(
-        requests_request, 
-        timeout=60, 
-        session=Session(), 
-        parse=lambda resp, content: loads(content), 
-    )
-else:
-    from httpx import HTTPStatusError as StatusError, RequestError # type: ignore
-    request = None
+
+do_request: None | Callable
+match use_request:
+    case "httpx":
+        from httpx import HTTPStatusError as StatusError, RequestError
+        do_request = None
+        def get_status_code(e):
+            return e.response.status_code
+    case "requests":
+        try:
+            from requests import Session
+            from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
+            from requests_request import request as requests_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
+            from requests import Session
+            from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
+            from requests_request import request as requests_request
+        do_request = partial(requests_request, timeout=60, session=Session())
+        def get_status_code(e):
+            return e.response.status_code
+    case "urlopen":
+        from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
+        try:
+            from urlopen import request as urlopen_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
+            from urlopen import request as urlopen_request
+        do_request = partial(urlopen_request, timeout=60)
+        def get_status_code(e):
+            return e.status
 
 
 @dataclass
@@ -360,7 +373,7 @@ def relogin(
                     prompt = highlight_prompt("[SCAN] 🦾 重新扫码: ", "yellow"), 
                     exc    = indent(highlight_exception(exc), "    ├ ")
                 ))
-            client.login_another_app(device, replace=True, request=request, timeout=5)
+            client.login_another_app(device, replace=True, do_request=do_request, timeout=5)
             if cookies_path:
                 open(cookies_path, "w").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
@@ -380,7 +393,7 @@ def relogin_wrap(func, /, *args, **kwds):
         with ensure_cm(fs_lock):
             return func(*args, **kwds)
     except StatusError as e:
-        if e.response.status_code != 405:
+        if get_status_code(e) != 405:
             raise
         relogin(e)
     return relogin_wrap(func, *args, **kwds)
@@ -534,7 +547,7 @@ def pull(
                         resp = check_response(relogin_wrap(
                             client.fs_mkdir, 
                             {"cname": attr["name"], "pid": pid}, 
-                            request=request, 
+                            do_request=do_request, 
                         ))
                         dirid = int(resp["file_id"])
                         dattr = {"id": dirid, "is_directory": True}
@@ -608,7 +621,7 @@ def pull(
                     filesize=attr["size"], 
                     filesha1=attr["sha1"], 
                     read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
-                    request=request, 
+                    do_request=do_request, 
                 )
                 status = resp["status"]
                 statuscode = resp.get("statuscode", 0)
@@ -628,7 +641,7 @@ def pull(
                         resp     = highlight_as_json(resp), 
                     ))
                     with urlopen(attr["url"], timeout=10) as resp:
-                        resp = client.upload_file_sample(resp, attr["name"], pid=pid, request=request)
+                        resp = client.upload_file_sample(resp, attr["name"], pid=pid, do_request=do_request)
                 elif status == 0 and statuscode in (0, 413):
                     raise URLError(resp)
                 else:
@@ -650,7 +663,7 @@ def pull(
             if max_retries < 0:
                 retryable = True
                 if isinstance(e, StatusError):
-                    retryable = e.response.status_code == 405
+                    retryable = get_status_code(e) == 405
                     if retryable:
                         try:
                             relogin()
@@ -784,7 +797,7 @@ if not cookies:
 
 
 client = P115Client(cookies, app="qandroid")
-device = client.login_device(request=request)["icon"]
+device = client.login_device(do_request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
     if device == "desktop":
