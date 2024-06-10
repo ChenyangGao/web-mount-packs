@@ -2,10 +2,10 @@
 # encoding: utf
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
-    "DownloadTask", "download_iter", "download", "requests_download", 
-    "download_async_iter", "async_download", 
+    "DownloadProgress", "DownloadTask", "AsyncDownloadTask", 
+    "download_iter", "download", "download_async_iter", "download_async", 
 ]
 
 # NOTE https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests
@@ -20,23 +20,22 @@ __all__ = [
 
 import errno
 
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterator
-from inspect import isasyncgen, isgenerator
+from collections.abc import AsyncGenerator, Generator, Callable, Generator
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
 from threading import Event
 from typing import cast, Any, NamedTuple, Self
 
-from aiohttp_client_request import request as aiohttp_request
-from asynctools import ensure_async, as_thread
+from asynctools import ensure_aiter, ensure_async, as_thread
 from concurrenttools import run_as_thread
-from filewrap import bio_skip_iter, bio_skip_async_iter, SupportsRead, SupportsWrite
-from http_request import headers_str_to_dict
+from filewrap import bio_chunk_iter, bio_chunk_async_iter, bio_skip_iter, bio_skip_async_iter, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
-from iterutils import cut_iter
-from requests_request import request as requests_request
 from urlopen import urlopen
+
+
+DEFAULT_ITER_BYTES = lambda resp: bio_chunk_iter(resp, chunksize=COPY_BUFSIZE)
+DEFAULT_ASYNC_ITER_BYTES = lambda resp: bio_chunk_async_iter(resp, chunksize=COPY_BUFSIZE)
 
 try:
     from aiofile import async_open, FileIOWrapperBase
@@ -72,7 +71,6 @@ class DownloadProgress(NamedTuple):
         return self.completed >= self.total
 
 
-# TODO 设计一个 AsyncDownloadTask
 class DownloadTask:
 
     def __init__(self, /, gen, submit=run_as_thread):
@@ -173,6 +171,12 @@ class DownloadTask:
                 self._run()
 
 
+class AsyncDownloadTask:
+
+    def __init__(self, /, *args, **kwargs):
+        raise NotImplementedError
+
+
 def download_iter(
     url: str | Callable[[], str], 
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
@@ -180,18 +184,23 @@ def download_iter(
     chunksize: int = COPY_BUFSIZE, 
     headers: None | dict[str, str] | Callable[[], dict[str, str]] = None, 
     urlopen: Callable = urlopen, 
+    iter_bytes: Callable = DEFAULT_ITER_BYTES, 
 ) -> Generator[DownloadProgress, None, None]:
     """
     """
-    if not isinstance(url, str):
+    if callable(url):
         url = url()
-
     if callable(headers):
         headers = headers()
-    if headers:
-        headers = {**headers, "Accept-Encoding": "identity"}
+    elif headers:
+        headers = dict(headers)
     else:
-        headers = {"Accept-Encoding": "identity"}
+        headers = {}
+    if type(url) is not str:
+        extra_headers = getattr(url, "headers", None)
+        if extra_headers:
+            headers.update(extra_headers)
+    headers["Accept-Encoding"] = "identity"
 
     if chunksize <= 0:
         chunksize = COPY_BUFSIZE
@@ -220,7 +229,8 @@ def download_iter(
         filesize = 0
         if resume:
             try:
-                filesize = fstat(fdst.fileno()).st_size # type: ignore
+                fileno = getattr(fdst, "fileno")()
+                filesize = fstat(fileno).st_size
             except (AttributeError, OSError):
                 pass
             else:
@@ -244,7 +254,6 @@ def download_iter(
         length_downloaded = 0
         length_skipped = 0
 
-        fsrc_read = resp.read
         fdst_write = fdst.write
         if filesize:
             if is_range_request(resp):
@@ -255,7 +264,7 @@ def download_iter(
                     length_skipped += skiplen
                     yield DownloadProgress(length or length_skipped, 0, length_skipped, skiplen, extra)
 
-        while (chunk := fsrc_read(chunksize)):
+        for chunk in iter_bytes(resp):
             fdst_write(chunk)
             downlen = len(chunk)
             length_downloaded += downlen
@@ -271,39 +280,45 @@ def download(
     chunksize: int = COPY_BUFSIZE, 
     headers: None | dict[str, str] | Callable[[], dict[str, str]] = None, 
     urlopen: Callable = urlopen, 
+    iter_bytes: Callable = DEFAULT_ITER_BYTES, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
-):
+) -> DownloadProgress:
     """
     """
-    gen = download_iter(url, file, resume=resume, chunksize=chunksize, headers=headers, urlopen=urlopen)
-    if make_reporthook:
-        progress = next(gen)
-        reporthook = make_reporthook(progress.total)
-        if isgenerator(reporthook):
-            next(reporthook)
-            reporthook = reporthook.send
-        reporthook = cast(Callable[[int], Any], reporthook)
-        reporthook(progress.last_incr)
-    else:
-        reporthook = None
-
-    for progress in gen:
-        reporthook and reporthook(progress.last_incr)
-
-
-def requests_download(
-    url: str | Callable[[], str], 
-    urlopen: Callable = requests_request, 
-    **kwargs, 
-):
-    """
-    """
-    def urlopen_wrapper(url, headers):
-        resp = urlopen(url, headers=headers, stream=True)
-        resp.raise_for_status()
-        resp.read = resp.raw.read
-        return resp
-    return download(url, urlopen=urlopen_wrapper, **kwargs)
+    update: None | Callable = None
+    close: None | Callable = None
+    download_gen = download_iter(
+        url, 
+        file, 
+        resume=resume, 
+        chunksize=chunksize, 
+        headers=headers, 
+        urlopen=urlopen, 
+        iter_bytes=iter_bytes, 
+    )
+    try:
+        if make_reporthook is not None:
+            progress = next(download_gen)
+            reporthook = make_reporthook(progress.total)
+            if isinstance(reporthook, Generator):
+                next(reporthook)
+                update = reporthook.send
+                close = reporthook.close
+            else:
+                update = reporthook
+                close = getattr(reporthook, "close", None)
+            update(progress.last_incr)
+        if update is None:
+            for progress in download_gen:
+                pass
+        else:
+            for progress in download_gen:
+                update(progress.last_incr)
+        return progress
+    finally:
+        download_gen.close()
+        if close is not None:
+            close()
 
 
 async def download_async_iter(
@@ -312,19 +327,24 @@ async def download_async_iter(
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
     headers: None | dict[str, str] | Callable[[], dict[str, str]] = None, 
-    urlopen: Callable = aiohttp_request, 
+    urlopen: Callable = urlopen, 
+    iter_bytes: Callable = DEFAULT_ASYNC_ITER_BYTES, 
 ) -> AsyncGenerator[DownloadProgress, None]:
     """
     """
-    if not isinstance(url, str):
+    if callable(url):
         url = await ensure_async(url)()
-
     if callable(headers):
         headers = await ensure_async(headers)()
-    if headers:
-        headers = {**headers, "Accept-Encoding": "identity"}
+    elif headers:
+        headers = dict(headers)
     else:
-        headers = {"Accept-Encoding": "identity"}
+        headers = {}
+    if type(url) is not str:
+        extra_headers = getattr(url, "headers", None)
+        if extra_headers:
+            headers.update(extra_headers)
+    headers["Accept-Encoding"] = "identity"
 
     if chunksize <= 0:
         chunksize = COPY_BUFSIZE
@@ -364,7 +384,8 @@ async def download_async_iter(
         filesize = 0
         if resume:
             try:
-                filesize = fstat(fdst.fileno()).st_size # type: ignore
+                fileno = getattr(fdst, "fileno")()
+                filesize = fstat(fileno).st_size
             except (AttributeError, OSError):
                 pass
             else:
@@ -388,7 +409,6 @@ async def download_async_iter(
         length_downloaded = 0
         length_skipped = 0
 
-        fsrc_read = ensure_async(resp.read)
         fdst_write = ensure_async(fdst.write)
         if filesize:
             if is_range_request(resp):
@@ -399,7 +419,7 @@ async def download_async_iter(
                     length_skipped += skiplen
                     yield DownloadProgress(length or length_skipped, 0, length_skipped, skiplen, extra)
 
-        while (chunk := (await fsrc_read(chunksize))):
+        async for chunk in ensure_aiter(iter_bytes(resp)):
             await fdst_write(chunk)
             downlen = len(chunk)
             length_downloaded += downlen
@@ -410,41 +430,53 @@ async def download_async_iter(
             await file_async_close()
 
 
-async def async_download(
+async def download_async(
     url: str | Callable[[], str], 
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
     headers: None | dict[str, str] | Callable[[], dict[str, str]] = None, 
     urlopen: Callable = urlopen, 
+    iter_bytes: Callable = DEFAULT_ASYNC_ITER_BYTES, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
 ):
     """
     """
-    gen = download_async_iter(url, file, resume=resume, chunksize=chunksize, headers=headers, urlopen=urlopen)
-    reporthook_close: None | Callable = None
-    if make_reporthook:
-        progress = await anext(gen)
-        reporthook = make_reporthook(progress.total)
-        if isasyncgen(reporthook):
-            await anext(reporthook)
-            reporthook_close = reporthook.aclose
-            reporthook = reporthook.asend
-        elif isgenerator(reporthook):
-            await as_thread(next)(reporthook)
-            reporthook_close = as_thread(reporthook.close)
-            reporthook = as_thread(reporthook.send)
-        else:
-            reporthook = ensure_async(cast(Callable, reporthook))
-        await reporthook(progress.last_incr)
-    else:
-        reporthook = None
-
+    update: None | Callable = None
+    close: None | Callable = None
+    download_gen = download_async_iter(
+        url, 
+        file, 
+        resume=resume, 
+        chunksize=chunksize, 
+        headers=headers, 
+        urlopen=urlopen, 
+        iter_bytes=iter_bytes, 
+    )
     try:
-        async for progress in gen:
-            reporthook and await reporthook(progress.last_incr)
+        if make_reporthook is not None:
+            progress = await anext(download_gen)
+            reporthook = make_reporthook(progress.total)
+            if isinstance(reporthook, AsyncGenerator):
+                await anext(reporthook)
+                update = reporthook.asend
+                close = reporthook.aclose
+            elif isinstance(reporthook, Generator):
+                await as_thread(next)(reporthook)
+                update = as_thread(reporthook.send)
+                close = reporthook.close
+            else:
+                update = ensure_async(reporthook)
+                close = getattr(reporthook, "close", None)
+            await update(progress.last_incr)
+        if update is None:
+            async for progress in download_gen:
+                pass
+        else:
+            async for progress in download_gen:
+                await update(progress.last_incr)
     finally:
-        await gen.aclose()
-        if reporthook_close:
-            await reporthook_close()
+        await download_gen.aclose()
+        if close is not None:
+            await ensure_async(close)()
 

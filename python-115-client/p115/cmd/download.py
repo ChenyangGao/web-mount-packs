@@ -61,6 +61,7 @@ def main(args) -> Result:
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
     from pathlib import Path
     from platform import system
+    from shutil import COPY_BUFSIZE # type: ignore
     from sys import exc_info
     from textwrap import indent
     from threading import Lock
@@ -75,7 +76,7 @@ def main(args) -> Result:
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     )
     from texttools import cycle_text, rotate_text
-    from urlopen import download
+    from download import download, DEFAULT_ITER_BYTES as iter_bytes
 
     cookies = args.cookies
     cookies_path = args.cookies_path
@@ -124,12 +125,16 @@ def main(args) -> Result:
     client = P115Client(cookies, app=args.app)
 
     do_request: None | Callable
+    urlopen: Callable
     match use_request:
         case "httpx":
-            from httpx import HTTPStatusError as StatusError, RequestError
+            from httpx import Client, HTTPStatusError as StatusError, RequestError
+            from httpx_request import request as httpx_request
             do_request = None
             def get_status_code(e):
                 return e.response.status_code
+            urlopen = partial(httpx_request, session=Client())
+            iter_bytes = lambda resp: resp.iter_bytes(COPY_BUFSIZE)
         case "requests":
             try:
                 from requests import Session
@@ -142,9 +147,24 @@ def main(args) -> Result:
                 from requests import Session
                 from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
                 from requests_request import request as requests_request
-            do_request = partial(requests_request, timeout=60, session=Session())
+            do_request = urlopen = partial(requests_request, session=Session())
+            iter_bytes = lambda resp: resp.iter_content(COPY_BUFSIZE)
             def get_status_code(e):
                 return e.response.status_code
+        case "urllib3":
+            from urllib.error import HTTPError as StatusError # type: ignore
+            try:
+                from urllib3.exceptions import RequestError # type: ignore
+                from urllib3_request import request as urllib3_request
+            except ImportError:
+                from sys import executable
+                from subprocess import run
+                run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+                from urllib3.exceptions import RequestError # type: ignore
+                from urllib3_request import request as urllib3_request
+            do_request = urlopen = urllib3_request
+            def get_status_code(e):
+                return e.status
         case "urlopen":
             from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
             try:
@@ -154,7 +174,7 @@ def main(args) -> Result:
                 from subprocess import run
                 run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
                 from urlopen import request as urlopen_request
-            do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
+            do_request = urlopen = partial(urlopen_request, cookies=client.cookiejar)
             def get_status_code(e):
                 return e.status
 
@@ -411,8 +431,9 @@ def main(args) -> Result:
                     url, 
                     dst_path, 
                     resume=resume, 
-                    headers=url.get("headers"), # type: ignore
                     make_reporthook=partial(add_report, attr=attr), 
+                    urlopen=urlopen, 
+                    iter_bytes=iter_bytes, 
                 )
                 console_print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
@@ -546,7 +567,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")

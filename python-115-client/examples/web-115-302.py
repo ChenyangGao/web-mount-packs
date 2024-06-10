@@ -72,7 +72,7 @@ parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默�
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 args = parser.parse_args()
 if args.version:
@@ -180,9 +180,21 @@ match use_request:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError # type: ignore
             from requests_request import request as make_request
-        make_request = do_request = partial(make_request, timeout=60, session=Session())
+        make_request = do_request = partial(make_request, session=Session())
         def get_status_code(e):
             return e.response.status_code
+    case "urllib3":
+        from urllib.error import HTTPError as StatusError # type: ignore
+        try:
+            from urllib3_request import request as make_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "urllib3_request"], check=True)
+            from urllib3_request import request as make_request
+        do_request = make_request
+        def get_status_code(e):
+            return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError # type: ignore
         try:
@@ -192,7 +204,7 @@ match use_request:
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
             from urlopen import request as make_request
-        do_request = partial(make_request, cookies=client.cookiejar, timeout=60)
+        do_request = partial(make_request, cookies=client.cookiejar)
         def get_status_code(e):
             return e.status
 

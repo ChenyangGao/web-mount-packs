@@ -32,6 +32,7 @@ def main(args):
         raise SystemExit(0)
 
     from collections.abc import Callable, Sequence
+    from functools import partial
     from os.path import expanduser, dirname, join as joinpath, realpath
     from sys import stdout
 
@@ -64,7 +65,40 @@ def main(args):
     if cookies_path and cookies != client.cookies:
         open(cookies_path, "w").write(client.cookies)
 
-    fs = client.fs
+    do_request: None | Callable
+    match args.use_request:
+        case "httpx":
+            do_request = None
+        case "requests":
+            try:
+                from requests import Session
+                from requests_request import request as requests_request
+            except ImportError:
+                from sys import executable
+                from subprocess import run
+                run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
+                from requests import Session
+                from requests_request import request as requests_request
+            do_request = partial(requests_request, session=Session())
+        case "urllib3":
+            try:
+                from urllib3_request import request as do_request
+            except ImportError:
+                from sys import executable
+                from subprocess import run
+                run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+                from urllib3_request import request as do_request
+        case "urlopen":
+            try:
+                from urlopen import request as urlopen_request
+            except ImportError:
+                from sys import executable
+                from subprocess import run
+                run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
+                from urlopen import request as urlopen_request
+            do_request = partial(urlopen_request, cookies=client.cookiejar)
+
+    fs = client.get_fs(request=do_request)
 
     if args.password and not fs.hidden_mode:
         fs.hidden_switch(True, password=args.password)
@@ -266,6 +300,7 @@ parser.add_argument("-o", "--output-file", help="保存到文件，此时命令�
 parser.add_argument("-m", "--min-depth", default=0, type=int, help="最小深度，默认值 0，小于或等于 0 时不限")
 parser.add_argument("-M", "--max-depth", default=-1, type=int, help="最大深度，默认值 -1，小于 0 时不限")
 parser.add_argument("-dfs", "--depth-first", action="store_true", help="使用深度优先搜索，否则使用广度优先")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 

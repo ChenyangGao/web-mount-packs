@@ -10,7 +10,6 @@ from json import loads
 
 from argtools import argcount
 from requests import adapters
-from requests.exceptions import ConnectTimeout, ReadTimeout
 from requests.models import Response
 from requests.sessions import Session
 
@@ -50,15 +49,14 @@ def request(
         if parse is False:
             return resp.content
         elif parse is True:
-            with resp:
-                content_type = resp.headers.get("Content-Type", "")
-                if content_type == "application/json":
-                    return resp.json()
-                elif content_type.startswith("application/json;"):
-                    return loads(resp.text)
-                elif content_type.startswith("text/"):
-                    return resp.text
-                return resp.content
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type == "application/json":
+                return resp.json()
+            elif content_type.startswith("application/json;"):
+                return loads(resp.text)
+            elif content_type.startswith("text/"):
+                return resp.text
+            return resp.content
         else:
             ac = argcount(parse)
             with resp:

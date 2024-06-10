@@ -28,7 +28,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-s", "--stats-interval", type=float, default=30, 
                     help="输出统计信息的时间间隔，单位 秒，默认值: 30，如果小于等于 0 则不输出")
 parser.add_argument("-d", "--debug", action="store_true", help="输出 DEBUG 级别日志信息")
@@ -171,6 +171,20 @@ match use_request:
         make_request = do_request = partial(make_request, timeout=60, session=Session())
         def get_status_code(e):
             return e.response.status_code
+    case "urllib3":
+        from urllib.error import HTTPError as StatusError # type: ignore
+        try:
+            from urllib3.exceptions import RequestError # type: ignore
+            from urllib3_request import request as make_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+            from urllib3.exceptions import RequestError # type: ignore
+            from urllib3_request import request as make_request
+        do_request = make_request
+        def get_status_code(e):
+            return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
         try:

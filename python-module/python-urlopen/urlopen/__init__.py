@@ -179,7 +179,7 @@ def request(
     with resp:
         if isinstance(parse, bool):
             data = decompress_response(resp)
-            if parse is True:
+            if parse:
                 content_type = resp.headers.get("Content-Type", "")
                 if content_type == "application/json":
                     return loads(data)

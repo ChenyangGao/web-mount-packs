@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-download"
-version = "0.0.2"
-description = "Python for download."
+name = "urllib3_request"
+version = "0.0.1.3"
+description = "urllib3 request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-download"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-download"
-keywords = ["download"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/urllib3_request"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/urllib3_request"
+keywords = ["urllib3", "request"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,20 +26,13 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
-http_response = "*"
-python-asynctools = "*"
-python-concurrenttools = "*"
-python-filewrap = "*"
-python-urlopen = "*"
-
-[tool.poetry.scripts]
-python-download = "download.__main__:main"
-download = "download.__main__:main"
+python = "^3.10"
+urllib3 = "*"
+python-argtools = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "download"
+include = "urllib3_request"
