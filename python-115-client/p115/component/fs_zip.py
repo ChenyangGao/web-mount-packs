@@ -20,7 +20,7 @@ from typing import cast, Never, Self
 
 from posixpatht import escape, joins, splits
 
-from .client import check_response, P115Client, ExtractProgress
+from .client import check_response, P115Client, ExtractProgress, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -288,8 +288,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         /, 
         pid: None | int = None, 
         headers: None | Mapping = None, 
-        detail: bool = False, 
-    ) -> str:
+    ) -> P115Url:
         "获取下载链接"
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
@@ -298,7 +297,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             self.pickcode, 
             attr["path"], 
             headers=headers, 
-            detail=detail, 
+            detail=True, 
             request=self.request, 
         )
 

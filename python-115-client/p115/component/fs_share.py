@@ -23,7 +23,7 @@ from typing import cast, Never, Self
 
 from posixpatht import escape, joins, splits
 
-from .client import check_response, P115Client
+from .client import check_response, P115Client, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -372,8 +372,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         /, 
         pid: None | int = None, 
         headers: None | Mapping = None, 
-        detail: bool = False, 
-    ) -> str:
+    ) -> P115Url:
         "获取下载链接"
         path_class = type(self).path_class
         if isinstance(id_or_path, (int, path_class)):
@@ -394,7 +393,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "file_id": id, 
             }, 
             headers=headers, 
-            detail=detail, 
+            detail=True, 
             request=self.request, 
         )
 

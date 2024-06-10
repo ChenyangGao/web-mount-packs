@@ -197,6 +197,7 @@ match use_request:
             return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError # type: ignore
+        from urllib.request import build_opener, HTTPCookieProcessor
         try:
             from urlopen import request as make_request
         except ImportError:
@@ -204,7 +205,7 @@ match use_request:
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
             from urlopen import request as make_request
-        do_request = partial(make_request, cookies=client.cookiejar)
+        do_request = partial(make_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
         def get_status_code(e):
             return e.status
 
@@ -266,7 +267,6 @@ def get_url(pickcode: str):
     url = relogin_wrap(
         fs.get_url_from_pickcode, 
         pickcode, 
-        detail=True, 
         headers={"User-Agent": request_headers.get("User-Agent") or ""}, 
         use_web_api=use_web_api, 
     )

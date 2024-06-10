@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = ["urlopen", "request", "download"]
 
 import errno
@@ -27,13 +27,15 @@ from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
 from brotli import decompress as decompress_br # type: ignore
-from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
+from filewrap import bio_skip_iter, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
 from zstandard import decompress as decompress_zstd
 
 
 if "__del__" not in HTTPResponse.__dict__:
     setattr(HTTPResponse, "__del__", HTTPResponse.close)
+if "__del__" not in OpenerDirector.__dict__:
+    setattr(OpenerDirector, "__del__", OpenerDirector.close)
 
 CRE_search_charset = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
 
@@ -85,8 +87,8 @@ def urlopen(
     timeout: None | int | float = None, 
     cookies: None | CookieJar = None, 
     proxy: None | tuple[str, str] = None, 
-    opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context())), 
     context: None | SSLContext = None, 
+    opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context())), 
     origin: None | str = None, 
 ) -> HTTPResponse:
     if isinstance(url, str) and not urlsplit(url).scheme:
@@ -135,8 +137,8 @@ def urlopen(
         req = Request(url, data=data, headers=headers or {}, method=method.upper())
     if proxy:
         req.set_proxy(*proxy)
-    if opener is None:
-        opener = build_opener()
+    if context is not None or cookies is not None:
+        opener = copy(opener)
     if context is not None:
         opener.add_handler(HTTPSHandler(context=context))
     if cookies is not None:

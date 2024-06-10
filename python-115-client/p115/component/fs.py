@@ -32,7 +32,7 @@ from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
 from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 
-from .client import check_response, P115Client
+from .client import check_response, P115Client, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -1250,8 +1250,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         pid: None | int = None, 
         headers: None | Mapping = None, 
-        detail: bool = False, 
-    ) -> str:
+    ) -> P115Url:
         "获取下载链接"
         attr = self.attr(id_or_path, pid)
         if attr["is_directory"]:
@@ -1259,7 +1258,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return self.client.download_url(
             attr["pickcode"], 
             use_web_api=attr.get("violated", False) and attr["size"] < 1024 * 1024 * 115, 
-            detail=detail, 
+            detail=True, 
             headers=headers, 
             request=self.request, 
         )
@@ -1268,14 +1267,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         /, 
         pickcode: str, 
-        detail: bool = False, 
         use_web_api: bool = False, 
         headers: None | Mapping = None, 
-    ) -> str:
+    ) -> P115Url:
         "由 pickcode 获取下载链接"
         return self.client.download_url(
             pickcode, 
-            detail=detail, 
+            detail=True, 
             use_web_api=use_web_api, 
             headers=headers, 
             request=self.request, 

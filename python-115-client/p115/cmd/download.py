@@ -167,6 +167,7 @@ def main(args) -> Result:
                 return e.status
         case "urlopen":
             from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
+            from urllib.request import build_opener, HTTPCookieProcessor
             try:
                 from urlopen import request as urlopen_request
             except ImportError:
@@ -174,7 +175,7 @@ def main(args) -> Result:
                 from subprocess import run
                 run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
                 from urlopen import request as urlopen_request
-            do_request = urlopen = partial(urlopen_request, cookies=client.cookiejar)
+            do_request = urlopen = partial(urlopen_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
             def get_status_code(e):
                 return e.status
 
@@ -374,13 +375,13 @@ def main(args) -> Result:
 
     def get_url(attr) -> str:
         if share_link:
-            return fs.get_url(attr["id"], detail=True)
+            return fs.get_url(attr["id"])
         if attr.get("violated", False):
             if attr["size"] >= 1024 * 1024 * 115:
                 return ""
-            return fs.get_url_from_pickcode(attr["pickcode"], detail=True, use_web_api=True)
+            return fs.get_url_from_pickcode(attr["pickcode"], use_web_api=True)
         else:
-            return fs.get_url_from_pickcode(attr["pickcode"], detail=True)
+            return fs.get_url_from_pickcode(attr["pickcode"])
 
     def work(task: Task, submit):
         attr, dst_path = task.src_attr, task.dst_path

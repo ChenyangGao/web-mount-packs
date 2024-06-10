@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.9.5.3"
+version = "0.0.9.5.4"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -49,7 +49,7 @@ python-http_request = ">=0.0.5"
 python-iterutils = "*"
 python-startfile = ">=0.0.2"
 python-texttools = ">=0.0.2"
-python-urlopen = ">=0.0.5.1"
+python-urlopen = ">=0.0.6"
 qrcode = "*"
 rich = "*"
 yarl = "*"

@@ -187,6 +187,7 @@ match use_request:
             return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
+        from urllib.request import build_opener, HTTPCookieProcessor
         try:
             from urlopen import request as make_request
         except ImportError:
@@ -194,7 +195,7 @@ match use_request:
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
             from urlopen import request as make_request
-        do_request = partial(make_request, cookies=client.cookiejar, timeout=60)
+        do_request = partial(make_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
         def get_status_code(e):
             return e.status
 
