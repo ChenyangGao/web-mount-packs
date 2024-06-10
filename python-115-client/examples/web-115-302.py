@@ -254,7 +254,7 @@ def redirect_exception_response(func, /):
         except FileNotFoundError as exc:
             return str(exc), 404 # Not Found
         except OSError as exc:
-            return str(exc), 400 # Bad Request
+            return str(exc), 500 # Internal Server Error
         except Exception as exc:
             return str(exc), 503 # Service Unavailable
     return update_wrapper(wrapper, func)
