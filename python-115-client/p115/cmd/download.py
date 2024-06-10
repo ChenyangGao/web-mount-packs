@@ -66,9 +66,7 @@ def main(args) -> Result:
     from threading import Lock
     from traceback import format_exc
     from typing import cast, ContextManager
-    from urllib.error import HTTPError, URLError
     from urllib.parse import quote
-    from urllib.request import urlopen, Request
     from warnings import warn
 
     from concurrenttools import thread_batch
@@ -424,19 +422,18 @@ def main(args) -> Result:
             task.reasons.append(e)
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
-                retryable = True
                 if isinstance(e, StatusError):
-                    retryable = get_status_code(e) == 405
-                    if retryable:
+                    status_code = get_status_code(e)
+                    if status_code == 405:
+                        retryable = True
                         try:
                             relogin()
                         except:
                             pass
-                if retryable:
-                    retryable = (
-                        isinstance(e, HTTPError) and e.status != 404
-                        and isinstance(e, (StatusError, RequestError, URLError, TimeoutError))
-                    )
+                    else:
+                        retryable = not (400 <= status_code < 500)
+                else:
+                    retryable = isinstance(e, (RequestError, TimeoutError))
             else:
                 retryable = task.times <= max_retries
             if retryable:

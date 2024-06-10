@@ -103,7 +103,6 @@ from os.path import expanduser, dirname, join as joinpath, realpath
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
-from urllib.request import urlopen, Request
 from urllib.parse import quote, unquote, urlsplit
 from warnings import warn
 
@@ -156,11 +155,15 @@ if not cookies:
                 pass
 
 client = P115Client(cookies, app="qandroid")
+if cookies_path and cookies != client.cookies:
+    open(cookies_path, "w").write(client.cookies)
 
 do_request: None | Callable
+make_request: Callable
 match use_request:
     case "httpx":
         from httpx import HTTPStatusError as StatusError
+        from httpx_request import request as make_request
         do_request = None
         def get_status_code(e):
             return e.response.status_code
@@ -168,27 +171,27 @@ match use_request:
         try:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError # type: ignore
-            from requests_request import request as requests_request
+            from requests_request import request as make_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
             from requests import Session
             from requests.exceptions import HTTPError as StatusError # type: ignore
-            from requests_request import request as requests_request
-        do_request = partial(requests_request, timeout=60, session=Session())
+            from requests_request import request as make_request
+        do_request = partial(make_request, timeout=60, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urlopen":
         from urllib.error import HTTPError as StatusError # type: ignore
         try:
-            from urlopen import request as urlopen_request
+            from urlopen import request as make_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request as urlopen_request
-        do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
+            from urlopen import request as make_request
+        do_request = partial(make_request, cookies=client.cookiejar, timeout=60)
         def get_status_code(e):
             return e.status
 
@@ -200,8 +203,6 @@ if device not in AVAILABLE_APPS:
     else:
         warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
         device = "qandroid"
-if cookies_path and cookies != client.cookies:
-    open(cookies_path, "w").write(client.cookies)
 fs = client.get_fs(client, path_to_id=LRUCache(65536), request=do_request)
 
 KEYS = (
@@ -263,16 +264,16 @@ def get_url(pickcode: str):
         bytes_range = request_headers.get("Range")
         if bytes_range:
             headers["Range"] = bytes_range
-            resp = urlopen(Request(url, headers=headers))
+            resp = make_request(url, headers=headers)
             return Response(
-                urlopen(Request(url, headers=headers)), 
+                resp, 
                 headers=dict(request_headers), 
                 status=206, 
                 mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
             )
-        resp = urlopen(Request(url, headers=headers))
+        resp = make_request(url, headers=headers)
         return send_file(
-            urlopen(Request(url, headers=headers)), 
+            resp, 
             mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
         )
     return redirect(url)

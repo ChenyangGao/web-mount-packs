@@ -47,7 +47,7 @@ from datetime import datetime
 from functools import partial
 from gzip import GzipFile
 from inspect import currentframe, getframeinfo
-from json import dumps, load, loads
+from json import dumps, loads
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from sys import exc_info
@@ -57,9 +57,7 @@ from threading import Lock, current_thread
 from time import perf_counter, sleep
 from traceback import format_exc
 from typing import cast, ContextManager, NamedTuple, TypedDict
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin
-from urllib.request import urlopen, Request
 from warnings import warn
 
 try:
@@ -69,17 +67,19 @@ try:
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
+    from yarl import URL
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", 
-         "colored", "python-concurrenttools", "python-115", "Pygments"], check=True)
+         "colored", "python-concurrenttools", "python-115", "Pygments", "yarl"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
     from p115 import check_response, P115Client, AVAILABLE_APPS
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
+    from yarl import URL
 
 
 COLORS_8_BIT: dict[str, int] = {
@@ -117,12 +117,39 @@ if max_workers > 1:
         fs_lock = Lock()
 cookies_path_mtime = 0
 
-client = P115Client(cookies, app="qandroid")
+if not cookies:
+    if cookies_path:
+        try:
+            cookies = open(cookies_path).read()
+        except FileNotFoundError:
+            pass
+    else:
+        seen = set()
+        for dir_ in (".", expanduser("~"), dirname(__file__)):
+            dir_ = realpath(dir_)
+            if dir_ in seen:
+                continue
+            seen.add(dir_)
+            try:
+                path = joinpath(dir_, "115-cookies.txt")
+                cookies = open(path).read()
+                cookies_path_mtime = stat(path).st_mtime_ns
+                if cookies:
+                    cookies_path = path
+                    break
+            except FileNotFoundError:
+                pass
 
+client = P115Client(cookies, app="qandroid")
+if cookies_path and cookies != client.cookies:
+    open(cookies_path, "w").write(client.cookies)
+
+request: Callable
 do_request: None | Callable
 match use_request:
     case "httpx":
         from httpx import HTTPStatusError as StatusError, RequestError
+        from httpx_request import request
         do_request = None
         def get_status_code(e):
             return e.response.status_code
@@ -130,27 +157,27 @@ match use_request:
         try:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request as requests_request
+            from requests_request import request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request as requests_request
-        do_request = partial(requests_request, timeout=60, session=Session())
+            from requests_request import request
+        do_request = partial(request, timeout=60, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urlopen":
         from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
         try:
-            from urlopen import request as urlopen_request
+            from urlopen import request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request as urlopen_request
-        do_request = partial(urlopen_request, cookies=client.cookiejar, timeout=60)
+            from urlopen import request
+        do_request = partial(request, cookies=client.cookiejar, timeout=60)
         def get_status_code(e):
             return e.status
 
@@ -162,8 +189,6 @@ if device not in AVAILABLE_APPS:
     else:
         warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
         device = "qandroid"
-if cookies_path and cookies != client.cookies:
-    open(cookies_path, "w").write(client.cookies)
 fs = client.get_fs(request=do_request)
 
 
@@ -185,6 +210,10 @@ class Tasks(TypedDict):
 class Result(NamedTuple):
     stats: dict
     tasks: Tasks
+
+
+class Retryable(Exception):
+    pass
 
 
 class ColoredLevelNameFormatter(logging.Formatter):
@@ -294,10 +323,7 @@ def attr(
         url = f"{base_url}?id={id_or_path}&method=attr"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
-        if resp.headers.get("Content-Encoding") == "gzip":
-            resp = GzipFile(fileobj=resp)
-        return load(resp)
+    return request(url, timeout=60, parse=True)
 
 
 def listdir(
@@ -308,15 +334,11 @@ def listdir(
         url = f"{base_url}?id={id_or_path}&method=list"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
-        if resp.headers.get("Content-Encoding") == "gzip":
-            resp = GzipFile(fileobj=resp)
-        return load(resp)
+    return request(url, timeout=60, parse=True)
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
-    with urlopen(Request(url, headers={"Range": f"bytes={bytes_range}"}), timeout=10) as resp:
-        return resp.read()
+    return request(url, headers={"Range": f"bytes={bytes_range}"}, timeout=10, parse=False)
 
 
 @contextmanager
@@ -653,10 +675,9 @@ def pull(
                         attr     = highlight_object(attr), 
                         resp     = highlight_as_json(resp), 
                     ))
-                    with urlopen(attr["url"], timeout=10) as resp:
-                        resp = client.upload_file_sample(resp, attr["name"], pid=pid, request=do_request)
+                    resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request)
                 elif status == 0 and statuscode in (0, 413):
-                    raise URLError(resp)
+                    raise Retryable(resp)
                 else:
                     raise OSError(resp)
                 resp_data = resp["data"]
@@ -674,19 +695,18 @@ def pull(
             task.reasons.append(e)
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
-                retryable = True
                 if isinstance(e, StatusError):
-                    retryable = get_status_code(e) == 405
-                    if retryable:
+                    status_code = get_status_code(e)
+                    if status_code == 405:
+                        retryable = True
                         try:
                             relogin()
                         except:
                             pass
-                if retryable:
-                    retryable = (
-                        isinstance(e, HTTPError) and e.status != 404
-                        and isinstance(e, (StatusError, RequestError, URLError, TimeoutError))
-                    )
+                    else:
+                        retryable = not (400 <= status_code < 500)
+                else:
+                    retryable = isinstance(e, (RequestError, TimeoutError, Retryable))
             else:
                 retryable = task.times <= max_retries
             if retryable:
@@ -783,30 +803,6 @@ def pull(
                 stats  = highlight_object(stats), 
             ))
     return Result(stats, all_tasks)
-
-
-if not cookies:
-    if cookies_path:
-        try:
-            cookies = open(cookies_path).read()
-        except FileNotFoundError:
-            pass
-    else:
-        seen = set()
-        for dir_ in (".", expanduser("~"), dirname(__file__)):
-            dir_ = realpath(dir_)
-            if dir_ in seen:
-                continue
-            seen.add(dir_)
-            try:
-                path = joinpath(dir_, "115-cookies.txt")
-                cookies = open(path).read()
-                cookies_path_mtime = stat(path).st_mtime_ns
-                if cookies:
-                    cookies_path = path
-                    break
-            except FileNotFoundError:
-                pass
 
 
 logger = logging.Logger("115-pull", logging.DEBUG if debug else logging.INFO)

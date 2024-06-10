@@ -64,7 +64,7 @@ def request_sync(
     session: None | Client = None, 
     # Client.send params
     auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
-    follow_redirects: bool | UseClientDefault = USE_CLIENT_DEFAULT, 
+    follow_redirects: bool | UseClientDefault = True, 
     # use Client.stream xor Client.request
     stream: bool = True, 
     # Client.__init__ params
@@ -132,7 +132,7 @@ async def request_async(
     session: None | AsyncClient = None, 
     # AsyncClient.send params
     auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
-    follow_redirects: bool | UseClientDefault = USE_CLIENT_DEFAULT, 
+    follow_redirects: bool | UseClientDefault = True, 
     # use AsyncClient.stream xor AsyncClient.request
     stream: bool = True, 
     # Client.__init__ params

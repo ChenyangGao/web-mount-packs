@@ -327,7 +327,10 @@ def main() -> Result:
             task.reasons.append(e)
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
-                retryable = e.status != 404 if isinstance(e, HTTPError) else isinstance(e, URLError)
+                if isinstance(e, HTTPError):
+                    retryable = not (400 <= cast(int, e.status) < 500)
+                else:
+                    retryable = isinstance(e, URLError)
             else:
                 retryable = task.times <= max_retries
             if retryable:

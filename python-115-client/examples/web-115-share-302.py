@@ -89,7 +89,6 @@ from os.path import expanduser, dirname, join as joinpath, realpath
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
-from urllib.request import Request
 from urllib.parse import quote, unquote, urlsplit
 from warnings import warn
 
@@ -143,6 +142,8 @@ except ImportError:
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
 
 client = P115Client(cookies, app="qandroid")
+if cookies_path and cookies != client.cookies:
+    open(cookies_path, "w").write(client.cookies)
 
 do_request: None | Callable
 match use_request:
@@ -187,8 +188,6 @@ if device not in AVAILABLE_APPS:
     else:
         warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
         device = "qandroid"
-if cookies_path and cookies != client.cookies:
-    open(cookies_path, "w").write(client.cookies)
 fs = client.get_share_fs(share_link, request=do_request)
 
 KEYS = (

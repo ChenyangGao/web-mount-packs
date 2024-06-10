@@ -563,7 +563,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return attrs["attr"]
         try:
             data = self.fs_info(id)["data"][0]
-        except OSError as e:
+        except FileNotFoundError as e:
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
         attr = normalize_info(data, fs=self)
         pid = attr["parent_id"]
