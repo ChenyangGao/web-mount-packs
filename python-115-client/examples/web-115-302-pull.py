@@ -144,12 +144,15 @@ client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
-request: Callable
 do_request: None | Callable
+make_request: Callable
 match use_request:
     case "httpx":
-        from httpx import HTTPStatusError as StatusError, RequestError
+        from httpx import Client, HTTPStatusError as StatusError, RequestError
         from httpx_request import request
+
+        from httpx_request import request as make_request
+        make_request = partial(make_request, session=Client())
         do_request = None
         def get_status_code(e):
             return e.response.status_code
@@ -157,27 +160,27 @@ match use_request:
         try:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request
+            from requests_request import request as make_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request
-        do_request = partial(request, timeout=60, session=Session())
+            from requests_request import request as make_request
+        make_request = do_request = partial(make_request, timeout=60, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urlopen":
         from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
         try:
-            from urlopen import request
+            from urlopen import request as make_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request
-        do_request = partial(request, cookies=client.cookiejar, timeout=60)
+            from urlopen import request as make_request
+        do_request = partial(make_request, cookies=client.cookiejar, timeout=60)
         def get_status_code(e):
             return e.status
 
@@ -323,7 +326,7 @@ def attr(
         url = f"{base_url}?id={id_or_path}&method=attr"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    return request(url, timeout=60, parse=True)
+    return make_request(url, parse=True)
 
 
 def listdir(
@@ -334,11 +337,11 @@ def listdir(
         url = f"{base_url}?id={id_or_path}&method=list"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    return request(url, timeout=60, parse=True)
+    return make_request(url, parse=True)
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
-    return request(url, headers={"Range": f"bytes={bytes_range}"}, timeout=10, parse=False)
+    return make_request(url, headers={"Range": f"bytes={bytes_range}"}, parse=False)
 
 
 @contextmanager

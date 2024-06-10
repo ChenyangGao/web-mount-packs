@@ -124,8 +124,9 @@ do_request: None | Callable
 make_request: Callable
 match use_request:
     case "httpx":
-        from httpx import HTTPStatusError as StatusError
+        from httpx import Client, HTTPStatusError as StatusError
         from httpx_request import request as make_request
+        make_request = partial(make_request, session=Client())
         do_request = None
         def get_status_code(e):
             return e.response.status_code
@@ -141,7 +142,7 @@ match use_request:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError # type: ignore
             from requests_request import request as make_request
-        do_request = partial(make_request, timeout=60, session=Session())
+        make_request = do_request = partial(make_request, timeout=60, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urlopen":
