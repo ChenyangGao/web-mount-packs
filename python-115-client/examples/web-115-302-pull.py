@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 7)
+__version__ = (0, 1, 8)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -26,6 +26,12 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果小于 0（默认），则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
     - 如果等于 0，则发生错误就抛出
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
+parser.add_argument("-md", "--direct-upload-max-size", type=int, help="""\
+秒传失败，会直接上传，为此施加一些限制：
+    - 如果不传（默认），则无论多大，都上传
+    - 如果小于 0，例如 -1，则直接失败，不上传
+    - 如果大于等于 0，则只上传小于等于此值大小的文件
+""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
@@ -103,6 +109,7 @@ max_workers = args.max_workers
 if max_workers <= 0:
     max_workers = 1
 max_retries = args.max_retries
+direct_upload_max_size = args.direct_upload_max_size
 lock_dir_methods = args.lock_dir_methods
 use_request = args.use_request
 stats_interval = args.stats_interval
@@ -682,19 +689,23 @@ def pull(
                 if status == 2 and statuscode == 0:
                     pass
                 elif status == 1 and statuscode == 0:
-                    if debug: logger.debug("""\
+                    should_direct_upload = direct_upload_max_size is None or attr["size"] <= direct_upload_max_size
+                    logger.warning("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
     ├ attr = {attr}
     ├ response = {resp}""".format(
                         emoji    = blink_mark("🥹"), 
-                        prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（直接上传）: ", "yellow"), 
+                        prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（%s）: " % ("放弃上传", "直接上传")[should_direct_upload], "yellow"), 
                         src_path = highlight_path(attr["path"]), 
                         name     = highlight_path(attr["name"]), 
                         pid      = highlight_id(pid), 
                         attr     = highlight_object(attr), 
                         resp     = highlight_as_json(resp), 
                     ))
-                    resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request, timout=None)
+                    if should_direct_upload:
+                        resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request)
+                    else:
+                        raise OSError(resp)
                 elif status == 0 and statuscode in (0, 413):
                     raise Retryable(resp)
                 else:
