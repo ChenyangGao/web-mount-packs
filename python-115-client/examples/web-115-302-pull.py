@@ -735,7 +735,7 @@ def pull(
                         except:
                             pass
                     else:
-                        retryable = status_code == 403 or not (400 <= status_code < 500)
+                        retryable = not (400 <= status_code < 500)
                 else:
                     retryable = isinstance(e, (RequestError, URLError, TimeoutError, Retryable))
             else:

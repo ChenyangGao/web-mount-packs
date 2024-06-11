@@ -328,7 +328,7 @@ def main() -> Result:
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
                 if isinstance(e, HTTPError):
-                    retryable = e.status == 403 or not (400 <= cast(int, e.status) < 500)
+                    retryable = not (400 <= cast(int, e.status) < 500)
                 else:
                     retryable = isinstance(e, URLError)
             else:
