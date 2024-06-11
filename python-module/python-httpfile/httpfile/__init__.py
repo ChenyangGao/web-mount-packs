@@ -104,6 +104,18 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             headers["Range"] = f"bytes={start}-"
         elif start < 0:
             headers["Range"] = f"bytes={start}"
+        if callable(url):
+            geturl = url
+            def url():
+                url = geturl()
+                headers_extra = getattr(url, "headers")
+                if headers_extra:
+                    headers.update(headers_extra)
+                return url
+        elif hasattr(url, "headers"):
+            headers_extra = getattr(url, "headers")
+            if headers_extra:
+                headers.update(headers_extra)
         response = urlopen(url() if callable(url) else url, headers=headers)
         if start:
             rng = get_range(response)

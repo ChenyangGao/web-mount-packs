@@ -76,6 +76,7 @@ RequestVarT = TypeVar("RequestVarT", dict, Callable)
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
+CRE_SET_COOKIE_search = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*").search
 APP_VERSION: Final = "99.99.99.99"
 
 parse_json = lambda _, content: loads(content)
@@ -4038,8 +4039,13 @@ class P115Client:
             headers = request_kwargs["headers"] = {"User-Agent": default_ua}
         def parse(resp, content: bytes) -> dict:
             json = loads(content)
-            if "Set-Cookie" in resp.headers:
-                headers["Cookie"] = resp.headers["Set-Cookie"]
+            if isinstance(resp.headers, Mapping):
+                headers["Cookie"] = CRE_SET_COOKIE_search(resp.headers["Set-Cookie"])[0] # type: ignore
+            else:
+                for k, v in reversed(resp.headers.items()):
+                    if k == "Set-Cookie":
+                        headers["Cookie"] = v
+                        break
             json["headers"] = headers
             return json
         request_kwargs["parse"] = parse
@@ -6501,8 +6507,13 @@ class P115Client:
             headers = request_kwargs["headers"] = {"User-Agent": default_ua}
         def parse(resp, content: bytes):
             json = loads(content)
-            if "Set-Cookie" in resp.headers:
-                headers["Cookie"] = resp.headers["Set-Cookie"]
+            if isinstance(resp.headers, Mapping):
+                headers["Cookie"] = CRE_SET_COOKIE_search(resp.headers["Set-Cookie"])[0] # type: ignore
+            else:
+                for k, v in reversed(resp.headers.items()):
+                    if k == "Set-Cookie":
+                        headers["Cookie"] = v
+                        break
             json["headers"] = headers
             return json
         request_kwargs["parse"] = parse
@@ -7795,7 +7806,6 @@ class P115Client:
                 headers=headers, 
                 start=start, 
                 seek_threshold=seek_threshold, 
-                urlopen=partial(urlopen, cookies=self.cookiejar), 
             )
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
