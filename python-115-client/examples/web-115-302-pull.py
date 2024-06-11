@@ -21,8 +21,7 @@ parser.add_argument("-cp", "--cookies-path", help="""\
     2. 用户根目录
     3. 此脚本所在目录""")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
-parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
-                    help="""最大重试次数。
+parser.add_argument("-mr", "--max-retries", default=-1, type=int, help="""最大重试次数。
     - 如果小于 0（默认），则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
     - 如果等于 0，则发生错误就抛出
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
@@ -30,8 +29,7 @@ parser.add_argument("-md", "--direct-upload-max-size", type=int, help="""\
 秒传失败，会直接上传，为此施加一些限制：
     - 如果不传（默认），则无论多大，都上传
     - 如果小于 0，例如 -1，则直接失败，不上传
-    - 如果大于等于 0，则只上传小于等于此值大小的文件
-""")
+    - 如果大于等于 0，则只上传小于等于此值大小的文件""")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
@@ -676,40 +674,43 @@ def pull(
                         update_success(1, 1, subattr["size"])
                 update_success(1)
             else:
-                resp = client.upload_file_init(
-                    attr["name"], 
-                    pid=pid, 
-                    filesize=attr["size"], 
-                    filesha1=attr["sha1"], 
-                    read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
-                    request=do_request, 
-                )
-                status = resp["status"]
-                statuscode = resp.get("statuscode", 0)
-                if status == 2 and statuscode == 0:
-                    pass
-                elif status == 1 and statuscode == 0:
-                    should_direct_upload = direct_upload_max_size is None or attr["size"] <= direct_upload_max_size
-                    logger.warning("""\
+                for i in reversed(range(3)):
+                    resp = client.upload_file_init(
+                        attr["name"], 
+                        pid=pid, 
+                        filesize=attr["size"], 
+                        filesha1=attr["sha1"], 
+                        read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
+                        request=do_request, 
+                    )
+                    status = resp["status"]
+                    statuscode = resp.get("statuscode", 0)
+                    if status == 2 and statuscode == 0:
+                        break
+                    elif status == 1 and statuscode == 0:
+                        if i:
+                            continue
+                        should_direct_upload = direct_upload_max_size is None or attr["size"] <= direct_upload_max_size
+                        logger.warning("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
     ├ attr = {attr}
     ├ response = {resp}""".format(
-                        emoji    = blink_mark("🥹"), 
-                        prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（%s）: " % ("放弃上传", "直接上传")[should_direct_upload], "yellow"), 
-                        src_path = highlight_path(attr["path"]), 
-                        name     = highlight_path(attr["name"]), 
-                        pid      = highlight_id(pid), 
-                        attr     = highlight_object(attr), 
-                        resp     = highlight_as_json(resp), 
-                    ))
-                    if should_direct_upload:
-                        resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request)
+                            emoji    = blink_mark("🥹"), 
+                            prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（%s）: " % ("放弃上传", "直接上传")[should_direct_upload], "yellow"), 
+                            src_path = highlight_path(attr["path"]), 
+                            name     = highlight_path(attr["name"]), 
+                            pid      = highlight_id(pid), 
+                            attr     = highlight_object(attr), 
+                            resp     = highlight_as_json(resp), 
+                        ))
+                        if should_direct_upload:
+                            resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request)
+                        else:
+                            raise OSError(resp)
+                    elif status == 0 and statuscode in (0, 413):
+                        raise Retryable(resp)
                     else:
                         raise OSError(resp)
-                elif status == 0 and statuscode in (0, 413):
-                    raise Retryable(resp)
-                else:
-                    raise OSError(resp)
                 resp_data = resp["data"]
                 if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n    ├ response = {resp}".format(
                     emoji    = blink_mark("🤭"), 
