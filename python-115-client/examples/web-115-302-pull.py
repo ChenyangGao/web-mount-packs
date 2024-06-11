@@ -30,6 +30,7 @@ parser.add_argument("-md", "--direct-upload-max-size", type=int, help="""\
     - 如果不传（默认），则无论多大，都上传
     - 如果小于 0，例如 -1，则直接失败，不上传
     - 如果大于等于 0，则只上传小于等于此值大小的文件""")
+parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
                     help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
@@ -105,6 +106,7 @@ max_workers = args.max_workers
 if max_workers <= 0:
     max_workers = 1
 max_retries = args.max_retries
+no_root = args.no_root
 direct_upload_max_size = args.direct_upload_max_size
 lock_dir_methods = args.lock_dir_methods
 use_request = args.use_request
@@ -765,23 +767,26 @@ def pull(
         finally:
             del thread_stats[cur_thread]
 
-    to_attr = None
     if isinstance(push_id, str):
         if not push_id.strip("/"):
             push_id = 0
         elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
             push_id = int(push_id)
     push_attr = attr(push_id, base_url)
+    to_attr = None
     if isinstance(to_pid, str):
         if not to_pid.strip("/"):
             to_pid = 0
         elif not to_pid.startswith("0") and to_pid.isascii() and to_pid.isdecimal():
             to_pid = int(to_pid)
         else:
-            to_attr = fs.makedirs(to_pid, exist_ok=True)
+            to_attr = relogin_wrap(fs.makedirs, to_pid, exist_ok=True)
             to_pid = to_attr["id"]
+    if to_pid != 0 and not no_root:
+        to_attr = relogin_wrap(fs.makedirs, [push_attr["name"]], pid=to_pid, exist_ok=True)
+        to_pid = to_attr["id"]
     if not to_attr:
-        to_attr = fs.attr(to_pid)
+        to_attr = relogin_wrap(fs.attr, to_pid)
 
     unfinished_tasks: dict[int, Task] = {
         cast(int, push_attr["id"]): Task(push_attr, cast(int, to_pid), to_attr)}

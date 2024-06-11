@@ -76,7 +76,7 @@ RequestVarT = TypeVar("RequestVarT", dict, Callable)
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
-CRE_SET_COOKIE_search = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*").search
+CRE_SET_COOKIE = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*")
 APP_VERSION: Final = "99.99.99.99"
 
 parse_json = lambda _, content: loads(content)
@@ -1467,9 +1467,9 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
-        GET https://proapi.115.com/android/1.0/user/setting
+        GET https://webapi.115.com/user/setting
         """
-        api = "https://proapi.115.com/android/1.0/user/setting"
+        api = "https://webapi.115.com/user/setting"
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -1491,6 +1491,65 @@ class P115Client:
     ) -> Awaitable[dict]:
         ...
     def user_setting2_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
+        POST https://webapi.115.com/user/setting
+        """
+        api = "https://webapi.115.com/user/setting"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting3(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting3(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_setting3(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
+        GET https://proapi.115.com/android/1.0/user/setting
+        """
+        api = "https://proapi.115.com/android/1.0/user/setting"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting3_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting3_post(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def user_setting3_post(
         self, 
         payload: dict, 
         /, 
@@ -1985,7 +2044,7 @@ class P115Client:
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - suffix: str = <default> # 后缀名
-            - type: int | str = <default>
+            - type: int = <default>
                 # 文件类型：
                 # - 所有: 0
                 # - 文档: 1
@@ -2066,7 +2125,7 @@ class P115Client:
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - suffix: str = <default> # 后缀名
-            - type: int | str = <default>
+            - type: int = <default>
                 # 文件类型：
                 # - 所有: 0
                 # - 文档: 1
@@ -2088,6 +2147,244 @@ class P115Client:
                 "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
                 "record_open_time": 1, "show_dir": 1, **payload, 
             }
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_image(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_image(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_image(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取图片的各种链接
+        GET https://webapi.115.com/files/image
+        payload:
+            - pickcode: str
+        """
+        api = "https://webapi.115.com/files/image"
+        if isinstance(payload, str):
+            payload = {"pickcode": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_video(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_video(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_video(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取视频信息（可以获取 .m3u8 文件链接，但此链接只能 web 的 cookies 才能获取数据）
+        GET https://webapi.115.com/files/video
+        payload:
+            - pickcode: str
+            - share_id: int | str = <default>
+            - local: 0 | 1 = <default>
+        """
+        api = "https://webapi.115.com/files/video"
+        if isinstance(payload, str):
+            payload = {"pickcode": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_video_subtitle(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_video_subtitle(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_video_subtitle(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取视频字幕
+        GET https://webapi.115.com/movies/subtitle
+        payload:
+            - pickcode: str
+        """
+        api = "https://webapi.115.com/movies/subtitle"
+        if isinstance(payload, str):
+            payload = {"pickcode": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_history(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_history(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_history(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取文件的观看历史，主要用于视频
+        GET https://webapi.115.com/files/history
+        payload:
+            - pick_code: str
+            - fetch: str = "one"
+            - category: int = <default>
+            - share_id: int | str = <default>
+        """
+        api = "https://webapi.115.com/files/history"
+        if isinstance(payload, str):
+            payload = {"fetch": "one", "pick_code": payload}
+        else:
+            payload = {"fetch": "one", **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_history_post(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_history_post(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_history_post(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """更新文件的观看历史，主要用于视频
+        GET https://webapi.115.com/files/history
+        payload:
+            - pick_code: str
+            - op: str = "update"
+            - category: int = <default>
+            - definition: int = <default>
+            - share_id: int | str = <default>
+            - time: int = <default>
+            - ...
+        """
+        api = "https://webapi.115.com/files/history"
+        if isinstance(payload, str):
+            payload = {"op": "update", "pick_code": payload}
+        else:
+            payload = {"op": "update", **payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_history_list(
+        self, 
+        payload: dict = {}, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_history_list(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_history_list(
+        self, 
+        payload: dict = {}, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取历史记录
+        GET https://webapi.115.com/history/list
+        payload:
+            - offset: int = 0
+            - limit: int = 32
+            - played_end: 0 | 1 = <default>
+            - type: int = <default>
+                # 文件类型：
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
+                # - 书籍: 7
+        """
+        api = "https://webapi.115.com/history/list"
+        if payload:
+            payload = {"offset": 0, "limit": 32, **payload}
+        else:
+            payload = {"offset": 0, "limit": 32}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2672,7 +2969,7 @@ class P115Client:
             - source: str = <default>
             - star: 0 | 1 = <default>
             - suffix: str = <default>
-            - type: int | str = <default>
+            - type: int = <default>
                 # 文件类型：
                 # - 所有: 0
                 # - 文档: 1
@@ -3344,16 +3641,16 @@ class P115Client:
         payload:
             - start: int = 0
             - limit: int = 1000
-            - show_type: int | str = 0
+            - show_type: int = 0
                 # 筛选类型，有多个则用逗号 ',' 隔开:
                 # 0: all
                 # 1: upload_file
                 # 2: browse_document
                 # 3: <UNKNOWN>
                 # 4: account_security
-            - type: int | str = <default>
-            - tab_type: int | str = <default>
-            - file_behavior_type: int | str = <default>
+            - type: int = <default>
+            - tab_type: int = <default>
+            - file_behavior_type: int = <default>
             - mode: str = <default>
             - check_num: int = <default>
             - total_count: int = <default>
@@ -4039,13 +4336,16 @@ class P115Client:
             headers = request_kwargs["headers"] = {"User-Agent": default_ua}
         def parse(resp, content: bytes) -> dict:
             json = loads(content)
-            if isinstance(resp.headers, Mapping):
-                headers["Cookie"] = CRE_SET_COOKIE_search(resp.headers["Set-Cookie"])[0] # type: ignore
-            else:
-                for k, v in reversed(resp.headers.items()):
-                    if k == "Set-Cookie":
-                        headers["Cookie"] = v
-                        break
+            if "Set-Cookie" in resp.headers:
+                if isinstance(resp.headers, Mapping):
+                    match = CRE_SET_COOKIE.search(resp.headers["Set-Cookie"])
+                    if match is not None:
+                        headers["Cookie"] = match[0]
+                else:
+                    for k, v in reversed(resp.headers.items()):
+                        if k == "Set-Cookie" and CRE_SET_COOKIE.match(v) is not None:
+                            headers["Cookie"] = v
+                            break
             json["headers"] = headers
             return json
         request_kwargs["parse"] = parse
@@ -6507,13 +6807,16 @@ class P115Client:
             headers = request_kwargs["headers"] = {"User-Agent": default_ua}
         def parse(resp, content: bytes):
             json = loads(content)
-            if isinstance(resp.headers, Mapping):
-                headers["Cookie"] = CRE_SET_COOKIE_search(resp.headers["Set-Cookie"])[0] # type: ignore
-            else:
-                for k, v in reversed(resp.headers.items()):
-                    if k == "Set-Cookie":
-                        headers["Cookie"] = v
-                        break
+            if "Set-Cookie" in resp.headers:
+                if isinstance(resp.headers, Mapping):
+                    match = CRE_SET_COOKIE.search(resp.headers["Set-Cookie"])
+                    if match is not None:
+                        headers["Cookie"] = match[0]
+                else:
+                    for k, v in reversed(resp.headers.items()):
+                        if k == "Set-Cookie" and CRE_SET_COOKIE.match(v) is not None:
+                            headers["Cookie"] = v
+                            break
             json["headers"] = headers
             return json
         request_kwargs["parse"] = parse
