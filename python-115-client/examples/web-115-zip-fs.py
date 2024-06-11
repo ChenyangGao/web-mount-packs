@@ -120,54 +120,52 @@ client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
-do_request: None | Callable
-make_request: Callable
+try:
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
+except ImportError:
+    from sys import executable
+    from subprocess import run
+    run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
+urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
+
+do_request: None | Callable = None
 match use_request:
     case "httpx":
-        from httpx import Client, HTTPStatusError as StatusError
-        from httpx_request import request as make_request
-        make_request = partial(make_request, session=Client())
-        do_request = None
+        from httpx import HTTPStatusError as StatusError
         def get_status_code(e):
             return e.response.status_code
     case "requests":
         try:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError # type: ignore
-            from requests_request import request as make_request
+            from requests_request import request as requests_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
             from requests import Session
             from requests.exceptions import HTTPError as StatusError # type: ignore
-            from requests_request import request as make_request
-        make_request = do_request = partial(make_request, timeout=60, session=Session())
+            from requests_request import request as requests_request
+        do_request = partial(requests_request, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urllib3":
         from urllib.error import HTTPError as StatusError # type: ignore
-        try:
-            from urllib3_request import request as make_request
-        except ImportError:
-            from sys import executable
-            from subprocess import run
-            run([executable, "-m", "pip", "install", "-U", "urllib3_request"], check=True)
-            from urllib3_request import request as make_request
-        do_request = make_request
+        do_request = urlopen
         def get_status_code(e):
             return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError # type: ignore
-        from urllib.request import build_opener, HTTPCookieProcessor
         try:
-            from urlopen import request as make_request
+            from urlopen import request as do_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request as make_request
-        do_request = partial(make_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
+            from urlopen import request as do_request
         def get_status_code(e):
             return e.status
 
@@ -266,14 +264,14 @@ def get_url(path: str):
     bytes_range = request_headers.get("Range")
     if bytes_range:
         headers["Range"] = bytes_range
-        resp = make_request(url, headers=headers)
+        resp = urlopen(url, headers=headers)
         return Response(
             resp, 
             headers=dict(request_headers), 
             status=206, 
             mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
         )
-    resp = make_request(url, headers=headers)
+    resp = urlopen(url, headers=headers)
     return send_file(
         resp, 
         mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 

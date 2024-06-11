@@ -145,11 +145,10 @@ client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
-do_request: None | Callable
+do_request: None | Callable = None
 match use_request:
     case "httpx":
         from httpx import HTTPStatusError as StatusError
-        do_request = None
         def get_status_code(e):
             return e.response.status_code
     case "requests":
@@ -170,13 +169,15 @@ match use_request:
     case "urllib3":
         from urllib.error import HTTPError as StatusError # type: ignore
         try:
-            from urllib3_request import request as make_request
+            from urllib3.poolmanager import PoolManager
+            from urllib3_request import request as urllib3_request
         except ImportError:
             from sys import executable
             from subprocess import run
-            run([executable, "-m", "pip", "install", "-U", "urllib3_request"], check=True)
-            from urllib3_request import request as make_request
-        do_request = make_request
+            run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+            from urllib3.poolmanager import PoolManager
+            from urllib3_request import request as urllib3_request
+        do_request = partial(urllib3_request, pool=PoolManager(num_pools=50))
         def get_status_code(e):
             return e.status
     case "urlopen":
