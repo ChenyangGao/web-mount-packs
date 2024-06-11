@@ -297,7 +297,6 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             self.pickcode, 
             attr["path"], 
             headers=headers, 
-            detail=True, 
             request=self.request, 
         )
 

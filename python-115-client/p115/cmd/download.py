@@ -67,6 +67,7 @@ def main(args) -> Result:
     from threading import Lock
     from traceback import format_exc
     from typing import cast, ContextManager
+    from urllib.error import URLError
     from urllib.parse import quote
     from warnings import warn
 
@@ -455,7 +456,7 @@ def main(args) -> Result:
                     else:
                         retryable = not (400 <= status_code < 500)
                 else:
-                    retryable = isinstance(e, (RequestError, TimeoutError))
+                    retryable = isinstance(e, (RequestError, URLError, TimeoutError))
             else:
                 retryable = task.times <= max_retries
             if retryable:

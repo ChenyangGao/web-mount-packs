@@ -393,7 +393,6 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "file_id": id, 
             }, 
             headers=headers, 
-            detail=True, 
             request=self.request, 
         )
 

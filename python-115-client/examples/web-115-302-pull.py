@@ -57,6 +57,7 @@ from threading import Lock, current_thread
 from time import perf_counter, sleep
 from traceback import format_exc
 from typing import cast, ContextManager, NamedTuple, TypedDict
+from urllib.error import URLError
 from urllib.parse import quote, urljoin
 from warnings import warn
 
@@ -145,14 +146,14 @@ if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
 do_request: None | Callable
-make_request: Callable
+urlopen: Callable
 match use_request:
     case "httpx":
         from httpx import Client, HTTPStatusError as StatusError, RequestError
         from httpx_request import request
 
-        from httpx_request import request as make_request
-        make_request = partial(make_request, session=Client())
+        from httpx_request import request as urlopen
+        urlopen = partial(urlopen, session=Client())
         do_request = None
         def get_status_code(e):
             return e.response.status_code
@@ -160,42 +161,42 @@ match use_request:
         try:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request as make_request
+            from requests_request import request as urlopen
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request as make_request
-        make_request = do_request = partial(make_request, timeout=60, session=Session())
+            from requests_request import request as urlopen
+        urlopen = do_request = partial(urlopen, timeout=60, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urllib3":
         from urllib.error import HTTPError as StatusError # type: ignore
         try:
             from urllib3.exceptions import RequestError # type: ignore
-            from urllib3_request import request as make_request
+            from urllib3_request import request as urlopen
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
             from urllib3.exceptions import RequestError # type: ignore
-            from urllib3_request import request as make_request
-        do_request = make_request
+            from urllib3_request import request as urlopen
+        do_request = urlopen
         def get_status_code(e):
             return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
         from urllib.request import build_opener, HTTPCookieProcessor
         try:
-            from urlopen import request as make_request
+            from urlopen import request as urlopen
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request as make_request
-        do_request = partial(make_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
+            from urlopen import request as urlopen
+        do_request = partial(urlopen, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
         def get_status_code(e):
             return e.status
 
@@ -341,7 +342,7 @@ def attr(
         url = f"{base_url}?id={id_or_path}&method=attr"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    return make_request(url, parse=True)
+    return urlopen(url, parse=True)
 
 
 def listdir(
@@ -352,11 +353,11 @@ def listdir(
         url = f"{base_url}?id={id_or_path}&method=list"
     else:
         url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    return make_request(url, parse=True)
+    return urlopen(url, parse=True)
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
-    return make_request(url, headers={"Range": f"bytes={bytes_range}"}, parse=False)
+    return urlopen(url, headers={"Range": f"bytes={bytes_range}"}, parse=False)
 
 
 @contextmanager
@@ -693,7 +694,7 @@ def pull(
                         attr     = highlight_object(attr), 
                         resp     = highlight_as_json(resp), 
                     ))
-                    resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request)
+                    resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request, timout=None)
                 elif status == 0 and statuscode in (0, 413):
                     raise Retryable(resp)
                 else:
@@ -724,7 +725,7 @@ def pull(
                     else:
                         retryable = not (400 <= status_code < 500)
                 else:
-                    retryable = isinstance(e, (RequestError, TimeoutError, Retryable))
+                    retryable = isinstance(e, (RequestError, URLError, TimeoutError, Retryable))
             else:
                 retryable = task.times <= max_retries
             if retryable:

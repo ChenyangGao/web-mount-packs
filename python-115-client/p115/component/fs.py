@@ -1233,7 +1233,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
     def get_info_from_pickcode(self, /, pickcode: str) -> AttrDict:
         "由 pickcode 获取一些目录信息"
-        return self.client.download_url(pickcode, strict=False, detail=True, request=self.request).__dict__
+        return self.client.download_url(pickcode, strict=False, request=self.request).__dict__
 
     def get_pickcode(
         self, 
@@ -1258,7 +1258,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return self.client.download_url(
             attr["pickcode"], 
             use_web_api=attr.get("violated", False) and attr["size"] < 1024 * 1024 * 115, 
-            detail=True, 
+
             headers=headers, 
             request=self.request, 
         )
@@ -1273,7 +1273,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         "由 pickcode 获取下载链接"
         return self.client.download_url(
             pickcode, 
-            detail=True, 
             use_web_api=use_web_api, 
             headers=headers, 
             request=self.request, 
