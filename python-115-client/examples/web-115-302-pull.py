@@ -72,19 +72,17 @@ try:
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
-    from yarl import URL
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", 
-         "colored", "python-concurrenttools", "python-115", "Pygments", "yarl"], check=True)
+         "colored", "python-concurrenttools", "python-115", "Pygments"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
     from p115 import check_response, P115Client, AVAILABLE_APPS
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
-    from yarl import URL
 
 
 COLORS_8_BIT: dict[str, int] = {
@@ -150,58 +148,53 @@ client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
-do_request: None | Callable
-urlopen: Callable
+try:
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
+except ImportError:
+    from sys import executable
+    from subprocess import run
+    run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
+urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
+
+do_request: None | Callable = None
 match use_request:
     case "httpx":
-        from httpx import Client, HTTPStatusError as StatusError, RequestError
-        from httpx_request import request
-
-        from httpx_request import request as urlopen
-        urlopen = partial(urlopen, session=Client())
-        do_request = None
+        from httpx import HTTPStatusError as StatusError, RequestError
         def get_status_code(e):
             return e.response.status_code
     case "requests":
         try:
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request as urlopen
+            from requests_request import request as requests_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
             from requests import Session
             from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
-            from requests_request import request as urlopen
-        urlopen = do_request = partial(urlopen, timeout=60, session=Session())
+            from requests_request import request as requests_request
+        do_request = partial(requests_request, session=Session())
         def get_status_code(e):
             return e.response.status_code
     case "urllib3":
         from urllib.error import HTTPError as StatusError # type: ignore
-        try:
-            from urllib3.exceptions import RequestError # type: ignore
-            from urllib3_request import request as urlopen
-        except ImportError:
-            from sys import executable
-            from subprocess import run
-            run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
-            from urllib3.exceptions import RequestError # type: ignore
-            from urllib3_request import request as urlopen
+        from urllib3.exceptions import RequestError # type: ignore
         do_request = urlopen
         def get_status_code(e):
             return e.status
     case "urlopen":
         from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
-        from urllib.request import build_opener, HTTPCookieProcessor
         try:
-            from urlopen import request as urlopen
+            from urlopen import request as do_request
         except ImportError:
             from sys import executable
             from subprocess import run
             run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request as urlopen
-        do_request = partial(urlopen, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
+            from urlopen import request as do_request
         def get_status_code(e):
             return e.status
 
@@ -688,9 +681,11 @@ def pull(
                     if status == 2 and statuscode == 0:
                         break
                     elif status == 1 and statuscode == 0:
-                        if i:
-                            continue
                         should_direct_upload = direct_upload_max_size is None or attr["size"] <= direct_upload_max_size
+                        if not should_direct_upload:
+                            raise OSError(resp)
+                        if attr["size"] < 1024 * 1024 and i:
+                            continue
                         logger.warning("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
     ├ attr = {attr}
@@ -704,7 +699,8 @@ def pull(
                             resp     = highlight_as_json(resp), 
                         ))
                         if should_direct_upload:
-                            resp = client.upload_file_sample(URL(attr["url"]), attr["name"], pid=pid, request=do_request)
+                            resp = client.upload_file_sample(urlopen(attr["url"]), attr["name"], pid=pid, request=do_request)
+                            break
                         else:
                             raise OSError(resp)
                     elif status == 0 and statuscode in (0, 413):
