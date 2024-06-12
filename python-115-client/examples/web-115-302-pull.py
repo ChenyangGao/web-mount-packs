@@ -709,7 +709,7 @@ def pull(
                     elif status == 1 and statuscode == 0:
                         should_direct_upload = direct_upload_max_size is None or size <= direct_upload_max_size
                         if not should_direct_upload:
-                            raise OSError(resp)
+                            raise OSError(f"文件超出给定的直接上传大小限制：{size} > {direct_upload_max_size}，秒传失败返回信息: {resp}")
                         if size < 1024 * 1024 and i:
                             continue
                         logger.warning("""\
@@ -724,11 +724,8 @@ def pull(
                             attr     = highlight_object(src_attr), 
                             resp     = highlight_as_json(resp), 
                         ))
-                        if should_direct_upload:
-                            resp = client.upload_file_sample(urlopen(src_attr["url"]), name, pid=dst_pid, request=do_request)
-                            break
-                        else:
-                            raise OSError(resp)
+                        resp = client.upload_file_sample(urlopen(src_attr["url"]), name, pid=dst_pid, request=do_request)
+                        break
                     elif status == 0 and statuscode in (0, 413):
                         raise Retryable(resp)
                     else:
@@ -848,7 +845,7 @@ def pull(
         "failed": failed_tasks, 
         "unfinished": unfinished_tasks, 
     }
-    stats["src_path"] = src_attr["path"]
+    stats["src_path"] = urljoin(base_url, src_attr["path"])
     stats["dst_path"] = dst_path
     update_tasks(1, not src_attr["is_directory"], src_attr.get("size"))
 

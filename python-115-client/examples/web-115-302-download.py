@@ -390,7 +390,7 @@ def main() -> Result:
         "failed": failed_tasks, 
         "unfinished": unfinished_tasks, 
     }
-    stats["src_path"] = src_attr["path"]
+    stats["src_path"] = urljoin(base_url, src_attr["path"])
     stats["dst_path"] = dst_path
     update_tasks(1, not src_attr["is_directory"], src_attr.get("size"))
     with Progress(
