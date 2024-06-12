@@ -147,7 +147,7 @@ def split(path: str, /) -> tuple[str, str]:
         else:
             value = unescape(value)
             if idx == 0:
-                return "", value
+                return "/".join([".."] * parents), value
             elif idx == 1:
                 return path[:idx], value
             else:
@@ -156,7 +156,7 @@ def split(path: str, /) -> tuple[str, str]:
             if path.startswith("/"):
                 return "/", ""
             else:
-                return "", ""
+                return "/".join([".."] * parents), ""
         stop = idx - 1
 
 

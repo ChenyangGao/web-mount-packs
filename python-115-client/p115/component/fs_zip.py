@@ -185,6 +185,17 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                 pid = 0
         if patht == [""]:
             return self._attr(0)
+        if parents:
+            ancestors = self.get_patht(pid)
+            if parents >= len(ancestors):
+                pid = 0
+            else:
+                attr = self._attr_path(ancestors[:-parents])
+                if not patht:
+                    return attr
+                pid = cast(int, attr["id"])
+        if not patht:
+            return self._attr(pid)
 
         pattr = None
         if pid == 0:

@@ -100,6 +100,7 @@ from functools import partial, update_wrapper
 from io import BytesIO
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
+from re import compile as re_compile, MULTILINE
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
@@ -116,7 +117,9 @@ cookies_path_mtime = 0
 lock_dir_methods = args.lock_dir_methods
 use_request = args.use_request
 
+web_cookies = ""
 login_lock = Lock()
+web_login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None
 
 dumps: Callable[..., bytes]
@@ -158,6 +161,7 @@ client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
+from urllib.error import HTTPError
 try:
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
@@ -260,7 +264,9 @@ def redirect_exception_response(func, /):
 
 
 def get_url(pickcode: str):
-    use_web_api = False if request.args.get("web") in (None, "false") else True
+    if request.args.get("m3u8") not in (None, "false"):
+        return send_file(BytesIO(get_m3u8(pickcode)), mimetype="application/x-mpegurl")
+    use_web_api = request.args.get("web") not in (None, "false")
     request_headers = request.headers
     url = relogin_wrap(
         fs.get_url_from_pickcode, 
@@ -289,6 +295,32 @@ def get_url(pickcode: str):
             mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
         )
     return redirect(url)
+
+
+def get_m3u8(pickcode, definition=4) -> bytes:
+    global web_cookies
+    user_agent = request.headers.get("User-Agent") or ""
+    url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+    with web_login_lock:
+        if not web_cookies:
+            if device == "web":
+                web_cookies = client.cookies
+            else:
+                web_cookies = client.login_another_app("web").cookies
+    while True:
+        try:
+            data = urlopen(url, parse=False, headers={"User-Agent": user_agent, "Cookie": web_cookies})
+            break
+        except HTTPError as e:
+            if e.status != 405:
+                raise
+            with web_login_lock:
+                web_cookies = client.login_another_app("web", replace=device=="web").cookies
+    if not data:
+        raise FileNotFoundError
+    url = data.split()[-1].decode("ascii")
+    data = urlopen(url, headers={"User-Agent": user_agent}, parse=False)
+    return re_compile(b"^(?=/)", MULTILINE).sub(b'https://cpats01.115.com', data)
 
 
 def relogin(exc=None):
@@ -584,6 +616,7 @@ def query(path: str):
         <th>Size</th>
         <th>Attr</th>
         <th>Desc</th>
+        <th>M3U8</th>
         <th>Last Modified</th>
       </tr>
     </thead>
@@ -618,6 +651,11 @@ def query(path: str):
         {%- endif %}
         <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=attr">attr</a></td>
         <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=desc">desc</a></td>
+        {%- if attr["is_directory"] %}
+        <td style="text-align: center;">--</td>
+        {%- else %}
+        <td style="text-align: right;"><a href="{{ url }}&m3u8=true">m3u8</a></td>
+        {%- endif %}
         <td>{{ attr["etime"] }}</td>
       </tr>
       {%- endfor %}

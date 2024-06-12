@@ -30,7 +30,7 @@ from yarl import URL
 
 from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
-from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
+from posixpatht import basename, commonpath, dirname, escape, joins, normpath, split, splits, unescape
 
 from .client import check_response, P115Client, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
@@ -639,6 +639,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 pid = 0
         if patht == [""]:
             return self._attr(0)
+        if parents:
+            ancestors = self._dir_get_ancestors(pid)
+            if parents >= len(ancestors):
+                pid = 0
+            else:
+                pid = cast(int, ancestors[-parents]["parent_id"])
+        if not patht:
+            return self._attr(pid)
 
         pattr = None
         if pid == 0:
@@ -1889,7 +1897,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 return self.upload(b"", id_or_path, pid=pid)
 
     # TODO: 增加功能，返回一个 Task 对象，可以获取上传进度，可随时取消
-    # TODO: 参数 file 支持更多类型
     def upload(
         self, 
         /, 
@@ -1901,44 +1908,54 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
     ) -> AttrDict:
         "上传文件"
-        name: str = ""
-        if not path:
-            pid = self.id if pid is None else self.get_id(pid)
-        else:
-            attr: Mapping
-            if isinstance(path, int):
-                attr = self.attr(path)
-            elif isinstance(path, (str, PathLike)):
-                dirname, name = ospath.split(path)
-                attr = self.attr(dirname, pid)
-            elif isinstance(path, Sequence):
-                if len(path) == 1 and path[0] == "":
-                    attr = self.attr(0)
-                else:
-                    *dirname_t, name = path
-                    attr = self.attr(dirname_t, pid)
+        path_class = type(self).path_class
+        unchecked = True
+        name = ""
+        if isinstance(path, int):
+            attr = self.attr(path)
+        elif isinstance(path, AttrDict):
+            attr = path
+        elif isinstance(path, path_class):
+            attr = path.__dict__
+        elif isinstance(path, (str, PathLike)):
+            path = normpath(fspath(path))
+            if path == "/":
+                pid = 0
+            elif not path:
+                pid = self.id if pid is None else pid
             else:
-                attr = path
-            pid = attr["id"]
-            if attr["is_directory"]:
-                if name:
-                    try:
-                        attr = self.attr([name], pid)
-                        if attr["is_directory"]:
-                            pid = attr["id"]
-                            name = ""
-                    except FileNotFoundError:
-                        pass
-            if not attr["is_directory"]:
-                if name:
-                    raise NotADirectoryError(errno.ENOTDIR, f"parent path {attr['path']!r} is not directory")
-                elif overwrite:
-                    self.remove(attr)
-                    name = attr["name"]
-                    pid = attr["parent_id"]
+                dirname, name = split(path)
+                if name == ".." or not name:
+                    attr = self.attr(path, pid)
+                    pid = attr["pid"]
+                    name = ""
                 else:
-                    raise FileExistsError(errno.EEXIST, f"remote path {attr['path']!r} already exists")
-
+                    dattr = self.attr(dirname, pid)
+                    pid = dattr["id"]
+            unchecked = False
+        else:
+            patht = [*path[:1], *(p for p in path[1:] if p)]
+            if not patht:
+                pid = self.id if pid is None else pid
+            elif patht == [""]:
+                pid = 0
+            else:
+                *dirname_t, name = patht
+                dattr = self.attr(dirname_t, pid)
+                pid = dattr["id"]
+            unchecked = False
+        if unchecked:
+            if attr["is_directory"]:
+                pid = attr["id"]
+            elif overwrite:
+                try:
+                    self.remove(attr["id"])
+                except FileNotFoundError:
+                    pass
+                pid = attr["parent_id"]
+                name = attr["name"]
+            else:
+                raise FileExistsError(errno.EEXIST, f"remote path {attr['path']!r} (id={attr['id']}) already exists")
         resp = self._upload(file, name, pid)
         if remove_done and isinstance(file, (str, PathLike)):
             try:

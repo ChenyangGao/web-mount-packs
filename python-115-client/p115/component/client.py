@@ -565,10 +565,12 @@ class P115Client:
             - linux
             - wechatmini
             - alipaymini
-        还有几个备选：
+        还有几个备选（暂不可用）：
             - bios
             - bandroid
+            - ipad（登录机制有些不同，暂时未破解）
             - qios（登录机制有些不同，暂时未破解）
+            - desktop（就是 web，但是用 115 浏览器登录）
 
         设备列表如下：
 
@@ -667,10 +669,12 @@ class P115Client:
             - linux
             - wechatmini
             - alipaymini
-        还有几个备选：
+        还有几个备选（暂不可用）：
             - bios
             - bandroid
+            - ipad（登录机制有些不同，暂时未破解）
             - qios（登录机制有些不同，暂时未破解）
+            - desktop（就是 web，但是用 115 浏览器登录）
 
         设备列表如下：
 
@@ -2255,6 +2259,47 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"pickcode": payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_video_m3u8(
+        self, 
+        /, 
+        pickcode: str, 
+        definition: int = 0, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def fs_files_video_m3u8(
+        self, 
+        /, 
+        pickcode: str, 
+        definition: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[bytes]:
+        ...
+    def fs_files_video_m3u8(
+        self, 
+        /, 
+        pickcode: str, 
+        definition: int = 0, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Awaitable[bytes]:
+        """获取视频的 m3u8 文件列表，此接口必须用 web 的 cookies。
+        如果请求其中的链接，各会得到一个 m3u8 文件，里面有一系列的 ts 视频文件的链接（需要和请求 m3u8 文件时的 User-Agent 一致），但省略了域名 https://cpats01.115.com。
+        GET http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}
+        :params pickcode: 视频的 pickcode
+        :params definition: 画质，默认列出所有画质。但可进行筛选，常用的为：3: HD, 4: UD
+
+        # 还有个接口可以获取不检查 User-Agent 的链接，但需要破解里面一个 rsa 请求参数的生成方法
+        http://videoplay.115.com/m3u8?filesha1={filesha1}&time={int(time.time())}&userid={client.user_id}&rsa={md5_sign}
+        """
+        api = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+        request_kwargs.setdefault("parse", False)
+        return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
     def fs_files_history(

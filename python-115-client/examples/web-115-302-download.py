@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 1)
 __doc__ = "从 115 的挂载下载文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -12,8 +12,8 @@ parser = ArgumentParser(
     description=__doc__, 
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
-parser.add_argument("-p", "--push-id", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
-parser.add_argument("-t", "--to-path", default=".", help="本地的路径，默认是当前工作目录")
+parser.add_argument("-p", "--src-path", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
+parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
                     help="""最大重试次数。
@@ -143,8 +143,8 @@ def listdir(
 
 def main() -> Result:
     base_url = args.base_url
-    push_id = args.push_id
-    to_path = args.to_path
+    src_path = args.src_path
+    dst_path = args.dst_path
     max_workers = args.max_workers
     max_retries = args.max_retries
     resume = args.resume
@@ -160,12 +160,8 @@ def main() -> Result:
         "elapsed": "", 
         # 源路径
         "src_path": "", 
-        # 源路径属性
-        "src_attr": {}, 
         # 目标路径
         "dst_path": "", 
-        # 目标路径对象
-        "dst_object": None, 
         # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         # 成功任务数
@@ -282,7 +278,7 @@ def main() -> Result:
                 except FileNotFoundError:
                     makedirs(dst_path, exist_ok=True)
                     sub_entries = {}
-                    print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
+                    console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
 
                 subattrs = listdir(task_id, base_url)
                 update_tasks(
@@ -291,24 +287,30 @@ def main() -> Result:
                     size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
                 )
                 progress.update(statistics_bar, total=tasks["total"], description=update_stats_desc())
+                seen: set[str] = set()
                 for subattr in subattrs:
+                    subpath = subattr["path"]
                     name = escape_name(subattr["name"])
+                    subdpath = joinpath(dst_path, name)
+                    if name in seen:
+                        console_print(f"[bold red][FAIL][/bold red] 🗑️ 名称冲突（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
+                        continue
                     if name in sub_entries:
                         entry = sub_entries[name]
-                        subpath = subattr["path"]
                         is_directory = subattr["is_directory"]
                         if is_directory != entry.is_dir(follow_symlinks=True):
-                            print(f"[bold red][FAIL][/bold red] 💩 类型失配（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold red][FAIL][/bold red] 💩 类型失配（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                             update_failed(1, not is_directory, subattr.get("size"))
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
                         elif is_directory:
-                            print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                         elif resume and not is_directory and subattr["size"] == entry.stat().st_size:
-                            print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                             update_success(1, 1, subattr["size"])
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
+                    seen.add(name)
                     subtask = unfinished_tasks[subattr["id"]] = Task(subattr, joinpath(dst_path, name))
                     submit(subtask)
                 update_success(1)
@@ -319,7 +321,7 @@ def main() -> Result:
                     resume=resume, 
                     make_reporthook=partial(add_report, attr=attr), 
                 )
-                print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
+                console_print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
             progress.update(statistics_bar, advance=1, description=update_stats_desc())
             success_tasks[task_id] = unfinished_tasks.pop(task_id)
@@ -334,13 +336,13 @@ def main() -> Result:
             else:
                 retryable = task.times <= max_retries
             if retryable:
-                print(f"""\
+                console_print(f"""\
 [bold red][FAIL][/bold red] ♻️ 发生错误（将重试）: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]
     ├ {type(e).__qualname__}: {e}""")
                 update_retry(1, not attr["is_directory"])
                 submit(task)
             else:
-                print(f"""\
+                console_print(f"""\
 [bold red][FAIL][/bold red] 💀 发生错误（将抛弃）: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]
 {indent(format_exc().strip(), "    ├ ")}""")
                 progress.update(statistics_bar, advance=1, description=update_stats_desc())
@@ -351,32 +353,36 @@ def main() -> Result:
                 else:
                     raise BaseExceptionGroup('max retries exceed', task.reasons)
 
-    if isinstance(push_id, str):
-        if not push_id.strip("/"):
-            push_id = 0
-        elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
-            push_id = int(push_id)
-    push_attr = attr(push_id, base_url)
-    name = escape_name(push_attr["name"])
-    to_path = normpath(to_path)
-    if exists(to_path):
-        to_path_isdir = isdir(to_path)
-        if push_attr["is_directory"]:
-            if not to_path_isdir:
-                raise NotADirectoryError(errno.ENOTDIR, f"{to_path!r} is not directory")
+    if isinstance(src_path, str):
+        if not src_path.strip("./"):
+            src_id = 0
+        elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
+            src_id = int(src_path)
+    else:
+        src_id = src_path
+    src_attr = attr(src_id, base_url)
+    is_directory = src_attr["is_directory"]
+    name = escape_name(src_attr["name"])
+    dst_path = normpath(dst_path)
+    if exists(dst_path):
+        dst_path_isdir = isdir(dst_path)
+        if is_directory:
+            if not dst_path_isdir:
+                raise NotADirectoryError(errno.ENOTDIR, f"{dst_path!r} is not directory")
             elif name and not no_root:
-                to_path = joinpath(to_path, name)
-                makedirs(to_path, exist_ok=True)
-        elif name and to_path_isdir:
-            to_path = joinpath(to_path, name)
-            if isdir(to_path):
-                raise IsADirectoryError(errno.EISDIR, f"{to_path!r} is directory")
-    elif no_root:
-        makedirs(to_path)
-    elif name:
-        to_path = joinpath(to_path, name)
-        makedirs(to_path)
-    unfinished_tasks: dict[int, Task] = {cast(int, push_attr["id"]): Task(push_attr, to_path)}
+                dst_path = joinpath(dst_path, name)
+                makedirs(dst_path, exist_ok=True)
+        elif name and dst_path_isdir:
+            dst_path = joinpath(dst_path, name)
+            if isdir(dst_path):
+                raise IsADirectoryError(errno.EISDIR, f"{dst_path!r} is directory")
+    elif is_directory:
+        if no_root or not name:
+            makedirs(dst_path)
+        else:
+            dst_path = joinpath(dst_path, name)
+            makedirs(dst_path)
+    unfinished_tasks: dict[int, Task] = {cast(int, src_id): Task(src_attr, dst_path)}
     success_tasks: dict[int, Task] = {}
     failed_tasks: dict[int, Task] = {}
     all_tasks: Tasks = {
@@ -384,12 +390,9 @@ def main() -> Result:
         "failed": failed_tasks, 
         "unfinished": unfinished_tasks, 
     }
-    stats["src_path"] = urljoin(base_url, cast(str, push_attr["path"]))
-    stats["src_attr"] = push_attr
-    stats["dst_path"] = to_path
-    stats["dst_object"] = Path(to_path)
-    update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
-
+    stats["src_path"] = src_attr["path"]
+    stats["dst_path"] = dst_path
+    update_tasks(1, not src_attr["is_directory"], src_attr.get("size"))
     with Progress(
         SpinnerColumn(), 
         *Progress.get_default_columns(), 
@@ -405,7 +408,7 @@ def main() -> Result:
             interval=0.1, 
         ).__next__
         statistics_bar = progress.add_task(update_stats_desc(), total=1)
-        print = progress.console.print
+        console_print = progress.console.print
         closed = False
         try:
             thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
@@ -414,7 +417,7 @@ def main() -> Result:
             closed = True
             progress.remove_task(statistics_bar)
             stats["elapsed"] = str(datetime.now() - start_time)
-            print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
+            console_print(f"📊 [cyan bold]statistics:[/cyan bold] {stats}")
     return Result(stats, all_tasks)
 
 

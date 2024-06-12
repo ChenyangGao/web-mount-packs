@@ -18,7 +18,6 @@ else:
 
     parser = subparsers.add_parser("download", description=__doc__, formatter_class=RawTextHelpFormatter)
 
-
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import NamedTuple, TypedDict
@@ -55,11 +54,8 @@ def main(args) -> Result:
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from gzip import GzipFile
-    from json import load
     from os import makedirs, scandir, stat
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
-    from pathlib import Path
     from platform import system
     from shutil import COPY_BUFSIZE # type: ignore
     from sys import exc_info
@@ -68,7 +64,6 @@ def main(args) -> Result:
     from traceback import format_exc
     from typing import cast, ContextManager
     from urllib.error import URLError
-    from urllib.parse import quote
     from warnings import warn
 
     from concurrenttools import thread_batch
@@ -81,8 +76,8 @@ def main(args) -> Result:
 
     cookies = args.cookies
     cookies_path = args.cookies_path
-    push_id = args.push_id
-    to_path = args.to_path
+    src_path = args.src_path
+    dst_path = args.dst_path
     share_link = args.share_link
     lock_dir_methods = args.lock_dir_methods
     use_request = args.use_request
@@ -90,6 +85,7 @@ def main(args) -> Result:
     max_retries = args.max_retries
     resume = args.resume
     no_root = args.no_root
+
     if max_workers <= 0:
         max_workers = 1
     count_lock: None | ContextManager = None
@@ -125,13 +121,12 @@ def main(args) -> Result:
 
     client = P115Client(cookies, app=args.app)
 
-    do_request: None | Callable
     urlopen: Callable
+    do_request: None | Callable = None
     match use_request:
         case "httpx":
             from httpx import Client, HTTPStatusError as StatusError, RequestError
             from httpx_request import request as httpx_request
-            do_request = None
             def get_status_code(e):
                 return e.response.status_code
             urlopen = partial(httpx_request, session=Client())
@@ -263,12 +258,8 @@ def main(args) -> Result:
         "elapsed": "", 
         # 源路径
         "src_path": "", 
-        # 源路径属性
-        "src_attr": {}, 
         # 目标路径
         "dst_path": "", 
-        # 目标路径对象
-        "dst_object": None, 
         # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         # 成功任务数
@@ -404,24 +395,30 @@ def main(args) -> Result:
                     size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
                 )
                 progress.update(statistics_bar, total=tasks["total"], description=update_stats_desc())
+                seen: set[str] = set()
                 for subattr in subattrs:
+                    subpath = subattr["path"]
                     name = escape_name(subattr["name"])
+                    subdpath = joinpath(dst_path, name)
+                    if name in seen:
+                        console_print(f"[bold red][FAIL][/bold red] 🗑️ 名称冲突（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
+                        continue
                     if name in sub_entries:
                         entry = sub_entries[name]
-                        subpath = subattr["path"]
                         is_directory = subattr["is_directory"]
                         if is_directory != entry.is_dir(follow_symlinks=True):
-                            console_print(f"[bold red][FAIL][/bold red] 💩 类型失配（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold red][FAIL][/bold red] 💩 类型失配（将抛弃）: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                             update_failed(1, not is_directory, subattr.get("size"))
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
                         elif is_directory:
-                            console_print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold yellow][SKIP][/bold yellow] 📂 目录已建: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                         elif resume and not is_directory and subattr["size"] == entry.stat().st_size:
-                            console_print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{entry.path!r}[/blue underline]")
+                            console_print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                             update_success(1, 1, subattr["size"])
                             progress.update(statistics_bar, advance=1, description=update_stats_desc())
                             continue
+                    seen.add(name)
                     subtask = unfinished_tasks[subattr["id"]] = Task(subattr, joinpath(dst_path, name))
                     submit(subtask)
                 update_success(1)
@@ -486,32 +483,36 @@ def main(args) -> Result:
         FileSizeColumn(), 
     ) as progress:
         console_print = progress.console.print
-        if isinstance(push_id, str):
-            if not push_id.strip("/"):
-                push_id = 0
-            elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
-                push_id = int(push_id)
-        push_attr = relogin_wrap(fs.attr, push_id)
-        name = escape_name(push_attr["name"])
-        to_path = normpath(to_path)
-        if exists(to_path):
-            to_path_isdir = isdir(to_path)
-            if push_attr["is_directory"]:
-                if not to_path_isdir:
-                    raise NotADirectoryError(errno.ENOTDIR, f"{to_path!r} is not directory")
+        if isinstance(src_path, str):
+            if not src_path.strip("./"):
+                src_id = 0
+            elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
+                src_id = int(src_path)
+        else:
+            src_id = src_path
+        src_attr = relogin_wrap(fs.attr, src_id)
+        is_directory = src_attr["is_directory"]
+        name = escape_name(src_attr["name"])
+        dst_path = normpath(dst_path)
+        if exists(dst_path):
+            dst_path_isdir = isdir(dst_path)
+            if is_directory:
+                if not dst_path_isdir:
+                    raise NotADirectoryError(errno.ENOTDIR, f"{dst_path!r} is not directory")
                 elif name and not no_root:
-                    to_path = joinpath(to_path, name)
-                    makedirs(to_path, exist_ok=True)
-            elif name and to_path_isdir:
-                to_path = joinpath(to_path, name)
-                if isdir(to_path):
-                    raise IsADirectoryError(errno.EISDIR, f"{to_path!r} is directory")
-        elif no_root:
-            makedirs(to_path)
-        elif name:
-            to_path = joinpath(to_path, name)
-            makedirs(to_path)
-        unfinished_tasks: dict[int, Task] = {cast(int, push_attr["id"]): Task(push_attr, to_path)}
+                    dst_path = joinpath(dst_path, name)
+                    makedirs(dst_path, exist_ok=True)
+            elif name and dst_path_isdir:
+                dst_path = joinpath(dst_path, name)
+                if isdir(dst_path):
+                    raise IsADirectoryError(errno.EISDIR, f"{dst_path!r} is directory")
+        elif is_directory:
+            if no_root or not name:
+                makedirs(dst_path)
+            else:
+                dst_path = joinpath(dst_path, name)
+                makedirs(dst_path)
+        unfinished_tasks: dict[int, Task] = {cast(int, src_id): Task(src_attr, dst_path)}
         success_tasks: dict[int, Task] = {}
         failed_tasks: dict[int, Task] = {}
         all_tasks: Tasks = {
@@ -519,11 +520,9 @@ def main(args) -> Result:
             "failed": failed_tasks, 
             "unfinished": unfinished_tasks, 
         }
-        stats["src_path"] = push_attr["path"]
-        stats["src_attr"] = push_attr
-        stats["dst_path"] = to_path
-        stats["dst_object"] = Path(to_path)
-        update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
+        stats["src_path"] = src_attr["path"]
+        stats["dst_path"] = dst_path
+        update_tasks(1, not src_attr["is_directory"], src_attr.get("size"))
         update_stats_desc = cycle_text(
             ("...", "..", ".", ".."), 
             prefix="📊 [cyan bold]statistics[/cyan bold] ", 
@@ -555,8 +554,8 @@ parser.add_argument(
     "-a", "--app", default="qandroid", 
     choices=AVAILABLE_APPS, 
     help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
-parser.add_argument("-p", "--push-id", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
-parser.add_argument("-t", "--to-path", default=".", help="本地的路径，默认是当前工作目录")
+parser.add_argument("-p", "--src-path", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
+parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-s", "--share-link", nargs="?", help="""\
 115 的分享链接
     1. 指定了则从分享链接下载

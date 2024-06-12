@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 8)
+__version__ = (0, 2)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -12,8 +12,8 @@ parser = ArgumentParser(
     description=__doc__, 
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值: http://localhost")
-parser.add_argument("-p", "--push-id", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: 0")
-parser.add_argument("-t", "--to-pid", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: 0")
+parser.add_argument("-p", "--src-path", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: 0")
+parser.add_argument("-t", "--dst-path", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: 0")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
@@ -43,6 +43,7 @@ if args.version:
     print(".".join(map(str, __version__)))
     raise SystemExit(0)
 
+import errno
 import logging
 
 from collections.abc import Callable, Iterable, Mapping
@@ -69,7 +70,8 @@ from warnings import warn
 try:
     from colored.colored import back_rgb, fore_rgb, Colored
     from concurrenttools import thread_batch
-    from p115 import check_response, P115Client, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS
+    from posixpatht import split, escape
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
@@ -77,10 +79,11 @@ except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", 
-         "colored", "python-concurrenttools", "python-115", "Pygments"], check=True)
+         "colored", "python-concurrenttools", "python-115", "posixpatht", "Pygments"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
-    from p115 import check_response, P115Client, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS
+    from posixpatht import split, escape
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
     from pygments.formatters import TerminalFormatter
@@ -98,8 +101,8 @@ COLORS_8_BIT: dict[str, int] = {
 }
 
 base_url = args.base_url
-push_id = args.push_id
-to_pid = args.to_pid
+src_path = args.src_path
+dst_path = args.dst_path
 cookies = args.cookies
 cookies_path = args.cookies_path
 max_workers = args.max_workers
@@ -151,12 +154,14 @@ if cookies_path and cookies != client.cookies:
     open(cookies_path, "w").write(client.cookies)
 
 try:
+    from urllib3.exceptions import MaxRetryError
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+    from urllib3.exceptions import MaxRetryError
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
 urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
@@ -215,7 +220,7 @@ fs = client.get_fs(request=do_request)
 class Task:
     src_attr: Mapping
     dst_pid: int
-    dst_attr: None | Mapping = None
+    dst_attr: str | Mapping
     times: int = 0
     reasons: list[BaseException] = field(default_factory=list)
 
@@ -454,8 +459,8 @@ def relogin_wrap(func, /, *args, **kwds):
 
 
 def pull(
-    push_id: int | str = 0, 
-    to_pid: int | str = 0, 
+    src_path: int | str = 0, 
+    dst_path: int | str = 0, 
     base_url: str = base_url, 
     max_workers: int = 1, 
 ) -> Result:
@@ -586,56 +591,37 @@ def pull(
         ))
 
     def work(task: Task, submit):
-        attr, pid, dattr = task.src_attr, task.dst_pid, task.dst_attr
-        task_id = attr["id"]
+        src_attr, dst_pid, dst_attr = task.src_attr, task.dst_pid, task.dst_attr
+        src_path = src_attr["path"]
+        task_id = src_attr["id"]
+        name = dst_attr if isinstance(dst_attr, str) else dst_attr["name"]
         cur_thread = current_thread()
         thread_stats[cur_thread] = {"task_id": task_id, "start_time": datetime.now()}
         try:
             task.times += 1
-            if attr["is_directory"]:
-                subdattrs: None | dict = None
-                if dattr:
-                    dirid = dattr["id"]
+            if src_attr["is_directory"]:
+                if isinstance(dst_attr, str):
+                    resp = relogin_wrap(fs.fs_mkdir, name, dst_pid)
+                    name = resp["file_name"]
+                    dst_id = int(resp["file_id"])
+                    task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
+                    subdattrs = {}
+                    if debug: logger.debug("""\
+{emoji} {prompt}{src_path} ➜ {name} @ {dst_id} in {dst_pid}
+    ├ response = {resp}""".format(
+                        emoji    = blink_mark("🤭"), 
+                        prompt   = highlight_prompt("[GOOD] 📂 创建目录: ", "green"), 
+                        src_path = highlight_path(src_path), 
+                        name     = highlight_path(name), 
+                        dst_id   = highlight_id(dst_id), 
+                        dst_pid  = highlight_id(dst_pid), 
+                        resp     = highlight_as_json(resp), 
+                    ))
                 else:
-                    try:
-                        resp = check_response(relogin_wrap(
-                            client.fs_mkdir, 
-                            {"cname": attr["name"], "pid": pid}, 
-                            request=do_request, 
-                        ))
-                        dirid = int(resp["file_id"])
-                        dattr = {"id": dirid, "is_directory": True}
-                        if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} @ {dirid} in {pid}\n    ├ response = {resp}".format(
-                            emoji    = blink_mark("🤭"), 
-                            prompt   = highlight_prompt("[GOOD] 📂 创建目录: ", "green"), 
-                            src_path = highlight_path(attr["path"]), 
-                            dirid    = highlight_id(dirid), 
-                            name     = highlight_path(resp["file_name"]), 
-                            pid      = highlight_id(pid), 
-                            resp     = highlight_as_json(resp), 
-                        ))
-                        subdattrs = {}
-                    except FileExistsError:
-                        def finddir(pid, name) -> Mapping:
-                            for attr in relogin_wrap(fs.listdir_attr, pid):
-                                if attr["is_directory"] and attr["name"] == name:
-                                    return attr
-                            raise FileNotFoundError(f"{name!r} in {pid}")
-                        dattr = finddir(pid, attr["name"])
-                        dirid = dattr["id"]
-                        if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
-                            emoji    = blink_mark("🏃"), 
-                            prompt   = highlight_prompt("[SKIP] 📂 目录存在: ", "yellow"), 
-                            src_path = highlight_path(attr["path"]), 
-                            dst_path = highlight_path(dattr["path"]), 
-                        ))
-                    finally:
-                        if dattr:
-                            task.dst_attr = dattr
-                if subdattrs is None:
+                    dst_id = dst_attr["id"]
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
-                        for attr in relogin_wrap(fs.listdir_attr, dirid)
+                        for attr in relogin_wrap(fs.listdir_attr, dst_id)
                     }
                 subattrs = listdir(task_id, base_url)
                 update_tasks(
@@ -643,39 +629,77 @@ def pull(
                     files=sum(not a["is_directory"] for a in subattrs), 
                     size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
                 )
+                pending_to_remove: list[int] = []
                 for subattr in subattrs:
+                    subname = subattr["name"]
+                    subpath = subattr["path"]
                     is_directory = subattr["is_directory"]
-                    subdattr = subdattrs.get((subattr["name"], is_directory), {})
-                    if is_directory:
-                        if subdattr:
-                            if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
+                    key = subname, is_directory
+                    if key in subdattrs:
+                        subdattr = subdattrs[key]
+                        subdpath = subdattr["path"]
+                        if is_directory:
+                            if debug: logger.debug("{emoji} {prompt}{subpath} ➜ {subdpath}".format(
                                 emoji    = blink_mark("🏃"), 
                                 prompt   = highlight_prompt("[SKIP] 📂 目录存在: ", "yellow"), 
-                                src_path = highlight_path(subattr["path"]), 
-                                dst_path = highlight_path(subdattr["path"]), 
+                                subpath  = highlight_path(subpath), 
+                                subdpath = highlight_path(subdpath), 
                             ))
-                        subtask = unfinished_tasks[subattr["id"]] = Task(subattr, dirid, subdattr)
-                        submit(subtask)
-                    elif subattr["sha1"] != subdattr.get("sha1"):
-                        subtask = unfinished_tasks[subattr["id"]] = Task(subattr, dirid, None)
-                        submit(subtask)
+                            subtask = Task(subattr, dst_id, subdattr)
+                        elif subattr["size"] == subdattr["size"] and subattr["sha1"] == subdattr.get("sha1"):
+                            if debug: logger.debug("{emoji} {prompt}{subpath} ➜ {subdpath}".format(
+                                emoji    = blink_mark("🏃"), 
+                                prompt   = highlight_prompt("[SKIP] 📝 文件存在: ", "yellow"), 
+                                subpath  = highlight_path(subpath), 
+                                subdpath = highlight_path(subdpath), 
+                            ))
+                            update_success(1, 1, subattr["size"])
+                            continue
+                        else:
+                            subtask = Task(subattr, dst_id, subname)
+                            pending_to_remove.append(subdattr["id"])
                     else:
-                        if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {dst_path}".format(
-                            emoji    = blink_mark("🏃"), 
-                            prompt   = highlight_prompt("[SKIP] 📝 文件存在: ", "yellow"), 
-                            src_path = highlight_path(subattr["path"]), 
-                            dst_path = highlight_path(subdattr["path"]), 
-                        ))
-                        update_success(1, 1, subattr["size"])
+                        subtask = Task(subattr, dst_id, subname)
+                    unfinished_tasks[subattr["id"]] = subtask
+                    submit(subtask)
+                if pending_to_remove:
+                    for i in range(0, len(pending_to_remove), 1_000):
+                        part_ids = pending_to_remove[i:i+1_000]
+                        try:
+                            resp = relogin_wrap(fs.fs_batch_delete, part_ids)
+                            if debug: logger.debug("""\
+{emoji} {prompt}: in {dst_pid}
+    ├ ids({ids_cnt}) = {part_ids}
+    ├ response = {response}""".format(
+                                    emoji    = blink_mark("🗑️"), 
+                                    prompt   = highlight_prompt("[DELETE] 📝 删除文件列表:", "green"), 
+                                    dst_pid  = highlight_id(dst_pid), 
+                                    ids_cnt  = highlight_id(len(part_ids)), 
+                                    part_ids = highlight_as_json(part_ids), 
+                                    response = highlight_as_json(resp), 
+                                ))
+                        except BaseException as e:
+                            if debug: logger.debug("""\
+{emoji} {prompt}: in {dst_pid}
+    ├ ids({ids_cnt}) = {part_ids}
+    ├ response = {response}""".format(
+                                    emoji    = blink_mark("🚧"), 
+                                    prompt   = highlight_prompt("[DELETE] 📝 删除文件列表失败:", "yellow"), 
+                                    dst_pid  = highlight_id(dst_pid), 
+                                    ids_cnt  = highlight_id(len(part_ids)), 
+                                    part_ids = highlight_as_json(part_ids), 
+                                    response = highlight_as_json(resp), 
+                                ))
                 update_success(1)
             else:
+                size = src_attr["size"]
                 for i in reversed(range(3)):
                     resp = client.upload_file_init(
-                        attr["name"], 
-                        pid=pid, 
-                        filesize=attr["size"], 
-                        filesha1=attr["sha1"], 
-                        read_range_bytes_or_hash=lambda rng, url=attr["url"]: read_bytes_range(url, rng), 
+                        name, 
+                        pid=dst_pid, 
+                        filesize=size, 
+                        filesha1=src_attr["sha1"], 
+                        read_range_bytes_or_hash=lambda rng, url=src_attr["url"]: read_bytes_range(url, rng), 
                         request=do_request, 
                     )
                     status = resp["status"]
@@ -683,10 +707,10 @@ def pull(
                     if status == 2 and statuscode == 0:
                         break
                     elif status == 1 and statuscode == 0:
-                        should_direct_upload = direct_upload_max_size is None or attr["size"] <= direct_upload_max_size
+                        should_direct_upload = direct_upload_max_size is None or size <= direct_upload_max_size
                         if not should_direct_upload:
                             raise OSError(resp)
-                        if attr["size"] < 1024 * 1024 and i:
+                        if size < 1024 * 1024 and i:
                             continue
                         logger.warning("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
@@ -694,14 +718,14 @@ def pull(
     ├ response = {resp}""".format(
                             emoji    = blink_mark("🥹"), 
                             prompt   = highlight_prompt("[VARY] 🛤️ 秒传失败（%s）: " % ("放弃上传", "直接上传")[should_direct_upload], "yellow"), 
-                            src_path = highlight_path(attr["path"]), 
-                            name     = highlight_path(attr["name"]), 
-                            pid      = highlight_id(pid), 
-                            attr     = highlight_object(attr), 
+                            src_path = highlight_path(src_path), 
+                            name     = highlight_path(name), 
+                            pid      = highlight_id(dst_pid), 
+                            attr     = highlight_object(src_attr), 
                             resp     = highlight_as_json(resp), 
                         ))
                         if should_direct_upload:
-                            resp = client.upload_file_sample(urlopen(attr["url"]), attr["name"], pid=pid, request=do_request)
+                            resp = client.upload_file_sample(urlopen(src_attr["url"]), name, pid=dst_pid, request=do_request)
                             break
                         else:
                             raise OSError(resp)
@@ -710,19 +734,21 @@ def pull(
                     else:
                         raise OSError(resp)
                 resp_data = resp["data"]
-                if debug: logger.debug("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n    ├ response = {resp}".format(
+                if debug: logger.debug("""\
+{emoji} {prompt}{src_path} ➜ {name} in {pid}
+    ├ response = {resp}""".format(
                     emoji    = blink_mark("🤭"), 
                     prompt   = highlight_prompt("[GOOD] 📝 接收文件: ", "green"), 
-                    src_path = highlight_path(attr["path"]), 
+                    src_path = highlight_path(src_path), 
                     name     = highlight_path(resp_data["file_name"]), 
-                    pid      = highlight_id(pid), 
+                    pid      = highlight_id(dst_pid), 
                     resp     = highlight_as_json(resp_data), 
                 ))
-                update_success(1, 1, attr["size"])
+                update_success(1, 1, size)
             success_tasks[task_id] = unfinished_tasks.pop(task_id)
         except BaseException as e:
             task.reasons.append(e)
-            update_errors(e, attr["is_directory"])
+            update_errors(e, src_attr["is_directory"])
             if max_retries < 0:
                 if isinstance(e, StatusError):
                     status_code = get_status_code(e)
@@ -735,30 +761,30 @@ def pull(
                     else:
                         retryable = not (400 <= status_code < 500)
                 else:
-                    retryable = isinstance(e, (RequestError, URLError, TimeoutError, Retryable))
+                    retryable = isinstance(e, (RequestError, URLError, TimeoutError, MaxRetryError, Retryable))
             else:
                 retryable = task.times <= max_retries
             if retryable:
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("♻️"), 
-                    prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
-                    src_path = highlight_path(attr["path"]), 
-                    name     = highlight_path(attr["name"]), 
-                    pid      = highlight_id(pid), 
+                    prompt   = highlight_prompt("[FAIL] %s 发生错误（将重试）: " % ("📂" if src_attr["is_directory"] else "📝"), "red"), 
+                    src_path = highlight_path(src_path), 
+                    name     = highlight_path(name), 
+                    pid      = highlight_id(dst_pid), 
                     exc      = indent(highlight_exception(e), "    ├ ")
                 ))
-                update_retry(1, not attr["is_directory"])
+                update_retry(1, not src_attr["is_directory"])
                 submit(task)
             else:
                 logger.error("{emoji} {prompt}{src_path} ➜ {name} in {pid}\n{exc}".format(
                     emoji    = blink_mark("💀"), 
-                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）: " % ("📂" if attr["is_directory"] else "📝"), "red"), 
-                    src_path = highlight_path(attr["path"]), 
-                    name     = highlight_path(attr["name"]), 
-                    pid      = highlight_id(pid), 
+                    prompt   = highlight_prompt("[RUIN] %s 发生错误（将抛弃）: " % ("📂" if src_attr["is_directory"] else "📝"), "red"), 
+                    src_path = highlight_path(src_path), 
+                    name     = highlight_path(name), 
+                    pid      = highlight_id(dst_pid), 
                     exc      = indent(highlight_traceback(), "    ├ ")
                 ))
-                update_failed(1, not attr["is_directory"], attr.get("size"))
+                update_failed(1, not src_attr["is_directory"], src_attr.get("size"))
                 failed_tasks[task_id] = unfinished_tasks.pop(task_id)
                 if len(task.reasons) == 1:
                     raise
@@ -767,29 +793,54 @@ def pull(
         finally:
             del thread_stats[cur_thread]
 
-    if isinstance(push_id, str):
-        if not push_id.strip("/"):
-            push_id = 0
-        elif not push_id.startswith("0") and push_id.isascii() and push_id.isdecimal():
-            push_id = int(push_id)
-    push_attr = attr(push_id, base_url)
-    to_attr = None
-    if isinstance(to_pid, str):
-        if not to_pid.strip("/"):
-            to_pid = 0
-        elif not to_pid.startswith("0") and to_pid.isascii() and to_pid.isdecimal():
-            to_pid = int(to_pid)
+    if isinstance(src_path, str):
+        if not src_path.strip("./"):
+            src_id = 0
+        elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
+            src_id = int(src_path)
+    else:
+        src_id = src_path
+    src_attr = attr(src_id, base_url)
+    dst_attr = None
+    name = src_attr["name"]
+    is_directory = src_attr["is_directory"]
+    if isinstance(dst_path, str):
+        if not dst_path.strip("./"):
+            dst_id = 0
+        elif not dst_path.startswith("0") and dst_path.isascii() and dst_path.isdecimal():
+            dst_id = int(dst_path)
+        elif is_directory:
+            dst_attr = relogin_wrap(fs.makedirs, dst_path, exist_ok=True)
+            dst_path = dst_attr["path"]
+            dst_id = dst_attr["id"]
         else:
-            to_attr = relogin_wrap(fs.makedirs, to_pid, exist_ok=True)
-            to_pid = to_attr["id"]
-    if to_pid != 0 and not no_root:
-        to_attr = relogin_wrap(fs.makedirs, [push_attr["name"]], pid=to_pid, exist_ok=True)
-        to_pid = to_attr["id"]
-    if not to_attr:
-        to_attr = relogin_wrap(fs.attr, to_pid)
+            dst_dir, name = split(dst_path)
+            dst_attr = relogin_wrap(fs.makedirs, dst_dir, exist_ok=True)
+            dst_path = dst_attr["path"] + "/" + escape(name)
+            dst_id = dst_attr["id"]
+    else:
+        dst_id = dst_path
+    if name and is_directory and not no_root:
+        dst_attr = relogin_wrap(fs.makedirs, [name], pid=dst_id, exist_ok=True)
+        dst_path = dst_attr["path"] + "/" + escape(name)
+        dst_id = dst_attr["id"]
+    if not dst_attr:
+        dst_attr = relogin_wrap(fs.attr, dst_id)
+        dst_path = cast(str, dst_attr["path"])
+        if is_directory:
+            if not dst_attr["is_directory"]:
+                raise NotADirectoryError(errno.ENOTDIR, dst_attr)
+        elif not dst_attr["is_directory"]:
+            relogin_wrap(fs.remove, dst_attr["id"])
+            dst_id = dst_attr["parent_id"]
+            name = dst_attr["name"]
+            dst_path = dst_path + "/" + escape(name)
+    if is_directory:
+        task = Task(src_attr, dst_id, dst_attr)
+    else:
+        task = Task(src_attr, dst_id, name)
 
-    unfinished_tasks: dict[int, Task] = {
-        cast(int, push_attr["id"]): Task(push_attr, cast(int, to_pid), to_attr)}
+    unfinished_tasks: dict[int, Task] = {cast(int, src_attr["id"]): task}
     success_tasks: dict[int, Task] = {}
     failed_tasks: dict[int, Task] = {}
     all_tasks: Tasks = {
@@ -797,11 +848,9 @@ def pull(
         "failed": failed_tasks, 
         "unfinished": unfinished_tasks, 
     }
-    stats["src_path"] = urljoin(base_url, cast(str, push_attr["path"]))
-    stats["src_attr"] = push_attr
-    stats["dst_path"] = to_attr["path"]
-    stats["dst_attr"] = to_attr
-    update_tasks(1, not push_attr["is_directory"], push_attr.get("size"))
+    stats["src_path"] = src_attr["path"]
+    stats["dst_path"] = dst_path
+    update_tasks(1, not src_attr["is_directory"], src_attr.get("size"))
 
     try:
         is_completed = False
@@ -851,5 +900,5 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-pull(push_id, to_pid, base_url=base_url, max_workers=max_workers)
+pull(src_path, dst_path, base_url=base_url, max_workers=max_workers)
 

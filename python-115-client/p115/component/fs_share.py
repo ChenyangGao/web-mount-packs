@@ -261,6 +261,14 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 pid = 0
         if patht == [""]:
             return self._attr(0)
+        if parents:
+            ancestors = self.get_ancestors(pid)
+            if parents >= len(ancestors):
+                pid = 0
+            else:
+                pid = cast(int, ancestors[-parents]["parent_id"])
+        if not patht:
+            return self._attr(pid)
 
         pattr = None
         if pid == 0:

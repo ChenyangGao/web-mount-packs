@@ -9,3 +9,4 @@ from .iterdir import *
 from .qrcode import *
 from .check import *
 from .download import *
+from .upload import *

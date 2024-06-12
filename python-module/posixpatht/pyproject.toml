@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "posixpatht"
-version = "0.0.1.1"
+version = "0.0.1.2"
 description = "Another posixpath module, supports names that contain backslashes."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
