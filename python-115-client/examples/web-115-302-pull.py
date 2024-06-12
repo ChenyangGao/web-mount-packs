@@ -786,7 +786,7 @@ def pull(
                 if len(task.reasons) == 1:
                     raise
                 else:
-                    raise BaseExceptionGroup('max retries exceed', task.reasons)
+                    raise BaseExceptionGroup('max retries exceeded', task.reasons)
         finally:
             del thread_stats[cur_thread]
 
@@ -819,7 +819,7 @@ def pull(
         dst_id = dst_path
     if name and is_directory and not no_root:
         dst_attr = relogin_wrap(fs.makedirs, [name], pid=dst_id, exist_ok=True)
-        dst_path = dst_attr["path"] + "/" + escape(name)
+        dst_path = dst_attr["path"]
         dst_id = dst_attr["id"]
     if not dst_attr:
         dst_attr = relogin_wrap(fs.attr, dst_id)
@@ -827,11 +827,12 @@ def pull(
         if is_directory:
             if not dst_attr["is_directory"]:
                 raise NotADirectoryError(errno.ENOTDIR, dst_attr)
-        elif not dst_attr["is_directory"]:
+        elif dst_attr["is_directory"]:
+            dst_path = dst_path + "/" + escape(name)
+        else:
             relogin_wrap(fs.remove, dst_attr["id"])
             dst_id = dst_attr["parent_id"]
             name = dst_attr["name"]
-            dst_path = dst_path + "/" + escape(name)
     if is_directory:
         task = Task(src_attr, dst_id, dst_attr)
     else:
