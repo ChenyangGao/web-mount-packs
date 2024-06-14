@@ -70,7 +70,7 @@ from warnings import warn
 try:
     from colored.colored import back_rgb, fore_rgb, Colored
     from concurrenttools import thread_batch
-    from p115 import P115Client, AVAILABLE_APPS
+    from p115 import check_response, P115Client, AVAILABLE_APPS
     from posixpatht import split, escape
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
@@ -82,7 +82,7 @@ except ImportError:
          "colored", "python-concurrenttools", "python-115", "posixpatht", "Pygments"], check=True)
     from colored.colored import back_rgb, fore_rgb, Colored # type: ignore
     from concurrenttools import thread_batch
-    from p115 import P115Client, AVAILABLE_APPS
+    from p115 import check_response, P115Client, AVAILABLE_APPS
     from posixpatht import split, escape
     from pygments import highlight
     from pygments.lexers import JsonLexer, Python3Lexer, Python3TracebackLexer
@@ -600,25 +600,29 @@ def pull(
         try:
             task.times += 1
             if src_attr["is_directory"]:
-                if isinstance(dst_attr, str):
-                    resp = relogin_wrap(fs.fs_mkdir, name, dst_pid)
-                    name = resp["file_name"]
-                    dst_id = int(resp["file_id"])
-                    task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
-                    subdattrs = {}
-                    if debug: logger.debug("""\
+                subdattrs: None | dict = None
+                try:
+                    if isinstance(dst_attr, str):
+                        resp = check_response(relogin_wrap(fs.fs_mkdir, name, dst_pid))
+                        name = resp["file_name"]
+                        dst_id = int(resp["file_id"])
+                        task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
+                        subdattrs = {}
+                        if debug: logger.debug("""\
 {emoji} {prompt}{src_path} ➜ {name} @ {dst_id} in {dst_pid}
     ├ response = {resp}""".format(
-                        emoji    = blink_mark("🤭"), 
-                        prompt   = highlight_prompt("[GOOD] 📂 创建目录: ", "green"), 
-                        src_path = highlight_path(src_path), 
-                        name     = highlight_path(name), 
-                        dst_id   = highlight_id(dst_id), 
-                        dst_pid  = highlight_id(dst_pid), 
-                        resp     = highlight_as_json(resp), 
-                    ))
-                else:
-                    dst_id = dst_attr["id"]
+                            emoji    = blink_mark("🤭"), 
+                            prompt   = highlight_prompt("[GOOD] 📂 创建目录: ", "green"), 
+                            src_path = highlight_path(src_path), 
+                            name     = highlight_path(name), 
+                            dst_id   = highlight_id(dst_id), 
+                            dst_pid  = highlight_id(dst_pid), 
+                            resp     = highlight_as_json(resp), 
+                        ))
+                except FileExistsError:
+                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, force_directory=True)
+                if subdattrs is None:
+                    dst_id = cast(Mapping, dst_attr)["id"]
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
                         for attr in relogin_wrap(fs.listdir_attr, dst_id)

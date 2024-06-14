@@ -67,7 +67,7 @@ def main(args):
     from warnings import warn
 
     from concurrenttools import thread_batch
-    from p115 import P115Client
+    from p115 import check_response, P115Client
     from posixpatht import split, escape
     from rich.progress import (
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
@@ -360,15 +360,19 @@ def main(args):
         try:
             task.times += 1
             if src_attr["is_directory"]:
-                if isinstance(dst_attr, str):
-                    resp = relogin_wrap(fs.fs_mkdir, name, dst_pid)
-                    name = resp["file_name"]
-                    dst_id = int(resp["file_id"])
-                    task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
-                    subdattrs = {}
-                    console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
-                else:
-                    dst_id = dst_attr["id"]
+                subdattrs: None | dict = None
+                try:
+                    if isinstance(dst_attr, str):
+                        resp = check_response(relogin_wrap(fs.fs_mkdir, name, dst_pid))
+                        name = resp["file_name"]
+                        dst_id = int(resp["file_id"])
+                        task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
+                        subdattrs = {}
+                        console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
+                except FileExistsError:
+                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, force_directory=True)
+                if subdattrs is None:
+                    dst_id = cast(Mapping, dst_attr)["id"]
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
                         for attr in relogin_wrap(fs.listdir_attr, dst_id)
