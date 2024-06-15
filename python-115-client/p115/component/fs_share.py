@@ -21,7 +21,7 @@ from stat import S_IFDIR, S_IFREG
 from time import time
 from typing import cast, Never, Self
 
-from posixpatht import escape, joins, splits
+from posixpatht import escape, joins, splits, path_is_dir_form
 
 from .client import check_response, P115Client, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
@@ -38,14 +38,14 @@ def normalize_info(
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
-        is_dir = False
+        is_directory = False
     else:
         fid = info["cid"]
         parent_id = info["pid"]
-        is_dir = True
+        is_directory = True
     info2 =  {
         "name": info["n"], 
-        "is_directory": is_dir, 
+        "is_directory": is_directory, 
         "size": info.get("s"), 
         "id": int(fid), 
         "parent_id": int(parent_id), 
@@ -63,8 +63,7 @@ def normalize_info(
         info2["thumb"] = info["u"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
-    if "ico" in info:
-        info2["ico"] = info["ico"]
+    info2["ico"] = info.get("ico", "folder" if is_directory else "")
     if keep_raw:
         info2["raw"] = info
     if extra_data:
@@ -81,9 +80,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     share_code: str
     receive_code: str
     path_to_id: MutableMapping[str, int]
-    # TODO: 优化缓存，下面这 2 个字典合并成一个 attr_cache
     id_to_attr: MutableMapping[int, AttrDict]
-    attr_cache: MutableMapping[int, tuple[AttrDict]]
+    pid_to_children: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
     path_class = P115SharePath
 
@@ -106,7 +104,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             receive_code= m["receive_code"] or "", 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
-            attr_cache={}, 
+            pid_to_children={}, 
             full_loaded=False, 
         )
 
@@ -217,7 +215,9 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "name": "", 
                 "path": "/", 
                 "is_directory": True, 
+                "size": None, 
                 "time": self.create_time, 
+                "timestamp": int(self.create_time.timestamp()), 
                 "fs": self, 
                 "ancestors": [{"id": 0, "name": ""}], 
             }
@@ -246,86 +246,91 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             pid = self.id
         if not path or path == ".":
             return self._attr(pid)
+
+        parents = 0
         if isinstance(path, str):
             if not force_directory:
-                force_directory = path.endswith(("/", "/.", "/.."))
-            if path.startswith("/"):
-                pid = 0
+                force_directory = path_is_dir_form(path)
             patht, parents = splits(path)
+            if not (patht or parents):
+                return self._attr(pid)
         else:
             if not force_directory:
                 force_directory = path[-1] == ""
-            patht = [path[0], *(p for p in path if p)]
-            parents = 0
-            if patht[0] == "":
-                pid = 0
+            patht = [path[0], *(p for p in path[1:] if p)]
         if patht == [""]:
             return self._attr(0)
-        if parents:
-            ancestors = self.get_ancestors(pid)
-            if parents >= len(ancestors):
-                pid = 0
-            else:
-                pid = cast(int, ancestors[-parents]["parent_id"])
-        if not patht:
-            return self._attr(pid)
+        elif patht and patht[0] == "":
+            pid = 0
 
-        pattr = None
+        ancestor_patht: list[str] = []
         if pid == 0:
             if patht[0] != "":
                 patht.insert(0, "")
         else:
-            pattr = self._attr(pid)
-            ppatht = self.get_patht(pattr["path"])
+            ancestors = self.get_ancestors(pid)
             if parents:
-                pattr = None
-                patht = ["", *ppatht[1:-parents], *patht]
+                if parents >= len(ancestors):
+                    pid = 0
+                else:
+                    pid = cast(int, ancestors[-parents-1]["id"])
+                    ancestor_patht = ["", *(a["name"] for a in ancestors[1:-parents])]
             else:
-                patht = [*ppatht, *patht]
-        fullpath = joins(patht)
+                ancestor_patht = ["", *(a["name"] for a in ancestors[1:])]
+        if not patht:
+            return self._attr(pid)
 
+        if pid == 0:
+            dirname = ""
+            ancestors_paths: list[str] = [(dirname := f"{dirname}/{escape(name)}") for name in patht[1:]]
+        else:
+            dirname = joins(ancestor_patht)
+            ancestors_paths = [(dirname := f"{dirname}/{escape(name)}") for name in patht]
+
+        fullpath = ancestors_paths[-1]
         path_to_id = self.path_to_id
-        if not force_directory and (id := path_to_id.get(fullpath)):
-            return self._attr(id)
-        if (id := path_to_id.get(fullpath + "/")):
-            return self._attr(id)
+        if path_to_id:
+            if not force_directory and (id := path_to_id.get(fullpath)):
+                return self._attr(id)
+            if (id := path_to_id.get(fullpath + "/")):
+                return self._attr(id)
         if self.full_loaded:
             raise FileNotFoundError(
                 errno.ENOENT, 
-                f"no such file {path!r} (in {pid!r})", 
+                f"no such path {fullpath!r} (in {pid!r})", 
             )
 
-        if pattr:
-            attr = pattr
+        parent: int | AttrDict
+        for i in reversed(range(len(ancestors_paths)-1)):
+            if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
+                parent = self._attr(id)
+                i += 1
+                break
         else:
-            attr = pattr = self._attr(pid)
-        if not attr["is_directory"]:
-            raise NotADirectoryError(
-                errno.ENOTDIR, 
-                f"`pid` does not point to a directory: {pid!r}", 
-            )
-        for name in patht[len(self.get_patht(pid)):-1]:
-            for attr in self.iterdir(pid):
-                if attr["name"] == name and attr["is_directory"]:
-                    pattr = attr
-                    pid = cast(int, attr["id"])
-                    break
+            i = 0
+            parent = pid
+
+        if pid == 0:
+            i += 1
+
+        last_idx = len(patht) - 1
+        for i, name in enumerate(patht[i:], i):
+            for attr in self.iterdir(parent):
+                if attr["name"] == name:
+                    if force_directory or i < last_idx:
+                        if attr["is_directory"]:
+                            parent = attr
+                            break
+                    else:
+                        break
             else:
+                if isinstance(parent, AttrDict):
+                    parent = parent["id"]
                 raise FileNotFoundError(
                     errno.ENOENT, 
-                    f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+                    f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
                 )
-        name = patht[-1]
-        for attr in self.iterdir(pid):
-            if attr["name"] == name:
-                if force_directory and not attr["is_directory"]:
-                    continue
-                return attr
-        else:
-            raise FileNotFoundError(
-                errno.ENOENT, 
-                f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
-            )
+        return attr
 
     def attr(
         self, 
@@ -450,7 +455,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         ancestors = attr["ancestors"]
         children: Sequence[AttrDict]
         try:
-            children = self.attr_cache[id]
+            children = self.pid_to_children[id]
             count = len(children)
             if start < 0:
                 start += count
@@ -469,7 +474,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 case "file_size":
                     key = lambda attr: attr.get("size") or 0
                 case "file_type":
-                    key = lambda attr: attr.get("ico", "")
+                    key = lambda attr: attr.get("ico", "folder" if attr["is_directory"] else "")
                 case "user_utime" | "user_ptime" | "user_otime":
                     key = lambda attr: attr["time"]
                 case _:
@@ -504,7 +509,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                         path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                         yield attr
-            children = self.attr_cache[id] = tuple(iterdir())
+            children = self.pid_to_children[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in children)
         return iter(children[start:stop])
 

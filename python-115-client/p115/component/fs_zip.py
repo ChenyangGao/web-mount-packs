@@ -18,7 +18,7 @@ from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
 from typing import cast, Never, Self
 
-from posixpatht import escape, joins, splits
+from posixpatht import escape, joins, splits, path_is_dir_form
 
 from .client import check_response, P115Client, ExtractProgress, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
@@ -29,12 +29,13 @@ def normalize_info(
     **extra_data, 
 ) -> AttrDict:
     timestamp = info.get("time") or 0
+    is_directory = info["file_category"] == 0
     return {
         "name": info["file_name"], 
-        "is_directory": info["file_category"] == 0, 
+        "is_directory": is_directory, 
         "file_category": info["file_category"], 
         "size": info["size"], 
-        "ico": info["ico"], 
+        "ico": info.get("ico", "folder" if is_directory else ""), 
         "time": datetime.fromtimestamp(timestamp), 
         "timestamp": timestamp, 
         **extra_data, 
@@ -53,7 +54,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     pickcode: str
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, AttrDict]
-    attr_cache: MutableMapping[int, tuple[AttrDict]]
+    pid_to_children: MutableMapping[int, tuple[AttrDict]]
     full_loaded: bool
     path_class = P115ZipPath
 
@@ -86,7 +87,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             pickcode=pickcode, 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
-            attr_cache={}, 
+            pid_to_children={}, 
             full_loaded=False, 
             _nextid=count(1).__next__, 
         )
@@ -136,14 +137,15 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             attr = self.id_to_attr[0] = {
                 "id": 0, 
                 "parent_id": 0, 
-                "file_category": 0, 
-                "is_directory": True, 
                 "name": "", 
                 "path": "/", 
+                "is_directory": True, 
                 "size": 0, 
                 "time": self.create_time, 
                 "timestamp": int(self.create_time.timestamp()), 
+                "file_category": 0, 
                 "fs": self, 
+                "ancestors": [{"id": 0, "name": ""}], 
             }
             return attr
         dq = deque((0,))
@@ -170,89 +172,91 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             pid = self.id
         if not path or path == ".":
             return self._attr(pid)
+
+        parents = 0
         if isinstance(path, str):
             if not force_directory:
-                force_directory = path.endswith(("/", "/.", "/.."))
-            if path.startswith("/"):
-                pid = 0
+                force_directory = path_is_dir_form(path)
             patht, parents = splits(path)
+            if not (patht or parents):
+                return self._attr(pid)
         else:
             if not force_directory:
                 force_directory = path[-1] == ""
-            patht = [path[0], *(p for p in path if p)]
-            parents = 0
-            if patht[0] == "":
-                pid = 0
+            patht = [path[0], *(p for p in path[1:] if p)]
         if patht == [""]:
             return self._attr(0)
-        if parents:
-            ancestors = self.get_patht(pid)
-            if parents >= len(ancestors):
-                pid = 0
-            else:
-                attr = self._attr_path(ancestors[:-parents])
-                if not patht:
-                    return attr
-                pid = cast(int, attr["id"])
-        if not patht:
-            return self._attr(pid)
+        elif patht and patht[0] == "":
+            pid = 0
 
-        pattr = None
+        ancestor_patht: list[str] = []
         if pid == 0:
             if patht[0] != "":
                 patht.insert(0, "")
         else:
-            pattr = self._attr(pid)
-            ppatht = self.get_patht(pattr["path"])
+            ancestors = self.get_ancestors(pid)
             if parents:
-                pattr = None
-                patht = ["", *ppatht[1:-parents], *patht]
+                if parents >= len(ancestors):
+                    pid = 0
+                else:
+                    pid = cast(int, ancestors[-parents-1]["id"])
+                    ancestor_patht = ["", *(a["name"] for a in ancestors[1:-parents])]
             else:
-                patht = [*ppatht, *patht]
-        fullpath = joins(patht)
+                ancestor_patht = ["", *(a["name"] for a in ancestors[1:])]
+        if not patht:
+            return self._attr(pid)
 
+        if pid == 0:
+            dirname = ""
+            ancestors_paths: list[str] = [(dirname := f"{dirname}/{escape(name)}") for name in patht[1:]]
+        else:
+            dirname = joins(ancestor_patht)
+            ancestors_paths = [(dirname := f"{dirname}/{escape(name)}") for name in patht]
+
+        fullpath = ancestors_paths[-1]
         path_to_id = self.path_to_id
-        if not force_directory and (id := path_to_id.get(fullpath)):
-            return self._attr(id)
-        if (id := path_to_id.get(fullpath + "/")):
-            return self._attr(id)
+        if path_to_id:
+            if not force_directory and (id := path_to_id.get(fullpath)):
+                return self._attr(id)
+            if (id := path_to_id.get(fullpath + "/")):
+                return self._attr(id)
         if self.full_loaded:
             raise FileNotFoundError(
                 errno.ENOENT, 
-                f"no such file {path!r} (in {pid!r})", 
+                f"no such path {fullpath!r} (in {pid!r})", 
             )
 
-        if pattr:
-            attr = pattr
+        parent: int | AttrDict
+        for i in reversed(range(len(ancestors_paths)-1)):
+            if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
+                parent = self._attr(id)
+                i += 1
+                break
         else:
-            attr = pattr = self._attr(pid)
-        if not attr["is_directory"]:
-            raise NotADirectoryError(
-                errno.ENOTDIR, 
-                f"`pid` does not point to a directory: {pid!r}", 
-            )
-        for name in patht[len(self.get_patht(pid)):-1]:
-            for attr in self.iterdir(pid):
-                if attr["name"] == name and attr["is_directory"]:
-                    pattr = attr
-                    pid = cast(int, attr["id"])
-                    break
+            i = 0
+            parent = pid
+
+        if pid == 0:
+            i += 1
+
+        last_idx = len(patht) - 1
+        for i, name in enumerate(patht[i:], i):
+            for attr in self.iterdir(parent):
+                if attr["name"] == name:
+                    if force_directory or i < last_idx:
+                        if attr["is_directory"]:
+                            parent = attr
+                            break
+                    else:
+                        break
             else:
+                if isinstance(parent, AttrDict):
+                    parent = parent["id"]
                 raise FileNotFoundError(
                     errno.ENOENT, 
-                    f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
+                    f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
                 )
-        name = patht[-1]
-        for attr in self.iterdir(pid):
-            if attr["name"] == name:
-                if force_directory and not attr["is_directory"]:
-                    continue
-                return attr
-        else:
-            raise FileNotFoundError(
-                errno.ENOENT, 
-                f"no such file {name!r} (in {pid} @ {pattr['path']!r})", 
-            )
+        return attr
 
     def attr(
         self, 
@@ -292,6 +296,15 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     ) -> ExtractProgress:
         "解压缩到网盘"
         return self.client.extract_file_future(self.pickcode, paths, dirname, to_pid, request=self.request)
+
+    def get_ancestors(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+    ) -> list[dict]:
+        "获取各个上级目录的少量信息（从根目录到当前目录）"
+        return self.attr(id_or_path, pid)["ancestors"]
 
     def get_url(
         self, 
@@ -342,8 +355,9 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                 f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
             )
         id = attr["id"]
+        ancestors = attr["ancestors"]
         try:
-            children = self.attr_cache[id]
+            children = self.pid_to_children[id]
         except KeyError:
             nextid = self.__dict__["_nextid"]
             dirname = attr["path"]
@@ -355,6 +369,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     attr = normalize_info(info, fs=self)
                     path = joinpath(dirname, escape(attr["name"]))
                     attr.update(id=nextid(), parent_id=id, path=path)
+                    attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                     path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                     yield attr
                 next_marker = data["next_marker"]
@@ -364,10 +379,11 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                         attr = normalize_info(info, fs=self)
                         path = joinpath(dirname, escape(attr["name"]))
                         attr.update(id=nextid(), parent_id=id, path=path)
+                        attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                         path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                         yield attr
                     next_marker = data["next_marker"]
-            children = self.attr_cache[id] = tuple(iterdir())
+            children = self.pid_to_children[id] = tuple(iterdir())
             self.id_to_attr.update((attr["id"], attr) for attr in children)
         count = len(children)
         return iter(children[start:stop])

@@ -2,12 +2,13 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "altsep", "curdir", "extsep", "pardir", "pathsep", "sep", "escape", "unescape", 
     "abspath", "basename", "commonpath", "commonpatht", "commonprefix", "dirname", 
     "isabs", "join", "joinpath", "joins", "normcase", "normpath", "normpatht", 
     "split", "splitdrive", "splitext", "splits", "realpath", "relpath", 
+    "path_is_dir_form", 
 ]
 
 from posixpath import altsep, curdir, extsep, pardir, pathsep, sep, commonprefix, normcase, splitdrive
@@ -15,10 +16,20 @@ from re import compile as re_compile, Match
 from typing import cast, Iterable, Sequence
 
 
+CRE_DIR_END_search = re_compile(r"(?P<bss>\\*)/\.{0,2}$").search
 CRE_PART_match = re_compile(r"[^\\/]*(?:\\(?s:.)[^\\/]*)*/").match
 CRE_PART = re_compile(r"[^\\/]*(?:\\(?s:.)[^\\/]*)*$")
 
 supports_unicode_filenames = True
+
+
+def path_is_dir_form(path: str) -> bool:
+    if path in ("/", "", ".", ".."):
+        return True
+    match = CRE_DIR_END_search(path)
+    if match is None:
+        return False
+    return len(match["bss"]) % 2 == 0
 
 
 def escape(name: str, /) -> str:

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -13,6 +13,7 @@ __doc__ = """\
 """
 
 from argparse import ArgumentParser, RawTextHelpFormatter
+from warnings import warn
 
 parser = ArgumentParser(
     formatter_class=RawTextHelpFormatter, 
@@ -67,32 +68,47 @@ method   | string  | 否   | 0. '':     缺省值，直接下载
          |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息，JSON 格式
          |         |      | 4. 'desc': 这个文件或文件夹的备注，text/html
 """)
-parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
-parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
+parser.add_argument("-pc", "--path-persistence-commitment", action="store_true", help="路径持久性承诺，只要你能保证文件不会被移动（可新增删除，但对应的路径不可被其他文件复用），打开此选项，用路径请求直链时，可节约一半时间")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
-parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
-args = parser.parse_args()
-if args.version:
-    print(".".join(map(str, __version__)))
-    raise SystemExit(0)
+
+if __name__ == "__main__":
+    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
+    parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
+    parser.add_argument("-d", "--debug", action="store_true", help="启用 flask 的 debug 模式")
+    parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
+
+    args = parser.parse_args()
+    if args.version:
+        print(".".join(map(str, __version__)))
+        raise SystemExit(0)
+else:
+    from sys import argv
+
+    try:
+        args_start = argv.index("--")
+        args, unknown = parser.parse_known_args(argv[args_start+1:])
+        if unknown:
+            warn(f"unknown args passed: {unknown}")
+    except ValueError:
+        args = parser.parse_args([])
 
 try:
-    from cachetools import LRUCache
+    from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from p115 import P115Client, AVAILABLE_APPS
+    from p115 import P115Client, P115Url, AVAILABLE_APPS
     from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "Flask-Compress", "httpx", "posixpatht", "python-115"], check=True)
-    from cachetools import LRUCache
+    from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from p115 import P115Client, AVAILABLE_APPS
+    from p115 import P115Client, P115Url, AVAILABLE_APPS
     from posixpatht import escape
 
 from collections.abc import Callable, MutableMapping
@@ -104,8 +120,8 @@ from re import compile as re_compile, MULTILINE
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
+from typing import cast
 from urllib.parse import quote, unquote, urlsplit
-from warnings import warn
 
 
 if getdefaulttimeout() is None:
@@ -115,6 +131,7 @@ cookies = args.cookies
 cookies_path = args.cookies_path
 cookies_path_mtime = 0
 lock_dir_methods = args.lock_dir_methods
+path_persistence_commitment = args.path_persistence_commitment
 use_request = args.use_request
 
 web_cookies = ""
@@ -220,6 +237,11 @@ if device not in AVAILABLE_APPS:
         warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
         device = "qandroid"
 fs = client.get_fs(client, path_to_id=LRUCache(65536), request=do_request)
+# NOTE: id 到 pickcode 的映射
+id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
+# NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续 2 次请求下载链接，而后台请求一次链接大约需要 170-200 ms，因此弄个 0.3 秒的缓存
+url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(64, ttl=0.3)
+
 
 KEYS = (
     "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", 
@@ -268,12 +290,16 @@ def get_url(pickcode: str):
         return send_file(BytesIO(get_m3u8(pickcode)), mimetype="application/x-mpegurl")
     use_web_api = request.args.get("web") not in (None, "false")
     request_headers = request.headers
-    url = relogin_wrap(
-        fs.get_url_from_pickcode, 
-        pickcode, 
-        headers={"User-Agent": request_headers.get("User-Agent") or ""}, 
-        use_web_api=use_web_api, 
-    )
+    user_agent = request_headers.get("User-Agent") or ""
+    try:
+        url = url_cache[(pickcode, user_agent)]
+    except KeyError:
+        url = url_cache[(pickcode, user_agent)] = relogin_wrap(
+            fs.get_url_from_pickcode, 
+            pickcode, 
+            headers={"User-Agent": user_agent}, 
+            use_web_api=use_web_api, 
+        )
     headers = url["headers"]
     if request.args.get("method") == "url":
         return {"url": url, "headers": headers}
@@ -453,13 +479,22 @@ def query(path: str):
                 return relogin_wrap(fs.desc, path)
     if pickcode:
         return get_url(pickcode)
-    if fid is not None:
-        attr = relogin_wrap(fs.attr, int(fid))
+    if fid:
+        file_id = int(fid)
+        if pickcode := id_to_pickcode.get(file_id):
+            return get_url(pickcode)
+        attr = relogin_wrap(fs.attr, file_id)
     else:
         path = unquote(request.args.get("path") or path)
+        if path_persistence_commitment and (fid := fs.path_to_id.get(fs.abspath(path))):
+            if pickcode := id_to_pickcode.get(fid):
+                return get_url(pickcode)
         attr = relogin_wrap(fs.attr, path)
     if not attr["is_directory"]:
-        return get_url(attr["pickcode"])
+        pickcode = cast(str, attr["pickcode"])
+        if id_to_pickcode is not None:
+            id_to_pickcode[attr["id"]] = pickcode
+        return get_url(pickcode)
     children = relogin_wrap(fs.listdir_attr, attr["id"])
     for subattr in children:
         subattr["path_url"] = "%s%s" % (origin, quote(subattr["path"], safe=":/"))
@@ -670,7 +705,8 @@ def query(path: str):
     )
 
 
-application.run(host=args.host, port=args.port, threaded=True)
+if __name__ == "__main__":
+    application.run(host=args.host, port=args.port, threaded=True, debug=args.debug)
 
 # TODO 支持指定挂载某个路径或 id，而不是挂载根目录
 # TODO 支持设置登录密码，不提供密码不能访问（302链接无需密码）

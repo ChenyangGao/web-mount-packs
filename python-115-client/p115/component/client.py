@@ -2154,6 +2154,41 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
+    def fs_files_getid(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_getid(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files_getid(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """由路径获取对应的 id（但只能获取目录，不能获取文件）
+        GET https://webapi.115.com/files/getid
+        payload:
+            - path: str
+        """
+        api = "https://webapi.115.com/files/getid"
+        if isinstance(payload, str):
+            payload = {"path": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
     def fs_files_image(
         self, 
         payload: str | dict, 
