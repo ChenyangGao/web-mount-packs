@@ -14,10 +14,12 @@ import errno
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import (
-    Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, Sequence, ValuesView, 
+    AsyncIterator, Awaitable, Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, 
+    Sequence, ValuesView, 
 )
 from functools import cached_property
 from io import UnsupportedOperation
+from inspect import isawaitable
 from mimetypes import guess_type
 from os import fsdecode, fspath, lstat, makedirs, scandir, stat, stat_result, PathLike
 from os import path as ospath
@@ -26,11 +28,12 @@ from re import compile as re_compile, escape as re_escape
 from stat import S_IFDIR, S_IFREG # TODO: common stat method
 from time import time
 from typing import (
-    cast, Any, Generic, IO, Literal, Never, Self, TypeAlias, TypeVar, 
+    overload, cast, Any, Generic, IO, Literal, Never, Self, TypeAlias, TypeVar, 
 )
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
 
+from asynctools import async_map
 from download import DownloadTask
 from filewrap import SupportsWrite
 from httpfile import HTTPFileReader
@@ -258,7 +261,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def join(self, *names: str) -> Self:
         if not names:
             return self
-        attr = self.fs.attr(names, self.id)
+        attr = self.fs.attr(names, pid=self.id)
         return type(self)(attr)
 
     def joinpath(self, *paths: str | PathLike[str]) -> Self:
@@ -269,7 +272,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         if path == path_new:
             return self
         if path != "/" and path_new.startswith(path + "/"):
-            attr = self.fs.attr(path_new[len(path)+1:], self.id)
+            attr = self.fs.attr(path_new[len(path)+1:], pid=self.id)
         else:    
             attr = self.fs.attr(path_new)
         return type(self)(attr)
@@ -544,12 +547,14 @@ class P115FileSystemBase(Generic[P115PathType]):
     path: str
     path_class: type[P115PathType]
     request: None | Callable = None
+    async_request: None | Callable = None
 
     def __init__(
         self, 
         /, 
         client: str | P115Client, 
         request: None | Callable = None, 
+        async_request: None | Callable = None, 
     ):
         if isinstance(client, str):
             client = P115Client(client)
@@ -557,6 +562,8 @@ class P115FileSystemBase(Generic[P115PathType]):
         ns["client"] = client
         if request is not None:
             ns["request"] = request
+        if async_request is not None:
+            ns["async_request"] = async_request
 
     def __contains__(self, id_or_path: IDOrPathType, /) -> bool:
         return self.exists(id_or_path)
@@ -564,8 +571,11 @@ class P115FileSystemBase(Generic[P115PathType]):
     def __getitem__(self, id_or_path: IDOrPathType, /) -> P115PathType:
         return self.as_path(id_or_path)
 
+    def __aiter__(self, /) -> AsyncIterator[P115PathType]:
+        return self.iter(self.id, max_depth=-1, async_=True)
+
     def __iter__(self, /) -> Iterator[P115PathType]:
-        return self.iter(max_depth=-1)
+        return self.iter(self.id, max_depth=-1)
 
     def __itruediv__(self, id_or_path: IDOrPathType, /) -> Self:
         self.chdir(id_or_path)
@@ -582,15 +592,40 @@ class P115FileSystemBase(Generic[P115PathType]):
             name = module + "." + name
         return f"<{name}(client={self.client!r}, id={self.id!r}, path={self.path!r}) at {hex(id(self))}>"
 
+    @overload
     @abstractmethod
     def attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> AttrDict:
         ...
+    @overload
+    @abstractmethod
+    def attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[AttrDict]:
+        ...
+    @abstractmethod
+    def attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> AttrDict | Awaitable[AttrDict]:
+        ...
 
+    @overload
     @abstractmethod
     def get_url(
         self, 
@@ -598,107 +633,334 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         pid: None | int = None, 
         headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> str:
         ...
+    @overload
+    @abstractmethod
+    def get_url(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[str]:
+        ...
+    @abstractmethod
+    def get_url(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Awaitable[str]:
+        ...
 
+    @overload
     @abstractmethod
     def iterdir(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[AttrDict]:
         ...
+    @overload
+    @abstractmethod
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[AttrDict]:
+        ...
+    @abstractmethod
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[AttrDict] | AsyncIterator[AttrDict]:
+        ...
 
-    def abspath(self, path: str | PathLike[str] = "", /) -> str:
-        return self.get_path(path, self.id)
+    def abspath(
+        self, 
+        path: str | PathLike[str] = "", 
+        /, 
+    ) -> str:
+        return self.get_path(path, pid=self.id)
 
+    @overload
     def as_path(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> P115PathType:
+        ...
+    @overload
+    def as_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[P115PathType]:
+        ...
+    def as_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> P115PathType | Awaitable[P115PathType]:
         path_class = type(self).path_class
-        attr: AttrDict
-        if isinstance(id_or_path, path_class):
-            return id_or_path
-        elif isinstance(id_or_path, dict):
-            attr = cast(AttrDict, id_or_path)
-        elif isinstance(id_or_path, int):
-            attr = self.attr(id_or_path)
+        if async_:
+            async def request():
+                attr: AttrDict
+                if isinstance(id_or_path, path_class):
+                    return id_or_path
+                elif isinstance(id_or_path, dict):
+                    attr = cast(AttrDict, id_or_path)
+                else:
+                    attr = await self.attr(id_or_path, pid=pid, async_=True)
+                attr["fs"] = self
+                return path_class(attr)
+            return request()
         else:
-            attr = self.attr(id_or_path, pid)
-        attr["fs"] = self
-        return path_class(attr)
+            attr: AttrDict
+            if isinstance(id_or_path, path_class):
+                return id_or_path
+            elif isinstance(id_or_path, dict):
+                attr = cast(AttrDict, id_or_path)
+            elif isinstance(id_or_path, int):
+                attr = self.attr(id_or_path)
+            else:
+                attr = self.attr(id_or_path, pid=pid)
+            attr["fs"] = self
+            return path_class(attr)
 
+    @overload
     def chdir(
         self, 
         id_or_path: IDOrPathType = 0, 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> int:
+        ...
+    @overload
+    def chdir(
+        self, 
+        id_or_path: IDOrPathType = 0, 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[int]:
+        ...
+    def chdir(
+        self, 
+        id_or_path: IDOrPathType = 0, 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Awaitable[int]:
         path_class = type(self).path_class
-        if isinstance(id_or_path, path_class):
-            id = id_or_path.id
-            self.__dict__.update(
-                id = id, 
-                path = id_or_path["path"], 
-            )
-            return id
-        elif id_or_path in (0, "/"):
-            self.__dict__.update(id=0, path="/")
-            return 0
-        if isinstance(id_or_path, PathLike):
-            id_or_path = fspath(id_or_path)
-        if not id_or_path or id_or_path == ".":
-            return self.id
-        attr = self.attr(id_or_path, pid)
-        if self.id == attr["id"]:
-            return self.id
-        elif attr["is_directory"]:
-            self.__dict__.update(
-                id = attr["id"], 
-                path = self.get_path(id_or_path, pid), 
-            )
-            return attr["id"]
+        if async_:
+            async def request():
+                nonlocal id_or_path
+                if isinstance(id_or_path, (AttrDict, path_class)):
+                    id = id_or_path["id"]
+                    self.__dict__.update(id=id, path=id_or_path["path"])
+                    return id
+                elif id_or_path in (0, "/"):
+                    self.__dict__.update(id=0, path="/")
+                    return 0
+                if isinstance(id_or_path, PathLike):
+                    id_or_path = fspath(id_or_path)
+                if not id_or_path or id_or_path == ".":
+                    return self.id
+                attr = await self.attr(id_or_path, pid=pid, async_=True)
+                if self.id == attr["id"]:
+                    return self.id
+                elif attr["is_directory"]:
+                    self.__dict__.update(id=attr["id"], path=attr["path"])
+                    return attr["id"]
+                else:
+                    raise NotADirectoryError(
+                        errno.ENOTDIR, 
+                        f"{id_or_path!r} (in {pid!r}) is not a directory", 
+                    )
+            return request()
         else:
-            raise NotADirectoryError(
-                errno.ENOTDIR, f"{id_or_path!r} (in {pid!r}) is not a directory")
+            if isinstance(id_or_path, (AttrDict, path_class)):
+                id = id_or_path["id"]
+                self.__dict__.update(id=id, path=id_or_path["path"])
+                return id
+            elif id_or_path in (0, "/"):
+                self.__dict__.update(id=0, path="/")
+                return 0
+            if isinstance(id_or_path, PathLike):
+                id_or_path = fspath(id_or_path)
+            if not id_or_path or id_or_path == ".":
+                return self.id
+            attr = self.attr(id_or_path, pid=pid)
+            if self.id == attr["id"]:
+                return self.id
+            elif attr["is_directory"]:
+                self.__dict__.update(id=attr["id"], path=attr["path"])
+                return attr["id"]
+            else:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"{id_or_path!r} (in {pid!r}) is not a directory", 
+                )
 
+    @overload
     def dictdir(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
         full_path: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> dict[int, str]:
-        if full_path:
-            return {attr["id"]: attr["path"] for attr in self.iterdir(id_or_path, pid, **kwargs)}
+        ...
+    @overload
+    def dictdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> Awaitable[dict[int, str]]:
+        ...
+    def dictdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> dict[int, str] | Awaitable[dict[int, str]]:
+        if async_:
+            async def request():
+                if full_path:
+                    return {attr["id"]: attr["path"] async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)}
+                else:
+                    return {attr["id"]: attr["name"] async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)}
+            return request()
+        elif full_path:
+            return {attr["id"]: attr["path"] for attr in self.iterdir(id_or_path, pid=pid, **kwargs)}
         else:
-            return {attr["id"]: attr["name"] for attr in self.iterdir(id_or_path, pid, **kwargs)}
+            return {attr["id"]: attr["name"] for attr in self.iterdir(id_or_path, pid=pid, **kwargs)}
 
+    @overload
     def dictdir_attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> dict[int, AttrDict]:
-        return {attr["id"]: attr for attr in self.iterdir(id_or_path, pid, **kwargs)}
+        ...
+    @overload
+    def dictdir_attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> Awaitable[dict[int, AttrDict]]:
+        ...
+    def dictdir_attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> dict[int, AttrDict] | Awaitable[dict[int, AttrDict]]:
+        if async_:
+            async def request():
+                return {attr["id"]: attr async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)}
+            return request()
+        else:
+            return {attr["id"]: attr for attr in self.iterdir(id_or_path, pid=pid, **kwargs)}
 
+    @overload
     def dictdir_path(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> dict[int, P115PathType]:
+        ...
+    @overload
+    def dictdir_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> Awaitable[dict[int, P115PathType]]:
+        ...
+    def dictdir_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> dict[int, P115PathType] | Awaitable[dict[int, P115PathType]]:
         path_class = type(self).path_class
-        return {attr["id"]: path_class(attr) for attr in self.iterdir(id_or_path, pid, **kwargs)}
+        if async_:
+            async def request():
+                return {attr["id"]: path_class(attr) async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)}
+            return request()
+        else:
+            return {attr["id"]: path_class(attr) for attr in self.iterdir(id_or_path, pid=pid, **kwargs)}
 
+    # TODO: 支持异步
     def download(
         self, 
         id_or_path: IDOrPathType, 
@@ -711,7 +973,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         if not isinstance(local_path_or_file, SupportsWrite):
             path = cast(bytes | str | PathLike, local_path_or_file)
             if not path:
-                path = self.attr(id_or_path, pid)["name"]
+                path = self.attr(id_or_path, pid=pid)["name"]
             if ospath.lexists(path):
                 if write_mode == "x":
                     raise FileExistsError(
@@ -724,7 +986,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         if callable(submit):
             kwargs["submit"] = submit
         task = DownloadTask.create_task(
-            lambda: self.get_url(id_or_path, pid), 
+            lambda: self.get_url(id_or_path, pid=pid), 
             local_path_or_file, 
             headers=lambda: {
                 **self.client.headers, 
@@ -738,6 +1000,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             task.run_wait()
         return task
 
+    # TODO: 支持异步
     def download_tree(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -753,7 +1016,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         local_dir = fsdecode(local_dir)
         if local_dir:
             makedirs(local_dir, exist_ok=True)
-        attr = self.attr(id_or_path, pid)
+        attr = self.attr(id_or_path, pid=pid)
         pathes: Iterable[P115PathType]
         if attr["is_directory"]:
             if not no_root:
@@ -809,145 +1072,340 @@ class P115FileSystemBase(Generic[P115PathType]):
                         if submit is None:
                             task.run_wait()
 
+    @overload
     def enumdir(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
         full_path: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[str]:
-        if full_path:
-            return (attr["path"] for attr in self.iterdir(id_or_path, pid, **kwargs))
+        ...
+    @overload
+    def enumdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[str]:
+        ...
+    def enumdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[str] | AsyncIterator[str]:
+        if async_:
+            if full_path:
+                return (attr["path"] async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs))
+            else:
+                return (attr["name"] async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs))
+        elif full_path:
+            return (attr["path"] for attr in self.iterdir(id_or_path, pid=pid, **kwargs))
         else:
-            return (attr["name"] for attr in self.iterdir(id_or_path, pid, **kwargs))
+            return (attr["name"] for attr in self.iterdir(id_or_path, pid=pid, **kwargs))
 
+    @overload
     def exists(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> bool:
+        ...
+    @overload
+    def exists(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[bool]:
+        ...
+    def exists(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Awaitable[bool]:
         path_class = type(self).path_class
-        try:
-            if isinstance(id_or_path, path_class):
-                id_or_path()
-            else:
-                self.attr(id_or_path, pid)
-            return True
-        except FileNotFoundError:
-            return False
+        if isinstance(id_or_path, (AttrDict, path_class)):
+            id_or_path = id_or_path["id"]
+        if async_:
+            async def request():
+                try:
+                    await self.attr(id_or_path, pid=pid, async_=True)
+                    return True
+                except FileNotFoundError:
+                    return False
+            return request()
+        else:
+            try:
+                self.attr(id_or_path, pid=pid)
+                return True
+            except FileNotFoundError:
+                return False
 
     def getcid(self, /) -> int:
         return self.id
 
-    def getcwd(self, /, fetch_attr: bool = False) -> str:
-        if fetch_attr:
-            return self.attr(self.id)["path"]
+    def getcwd(self, /) -> str:
         return self.path
 
+    @overload
     def get_id(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> int:
-        if isinstance(id_or_path, int):
-            return id_or_path
+        ...
+    @overload
+    def get_id(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[int]:
+        ...
+    def get_id(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Awaitable[int]:
         path_class = type(self).path_class
-        if pid is None and (not id_or_path or id_or_path == "."):
-            return self.id
-        elif isinstance(id_or_path, path_class):
-            return id_or_path.id
-        if id_or_path == "/":
-            return 0
-        try:
-            path_to_id = getattr(self, "path_to_id", None)
-            if path_to_id is not None:
-                path = self.get_path(id_or_path, pid)
-                return path_to_id[path]
-        except LookupError:
-            pass
-        return self.attr(id_or_path, pid)["id"]
+        if async_:
+            async def request():
+                if isinstance(id_or_path, int):
+                    return id_or_path
+                elif isinstance(id_or_path, (AttrDict, path_class)):
+                    return id_or_path["id"]
+                if not id_or_path or id_or_path == ".":
+                    if pid is None:
+                        return self.id
+                    return pid
+                if id_or_path == "/":
+                    return 0
+                attr = await self.attr(id_or_path, pid=pid, async_=True)
+                return attr["id"]
+            return request()
+        else:
+            if isinstance(id_or_path, int):
+                return id_or_path
+            elif isinstance(id_or_path, path_class):
+                return id_or_path.id
+            if not id_or_path or id_or_path == ".":
+                if pid is None:
+                    return self.id
+                return pid
+            if id_or_path == "/":
+                return 0
+            return self.attr(id_or_path, pid=pid)["id"]
 
+    @overload
     def get_path(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> str:
-        if isinstance(id_or_path, int):
-            id = id_or_path
-            if id == 0:
-                return "/"
-            return self.attr(id)["path"]
+        ...
+    @overload
+    def get_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[str]:
+        ...
+    def get_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Awaitable[str]:
         path_class = type(self).path_class
-        if pid is None and (not id_or_path or id_or_path == "."):
-            return self.path
-        elif isinstance(id_or_path, path_class):
-            return id_or_path.path
-        elif isinstance(id_or_path, dict):
-            return id_or_path["path"]
-        if isinstance(id_or_path, (str, PathLike)):
-            path = fspath(id_or_path)
-            if not path.startswith("/"):
-                ppath = self.path if pid is None else joins(self.get_patht(pid))
-                if path in ("", "."):
+        if async_:
+            async def request():
+                if isinstance(id_or_path, (AttrDict, path_class)):
+                    return id_or_path["path"]
+                elif isinstance(id_or_path, int):
+                    id = id_or_path
+                    if id == 0:
+                        return "/"
+                    attr = await self.attr(id, pid=pid, async_=True)
+                    return attr["path"]
+                if isinstance(id_or_path, (str, PathLike)):
+                    patht, parent = splits(fspath(id_or_path))
+                else:
+                    if id_or_path:
+                        patht = [id_or_path[0], *(p for p in id_or_path[1:] if p)]
+                    else:
+                        patht = []
+                    parent = 0
+                if patht and patht[0] == "":
+                    return joins(patht)
+                if pid is None:
+                    ppath = self.path
+                else:
+                    attr = await self.attr(pid, async_=True)
+                    ppath = attr["path"]
+                if not (patht and parent):
                     return ppath
-                path = joinpath(ppath, path)
-            return normpath(path)
+                ppatht = splits(ppath)[0]
+                if parent:
+                    ppatht = ppatht[1:-parent]
+                return joins([*ppatht, *patht])
+            return request()
         else:
-            path = joins(id_or_path)
-            if not path.startswith("/"):
-                ppath = self.path if pid is None else joins(self.get_patht(pid))
-                if not path:
-                    return ppath
-                path = joinpath(ppath, path)
-        return path
+            if isinstance(id_or_path, (AttrDict, path_class)):
+                return id_or_path["path"]
+            elif isinstance(id_or_path, int):
+                id = id_or_path
+                if id == 0:
+                    return "/"
+                return self.attr(id)["path"]
+            if isinstance(id_or_path, (str, PathLike)):
+                patht, parent = splits(fspath(id_or_path))
+            else:
+                if id_or_path:
+                    patht = [id_or_path[0], *(p for p in id_or_path[1:] if p)]
+                else:
+                    patht = []
+                parent = 0
+            if patht and patht[0] == "":
+                return joins(patht)
+            if pid is None:
+                ppath = self.path
+            else:
+                ppath = self.attr(pid)["path"]
+            if not (patht and parent):
+                return ppath
+            ppatht = splits(ppath)[0]
+            if parent:
+                ppatht = ppatht[1:-parent]
+            return joins([*ppatht, *patht])
 
+    @overload
     def get_patht(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> list[str]:
-        if isinstance(id_or_path, int):
-            id = id_or_path
-            if id == 0:
-                return [""]
-            return splits(self.attr(id)["path"])[0]
+        ...
+    @overload
+    def get_patht(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[list[str]]:
+        ...
+    def get_patht(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> list[str] | Awaitable[list[str]]:
         path_class = type(self).path_class
-        if pid is None and (not id_or_path or id_or_path == "."):
-            return splits(self.path)[0]
-        elif isinstance(id_or_path, path_class):
-            return splits(id_or_path.path)[0]
-        elif isinstance(id_or_path, dict):
-            return splits(id_or_path["path"])[0]
-        patht: Sequence[str]
-        if isinstance(id_or_path, (str, PathLike)):
-            path = fspath(id_or_path)
-            if path.startswith("/"):
-                return splits(path)[0]
-            elif path in ("", "."):
+        if async_:
+            async def request():
+                if isinstance(id_or_path, (AttrDict, path_class)):
+                    return splits(id_or_path["path"])[0]
+                elif isinstance(id_or_path, int):
+                    id = id_or_path
+                    if id == 0:
+                        return [""]
+                    attr = await self.attr(id, pid=pid, async_=True)
+                    return splits(attr["path"])[0]
+                if isinstance(id_or_path, (str, PathLike)):
+                    patht, parent = splits(fspath(id_or_path))
+                else:
+                    if id_or_path:
+                        patht = [id_or_path[0], *(p for p in id_or_path[1:] if p)]
+                    else:
+                        patht = []
+                    parent = 0
+                if patht and patht[0] == "":
+                    return patht
                 if pid is None:
-                    return splits(self.path)[0]
-                return self.get_patht(pid)
-            patht, parents = splits(path)
+                    ppatht = splits(self.path)[0]
+                else:
+                    attr = await self.attr(pid, async_=True)
+                    ppatht = splits(attr["path"])[0]
+                if not (patht and parent):
+                    return ppatht
+                if parent:
+                    ppatht = ppatht[1:-parent]
+                ppatht.extend(patht)
+                return ppatht
+            return request()
         else:
-            patht = id_or_path
-            if not patht[0]:
-                return [p for i, p in enumerate(patht) if not i or p]
-            parents = 0
-        if pid is None:
-            pid = self.id
-        ppatht = self.get_patht(pid)
-        if parents:
-            idx = min(parents, len(ppatht) - 1)
-            ppatht = ppatht[:-idx]
-        if patht:
+            if isinstance(id_or_path, (AttrDict, path_class)):
+                return splits(id_or_path["path"])[0]
+            elif isinstance(id_or_path, int):
+                id = id_or_path
+                if id == 0:
+                    return [""]
+                return splits(self.attr(id)["path"])[0]
+            if isinstance(id_or_path, (str, PathLike)):
+                patht, parent = splits(fspath(id_or_path))
+            else:
+                if id_or_path:
+                    patht = [id_or_path[0], *(p for p in id_or_path[1:] if p)]
+                else:
+                    patht = []
+                parent = 0
+            if patht and patht[0] == "":
+                return patht
+            if pid is None:
+                ppatht = splits(self.path)[0]
+            else:
+                ppatht = splits(self.attr(pid)["path"])[0]
+            if not (patht and parent):
+                return ppatht
+            if parent:
+                ppatht = ppatht[1:-parent]
             ppatht.extend(patht)
-        return ppatht
+            return ppatht
 
+    @overload
     def glob(
         self, 
         /, 
@@ -955,154 +1413,378 @@ class P115FileSystemBase(Generic[P115PathType]):
         dirname: IDOrPathType = "", 
         ignore_case: bool = False, 
         allow_escaped_slash: bool = True, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> Iterator[P115PathType]:
-        if pattern == "*":
-            return self.iter(dirname)
-        elif pattern == "**":
-            return self.iter(dirname, max_depth=-1)
-        path_class = type(self).path_class
-        if not pattern:
-            try:
-                attr = self.attr(dirname)
-            except FileNotFoundError:
-                return iter(())
-            else:
-                attr["fs"] = self
-                return iter((path_class(attr),))
-        elif not pattern.lstrip("/"):
-            attr = self.attr(0)
-            attr["fs"] = self
-            return iter((path_class(attr),))
-        splitted_pats = tuple(translate_iter(
-            pattern, allow_escaped_slash=allow_escaped_slash))
-        dirname_as_id = isinstance(dirname, (int, path_class))
-        dirid: int
-        if isinstance(dirname, path_class):
-            dirid = dirname.id
-        elif isinstance(dirname, int):
-            dirid = dirname
-        if pattern.startswith("/"):
-            dir_ = "/"
-        else:
-            dir_ = self.get_path(dirname)
-        i = 0
-        dir2 = ""
-        if ignore_case:
-            if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats))
-                match = re_compile("(?i:%s)" % pattern).fullmatch
-                return self.iter(
-                    dirname, 
-                    max_depth=-1, 
-                    predicate=lambda p: match(p.path) is not None, 
-                )
-        else:
-            typ = None
-            for i, (pat, typ, orig) in enumerate(splitted_pats):
-                if typ != "orig":
-                    break
-                dir2 = joinpath(dir2, orig)
-            dir_ = joinpath(dir_, dir2)
-            if typ == "orig":
-                try:
-                    if dirname_as_id:
-                        attr = self.attr(dir2, dirid)
-                    else:
-                        attr = self.attr(dir_)
-                except FileNotFoundError:
-                    return iter(())
-                else:
-                    attr["fs"] = self
-                    return iter((path_class(attr),))
-            elif typ == "dstar" and i + 1 == len(splitted_pats):
-                if dirname_as_id:
-                    return self.iter(dir2, dirid, max_depth=-1)
-                else:
-                    return self.iter(dir_, max_depth=-1)
-            if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats[i:]))
-                match = re_compile(pattern).fullmatch
-                if dirname_as_id:
-                    return self.iter(
-                        dir2, 
-                        dirid, 
-                        max_depth=-1, 
-                        predicate=lambda p: match(p.path) is not None, 
-                    )
-                else:
-                    return self.iter(
-                        dir_, 
-                        max_depth=-1, 
-                        predicate=lambda p: match(p.path) is not None, 
-                    )
-        cref_cache: dict[int, Callable] = {}
-        def glob_step_match(path, i):
-            j = i + 1
-            at_end = j == len(splitted_pats)
-            pat, typ, orig = splitted_pats[i]
-            if typ == "orig":
-                subpath = path.joinpath(orig)
-                if at_end:
-                    yield subpath
-                elif subpath["is_directory"]:
-                    yield from glob_step_match(subpath, j)
-            elif typ == "star":
-                if at_end:
-                    yield from path.iter()
-                else:
-                    for subpath in path.iter():
-                        if subpath["is_directory"]:
-                            yield from glob_step_match(subpath, j)
-            else:
-                for subpath in path.iter():
+        ...
+    @overload
+    def glob(
+        self, 
+        /, 
+        pattern: str = "*", 
+        dirname: IDOrPathType = "", 
+        ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[P115PathType]:
+        ...
+    def glob(
+        self, 
+        /, 
+        pattern: str = "*", 
+        dirname: IDOrPathType = "", 
+        ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
+        if async_:
+            if pattern == "*":
+                return self.iter(dirname, async_=True)
+            elif pattern == "**":
+                return self.iter(dirname, max_depth=-1, async_=True)
+            async def request():
+                nonlocal pattern
+                path_class = type(self).path_class
+                if not pattern:
                     try:
-                        cref = cref_cache[i]
-                    except KeyError:
-                        if ignore_case:
-                            pat = "(?i:%s)" % pat
-                        cref = cref_cache[i] = re_compile(pat).fullmatch
-                    if cref(subpath["name"]):
+                        attr = await self.attr(dirname, async_=True)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        yield path_class(attr)
+                    return
+                elif not pattern.lstrip("/"):
+                    yield path_class(self.attr(0))
+                    return
+                splitted_pats = tuple(translate_iter(
+                    pattern, 
+                    allow_escaped_slash=allow_escaped_slash, 
+                ))
+                dirname_as_id = isinstance(dirname, (int, AttrDict, path_class))
+                dirid: int
+                if dirname_as_id:
+                    if isinstance(dirname, int):
+                        dirid = dirname
+                    else:
+                        dirid = dirname["id"] # type: ignore
+                if pattern.startswith("/"):
+                    dir_ = "/"
+                else:
+                    dir_ = await self.get_path(dirname, pid=None, async_=True)
+                i = 0
+                dir2 = ""
+                if ignore_case:
+                    if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                        pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats))
+                        match = re_compile("(?i:%s)" % pattern).fullmatch
+                        async for path in self.iter(
+                            dirname, 
+                            max_depth=-1, 
+                            predicate=lambda p: match(p.path) is not None, 
+                            async_=True, 
+                        ):
+                            yield path
+                        return
+                else:
+                    typ = None
+                    for i, (pat, typ, orig) in enumerate(splitted_pats):
+                        if typ != "orig":
+                            break
+                        dir2 = joinpath(dir2, orig)
+                    dir_ = joinpath(dir_, dir2)
+                    if typ == "orig":
+                        try:
+                            if dirname_as_id:
+                                attr = await self.attr(dir2, pid=dirid, async_=True)
+                            else:
+                                attr = await self.attr(dir_, pid=dirid, async_=True)
+                        except FileNotFoundError:
+                            pass
+                        else:
+                            yield path_class(attr)
+                        return
+                    elif typ == "dstar" and i + 1 == len(splitted_pats):
+                        if dirname_as_id:
+                            async for path in self.iter(dir2, pid=dirid, max_depth=-1, async_=True):
+                                yield path
+                        else:
+                            async for path in self.iter(dir_, max_depth=-1, async_=True):
+                                yield path
+                        return
+                    if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                        pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats[i:]))
+                        match = re_compile(pattern).fullmatch
+                        if dirname_as_id:
+                            async for path in self.iter(
+                                dir2, 
+                                pid=dirid, 
+                                max_depth=-1, 
+                                predicate=lambda p: match(p.path) is not None, 
+                                async_=True, 
+                            ):
+                                yield path
+                        else:
+                            async for path in self.iter(
+                                dir_, 
+                                max_depth=-1, 
+                                predicate=lambda p: match(p.path) is not None, 
+                                async_=True, 
+                            ):
+                                yield path
+                        return
+                cref_cache: dict[int, Callable] = {}
+                async def glob_step_match(path, i):
+                    j = i + 1
+                    at_end = j == len(splitted_pats)
+                    pat, typ, orig = splitted_pats[i]
+                    if typ == "orig":
+                        subpath = path.joinpath(orig)
                         if at_end:
                             yield subpath
                         elif subpath["is_directory"]:
-                            yield from glob_step_match(subpath, j)
-        if dirname_as_id:
-            attr = self.attr(dir2, dirid)
+                            async for subpath2 in glob_step_match(subpath, j):
+                                yield subpath2
+                    elif typ == "star":
+                        if at_end:
+                            async for subpath in path.iter(async_=True):
+                                yield subpath
+                        else:
+                            async for subpath in path.iter(async_=True):
+                                if subpath["is_directory"]:
+                                    async for subpath2 in glob_step_match(subpath, j):
+                                        yield subpath2
+                    else:
+                        async for subpath in path.iter(async_=True):
+                            try:
+                                cref = cref_cache[i]
+                            except KeyError:
+                                if ignore_case:
+                                    pat = "(?i:%s)" % pat
+                                cref = cref_cache[i] = re_compile(pat).fullmatch
+                            if cref(subpath["name"]):
+                                if at_end:
+                                    yield subpath
+                                elif subpath["is_directory"]:
+                                    async for subpath2 in glob_step_match(subpath, j):
+                                        yield subpath2
+                if dirname_as_id:
+                    attr = await self.attr(dir2, pid=dirid, async_=True)
+                else:
+                    attr = await self.attr(dir_, async_=True)
+                if not attr["is_directory"]:
+                    return
+                for subpath in glob_step_match(path_class(attr), i):
+                    yield subpath
+            return request()
         else:
-            attr = self.attr(dir_)
-        if not attr["is_directory"]:
-            return iter(())
-        attr["fs"] = self
-        path = path_class(attr)
-        return glob_step_match(path, i)
+            if pattern == "*":
+                return self.iter(dirname)
+            elif pattern == "**":
+                return self.iter(dirname, max_depth=-1)
+            path_class = type(self).path_class
+            if not pattern:
+                try:
+                    attr = self.attr(dirname)
+                except FileNotFoundError:
+                    return iter(())
+                else:
+                    return iter((path_class(attr),))
+            elif not pattern.lstrip("/"):
+                return iter((path_class(self.attr(0)),))
+            splitted_pats = tuple(translate_iter(
+                pattern, 
+                allow_escaped_slash=allow_escaped_slash, 
+            ))
+            dirname_as_id = isinstance(dirname, (int, AttrDict, path_class))
+            dirid: int
+            if dirname_as_id:
+                if isinstance(dirname, int):
+                    dirid = dirname
+                else:
+                    dirid = dirname["id"] # type: ignore
+            if pattern.startswith("/"):
+                dir_ = "/"
+            else:
+                dir_ = self.get_path(dirname)
+            i = 0
+            dir2 = ""
+            if ignore_case:
+                if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                    pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats))
+                    match = re_compile("(?i:%s)" % pattern).fullmatch
+                    return self.iter(
+                        dirname, 
+                        max_depth=-1, 
+                        predicate=lambda p: match(p.path) is not None, 
+                    )
+            else:
+                typ = None
+                for i, (pat, typ, orig) in enumerate(splitted_pats):
+                    if typ != "orig":
+                        break
+                    dir2 = joinpath(dir2, orig)
+                dir_ = joinpath(dir_, dir2)
+                if typ == "orig":
+                    try:
+                        if dirname_as_id:
+                            attr = self.attr(dir2, pid=dirid)
+                        else:
+                            attr = self.attr(dir_)
+                    except FileNotFoundError:
+                        return iter(())
+                    else:
+                        return iter((path_class(attr),))
+                elif typ == "dstar" and i + 1 == len(splitted_pats):
+                    if dirname_as_id:
+                        return self.iter(dir2, pid=dirid, max_depth=-1)
+                    else:
+                        return self.iter(dir_, max_depth=-1)
+                if any(typ == "dstar" for _, typ, _ in splitted_pats):
+                    pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats[i:]))
+                    match = re_compile(pattern).fullmatch
+                    if dirname_as_id:
+                        return self.iter(
+                            dir2, 
+                            pid=dirid, 
+                            max_depth=-1, 
+                            predicate=lambda p: match(p.path) is not None, 
+                        )
+                    else:
+                        return self.iter(
+                            dir_, 
+                            max_depth=-1, 
+                            predicate=lambda p: match(p.path) is not None, 
+                        )
+            cref_cache: dict[int, Callable] = {}
+            def glob_step_match(path, i):
+                j = i + 1
+                at_end = j == len(splitted_pats)
+                pat, typ, orig = splitted_pats[i]
+                if typ == "orig":
+                    subpath = path.joinpath(orig)
+                    if at_end:
+                        yield subpath
+                    elif subpath["is_directory"]:
+                        yield from glob_step_match(subpath, j)
+                elif typ == "star":
+                    if at_end:
+                        yield from path.iter()
+                    else:
+                        for subpath in path.iter():
+                            if subpath["is_directory"]:
+                                yield from glob_step_match(subpath, j)
+                else:
+                    for subpath in path.iter():
+                        try:
+                            cref = cref_cache[i]
+                        except KeyError:
+                            if ignore_case:
+                                pat = "(?i:%s)" % pat
+                            cref = cref_cache[i] = re_compile(pat).fullmatch
+                        if cref(subpath["name"]):
+                            if at_end:
+                                yield subpath
+                            elif subpath["is_directory"]:
+                                yield from glob_step_match(subpath, j)
+            if dirname_as_id:
+                attr = self.attr(dir2, pid=dirid)
+            else:
+                attr = self.attr(dir_)
+            if not attr["is_directory"]:
+                return iter(())
+            return glob_step_match(path_class(attr), i)
 
+    @overload
     def isdir(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> bool:
+        ...
+    @overload
+    def isdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[bool]:
+        ...
+    def isdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Awaitable[bool]:
         path_class = type(self).path_class
-        if isinstance(id_or_path, path_class):
+        if isinstance(id_or_path, (AttrDict, path_class)):
             return id_or_path["is_directory"]
-        try:
-            return self.attr(id_or_path, pid)["is_directory"]
-        except FileNotFoundError:
-            return False
+        if async_:
+            async def request():
+                try:
+                    attr = await self.attr(id_or_path, pid=pid, async_=True)
+                    return attr["is_directory"]
+                except FileNotFoundError:
+                    return False
+            return request()
+        else:
+            try:
+                return self.attr(id_or_path, pid=pid)["is_directory"]
+            except FileNotFoundError:
+                return False
 
+    @overload
     def isfile(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> bool:
+        ...
+    @overload
+    def isfile(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[bool]:
+        ...
+    def isfile(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Awaitable[bool]:
         path_class = type(self).path_class
         if isinstance(id_or_path, path_class):
             return not id_or_path["is_directory"]
-        try:
-            return not self.attr(id_or_path, pid)["is_directory"]
-        except FileNotFoundError:
-            return False
+        if async_:
+            async def request():
+                try:
+                    attr = await self.attr(id_or_path, pid=pid, async_=True)
+                    return not attr["is_directory"]
+                except FileNotFoundError:
+                    return False
+            return request()
+        else:
+            try:
+                return not self.attr(id_or_path, pid=pid)["is_directory"]
+            except FileNotFoundError:
+                return False
 
     def _iter_bfs(
         self, 
@@ -1118,7 +1800,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         dq: deque[tuple[int, P115PathType]] = deque()
         push, pop = dq.append, dq.popleft
         path_class = type(self).path_class
-        path = self.as_path(top, pid)
+        path = self.as_path(top, pid=pid)
         push((0, path))
         while dq:
             depth, path = pop()
@@ -1148,6 +1830,56 @@ class P115FileSystemBase(Generic[P115PathType]):
                 elif onerror:
                     raise
 
+    async def _iter_bfs_async(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        **kwargs, 
+    ) -> AsyncIterator[P115PathType]:
+        dq: deque[tuple[int, P115PathType]] = deque()
+        push, pop = dq.append, dq.popleft
+        path_class = type(self).path_class
+        path = await self.as_path(top, pid=pid, async_=True)
+        push((0, path))
+        while dq:
+            depth, path = pop()
+            if min_depth <= 0:
+                pred = predicate(path) if predicate else True
+                if isawaitable(pred):
+                    pred = await pred
+                if pred is None:
+                    return
+                elif pred:
+                    yield path
+                min_depth = 1
+            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
+                return
+            depth += 1
+            try:
+                async for attr in self.iterdir(path, async_=True, **kwargs):
+                    path = path_class(attr)
+                    pred = predicate(path) if predicate else True
+                    if isawaitable(pred):
+                        pred = await pred
+                    if pred is None:
+                        continue
+                    elif pred and depth >= min_depth:
+                        yield path
+                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
+                        push((depth, path))
+            except OSError as e:
+                if callable(onerror):
+                    ret = onerror(e)
+                    if isawaitable(ret):
+                        await ret
+                elif onerror:
+                    raise
+
     def _iter_dfs(
         self, 
         top: IDOrPathType = "", 
@@ -1167,7 +1899,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             global_yield_me = False
             min_depth -= 1
         elif min_depth <= 0:
-            path = self.as_path(top, pid)
+            path = self.as_path(top, pid=pid)
             pred = predicate(path) if predicate else True
             if pred is None:
                 return
@@ -1181,7 +1913,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             max_depth -= 1
         path_class = type(self).path_class
         try:
-            for attr in self.iterdir(top, pid, **kwargs):
+            for attr in self.iterdir(top, pid=pid, **kwargs):
                 path = path_class(attr)
                 yield_me = global_yield_me
                 if yield_me and predicate:
@@ -1208,6 +1940,74 @@ class P115FileSystemBase(Generic[P115PathType]):
             elif onerror:
                 raise
 
+    async def _iter_dfs_async(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        **kwargs, 
+    ) -> AsyncIterator[P115PathType]:
+        if not max_depth:
+            return
+        global_yield_me = True
+        if min_depth > 1:
+            global_yield_me = False
+            min_depth -= 1
+        elif min_depth <= 0:
+            path = await self.as_path(top, pid=pid, async_=True)
+            pred = predicate(path) if predicate else True
+            if isawaitable(pred):
+                pred = await pred
+            if pred is None:
+                return
+            elif pred:
+                yield path
+            if path.is_file():
+                return
+            min_depth = 1
+            top = path.id
+        if max_depth > 0:
+            max_depth -= 1
+        path_class = type(self).path_class
+        try:
+            async for attr in self.iterdir(top, pid=pid, async_=True, **kwargs):
+                path = path_class(attr)
+                yield_me = global_yield_me
+                if yield_me and predicate:
+                    pred = predicate(path)
+                    if isawaitable(pred):
+                        pred = await pred
+                    if pred is None:
+                        continue
+                    yield_me = pred 
+                if yield_me and topdown:
+                    yield path
+                if path.is_dir():
+                    async for subpath in self._iter_dfs_async(
+                        path, 
+                        topdown=topdown, 
+                        min_depth=min_depth, 
+                        max_depth=max_depth, 
+                        predicate=predicate, 
+                        onerror=onerror, 
+                    ):
+                        yield subpath
+                if yield_me and not topdown:
+                    yield path
+        except OSError as e:
+            if callable(onerror):
+                ret = onerror(e)
+                if isawaitable(ret):
+                    await ret
+            elif onerror:
+                raise
+
+    @overload
     def iter(
         self, 
         top: IDOrPathType = "", 
@@ -1218,9 +2018,64 @@ class P115FileSystemBase(Generic[P115PathType]):
         max_depth: int = 1, 
         predicate: None | Callable[[P115PathType], None | bool] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
-        if topdown is None:
+        ...
+    @overload
+    def iter(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[P115PathType]:
+        ...
+    def iter(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
+        if async_:
+            if topdown is None:
+                return self._iter_bfs_async(
+                    top, 
+                    pid, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    predicate=predicate, 
+                    onerror=onerror, 
+                    **kwargs, 
+                )
+            else:
+                return self._iter_dfs_async(
+                    top, 
+                    pid, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    predicate=predicate, 
+                    onerror=onerror, 
+                    **kwargs, 
+                )
+        elif topdown is None:
             return self._iter_bfs(
                 top, 
                 pid, 
@@ -1242,38 +2097,130 @@ class P115FileSystemBase(Generic[P115PathType]):
                 **kwargs, 
             )
 
+    @overload
     def listdir(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
         full_path: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> list[str]:
-        if full_path:
-            return [attr["path"] for attr in self.iterdir(id_or_path, pid, **kwargs)]
+        ...
+    @overload
+    def listdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> Awaitable[list[str]]:
+        ...
+    def listdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        full_path: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> list[str] | Awaitable[list[str]]:
+        if async_:
+            async def request():
+                if full_path:
+                    return [attr["path"] async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)]
+                else:
+                    return [attr["name"] async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)]
+            return request()
+        elif full_path:
+            return [attr["path"] for attr in self.iterdir(id_or_path, pid=pid, **kwargs)]
         else:
-            return [attr["name"] for attr in self.iterdir(id_or_path, pid, **kwargs)]
+            return [attr["name"] for attr in self.iterdir(id_or_path, pid=pid, **kwargs)]
 
+    @overload
     def listdir_attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> list[AttrDict]:
-        return list(self.iterdir(id_or_path, pid, **kwargs))
+        ...
+    @overload
+    def listdir_attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> Awaitable[list[AttrDict]]:
+        ...
+    def listdir_attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> list[AttrDict] | Awaitable[list[AttrDict]]:
+        if async_:
+            async def request():
+                return [attr async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)]
+            return request()
+        else:
+            return list(self.iterdir(id_or_path, pid=pid, **kwargs))
 
+    @overload
     def listdir_path(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> list[P115PathType]:
+        ...
+    @overload
+    def listdir_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> Awaitable[list[P115PathType]]:
+        ...
+    def listdir_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> list[P115PathType] | Awaitable[list[P115PathType]]:
         path_class = type(self).path_class
-        return [path_class(attr) for attr in self.iterdir(id_or_path, pid, **kwargs)]
+        if async_:
+            async def request():
+                return [path_class(attr) async for attr in self.iterdir(id_or_path, pid=pid, async_=True, **kwargs)]
+            return request()
+        else:
+            return [path_class(attr) for attr in self.iterdir(id_or_path, pid=pid, **kwargs)]
 
+    # TODO: 支持异步
     def open(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -1290,7 +2237,7 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        url = self.get_url(id_or_path, pid)
+        url = self.get_url(id_or_path, pid=pid)
         return self.client.open(
             url, 
             headers=headers, 
@@ -1304,6 +2251,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             newline=newline, 
         )
 
+    @overload
     def read_bytes(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -1311,20 +2259,82 @@ class P115FileSystemBase(Generic[P115PathType]):
         start: int = 0, 
         stop: None | int = None, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> bytes:
-        url = self.get_url(id_or_path, pid)
-        return self.client.read_bytes(url, start, stop)
+        ...
+    @overload
+    def read_bytes(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        start: int = 0, 
+        stop: None | int = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[bytes]:
+        ...
+    def read_bytes(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        start: int = 0, 
+        stop: None | int = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bytes | Awaitable[bytes]:
+        if async_:
+            async def request():
+                url = await self.get_url(id_or_path, pid=pid, async_=True)
+                return await self.client.read_bytes(url, start=start, stop=stop, async_=True)
+            return request()
+        else:
+            url = self.get_url(id_or_path, pid=pid)
+            return self.client.read_bytes(url, start=start, stop=stop)
 
+    @overload
     def read_bytes_range(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         bytes_range: str = "0-", 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> bytes:
-        url = self.get_url(id_or_path, pid)
-        return self.client.read_bytes_range(url, bytes_range)
+        ...
+    @overload
+    def read_bytes_range(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        bytes_range: str = "0-", 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[bytes]:
+        ...
+    def read_bytes_range(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        bytes_range: str = "0-", 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bytes | Awaitable[bytes]:
+        if async_:
+            async def request():
+                url = await self.get_url(id_or_path, pid=pid, async_=True)
+                return await self.client.read_bytes_range(url, bytes_range=bytes_range, async_=True)
+            return request()
+        else:
+            url = self.get_url(id_or_path, pid=pid)
+            return self.client.read_bytes_range(url, bytes_range=bytes_range)
 
+    @overload
     def read_block(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -1332,12 +2342,46 @@ class P115FileSystemBase(Generic[P115PathType]):
         size: int = 0, 
         offset: int = 0, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> bytes:
-        if size <= 0:
-            return b""
-        url = self.get_url(id_or_path, pid)
-        return self.client.read_block(url, size, offset)
+        ...
+    @overload
+    def read_block(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        size: int = 0, 
+        offset: int = 0, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[bytes]:
+        ...
+    def read_block(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        size: int = 0, 
+        offset: int = 0, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bytes | Awaitable[bytes]:
+        if async_:
+            async def request():
+                if size <= 0:
+                    return b""
+                url = await self.get_url(id_or_path, pid=pid, async_=True)
+                return self.client.read_block(url, size=size, start=offset, async_=True)
+            return request()
+        else:
+            if size <= 0:
+                return b""
+            url = self.get_url(id_or_path, pid=pid)
+            return self.client.read_block(url, size=size, start=offset)
 
+    # TODO: 支持异步
     def read_text(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -1355,6 +2399,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             pid=pid, 
         ).read()
 
+    @overload
     def rglob(
         self, 
         /, 
@@ -1362,31 +2407,113 @@ class P115FileSystemBase(Generic[P115PathType]):
         dirname: IDOrPathType = "", 
         ignore_case: bool = False, 
         allow_escaped_slash: bool = True, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> Iterator[P115PathType]:
+        ...
+    @overload
+    def rglob(
+        self, 
+        /, 
+        pattern: str = "", 
+        dirname: IDOrPathType = "", 
+        ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[P115PathType]:
+        ...
+    def rglob(
+        self, 
+        /, 
+        pattern: str = "", 
+        dirname: IDOrPathType = "", 
+        ignore_case: bool = False, 
+        allow_escaped_slash: bool = True, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
         if not pattern:
-            return self.iter(dirname, max_depth=-1)
+            return self.iter(dirname, max_depth=-1, async_=async_)
         if pattern.startswith("/"):
             pattern = joinpath("/", "**", pattern.lstrip("/"))
         else:
             pattern = joinpath("**", pattern)
-        return self.glob(pattern, dirname, ignore_case=ignore_case, allow_escaped_slash=allow_escaped_slash)
+        return self.glob(
+            pattern, 
+            dirname, 
+            ignore_case=ignore_case, 
+            allow_escaped_slash=allow_escaped_slash, 
+            async_=async_, 
+        )
 
+    @overload
     def scandir(
         self, 
-        id_or_path: IDOrPathType, 
+        id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
-        return map(type(self).path_class, self.iterdir(id_or_path, pid, **kwargs))
+        ...
+    @overload
+    def scandir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[P115PathType]:
+        ...
+    def scandir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
+        path_class = type(self).path_class
+        if async_:
+            return async_map(path_class, self.iterdir(id_or_path, pid=pid, async_=True, **kwargs), threaded=False)
+        else:
+            return map(path_class, self.iterdir(id_or_path, pid=pid, **kwargs))
 
+    @overload
     def stat(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> stat_result:
-        raise UnsupportedOperation(errno.ENOSYS, 
+        ...
+    @overload
+    def stat(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[stat_result]:
+        ...
+    def stat(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> stat_result | Awaitable[stat_result]:
+        raise UnsupportedOperation(
+            errno.ENOSYS, 
             "`stat()` is currently not supported, use `attr()` instead."
         )
 
@@ -1402,7 +2529,7 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         dq: deque[tuple[int, AttrDict]] = deque()
         push, pop = dq.append, dq.popleft
-        push((0, self.attr(top, pid)))
+        push((0, self.attr(top, pid=pid)))
         while dq:
             depth, parent = pop()
             depth += 1
@@ -1429,6 +2556,48 @@ class P115FileSystemBase(Generic[P115PathType]):
                 elif onerror:
                     raise
 
+    async def _walk_bfs_async(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        **kwargs, 
+    ) -> AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        dq: deque[tuple[int, AttrDict]] = deque()
+        push, pop = dq.append, dq.popleft
+        attr = await self.attr(top, pid=pid, async_=True)
+        push((0, attr))
+        while dq:
+            depth, parent = pop()
+            depth += 1
+            try:
+                push_me = max_depth < 0 or depth < max_depth
+                if min_depth <= 0 or depth >= min_depth:
+                    dirs: list[AttrDict] = []
+                    files: list[AttrDict] = []
+                    async for attr in self.iterdir(parent, async_=True, **kwargs):
+                        if attr["is_directory"]:
+                            dirs.append(attr)
+                            if push_me:
+                                push((depth, attr))
+                        else:
+                            files.append(attr)
+                    yield parent["path"], dirs, files
+                elif push_me:
+                    async for attr in self.iterdir(parent, async_=True, **kwargs):
+                        if attr["is_directory"]:
+                            push((depth, attr))
+            except OSError as e:
+                if callable(onerror):
+                    ret = onerror(e)
+                    if isawaitable(ret):
+                        await ret
+                elif onerror:
+                    raise
+
     def _walk_dfs(
         self, 
         top: IDOrPathType = "", 
@@ -1450,13 +2619,13 @@ class P115FileSystemBase(Generic[P115PathType]):
         try:
             dirs: list[AttrDict] = []
             files: list[AttrDict] = []
-            for attr in self.iterdir(top, pid, **kwargs):
+            for attr in self.iterdir(top, pid=pid, **kwargs):
                 if attr["is_directory"]:
                     dirs.append(attr)
                 else:
                     files.append(attr)
             if yield_me and topdown:
-                yield self.get_path(top, pid), dirs, files
+                yield self.get_path(top, pid=pid), dirs, files
             for attr in dirs:
                 yield from self._walk_dfs(
                     attr, 
@@ -1466,13 +2635,63 @@ class P115FileSystemBase(Generic[P115PathType]):
                     onerror=onerror, 
                 )
             if yield_me and not topdown:
-                yield self.get_path(top, pid), dirs, files
+                yield self.get_path(top, pid=pid), dirs, files
         except OSError as e:
             if callable(onerror):
                 onerror(e)
             elif onerror:
                 raise
 
+    async def _walk_dfs_async(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        **kwargs, 
+    ) -> AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        if not max_depth:
+            return
+        if min_depth > 0:
+            min_depth -= 1
+        if max_depth > 0:
+            max_depth -= 1
+        yield_me = min_depth <= 0
+        try:
+            dirs: list[AttrDict] = []
+            files: list[AttrDict] = []
+            async for attr in self.iterdir(top, pid=pid, async_=True, **kwargs):
+                if attr["is_directory"]:
+                    dirs.append(attr)
+                else:
+                    files.append(attr)
+            if yield_me and topdown:
+                parent = await self.get_path(top, pid=pid, async_=True)
+                yield parent, dirs, files
+            for attr in dirs:
+                async for subattr in self._walk_dfs_async(
+                    attr, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                ):
+                    yield subattr
+            if yield_me and not topdown:
+                parent = await self.get_path(top, pid=pid, async_=True)
+                yield parent, dirs, files
+        except OSError as e:
+            if callable(onerror):
+                ret = onerror(e)
+                if isawaitable(ret):
+                    await ret
+            elif onerror:
+                raise
+
+    @overload
     def walk(
         self, 
         top: IDOrPathType = "", 
@@ -1482,19 +2701,66 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
-        for path, dirs, files in self.walk_attr(
-            top, 
-            pid, 
-            topdown=topdown, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            onerror=onerror, 
-            **kwargs, 
-        ):
-            yield path, [a["name"] for a in dirs], [a["name"] for a in files]
+        ...
+    @overload
+    def walk(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[tuple[str, list[str], list[str]]]:
+        ...
+    def walk(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[str], list[str]]] | AsyncIterator[tuple[str, list[str], list[str]]]:
+        if async_:
+            async def request():
+                async for path, dirs, files in self.walk_attr(
+                    top, 
+                    pid, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    async_=True, 
+                    **kwargs, 
+                ):
+                    yield path, [a["name"] for a in dirs], [a["name"] for a in files]
+            return request()
+        else:
+            for path, dirs, files in self.walk_attr(
+                top, 
+                pid, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                **kwargs, 
+            ):
+                yield path, [a["name"] for a in dirs], [a["name"] for a in files]
 
+    @overload
     def walk_attr(
         self, 
         top: IDOrPathType = "", 
@@ -1504,9 +2770,60 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
-        if topdown is None:
+        ...
+    @overload
+    def walk_attr(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        ...
+    def walk_attr(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]] | AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
+        if async_:
+            if topdown is None:
+                return self._walk_bfs_async(
+                    top, 
+                    pid, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    **kwargs, 
+                )
+            else:
+                return self._walk_dfs_async(
+                    top, 
+                    pid, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    **kwargs, 
+                )
+        elif topdown is None:
             return self._walk_bfs(
                 top, 
                 pid, 
@@ -1526,6 +2843,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 **kwargs, 
             )
 
+    @overload
     def walk_path(
         self, 
         top: IDOrPathType = "", 
@@ -1535,19 +2853,65 @@ class P115FileSystemBase(Generic[P115PathType]):
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[tuple[str, list[P115PathType], list[P115PathType]]]:
+        ...
+    @overload
+    def walk_path(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[True], 
+        **kwargs, 
+    ) -> AsyncIterator[tuple[str, list[P115PathType], list[P115PathType]]]:
+        ...
+    def walk_path(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: None | bool = True, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: None | bool | Callable[[OSError], bool] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[tuple[str, list[P115PathType], list[P115PathType]]] | AsyncIterator[tuple[str, list[P115PathType], list[P115PathType]]]:
         path_class = type(self).path_class
-        for path, dirs, files in self.walk_attr(
-            top, 
-            pid, 
-            topdown=topdown, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            onerror=onerror, 
-            **kwargs, 
-        ):
-            yield path, [path_class(a) for a in dirs], [path_class(a) for a in files]
+        if async_:
+            async def request():
+                async for path, dirs, files in self.walk_attr(
+                    top, 
+                    pid, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    onerror=onerror, 
+                    async_=True, 
+                    **kwargs, 
+                ):
+                    yield path, [path_class(a) for a in dirs], [path_class(a) for a in files]
+            return request()
+        else:
+            for path, dirs, files in self.walk_attr(
+                top, 
+                pid, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                onerror=onerror, 
+                **kwargs, 
+            ):
+                yield path, [path_class(a) for a in dirs], [path_class(a) for a in files]
 
     list = listdir_path
     dict = dictdir_path

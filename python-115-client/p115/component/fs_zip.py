@@ -9,14 +9,16 @@ __all__ = ["P115ZipPath", "P115ZipFileSystem"]
 import errno
 
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    Awaitable, Callable, Iterator, Mapping, MutableMapping, Sequence, 
+)
 from datetime import datetime
 from functools import cached_property
 from itertools import count, islice
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
-from typing import cast, Never, Self
+from typing import cast, overload, Literal, Never, Self
 
 from posixpatht import escape, joins, splits, path_is_dir_form
 
@@ -94,16 +96,6 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attributes")
-
-    @classmethod
-    def login(
-        cls, 
-        /, 
-        id_or_pickcode: int | str, 
-        cookie = None, 
-        app: str = "web", 
-    ) -> Self:
-        return cls(P115Client(cookie, app=app), id_or_pickcode)
 
     @check_response
     def fs_files(
@@ -388,26 +380,56 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         count = len(children)
         return iter(children[start:stop])
 
+    @overload
     def stat(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> stat_result:
+        ...
+    @overload
+    def stat(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[stat_result]:
+        ...
+    def stat(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> stat_result | Awaitable[stat_result]:
         "检查路径的属性，就像 `os.stat`"
-        attr = self.attr(id_or_path, pid)
-        is_dir = attr["is_directory"]
-        timestamp: float = attr["timestamp"]
-        return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o444, # mode
-            cast(int, attr["id"]), # ino
-            cast(int, attr["parent_id"]), # dev
-            1, # nlink
-            self.client.user_id, # uid
-            1, # gid
-            cast(int, 0 if is_dir else attr["size"]), # size
-            timestamp, # atime
-            timestamp, # mtime
-            timestamp, # ctime
-        ))
+        def process(attr):
+            is_dir = attr["is_directory"]
+            timestamp: float = attr["timestamp"]
+            return stat_result((
+                (S_IFDIR if is_dir else S_IFREG) | 0o444, # mode
+                cast(int, attr["id"]), # ino
+                cast(int, attr["parent_id"]), # dev
+                1, # nlink
+                self.client.user_id, # uid
+                1, # gid
+                cast(int, 0 if is_dir else attr["size"]), # size
+                timestamp, # atime
+                timestamp, # mtime
+                timestamp, # ctime
+            ))
+        if async_:
+            async def request():
+                attr = await self.attr(id_or_path, pid=pid, async_=True)
+                return process(attr)
+            return request()
+        else:
+            attr = self.attr(id_or_path, pid=pid)
+            return process(attr)
 

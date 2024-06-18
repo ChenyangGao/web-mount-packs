@@ -2,16 +2,15 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __doc__ = """\
-    🕸️ 获取你的 115 网盘账号上的某个压缩包中的文件信息和下载链接 🕷️
+    🕸️ 获取 115 分享上的文件信息和下载链接 🕷️
 
-🚫 注意事项：这些限制以前没有，现在受限了：
-    - 大于等于 115 MB 时不能下载
-    - 不能直接请求直链，需要携带特定的 Cookie 和 User-Agent
+🚫 注意事项：暂无限制，并不要求请求头有指定的 Cookie 和 User-Agent
 """
 
 from argparse import ArgumentParser, RawTextHelpFormatter
+from warnings import warn
 
 parser = ArgumentParser(
     formatter_class=RawTextHelpFormatter, 
@@ -29,6 +28,10 @@ parser = ArgumentParser(
 
     GET ?path={path}
 
+也可以通过 id 查询
+
+    GET ?id={id}
+
 2. 查询文件或文件夹的信息，返回 json
 
     GET ?method=attr
@@ -45,42 +48,55 @@ parser = ArgumentParser(
 
  参数    | 类型    | 必填 | 说明
 -------  | ------- | ---- | ----------
+id       | integer | 否   | 文件或文件夹的 id，优先级高于 path
 path     | string  | 否   | 文件或文件夹的路径，优先级高于 url 中的路径部分
 method   | string  | 否   | 0. '':     缺省值，直接下载
-         |         |      | 1. 'url':  这个文件的下载链接，JSON 格式
+         |         |      | 1. 'url':  这个文件的下载链接和请求头，JSON 格式
          |         |      | 2. 'attr': 这个文件或文件夹的信息，JSON 格式
          |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息，JSON 格式
 """)
-parser.add_argument("code", help="115 的压缩包（.zip、.rar 或 .7z）的 id、pickcode 或 路径")
-parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
-parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
+parser.add_argument("share_link", help="115 的分享链接")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
-parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
-args = parser.parse_args()
-if args.version:
-    print(".".join(map(str, __version__)))
-    raise SystemExit(0)
+
+if __name__ == "__main__":
+    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
+    parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
+    parser.add_argument("-d", "--debug", action="store_true", help="启用 flask 的 debug 模式")
+    parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
+    args = parser.parse_args()
+    if args.version:
+        print(".".join(map(str, __version__)))
+        raise SystemExit(0)
+else:
+    from sys import argv
+
+    try:
+        args_start = argv.index("--")
+        args, unknown = parser.parse_known_args(argv[args_start+1:])
+        if unknown:
+            warn(f"unknown args passed: {unknown}")
+    except ValueError:
+        args = parser.parse_args([])
 
 try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
     from p115 import P115Client, AVAILABLE_APPS
+    from posixpatht import escape
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "flask", "Flask-Compress", "httpx", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "flask", "Flask-Compress", "httpx", "posixpatht", "python-115"], check=True)
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
     from p115 import P115Client, AVAILABLE_APPS
-
-import posixpath
+    from posixpatht import escape
 
 from collections.abc import Callable
 from functools import partial, update_wrapper
-from html import escape
 from io import BytesIO
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
@@ -88,13 +104,12 @@ from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
 from urllib.parse import quote, unquote, urlsplit
-from warnings import warn
 
 
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
-code = args.code
+share_link = args.share_link.replace("\\", "")
 cookies = args.cookies
 cookies_path = args.cookies_path
 cookies_path_mtime = 0
@@ -103,71 +118,6 @@ use_request = args.use_request
 
 login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None
-
-dumps: Callable[..., bytes]
-loads: Callable
-try:
-    from orjson import dumps, loads
-except ImportError:
-    odumps: Callable[..., str]
-    try:
-        from ujson import dumps as odumps, loads
-    except ImportError:
-        from json import dumps as odumps, loads
-    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
-
-client = P115Client(cookies, app="qandroid")
-if cookies_path and cookies != client.cookies:
-    open(cookies_path, "w").write(client.cookies)
-
-try:
-    from urllib3.poolmanager import PoolManager
-    from urllib3_request import request as urllib3_request
-except ImportError:
-    from sys import executable
-    from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
-    from urllib3.poolmanager import PoolManager
-    from urllib3_request import request as urllib3_request
-urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
-
-do_request: None | Callable = None
-match use_request:
-    case "httpx":
-        from httpx import HTTPStatusError as StatusError
-        def get_status_code(e):
-            return e.response.status_code
-    case "requests":
-        try:
-            from requests import Session
-            from requests.exceptions import HTTPError as StatusError # type: ignore
-            from requests_request import request as requests_request
-        except ImportError:
-            from sys import executable
-            from subprocess import run
-            run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
-            from requests import Session
-            from requests.exceptions import HTTPError as StatusError # type: ignore
-            from requests_request import request as requests_request
-        do_request = partial(requests_request, session=Session())
-        def get_status_code(e):
-            return e.response.status_code
-    case "urllib3":
-        from urllib.error import HTTPError as StatusError # type: ignore
-        do_request = urlopen
-        def get_status_code(e):
-            return e.status
-    case "urlopen":
-        from urllib.error import HTTPError as StatusError # type: ignore
-        try:
-            from urlopen import request as do_request
-        except ImportError:
-            from sys import executable
-            from subprocess import run
-            run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
-            from urlopen import request as do_request
-        def get_status_code(e):
-            return e.status
 
 if not cookies:
     if cookies_path:
@@ -192,6 +142,71 @@ if not cookies:
             except FileNotFoundError:
                 pass
 
+dumps: Callable[..., bytes]
+loads: Callable
+try:
+    from orjson import dumps, loads
+except ImportError:
+    odumps: Callable[..., str]
+    try:
+        from ujson import dumps as odumps, loads
+    except ImportError:
+        from json import dumps as odumps, loads
+    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+
+client = P115Client(cookies, app="qandroid")
+if cookies_path and cookies != client.cookies:
+    open(cookies_path, "w").write(client.cookies)
+
+do_request: None | Callable = None
+match use_request:
+    case "httpx":
+        from httpx import HTTPStatusError as StatusError
+        def get_status_code(e):
+            return e.response.status_code
+    case "requests":
+        try:
+            from requests import Session
+            from requests.exceptions import HTTPError as StatusError # type: ignore
+            from requests_request import request as requests_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
+            from requests import Session
+            from requests.exceptions import HTTPError as StatusError # type: ignore
+            from requests_request import request as requests_request
+        do_request = partial(requests_request, timeout=60, session=Session())
+        def get_status_code(e):
+            return e.response.status_code
+    case "urllib3":
+        from urllib.error import HTTPError as StatusError # type: ignore
+        try:
+            from urllib3.poolmanager import PoolManager
+            from urllib3_request import request as urllib3_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
+            from urllib3.poolmanager import PoolManager
+            from urllib3_request import request as urllib3_request
+        do_request = partial(urllib3_request, pool=PoolManager(num_pools=50))
+        def get_status_code(e):
+            return e.status
+    case "urlopen":
+        from urllib.error import HTTPError as StatusError # type: ignore
+        from urllib.request import build_opener, HTTPCookieProcessor
+        try:
+            from urlopen import request as urlopen_request
+        except ImportError:
+            from sys import executable
+            from subprocess import run
+            run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
+            from urlopen import request as urlopen_request
+        do_request = partial(urlopen_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
+        def get_status_code(e):
+            return e.status
+
 device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
@@ -200,19 +215,11 @@ if device not in AVAILABLE_APPS:
     else:
         warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
         device = "qandroid"
-if code.startswith("/"):
-    pickcode = client.fs.get_pickcode(code)
-elif not code.startswith("0") and code.isascii() and code.isdecimal():
-    pickcode = client.fs.get_pickcode(int(code))
-elif code.isalnum() and 15 <= len(code) <= 20:
-    pickcode = code
-else:
-    pickcode = client.fs.get_pickcode(code)
-fs = client.get_zip_fs(pickcode, request=do_request)
+fs = client.get_share_fs(share_link, request=do_request)
 
 KEYS = (
-    "name", "path", "is_directory", "size", "format_size", "time", 
-    "timestamp", "url", 
+    "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", "size", 
+    "format_size", "time", "timestamp", "thumb", "url", "short_url", "ancestors", 
 )
 application = Flask(__name__)
 Compress(application)
@@ -251,31 +258,12 @@ def redirect_exception_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-def get_url(path: str):
-    request_headers = request.headers
-    url = relogin_wrap(
-        fs.get_url, 
-        path, 
-        headers={"User-Agent": request_headers.get("User-Agent") or ""}, 
-    )
-    headers = url["headers"]
+def get_url(id: int):
+    url = relogin_wrap(fs.get_url, id)
     if request.args.get("method") == "url":
-        return {"url": url, "headers": headers}
-    bytes_range = request_headers.get("Range")
-    if bytes_range:
-        headers["Range"] = bytes_range
-        resp = urlopen(url, headers=headers)
-        return Response(
-            resp, 
-            headers=dict(request_headers), 
-            status=206, 
-            mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
-        )
-    resp = urlopen(url, headers=headers)
-    return send_file(
-        resp, 
-        mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
-    )
+        return {"url": url}
+    else:
+        return redirect(url)
 
 
 def relogin(exc=None):
@@ -356,47 +344,55 @@ def query(path: str):
     scheme = request.environ.get("HTTP_X_FORWARDED_PROTO") or "http"
     netloc = unquote(urlsplit(request.url).netloc)
     origin = f"{scheme}://{netloc}"
+    fid = request.args.get("id")
     def update_attr(attr):
-        attr["url"] = "%s%s" % (origin, quote(attr["path"], safe=":/"))
+        path_url = attr.get("path_url") or "%s%s" % (origin, quote(attr["path"], safe=":/"))
+        attr["short_url"] = f"{origin}?id={attr['id']}"
+        attr["url"] = f"{path_url}?id={attr['id']}"
         attr["format_size"] = format_bytes(attr["size"])
         return attr
     match request.args.get("method"):
         case "attr":
-            path = unquote(request.args.get("path") or path)
-            attr = relogin_wrap(fs.attr, path)
+            if fid is not None:
+                attr = relogin_wrap(fs.attr, int(fid))
+            else:
+                path = unquote(request.args.get("path") or path)
+                attr = relogin_wrap(fs.attr, path)
             update_attr(attr)
             json_str = dumps({k: attr.get(k) for k in KEYS})
             return Response(json_str, content_type='application/json; charset=utf-8')
         case "list":
-            path = unquote(request.args.get("path") or path)
-            children = relogin_wrap(fs.listdir_attr, path)
+            if fid is not None:
+                children = relogin_wrap(fs.listdir_attr, int(fid))
+            else:
+                path = unquote(request.args.get("path") or path)
+                children = relogin_wrap(fs.listdir_attr, path)
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
             ])
             return Response(json_str, content_type='application/json; charset=utf-8')
-    path = unquote(request.args.get("path") or path)
-    attr = relogin_wrap(fs.attr, path)
-    path = attr["path"]
-    if not attr["is_directory"]:
-        return get_url(path)
-    children = relogin_wrap(fs.listdir_attr, path)
-    for subattr in children:
-        update_attr(subattr)
-    if path == "/":
-        header = f'<strong><a href="{origin}?method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
+    if fid is not None:
+        attr = relogin_wrap(fs.attr, int(fid))
     else:
-        ancestors = []
-        dir_ = path
-        while dir_ != "/":
-            subdir, name = posixpath.split(dir_)
-            ancestors.append((dir_, name))
-            dir_ = subdir
-        info = ancestors[0]
-        header = f'<strong><a href="{origin}" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
-                f'<strong><a href="{origin}{quote(path, safe=":/")}" style="border: 1px solid black; text-decoration: none">{escape(name)}</a></strong>/' 
-                for path, name in reversed(ancestors[1:])
-            ) + f'<strong><a href="{origin}{quote(path, safe=":/")}?method=list" style="border: 1px solid black; text-decoration: none">{escape(attr["name"])}</a></strong>'
+        path = unquote(request.args.get("path") or path)
+        attr = relogin_wrap(fs.attr, path)
+    if not attr["is_directory"]:
+        return get_url(attr["id"])
+    children = relogin_wrap(fs.listdir_attr, attr["id"])
+    for subattr in children:
+        subattr["path_url"] = "%s%s" % (origin, quote(subattr["path"], safe=":/"))
+        update_attr(subattr)
+    fid = attr["id"]
+    if fid == 0:
+        header = f'<strong><a href="{origin}?id=0&method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
+    else:
+        ancestors = relogin_wrap(fs.get_ancestors, int(attr["id"]))
+        info = ancestors[-1]
+        header = f'<strong><a href="{origin}?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
+                f'<strong><a href="{origin}?id={info["id"]}" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>/' 
+                for info in ancestors[1:-1]
+            ) + f'<strong><a href="{origin}?id={info["id"]}&method=list" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>'
     return render_template_string(
         """\
 <!DOCTYPE html>
@@ -542,9 +538,9 @@ def query(path: str):
       </tr>
     </thead>
     <tbody>
-      {%- if path != "/" %}
+      {%- if attr["id"] != 0 %}
       <tr>
-        <td colspan="6"><a href="{{ path }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
+        <td colspan="6"><a href="/?id={{ attr["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
       </tr>
       {%- endif %}
       {%- for attr in children %}
@@ -570,7 +566,7 @@ def query(path: str):
         {%- else %}
         <td style="text-align: right;"><span class="popup">{{ attr["format_size"] }}<span class="popuptext">{{ attr["size"] }}</span></span></td>
         {%- endif %}
-        <td><a href="{{ attr["path"] }}?method=attr">attr</a></td>
+        <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=attr">attr</a></td>
         <td>{{ attr["time"] }}</td>
       </tr>
       {%- endfor %}
@@ -578,12 +574,13 @@ def query(path: str):
   </table>
 </body>
 </html>""", 
-        path=path, 
+        attr=attr, 
         children=children, 
         origin=origin, 
         header=header, 
     )
 
 
-application.run(host=args.host, port=args.port, threaded=True)
+if __name__ == "__main__":
+    application.run(host=args.host, port=args.port, threaded=True, debug=args.debug)
 

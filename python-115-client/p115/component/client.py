@@ -12,8 +12,8 @@ from asyncio import to_thread
 from base64 import b64encode
 from binascii import b2a_hex
 from collections.abc import (
-    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, ItemsView, 
-    Iterable, Iterator, Mapping, Sequence, 
+    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable,  
+    Generator, ItemsView, Iterable, Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
 from contextlib import asynccontextmanager, aclosing, closing
@@ -34,8 +34,8 @@ from socket import getdefaulttimeout, setdefaulttimeout
 from threading import Condition, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
-    cast, overload, Any, Final, Literal, Never, NotRequired, Self, 
-    TypeVar, TypedDict
+    cast, overload, Any, Final, Literal, NotRequired, Self, 
+    TypeVar, TypedDict, 
 )
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
@@ -72,7 +72,7 @@ from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
-RequestVarT = TypeVar("RequestVarT", dict, Callable)
+RequestVarT = TypeVar("RequestVarT", dict, Awaitable[dict], Callable[..., dict], Callable[..., Awaitable[dict]])
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
@@ -92,9 +92,7 @@ def to_base64(s: bytes | str, /) -> str:
 def check_response(fn: RequestVarT, /) -> RequestVarT:
     """检测 115 的某个接口的响应，如果成功则直接返回，否则根据具体情况抛出一个异常
     """
-    def check(resp):
-        if not isinstance(resp, dict):
-            raise TypeError("the response should be dict")
+    def check(resp: dict):
         if resp.get("state", True):
             return resp
         if "errno" in resp:
@@ -107,10 +105,10 @@ def check_response(fn: RequestVarT, /) -> RequestVarT:
                     raise AuthenticationError(resp)
                 # {"state": false, "errno": 20004, "error": "该目录名称已存在。", "errtype": "war"}
                 case 20004:
-                    raise FileExistsError(resp)
+                    raise FileExistsError(errno.EEXIST, resp)
                 # {"state": false, "errno": 20009, "error": "父目录不存在。", "errtype": "war"}
                 case 20009:
-                    raise FileNotFoundError(resp)
+                    raise FileNotFoundError(errno.ENOENT, resp)
                 # {"state": false, "errno": 91002, "error": "不能将文件复制到自身或其子目录下。", "errtype": "war"}
                 case 91002:
                     raise OSError(errno.ENOTSUP, resp)
@@ -122,10 +120,10 @@ def check_response(fn: RequestVarT, /) -> RequestVarT:
                     raise OSError(errno.ENOSPC, resp)
                 # {"state": false, "errno": 90008, "error": "文件（夹）不存在或已经删除。", "errtype": "war"}
                 case 90008:
-                    raise FileNotFoundError(resp)
+                    raise FileNotFoundError(errno.ENOENT, resp)
                 # {"state": false,  "errno": 231011, "error": "文件已删除，请勿重复操作","errtype": "war"}
                 case 231011:
-                    raise FileNotFoundError(resp)
+                    raise FileNotFoundError(errno.ENOENT, resp)
                 # {"state": false, "errno": 990009, "error": "删除[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
                 # {"state": false, "errno": 990009, "error": "还原[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
                 # {"state": false, "errno": 990009, "error": "复制[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
@@ -148,14 +146,21 @@ def check_response(fn: RequestVarT, /) -> RequestVarT:
         raise OSError(errno.EIO, resp)
     if isinstance(fn, dict):
         return check(fn)
+    elif isinstance(fn, Awaitable):
+        async def checkval():
+            return check(await fn)
+        return checkval()
     elif iscoroutinefunction(fn):
         async def wrapper(*args, **kwds):
             return check(await fn(*args, **kwds))
-    elif callable(fn):
-        def wrapper(*args, **kwds):
-            return check(fn(*args, **kwds))
     else:
-        raise TypeError("the response should be dict")
+        def wrapper(*args, **kwds):
+            ret = fn(*args, **kwds)
+            if isinstance(ret, Awaitable):
+                async def checkval():
+                    return check(await ret)
+                return checkval()
+            return check(ret)
     return update_wrapper(wrapper, fn)
 
 
@@ -4095,6 +4100,7 @@ class P115Client:
         /, 
         strict: bool = True, 
         use_web_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> P115Url:
@@ -4104,8 +4110,9 @@ class P115Client:
         self, 
         payload: dict, 
         /, 
-        strict: bool, 
-        use_web_api: bool, 
+        strict: bool = True, 
+        use_web_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[P115Url]:
@@ -4116,6 +4123,7 @@ class P115Client:
         /, 
         strict: bool = True, 
         use_web_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> P115Url | Awaitable[P115Url]:
@@ -4127,13 +4135,13 @@ class P115Client:
             - share_code: str
             - user_id: int | str = <default>
         """
-        file_id = payload["file_id"]
         if use_web_api:
             resp = self.share_download_url_web(payload, async_=async_, **request_kwargs)
         else:
             resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
         def get_url(resp: dict) -> P115Url:
             info = check_response(resp)["data"]
+            file_id = payload["file_id"]
             if not info:
                 raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}")
             url = info["url"]
@@ -4240,7 +4248,8 @@ class P115Client:
         pickcode: str, 
         /, 
         strict: bool = True, 
-        use_web_api: bool = False,
+        use_web_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> P115Url:
@@ -4250,8 +4259,9 @@ class P115Client:
         self, 
         pickcode: str, 
         /, 
-        strict: bool, 
-        use_web_api: bool,
+        strict: bool = True, 
+        use_web_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[P115Url]:
@@ -4261,7 +4271,8 @@ class P115Client:
         pickcode: str, 
         /, 
         strict: bool = True, 
-        use_web_api: bool = False,
+        use_web_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> P115Url | Awaitable[P115Url]:
@@ -4274,8 +4285,14 @@ class P115Client:
                 **request_kwargs, 
             )
             def get_url(resp: dict) -> P115Url:
-                if "pickcode" not in resp:
-                    raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
+                if not resp["state"]:
+                    resp["pickcode"] = pickcode
+                    if resp["msg_code"] == 70005:
+                        raise FileNotFoundError(errno.ENOENT, resp)
+                    elif resp["msg_code"] == 70004 and strict:
+                        raise IsADirectoryError(errno.EISDIR, resp)
+                    else:
+                        raise OSError(errno.EIO, resp)
                 return P115Url(
                     resp.get("file_url", ""), 
                     id=int(resp["file_id"]), 
@@ -4293,7 +4310,10 @@ class P115Client:
             )
             def get_url(resp: dict) -> P115Url:
                 if not resp["state"]:
-                    raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
+                    resp["pickcode"] = pickcode
+                    if resp["errno"] == 50003:
+                        raise FileNotFoundError(errno.ENOENT, resp)
+                    raise OSError(errno.EIO, resp)
                 for fid, info in resp["data"].items():
                     url = info["url"]
                     if strict and not url:
@@ -5472,23 +5492,26 @@ class P115Client:
     @overload
     @staticmethod
     def upload_token(
-        async_: Literal[False] = False, 
         request: None | Callable = None, 
+        *, 
+        async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
     @staticmethod
     def upload_token(
-        async_: Literal[True], 
         request: None | Callable = None, 
+        *, 
+        async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
         ...
     @staticmethod
     def upload_token(
-        async_: Literal[False, True] = False, 
         request: None | Callable = None, 
+        *, 
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
         """获取阿里云 OSS 的 token，用于上传
@@ -5506,7 +5529,8 @@ class P115Client:
         self, 
         /, 
         filename: str, 
-        pid: int,
+        pid: int = 0, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5516,7 +5540,8 @@ class P115Client:
         self, 
         /, 
         filename: str, 
-        pid: int,
+        pid: int = 0, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5525,7 +5550,8 @@ class P115Client:
         self, 
         /, 
         filename: str, 
-        pid: int = 0,
+        pid: int = 0, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5541,11 +5567,12 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer]), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         filesize: int = -1, 
         pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5556,10 +5583,11 @@ class P115Client:
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
                 Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        filename: None | str, 
-        filesize: int, 
-        pid: int, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
+        filename: None | str = None, 
+        filesize: int = -1, 
+        pid: int = 0, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5573,6 +5601,7 @@ class P115Client:
         filesize: int = -1, 
         pid: int = 0, 
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5830,8 +5859,9 @@ class P115Client:
         filename: str, 
         filesize: int, 
         filesha1: str, 
-        read_range_bytes_or_hash: None | Callable[[str], str | Buffer], 
-        pid: int,
+        read_range_bytes_or_hash: None | Callable[[str], str | Buffer] = None, 
+        pid: int = 0, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5843,8 +5873,9 @@ class P115Client:
         filename: str, 
         filesize: int, 
         filesha1: str, 
-        read_range_bytes_or_hash: None | Callable[[str], str | Buffer], 
-        pid: int,
+        read_range_bytes_or_hash: None | Callable[[str], str | Buffer] = None, 
+        pid: int = 0, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -5857,6 +5888,7 @@ class P115Client:
         filesha1: str, 
         read_range_bytes_or_hash: None | Callable[[str], str | Buffer] = None, 
         pid: int = 0, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -5962,7 +5994,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
@@ -5970,7 +6002,8 @@ class P115Client:
         partsize: int = 0, 
         upload_directly: bool = False, 
         multipart_resume_data: None | MultipartResumeData = None, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -5981,14 +6014,15 @@ class P115Client:
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
                 Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        filename: None | str, 
-        pid: int, 
-        filesize: int, 
-        filesha1: None | str, 
-        partsize: int, 
-        upload_directly: bool, 
-        multipart_resume_data: None | MultipartResumeData, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
+        filename: None | str = None, 
+        pid: int = 0, 
+        filesize: int = -1, 
+        filesha1: None | str = None, 
+        partsize: int = 0, 
+        upload_directly: bool = False, 
+        multipart_resume_data: None | MultipartResumeData = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -6006,6 +6040,7 @@ class P115Client:
         upload_directly: bool = False, 
         multipart_resume_data: None | MultipartResumeData = None, 
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -6799,7 +6834,7 @@ class P115Client:
         self, 
         /, 
         pickcode: str, 
-        path: str,
+        path: str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> P115Url:
@@ -6809,7 +6844,7 @@ class P115Client:
         self, 
         /, 
         pickcode: str, 
-        path: str,
+        path: str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[P115Url]:
@@ -6818,7 +6853,7 @@ class P115Client:
         self, 
         /, 
         pickcode: str, 
-        path: str,
+        path: str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> P115Url | Awaitable[P115Url]:
@@ -8201,7 +8236,8 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
-        headers: None | Mapping = None,
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -8211,9 +8247,10 @@ class P115Client:
         self, 
         /, 
         url: str, 
-        start: int, 
-        stop: None | int, 
-        headers: None | Mapping,
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -8224,7 +8261,8 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
-        headers: None | Mapping = None,
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
@@ -8267,7 +8305,7 @@ class P115Client:
                 bytes_range = await get_bytes_range_async(start, stop)
                 if not bytes_range:
                     return b""
-                return await self.read_bytes_range(url, bytes_range, async_=async_, **request_kwargs)
+                return await self.read_bytes_range(url, bytes_range=bytes_range, async_=async_, **request_kwargs)
             return async_request()
         else:
             def get_bytes_range(start, stop) -> str:
@@ -8291,7 +8329,7 @@ class P115Client:
             bytes_range = get_bytes_range(start, stop)
             if not bytes_range:
                 return b""
-            return self.read_bytes_range(url, bytes_range, async_=async_, **request_kwargs)
+            return self.read_bytes_range(url, bytes_range=bytes_range, async_=async_, **request_kwargs)
 
     @overload
     def read_bytes_range(
@@ -8299,7 +8337,8 @@ class P115Client:
         /, 
         url: str, 
         bytes_range: str = "0-", 
-        headers: None | Mapping = None,
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -8309,8 +8348,9 @@ class P115Client:
         self, 
         /, 
         url: str, 
-        bytes_range: str, 
-        headers: None | Mapping,
+        bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -8320,7 +8360,8 @@ class P115Client:
         /, 
         url: str, 
         bytes_range: str = "0-", 
-        headers: None | Mapping = None,
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
@@ -8360,7 +8401,8 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: None | Mapping = None,
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -8370,9 +8412,10 @@ class P115Client:
         self, 
         /, 
         url: str, 
-        size: int, 
-        offset: int, 
-        headers: None | Mapping,
+        size: int = 0, 
+        offset: int = 0, 
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[bytes]:
@@ -8383,7 +8426,8 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: None | Mapping = None,
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Awaitable[bytes]:
@@ -8396,11 +8440,16 @@ class P115Client:
         :param request_kwargs: 其它请求参数
         """
         if size <= 0:
-            return b""
+            if async_:
+                async def request():
+                    yield b""
+                return request()
+            else:
+                return b""
         return self.read_bytes(
             url, 
-            offset, 
-            offset+size, 
+            start=offset, 
+            stop=offset+size, 
             headers=headers, 
             async_=async_, 
             **request_kwargs, 
