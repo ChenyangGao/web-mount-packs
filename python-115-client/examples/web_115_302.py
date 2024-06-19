@@ -667,7 +667,7 @@ def query(path: str):
       <tr>
         {%- set name = attr["name"] %}
         {%- set url = attr["url"] %}
-        <td style="max-width: 600px; word-wrap: break-word"><i class="file-type tp-{{ attr.get("ico") or "folder" }}"></i><a href="{{ url }}">{{ name }}</a></td>
+        <td style="max-width: 600px; word-wrap: break-word"><i class="file-type tp-{{ attr.get("ico") or "" }}"></i><a href="{{ url }}">{{ name }}</a></td>
         <td style="width: 160px; word-wrap: break-word;">
           {%- if not attr["is_directory"] %}
           <a class="popup" href="iina://weblink?url={{ url }}"><img class="icon" src="/?pic=iina" /><span class="popuptext">IINA</span></a>

@@ -185,6 +185,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     "time": self.create_time, 
                     "timestamp": int(self.create_time.timestamp()), 
                     "file_category": 0, 
+                    "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"id": 0, "name": ""}], 
                 }
@@ -309,7 +310,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
 
             parent: int | AttrDict
             for i in reversed(range(len(ancestors_paths)-1)):
-                if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
+                if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[len(patht)-i]) + "/")):
                     parent = yield partial(self._attr, id, async_=async_)
                     i += 1
                     break
@@ -339,7 +340,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                                 parent = parent["id"]
                             raise FileNotFoundError(
                                 errno.ENOENT, 
-                                f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                                f"no such file {name!r} (in {parent} @ {joins(patht[:i])!r})", 
                             )
                     yield step
             else:
@@ -357,7 +358,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                             parent = parent["id"]
                         raise FileNotFoundError(
                             errno.ENOENT, 
-                            f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                            f"no such file {name!r} (in {parent} @ {joins(patht[:i])!r})", 
                         )
             return attr
         return run_gen_step(gen_step, async_=async_)

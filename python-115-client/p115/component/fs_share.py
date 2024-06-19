@@ -316,6 +316,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     "size": None, 
                     "time": self.create_time, 
                     "timestamp": int(self.create_time.timestamp()), 
+                    "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"id": 0, "name": ""}], 
                 }
@@ -461,7 +462,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                                 parent = parent["id"]
                             raise FileNotFoundError(
                                 errno.ENOENT, 
-                                f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                                f"no such file {name!r} (in {parent} @ {joins(patht[:i])!r})", 
                             )
                     yield step
             else:
@@ -479,7 +480,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                             parent = parent["id"]
                         raise FileNotFoundError(
                             errno.ENOENT, 
-                            f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                            f"no such file {name!r} (in {parent} @ {joins(patht[:i])!r})", 
                         )
             return attr
         return run_gen_step(gen_step, async_=async_)

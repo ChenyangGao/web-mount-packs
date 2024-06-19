@@ -1287,6 +1287,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     "utime": last_update, 
                     "ptime": datetime.fromtimestamp(0), 
                     "open_time": last_update, 
+                    "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}], 
                 }
@@ -1343,12 +1344,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     })
                     path = attr["path"] = joins([a["name"] for a in ancestors])
                 else:
-                    attr["ancestors"] = [{
-                        "name": attr["name"], 
-                        "id": attr["id"], 
-                        "parent_id": attr["parent_id"], 
-                        "is_directory": attr["is_directory"], 
-                    }]
+                    attr["ancestors"] = [
+                        {"name": "", "id": 0, "parent_id": 0, "is_directory": True}, 
+                        {
+                            "name": attr["name"], 
+                            "id": attr["id"], 
+                            "parent_id": attr["parent_id"], 
+                            "is_directory": attr["is_directory"], 
+                        }, 
+                    ]
                     path = attr["path"] = "/" + escape(attr["name"])
                 path_to_id = self.path_to_id
                 if path_to_id is not None:
@@ -1531,7 +1535,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                 parent = parent["id"]
                             raise FileNotFoundError(
                                 errno.ENOENT, 
-                                f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                                f"no such file {name!r} (in {parent} @ {joins(patht[:i])!r})", 
                             )
                     yield step
             else:
@@ -1549,7 +1553,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             parent = parent["id"]
                         raise FileNotFoundError(
                             errno.ENOENT, 
-                            f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                            f"no such file {name!r} (in {parent} @ {joins(patht[:i])!r})", 
                         )
             return attr
         return run_gen_step(gen_step, async_=async_)
