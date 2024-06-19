@@ -2,13 +2,15 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
-    "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", 
+    "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", "run_gen_step", 
 ]
 
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
+from asyncio import to_thread
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterable, Iterator
+from inspect import isawaitable
 from typing import Any, TypeVar
 
 from asynctools import async_zip, ensure_async, ensure_aiter
@@ -161,4 +163,66 @@ def cut_iter(
         yield start, step
     if start != stop:
         yield stop, stop - start
+
+
+def run_gen_step(
+    gen_step: Generator[Callable, Any, T] | Callable[[], Generator[Callable, Any, T]], 
+    *, 
+    async_: bool = False, 
+    threaded: bool = False, 
+) -> T:
+    if callable(gen_step):
+        gen = gen_step()
+        close = gen.close
+    else:
+        gen = gen_step
+        close = None
+    send = gen.send
+    throw = gen.throw
+    if async_:
+        async def process():
+            try:
+                if threaded:
+                    func = await to_thread(send, None)
+                else:
+                    func = send(None)
+                while True:
+                    try:
+                        ret = func()
+                        if isawaitable(ret):
+                            ret = await ret
+                    except BaseException as e:
+                        if threaded:
+                            func = await to_thread(throw, e)
+                        else:
+                            func = throw(e)
+                    else:
+                        if threaded:
+                            func = await to_thread(send, ret)
+                        else:
+                            func = send(ret)
+            except StopIteration as e:
+                return e.value
+            finally:
+                if close is not None:
+                    if threaded:
+                        await to_thread(close)
+                    else:
+                        close()
+        return process()
+    else:
+        try:
+            func = send(None)
+            while True:
+                try:
+                    ret = func()
+                except BaseException as e:
+                    func = throw(e)
+                else:
+                    func = send(ret)
+        except StopIteration as e:
+            return e.value
+        finally:
+            if close is not None:
+                close()
 

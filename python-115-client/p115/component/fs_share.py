@@ -10,10 +10,12 @@ import errno
 
 from collections import deque
 from collections.abc import (
-    Awaitable, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
+    AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, 
+    MutableMapping, Sequence, 
 )
+from copy import deepcopy
 from datetime import datetime
-from functools import cached_property
+from functools import cached_property, partial
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from re import compile as re_compile
@@ -21,6 +23,7 @@ from stat import S_IFDIR, S_IFREG
 from time import time
 from typing import cast, overload, Literal, Never, Self
 
+from iterutils import run_gen_step
 from posixpatht import escape, joins, splits, path_is_dir_form
 
 from .client import check_response, P115Client, P115Url
@@ -81,7 +84,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     receive_code: str
     path_to_id: MutableMapping[str, int]
     id_to_attr: MutableMapping[int, AttrDict]
-    pid_to_children: MutableMapping[int, tuple[AttrDict]]
+    pid_to_children: MutableMapping[int, tuple[AttrDict, ...]]
     full_loaded: bool
     path_class = P115SharePath
 
@@ -91,11 +94,12 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         client: str | P115Client, 
         share_link: str, 
         request: None | Callable = None, 
+        async_request: None | Callable = None, 
     ):
         m = CRE_SHARE_LINK_search(share_link)
         if m is None:
             raise ValueError("not a valid 115 share link")
-        super().__init__(client, request)
+        super().__init__(client, request, async_request)
         self.__dict__.update(
             id=0, 
             path="/", 
@@ -119,8 +123,28 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attributes")
 
-    @check_response
-    def fs_files(self, /, payload: dict) -> dict:
+    @overload
+    def fs_files(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
+    def fs_files(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Awaitable[dict]:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
         :param payload:
             - id: int | str = 0
@@ -136,23 +160,52 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
         """
-        payload = {
-            **payload, 
-            "share_code": self.share_code, 
-            "receive_code": self.receive_code, 
-        }
-        return self.client.share_snap(payload, request=self.request)
+        return check_response(self.client.share_snap( # type: ignore
+            {
+                **payload, 
+                "share_code": self.share_code, 
+                "receive_code": self.receive_code, 
+            }, 
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+        ))
 
-    @check_response
-    def downlist(self, /, id: int = 0) -> dict:
+    @overload
+    def downlist(
+        self, 
+        /, 
+        id: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def downlist(
+        self, 
+        /, 
+        id: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
+    def downlist(
+        self, 
+        /, 
+        id: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Awaitable[dict]:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         """
-        payload = {
-            "share_code": self.share_code, 
-            "receive_code": self.receive_code, 
-            "cid": id, 
-        }
-        return self.client.share_downlist(payload, request=self.request)
+        return check_response(self.client.share_downlist( # type: ignore
+            {
+                "share_code": self.share_code, 
+                "receive_code": self.receive_code, 
+                "cid": id, 
+            }, 
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+        ))
 
     @cached_property
     def create_time(self, /) -> datetime:
@@ -179,226 +232,443 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         "获取分享信息"
         return self.sharedata["shareinfo"]
 
-    def _search_item(self, id: int, /) -> AttrDict:
+    @overload
+    def _search_item(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> AttrDict:
+        ...
+    @overload
+    def _search_item(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[AttrDict]:
+        ...
+    def _search_item(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> AttrDict | Awaitable[AttrDict]:
         dq = deque((self.attr(0),))
         get, put = dq.popleft, dq.append
-        while dq:
-            for attr in self.iterdir(get()):
-                if attr["id"] == id:
-                    return attr
-                if attr["is_directory"]:
-                    put(attr)
-        self.__dict__["full_loaded"] = True
-        raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
-
-    def _attr(self, id: int = 0, /) -> AttrDict:
-        try:
-            return self.id_to_attr[id]
-        except KeyError:
-            pass
-        if self.full_loaded:
+        if async_:
+            async def request():
+                while dq:
+                    async for attr in self.iterdir(get(), async_=True):
+                        if attr["id"] == id:
+                            return attr
+                        if attr["is_directory"]:
+                            put(attr)
+                self.__dict__["full_loaded"] = True
+                raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
+            return request()
+        else:
+            while dq:
+                for attr in self.iterdir(get()):
+                    if attr["id"] == id:
+                        return attr
+                    if attr["is_directory"]:
+                        put(attr)
+            self.__dict__["full_loaded"] = True
             raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
-        if id == 0:
-            attr = self.id_to_attr[0] = {
-                "id": 0, 
-                "parent_id": 0, 
-                "name": "", 
-                "path": "/", 
-                "is_directory": True, 
-                "size": None, 
-                "time": self.create_time, 
-                "timestamp": int(self.create_time.timestamp()), 
-                "fs": self, 
-                "ancestors": [{"id": 0, "name": ""}], 
-            }
-            return attr
-        self.client.share_download_url(
-            {
-                "share_code": self.share_code, 
-                "receive_code": self.receive_code, 
-                "file_id": id, 
-            }, 
-            strict=False, 
-            request=self.request, 
-        )
-        return self._search_item(id)
 
+    @overload
+    def _attr(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> AttrDict:
+        ...
+    @overload
+    def _attr(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[AttrDict]:
+        ...
+    def _attr(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> AttrDict | Awaitable[AttrDict]:
+        def gen_step():
+            try:
+                return self.id_to_attr[id]
+            except KeyError:
+                pass
+            if self.full_loaded:
+                raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
+            if id == 0:
+                attr = self.id_to_attr[0] = {
+                    "id": 0, 
+                    "parent_id": 0, 
+                    "name": "", 
+                    "path": "/", 
+                    "is_directory": True, 
+                    "size": None, 
+                    "time": self.create_time, 
+                    "timestamp": int(self.create_time.timestamp()), 
+                    "fs": self, 
+                    "ancestors": [{"id": 0, "name": ""}], 
+                }
+                return attr
+            # NOTE: quick detection of id existence
+            yield partial(
+                self.client.share_download_url, 
+                {
+                    "share_code": self.share_code, 
+                    "receive_code": self.receive_code, 
+                    "file_id": id, 
+                }, 
+                strict=False, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            return (yield partial(self._search_item, id, async_=async_))
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
     def _attr_path(
         self, 
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
         force_directory: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> AttrDict:
-        if isinstance(path, PathLike):
-            path = fspath(path)
-        if pid is None:
-            pid = self.id
-        if not path or path == ".":
-            return self._attr(pid)
+        ...
+    @overload
+    def _attr_path(
+        self, 
+        path: str | PathLike[str] | Sequence[str], 
+        /, 
+        pid: None | int = None, 
+        force_directory: bool = False, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[AttrDict]:
+        ...
+    def _attr_path(
+        self, 
+        path: str | PathLike[str] | Sequence[str], 
+        /, 
+        pid: None | int = None, 
+        force_directory: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> AttrDict | Awaitable[AttrDict]:
+        def gen_step():
+            nonlocal path, pid, force_directory
 
-        parents = 0
-        if isinstance(path, str):
-            if not force_directory:
-                force_directory = path_is_dir_form(path)
-            patht, parents = splits(path)
-            if not (patht or parents):
-                return self._attr(pid)
-        else:
-            if not force_directory:
-                force_directory = path[-1] == ""
-            patht = [path[0], *(p for p in path[1:] if p)]
-        if patht == [""]:
-            return self._attr(0)
-        elif patht and patht[0] == "":
-            pid = 0
+            if isinstance(path, PathLike):
+                path = fspath(path)
+            if pid is None:
+                pid = self.id
+            if not path or path == ".":
+                return (yield partial(self._attr, pid, async_=async_))
 
-        ancestor_patht: list[str] = []
-        if pid == 0:
-            if patht[0] != "":
-                patht.insert(0, "")
-        else:
-            ancestors = self.get_ancestors(pid)
-            if parents:
-                if parents >= len(ancestors):
-                    pid = 0
-                else:
-                    pid = cast(int, ancestors[-parents-1]["id"])
-                    ancestor_patht = ["", *(a["name"] for a in ancestors[1:-parents])]
+            parents = 0
+            if isinstance(path, str):
+                if not force_directory:
+                    force_directory = path_is_dir_form(path)
+                patht, parents = splits(path)
+                if not (patht or parents):
+                    return (yield partial(self._attr, pid, async_=async_))
             else:
-                ancestor_patht = ["", *(a["name"] for a in ancestors[1:])]
-        if not patht:
-            return self._attr(pid)
+                if not force_directory:
+                    force_directory = path[-1] == ""
+                patht = [path[0], *(p for p in path[1:] if p)]
+            if patht == [""]:
+                return self._attr(0)
+            elif patht and patht[0] == "":
+                pid = 0
 
-        if pid == 0:
-            dirname = ""
-            ancestors_paths: list[str] = [(dirname := f"{dirname}/{escape(name)}") for name in patht[1:]]
-        else:
-            dirname = joins(ancestor_patht)
-            ancestors_paths = [(dirname := f"{dirname}/{escape(name)}") for name in patht]
-
-        fullpath = ancestors_paths[-1]
-        path_to_id = self.path_to_id
-        if path_to_id:
-            if not force_directory and (id := path_to_id.get(fullpath)):
-                return self._attr(id)
-            if (id := path_to_id.get(fullpath + "/")):
-                return self._attr(id)
-        if self.full_loaded:
-            raise FileNotFoundError(
-                errno.ENOENT, 
-                f"no such path {fullpath!r} (in {pid!r})", 
-            )
-
-        parent: int | AttrDict
-        for i in reversed(range(len(ancestors_paths)-1)):
-            if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
-                parent = self._attr(id)
-                i += 1
-                break
-        else:
-            i = 0
-            parent = pid
-
-        if pid == 0:
-            i += 1
-
-        last_idx = len(patht) - 1
-        for i, name in enumerate(patht[i:], i):
-            for attr in self.iterdir(parent):
-                if attr["name"] == name:
-                    if force_directory or i < last_idx:
-                        if attr["is_directory"]:
-                            parent = attr
-                            break
+            ancestor_patht: list[str] = []
+            if pid == 0:
+                if patht[0] != "":
+                    patht.insert(0, "")
+            else:
+                ancestors = yield partial(self.get_ancestors, pid, async_=async_)
+                if parents:
+                    if parents >= len(ancestors):
+                        pid = 0
                     else:
-                        break
+                        pid = cast(int, ancestors[-parents-1]["id"])
+                        ancestor_patht = ["", *(a["name"] for a in ancestors[1:-parents])]
+                else:
+                    ancestor_patht = ["", *(a["name"] for a in ancestors[1:])]
+            if not patht:
+                return (yield partial(self._attr, pid, async_=async_))
+
+            if pid == 0:
+                dirname = ""
+                ancestors_paths: list[str] = [(dirname := f"{dirname}/{escape(name)}") for name in patht[1:]]
             else:
-                if isinstance(parent, AttrDict):
-                    parent = parent["id"]
+                dirname = joins(ancestor_patht)
+                ancestors_paths = [(dirname := f"{dirname}/{escape(name)}") for name in patht]
+
+            fullpath = ancestors_paths[-1]
+            path_to_id = self.path_to_id
+            if path_to_id:
+                if not force_directory and (id := path_to_id.get(fullpath)):
+                    return (yield partial(self._attr, id, async_=async_))
+                if (id := path_to_id.get(fullpath + "/")):
+                    return (yield partial(self._attr, id, async_=async_))
+            if self.full_loaded:
                 raise FileNotFoundError(
                     errno.ENOENT, 
-                    f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                    f"no such path {fullpath!r} (in {pid!r})", 
                 )
-        return attr
 
+            parent: int | AttrDict
+            for i in reversed(range(len(ancestors_paths)-1)):
+                if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
+                    parent = yield partial(self._attr, id, async_=async_)
+                    i += 1
+                    break
+            else:
+                i = 0
+                parent = pid
+
+            if pid == 0:
+                i += 1
+
+            attr: AttrDict
+            last_idx = len(patht) - 1
+            if async_:
+                for i, name in enumerate(patht[i:], i):
+                    async def step():
+                        nonlocal attr, parent
+                        async for attr in self.iterdir(parent, async_=True):
+                            if attr["name"] == name:
+                                if force_directory or i < last_idx:
+                                    if attr["is_directory"]:
+                                        parent = attr
+                                        break
+                                else:
+                                    break
+                        else:
+                            if isinstance(parent, AttrDict):
+                                parent = parent["id"]
+                            raise FileNotFoundError(
+                                errno.ENOENT, 
+                                f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                            )
+                    yield step
+            else:
+                for i, name in enumerate(patht[i:], i):
+                    for attr in self.iterdir(parent):
+                        if attr["name"] == name:
+                            if force_directory or i < last_idx:
+                                if attr["is_directory"]:
+                                    parent = attr
+                                    break
+                            else:
+                                break
+                    else:
+                        if isinstance(parent, AttrDict):
+                            parent = parent["id"]
+                        raise FileNotFoundError(
+                            errno.ENOENT, 
+                            f"no such file {name!r} (in {parent} @ {ancestors_paths[i]!r})", 
+                        )
+            return attr
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
     def attr(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        refresh: bool = True, 
         force_directory: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> AttrDict:
+        ...
+    @overload
+    def attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        force_directory: bool = False, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[AttrDict]:
+        ...
+    def attr(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        force_directory: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> AttrDict | Awaitable[AttrDict]:
         "获取属性"
-        path_class = type(self).path_class
-        if isinstance(id_or_path, path_class):
-            attr = id_or_path.__dict__
-            if refresh:
-                attr = self._attr(attr["id"])
-        elif isinstance(id_or_path, AttrDict):
-            attr = id_or_path
-            if refresh:
-                attr = self._attr(attr["id"])
-        elif isinstance(id_or_path, int):
-            attr = self._attr(id_or_path)
-        else:
-            return self._attr_path(id_or_path, pid, force_directory=force_directory)
-        if force_directory and not attr["is_directory"]:
-            raise NotADirectoryError(
-                errno.ENOTDIR, 
-                f"{attr['id']} (id={attr['id']}) is not directory"
-            )
-        return attr
+        def gen_step():
+            path_class = type(self).path_class
+            if isinstance(id_or_path, path_class):
+                attr = id_or_path.__dict__
+            elif isinstance(id_or_path, AttrDict):
+                attr = id_or_path
+            elif isinstance(id_or_path, int):
+                attr = yield partial(self._attr, id_or_path, async_=async_)
+            else:
+                return (yield partial(
+                    self._attr_path, 
+                    id_or_path, 
+                    pid=pid, 
+                    force_directory=force_directory, 
+                    async_=async_, 
+                ))
+            if force_directory and not attr["is_directory"]:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"{attr['id']} (id={attr['id']}) is not directory"
+                )
+            return attr
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def dirlen(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> int:
+        ...
+    @overload
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[int]:
+        ...
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Awaitable[int]:
         "文件夹中的项目数（直属的文件和目录计数）"
-        return self.fs_files({"cid": self.get_id(id_or_path, pid), "limit": 1})["data"]["count"]
+        def gen_step():
+            id = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
+            if (children := self.pid_to_children.get(id)) is not None:
+                return len(children)
+            resp = yield partial(
+                self.fs_files, 
+                {"cid": id, "limit": 1}, 
+                async_=async_, 
+            )
+            return resp["data"]["count"]
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def get_ancestors(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> list[dict]:
+        ...
+    @overload
+    def get_ancestors(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[list[dict]]:
+        ...
+    def get_ancestors(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> list[dict] | Awaitable[list[dict]]:
         "获取各个上级目录的少量信息（从根目录到当前目录）"
-        return self.attr(id_or_path, pid)["ancestors"]
+        def gen_step():
+            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+            return deepcopy(attr["ancestors"])
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def get_url(
         self, 
         id_or_path: IDOrPathType, 
         /, 
         pid: None | int = None, 
         headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> P115Url:
+        ...
+    @overload
+    def get_url(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[P115Url]:
+        ...
+    def get_url(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        pid: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> P115Url | Awaitable[P115Url]:
         "获取下载链接"
-        path_class = type(self).path_class
-        if isinstance(id_or_path, (int, path_class)):
-            id = id_or_path if isinstance(id_or_path, int) else id_or_path.id
-            if id in self.id_to_attr:
-                attr = self.id_to_attr[id]
+        def gen_step():
+            if isinstance(id_or_path, int):
+                id = id_or_path
+            else:
+                attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
                 if attr["is_directory"]:
                     raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-        else:
-            attr = self.attr(id_or_path, pid)
-            if attr["is_directory"]:
-                raise IsADirectoryError(errno.EISDIR, f"{attr['path']!r} (id={attr['id']!r}) is a directory")
-            id = attr["id"]
-        return self.client.share_download_url(
-            {
-                "share_code": self.share_code, 
-                "receive_code": self.receive_code, 
-                "file_id": id, 
-            }, 
-            headers=headers, 
-            request=self.request, 
-        )
+                id = attr["id"]
+            return (yield partial(
+                self.client.share_download_url, 
+                {
+                    "share_code": self.share_code, 
+                    "receive_code": self.receive_code, 
+                    "file_id": id, 
+                }, 
+                headers=headers, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def iterdir(
         self, 
         id_or_path: IDOrPathType = "", 
@@ -407,8 +677,37 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
+        *, 
+        async_: Literal[False] = False, 
         **payload, 
     ) -> Iterator[AttrDict]:
+        ...
+    @overload
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        start: int = 0, 
+        stop: None | int = None, 
+        page_size: int = 1_000, 
+        *, 
+        async_: Literal[True], 
+        **payload, 
+    ) -> AsyncIterator[AttrDict]:
+        ...
+    def iterdir(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        start: int = 0, 
+        stop: None | int = None, 
+        page_size: int = 1_000, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **payload, 
+    ) -> Iterator[AttrDict] | AsyncIterator[AttrDict]:
         """迭代获取目录内直属的文件或目录的信息
         :param payload:
             - limit: int = 32
@@ -423,110 +722,158 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
         """
-        if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
-            return iter(())
+        path_class = type(self).path_class
         if page_size <= 0:
             page_size = 1_000
-        path_class = type(self).path_class
-        if isinstance(id_or_path, int):
-            attr = self._attr(id_or_path)
-        elif isinstance(id_or_path, AttrDict):
-            attr = id_or_path
-        elif isinstance(id_or_path, path_class):
-            attr = id_or_path.__dict__
-        else:
-            attr = self._attr_path(id_or_path, pid, force_directory=True)
-        if not attr["is_directory"]:
-            raise NotADirectoryError(
-                errno.ENOTDIR, 
-                f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
-            )
-        id = attr["id"]
-        ancestors = attr["ancestors"]
-        children: Sequence[AttrDict]
-        try:
-            children = self.pid_to_children[id]
-            count = len(children)
-            if start < 0:
-                start += count
-                if start < 0:
-                    start = 0
-            if stop is None:
-                stop = count
-            elif stop < 0:
-                stop += count
-            if start >= stop or stop <= 0 or start >= count:
-                return iter(())
-            key: None | Callable
-            match payload.get("o"):
-                case "file_name":
-                    key = lambda attr: attr["name"]
-                case "file_size":
-                    key = lambda attr: attr.get("size") or 0
-                case "file_type":
-                    key = lambda attr: attr.get("ico", "folder" if attr["is_directory"] else "")
-                case "user_utime" | "user_ptime" | "user_otime":
-                    key = lambda attr: attr["time"]
-                case _:
-                    key = None
-            if key:
-                children = sorted(children, key=key, reverse=payload.get("asc", True))
-        except KeyError:
-            payload["cid"] = id
-            payload["limit"] = page_size
-            offset = int(payload.setdefault("offset", 0))
-            if offset < 0:
-                offset = payload["offset"] = 0
+        def gen_step():
+            nonlocal start, stop
+            if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
+                return ()
+            if isinstance(id_or_path, int):
+                attr = yield partial(self._attr, id_or_path, async_=async_)
+            elif isinstance(id_or_path, AttrDict):
+                attr = id_or_path
+            elif isinstance(id_or_path, path_class):
+                attr = id_or_path.__dict__
             else:
-                payload["offset"] = 0
-            dirname = attr["path"]
-            def iterdir():
+                attr = yield partial(
+                    self._attr_path, 
+                    id_or_path, 
+                    pid=pid, 
+                    force_directory=True, 
+                    async_=async_, 
+                )
+            if not attr["is_directory"]:
+                raise NotADirectoryError(
+                    errno.ENOTDIR, 
+                    f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
+                )
+            id = attr["id"]
+            ancestors = attr["ancestors"]
+            children: Sequence[AttrDict]
+            try:
+                children = self.pid_to_children[id]
+            except KeyError:
+                payload["cid"] = id
+                payload["limit"] = page_size
+                offset = int(payload.setdefault("offset", 0))
+                if offset < 0:
+                    offset = payload["offset"] = 0
+                else:
+                    payload["offset"] = 0
+                dirname = attr["path"]
                 get_files = self.fs_files
                 path_to_id = self.path_to_id
-                data = get_files(payload)["data"]
+                ls: list[AttrDict] = []
+                add = ls.append
+                resp = yield partial(get_files, payload, async_=async_)
+                data = resp["data"]
                 for attr in map(normalize_info, data["list"]):
                     attr["fs"] = self
                     attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                     path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
-                    yield attr
+                    add(attr)
                 for _ in range((data["count"] - 1) // page_size):
                     payload["offset"] += page_size
-                    data = get_files(payload)["data"]
+                    resp = yield partial(get_files, payload, async_=async_)
+                    data = resp["data"]
                     for attr in map(normalize_info, data["list"]):
                         attr["fs"] = self
                         attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                         path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
-                        yield attr
-            children = self.pid_to_children[id] = tuple(iterdir())
-            self.id_to_attr.update((attr["id"], attr) for attr in children)
-        return iter(children[start:stop])
+                        add(attr)
+                children = self.pid_to_children[id] = tuple(ls)
+                self.id_to_attr.update((attr["id"], attr) for attr in children)
+            else:
+                count = len(children)
+                if start < 0:
+                    start += count
+                    if start < 0:
+                        start = 0
+                if stop is None:
+                    stop = count
+                elif stop < 0:
+                    stop += count
+                if start >= stop or stop <= 0 or start >= count:
+                    return ()
+                key: None | Callable
+                match payload.get("o"):
+                    case "file_name":
+                        key = lambda attr: attr["name"]
+                    case "file_size":
+                        key = lambda attr: attr.get("size") or 0
+                    case "file_type":
+                        key = lambda attr: attr.get("ico", "folder" if attr["is_directory"] else "")
+                    case "user_utime" | "user_ptime" | "user_otime":
+                        key = lambda attr: attr["time"]
+                    case _:
+                        key = None
+                if key:
+                    children = sorted(children, key=key, reverse=payload.get("asc", True))
+            return children[start:stop]
+        if async_:
+            async def wrap():
+                for attr in (await run_gen_step(gen_step, async_=True)):
+                    yield attr
+            return wrap()
+        else:
+            return iter(run_gen_step(gen_step))
 
-    @check_response
+    @overload
     def receive(
         self, 
         ids: int | str | Iterable[int | str], 
         /, 
         to_pid: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> dict:
+        ...
+    @overload
+    def receive(
+        self, 
+        ids: int | str | Iterable[int | str], 
+        /, 
+        to_pid: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
+    def receive(
+        self, 
+        ids: int | str | Iterable[int | str], 
+        /, 
+        to_pid: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Awaitable[dict]:
         """接收分享文件到网盘
         :param ids: 要转存到文件 id（这些 id 归属分享链接）
         :param to_pid: 你的网盘的一个目录 id（这个 id 归属你的网盘）
         """
-        if isinstance(ids, int):
-            ids = str(ids)
-        elif isinstance(ids, Iterable):
-            ids = ",".join(map(str, ids))
-        if not ids:
-            raise ValueError("no id (to file) to receive")
-        payload = {
-            "share_code": self.share_code, 
-            "receive_code": self.receive_code, 
-            "file_id": ids, 
-            "cid": to_pid, 
-        }
-        return self.client.share_receive(payload, request=self.request)
+        def gen_step():
+            nonlocal ids
+            if isinstance(ids, int):
+                ids = str(ids)
+            elif isinstance(ids, Iterable):
+                ids = ",".join(map(str, ids))
+            if not ids:
+                raise ValueError("no id (to file) to receive")
+            payload = {
+                "share_code": self.share_code, 
+                "receive_code": self.receive_code, 
+                "file_id": ids, 
+                "cid": to_pid, 
+            }
+            return (yield partial(
+                self.client.share_receive, 
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def stat(
@@ -557,7 +904,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         async_: Literal[False, True] = False, 
     ) -> stat_result | Awaitable[stat_result]:
         "检查路径的属性，就像 `os.stat`"
-        def process(attr):
+        def gen_step():
+            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
             is_dir = attr["is_directory"]
             timestamp: float = attr["timestamp"]
             return stat_result((
@@ -572,12 +920,5 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 timestamp, # mtime
                 timestamp, # ctime
             ))
-        if async_:
-            async def request():
-                attr = await self.attr(id_or_path, pid=pid, async_=True)
-                return process(attr)
-            return request()
-        else:
-            attr = self.attr(id_or_path, pid=pid)
-            return process(attr)
+        return run_gen_step(gen_step, async_=async_)
 
