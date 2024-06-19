@@ -53,6 +53,7 @@ from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from re import compile as re_compile, MULTILINE
 from sys import exc_info
+from urllib.parse import quote, unquote
 
 from cachetools import LRUCache, TTLCache
 from blacksheep import (
@@ -209,11 +210,14 @@ def normalize_attr(
     data = {k: attr[k] for k in KEYS if k in attr}
     if not attr["is_directory"]:
         pickcode = attr["pickcode"]
-        url = f"{origin}/api/download?pickcode={pickcode}"
+        url = f"{origin}/api/download{quote(attr['path'])}?pickcode={pickcode}"
+        short_url = f"{origin}/api/download?pickcode={pickcode}"
         if attr["violated"] and attr["size"] < 1024 * 1024 * 115:
             url += "&web=true"
+            short_url += "&web=true"
         data["format_size"] = format_bytes(attr["size"])
         data["url"] = url
+        data["short_url"] = short_url
     return data
 
 
@@ -251,10 +255,11 @@ async def get_attr(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    attr = await call_wrap(fs.attr, (path or path2) if id < 0 else id)
+    attr = await call_wrap(fs.attr, (path or unquote(path2)) if id < 0 else id)
     origin = f"{request.scheme}://{request.host}"
     return normalize_attr(attr, origin)
 
@@ -275,10 +280,11 @@ async def get_list(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    children = await call_wrap(fs.listdir_attr, (path or path2) if id < 0 else id)
+    children = await call_wrap(fs.listdir_attr, (path or unquote(path2)) if id < 0 else id)
     origin = f"{request.scheme}://{request.host}"
     return [
         normalize_attr(attr, origin)
@@ -301,10 +307,11 @@ async def get_ancestors(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    return await call_wrap(fs.get_ancestors, (path or path2) if id < 0 else id)
+    return await call_wrap(fs.get_ancestors, (path or unquote(path2)) if id < 0 else id)
 
 
 @get("/api/desc")
@@ -322,10 +329,11 @@ async def get_desc(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    return html(await call_wrap(fs.desc, (path or path2) if id < 0 else id))
+    return html(await call_wrap(fs.desc, (path or unquote(path2)) if id < 0 else id))
 
 
 @get("/api/url")
@@ -345,10 +353,11 @@ async def get_url(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
     if not pickcode:
-        pickcode = await call_wrap(fs.get_pickcode, (path or path2) if id < 0 else id)
+        pickcode = await call_wrap(fs.get_pickcode, (path or unquote(path2)) if id < 0 else id)
     try:
         url = url_cache[(pickcode, user_agent)]
     except KeyError:
@@ -378,6 +387,7 @@ async def file_download(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     resp = await get_url(request, id, pickcode, path, path2, web=web)
     url = resp["url"]
@@ -419,13 +429,14 @@ async def file_m3u8(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param definition: 分辨率。<br />&nbsp;&nbsp;3 - HD<br />&nbsp;&nbsp;4 - UD
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     global web_cookies
     user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
     if not pickcode:
-        pickcode = await call_wrap(fs.get_pickcode, (path or path2) if id < 0 else id)
+        pickcode = await call_wrap(fs.get_pickcode, (path or unquote(path2)) if id < 0 else id)
     url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
     async with web_login_lock:
         if not web_cookies:
