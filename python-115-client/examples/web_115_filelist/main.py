@@ -253,7 +253,7 @@ async def get_attr(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
@@ -278,7 +278,7 @@ async def get_list(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
@@ -305,7 +305,7 @@ async def get_ancestors(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
@@ -327,7 +327,7 @@ async def get_desc(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
@@ -351,7 +351,7 @@ async def get_url(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
@@ -385,11 +385,11 @@ async def file_download(
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径
+    :param path: 文件或目录的路径，优先级高于 path2
     :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
-    resp = await get_url(request, id, pickcode, path, path2, web=web)
+    resp = await get_url.__wrapped__(request, pickcode, id, path, path2, web=web)
     url = resp["url"]
     headers = resp["headers"]
     if web:
