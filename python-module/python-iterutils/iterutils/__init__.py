@@ -9,7 +9,9 @@ __all__ = [
 ]
 
 from asyncio import to_thread
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterable, Iterator
+from collections.abc import (
+    AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterable, Iterator, 
+)
 from inspect import isawaitable
 from typing import Any, TypeVar
 
@@ -170,6 +172,7 @@ def run_gen_step(
     *, 
     async_: bool = False, 
     threaded: bool = False, 
+    as_iter: bool = False, 
 ) -> T:
     if callable(gen_step):
         gen = gen_step()
@@ -209,7 +212,22 @@ def run_gen_step(
                         await to_thread(close)
                     else:
                         close()
-        return process()
+        result = process()
+        if as_iter:
+            async def wrap(result):
+                it = await result
+                try:
+                    it = aiter(it)
+                except TypeError:
+                    for val in iter(it):
+                        if isawaitable(val):
+                            val = await val
+                        yield val
+                else:
+                    async for val in it:
+                        yield val
+            result = wrap(result)
+        return result
     else:
         try:
             func = send(None)
@@ -221,7 +239,10 @@ def run_gen_step(
                 else:
                     func = send(ret)
         except StopIteration as e:
-            return e.value
+            result = e.value
+            if as_iter:
+                result = iter(result)
+            return result
         finally:
             if close is not None:
                 close()

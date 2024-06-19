@@ -502,7 +502,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
     ) -> P115Url | Awaitable[P115Url]:
         "获取下载链接"
         def gen_step():
-            attr = yield partial(self.attr, id_or_path, pid=pid)
+            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
             if attr["is_directory"]:
                 raise IsADirectoryError(
                     errno.EISDIR, 
@@ -632,13 +632,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                 children = self.pid_to_children[id] = tuple(ls)
                 self.id_to_attr.update((attr["id"], attr) for attr in children)
             return children[start:stop]
-        if async_:
-            async def wrap():
-                for attr in (await run_gen_step(gen_step, async_=True)):
-                    yield attr
-            return wrap()
-        else:
-            return iter(run_gen_step(gen_step))
+        return run_gen_step(gen_step, async_=async_, as_iter=True)
 
     @overload
     def stat(

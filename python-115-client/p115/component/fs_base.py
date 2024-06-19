@@ -374,7 +374,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         def gen_step():
             if self.id == 0:
                 return self
-            attr = yield partial(self.fs.attr, self["parent_id"])
+            attr = yield partial(self.fs.attr, self["parent_id"], async_=async_)
             return type(self)(attr)
         return run_gen_step(gen_step, async_=async_)
 

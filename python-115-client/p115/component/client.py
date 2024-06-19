@@ -4671,7 +4671,7 @@ class P115Client:
         request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
         if hasattr(file, "getbuffer"):
             try:
-                file = getattr(self, "getbuffer")()
+                file = getattr(file, "getbuffer")()
             except TypeError:
                 pass
         if isinstance(file, Buffer):
@@ -4883,7 +4883,7 @@ class P115Client:
         """
         if hasattr(file, "getbuffer"):
             try:
-                file = getattr(self, "getbuffer")()
+                file = getattr(file, "getbuffer")()
             except TypeError:
                 pass
         if isinstance(file, Buffer):
@@ -5071,7 +5071,7 @@ class P115Client:
         url = self.upload_endpoint_url(bucket, object)
         if hasattr(file, "getbuffer"):
             try:
-                file = getattr(self, "getbuffer")()
+                file = getattr(file, "getbuffer")()
             except TypeError:
                 pass
         dataiter: Iterable[Buffer] | AsyncIterable[Buffer]
@@ -5202,7 +5202,7 @@ class P115Client:
         parts: list[dict] = []
         if hasattr(file, "getbuffer"):
             try:
-                file = getattr(self, "getbuffer")()
+                file = getattr(file, "getbuffer")()
             except TypeError:
                 pass
         if async_:
@@ -5610,7 +5610,7 @@ class P115Client:
         file_will_open: None | tuple[str, Any] = None
         if hasattr(file, "getbuffer"):
             try:
-                file = getattr(self, "getbuffer")()
+                file = getattr(file, "getbuffer")()
             except TypeError:
                 pass
         if isinstance(file, Buffer):
@@ -6071,7 +6071,7 @@ class P115Client:
             )
         if hasattr(file, "getbuffer"):
             try:
-                file = getattr(self, "getbuffer")()
+                file = getattr(file, "getbuffer")()
             except TypeError:
                 pass
         if async_:

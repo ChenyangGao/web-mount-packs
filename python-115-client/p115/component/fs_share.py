@@ -813,13 +813,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 if key:
                     children = sorted(children, key=key, reverse=payload.get("asc", True))
             return children[start:stop]
-        if async_:
-            async def wrap():
-                for attr in (await run_gen_step(gen_step, async_=True)):
-                    yield attr
-            return wrap()
-        else:
-            return iter(run_gen_step(gen_step))
+        return run_gen_step(gen_step, async_=async_, as_iter=True)
 
     @overload
     def receive(
