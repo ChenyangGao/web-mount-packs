@@ -113,7 +113,7 @@ class CloudDriveClient(Client):
         return CloudDriveUploadTaskList(self)
 
     def get_url(self, /, path: str) -> str:
-        return self.download_baseurl + quote(path, safe="?&=")
+        return self.download_baseurl + quote(path)
 
     @staticmethod
     def open(

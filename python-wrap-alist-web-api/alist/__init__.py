@@ -2406,10 +2406,18 @@ class AlistClient:
     def qbit_transfer_tasklist(self, /) -> AlistQbitTransferTaskList:
         return AlistQbitTransferTaskList(self)
 
-    def get_url(self, /, path: str) -> str:
+    def get_url(
+        self, 
+        /, 
+        path: str, 
+        ensure_ascii: bool = True, 
+    ) -> str:
         if self.base_path != "/":
             path = self.base_path + path
-        return self.origin + "/d" + quote(path, safe=":/?&=#")
+        if ensure_ascii:
+            return self.origin + "/d" + quote(path, safe="@[]:/&=!$&'()*+,;=")
+        else:
+            return self.origin + "/d" + path.translate({38: "%26", 61: "%3D"})
 
     @staticmethod
     def open(
@@ -2655,8 +2663,8 @@ class AlistPath(Mapping, PathLike[str]):
     def exists(self, /) -> bool:
         return self.fs.exists(self)
 
-    def get_url(self, /) -> str:
-        return self.fs.get_url(self)
+    def get_url(self, /, ensure_ascii: bool = True) -> str:
+        return self.fs.get_url(self, ensure_ascii=ensure_ascii)
 
     def glob(
         self, 
@@ -3915,6 +3923,7 @@ class AlistFileSystem:
         self, 
         /, 
         path: str | PathLike[str] = "", 
+        ensure_ascii: bool = True, 
         _check: bool = True, 
     ) -> str:
         if isinstance(path, AlistPath):
@@ -3922,7 +3931,7 @@ class AlistFileSystem:
         elif _check:
             path = self.abspath(path)
         path = cast(str, path)
-        return self.client.get_url(path)
+        return self.client.get_url(path, ensure_ascii=ensure_ascii)
 
     def glob(
         self, 
