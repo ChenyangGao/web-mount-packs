@@ -2415,7 +2415,7 @@ class AlistClient:
         if self.base_path != "/":
             path = self.base_path + path
         if ensure_ascii:
-            return self.origin + "/d" + quote(path, safe="@[]:/&=!$&'()*+,;=")
+            return self.origin + "/d" + quote(path, safe="@[]:/!$&'()*+,;=")
         else:
             return self.origin + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
 

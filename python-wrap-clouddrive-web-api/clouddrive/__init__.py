@@ -112,8 +112,16 @@ class CloudDriveClient(Client):
     def upload_tasklist(self, /) -> CloudDriveUploadTaskList:
         return CloudDriveUploadTaskList(self)
 
-    def get_url(self, /, path: str) -> str:
-        return self.download_baseurl + quote(path)
+    def get_url(
+        self, 
+        /, 
+        path: str, 
+        ensure_ascii: bool = True, 
+    ) -> str:
+        if ensure_ascii:
+            return self.download_baseurl + quote(path, safe="@[]:!$&'()*+,;=")
+        else:
+            return self.origin + "/d" + path.translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
 
     @staticmethod
     def open(
@@ -346,8 +354,12 @@ class CloudDrivePath(Mapping, PathLike[str]):
     def exists(self, /) -> bool:
         return self.fs.exists(self)
 
-    def get_url(self, /) -> str:
-        return self.fs.get_url(self)
+    def get_url(
+        self, 
+        /, 
+        ensure_ascii: bool = True, 
+    ) -> str:
+        return self.fs.get_url(self, ensure_ascii=ensure_ascii)
 
     def glob(
         self, 
@@ -1106,6 +1118,7 @@ class CloudDriveFileSystem:
         self, 
         /, 
         path: str | PathLike[str] = "", 
+        ensure_ascii: bool = True, 
         _check: bool = True, 
     ) -> str:
         if isinstance(path, CloudDrivePath):
@@ -1113,7 +1126,7 @@ class CloudDriveFileSystem:
         elif _check:
             path = self.abspath(path)
         path = cast(str, path)
-        return self.client.get_url(path)
+        return self.client.get_url(path, ensure_ascii=ensure_ascii)
 
     def glob(
         self, 
