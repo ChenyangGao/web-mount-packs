@@ -76,12 +76,12 @@ from blacksheep import (
     Application, Request, Response, StreamedContent
 )
 from blacksheep.server.openapi.common import ParameterInfo
+from blacksheep.server.openapi.ui import ReDocUIProvider
 from blacksheep.server.openapi.v3 import OpenAPIHandler
 from openapidocs.v3 import Info # type: ignore
 from httpx import HTTPStatusError
 from p115 import P115Client, P115Url, AVAILABLE_APPS
 
-from blacksheep.server.openapi.ui import ReDocUIProvider
 
 CRE_LINE_HEAD_SLASH_sub = re_compile(b"^(?=/)", MULTILINE).sub
 

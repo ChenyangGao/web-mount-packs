@@ -4,25 +4,30 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Recyclebin"]
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
+from typing import Literal
 
 from .client import check_response, P115Client
 
 
 class P115Recyclebin:
     "回收站"
-    __slots__ = ("client", "password")
+    __slots__ = "client", "password", "request", "async_request"
 
     def __init__(
         self, 
         client: str | P115Client, 
         /, 
         password: int | str = "", 
+        request: None | Callable = None, 
+        async_request: None | Callable = None, 
     ):
         if isinstance(client, str):
             client = P115Client(client)
         self.client = client
         self.password = password
+        self.request = request
+        self.async_request = async_request
 
     def __contains__(self, id: int | str, /) -> bool:
         ids = str(id)
@@ -58,6 +63,8 @@ class P115Recyclebin:
         self, 
         /, 
         password: None | int | str = None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         "清空回收站，如果不传入密码则用 self.password"
         if password is None:
@@ -69,6 +76,8 @@ class P115Recyclebin:
         id: int | str, 
         /, 
         default=None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ):
         "用 id 查询回收站中的文件信息"
         ids = str(id)
@@ -79,6 +88,8 @@ class P115Recyclebin:
         /, 
         offset: int = 0, 
         page_size: int = 1 << 10, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> Iterator[dict]:
         "迭代获取回收站的文件信息"
         if offset < 0:
@@ -105,6 +116,8 @@ class P115Recyclebin:
         /, 
         offset: int = 0, 
         limit: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> list[dict]:
         "获取回收站的文件信息列表"
         if limit <= 0:
@@ -134,6 +147,7 @@ class P115Recyclebin:
         self, 
         ids: int | str | Iterable[int | str], 
         /, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         "恢复已删除文件"
         if isinstance(ids, (int, str)):

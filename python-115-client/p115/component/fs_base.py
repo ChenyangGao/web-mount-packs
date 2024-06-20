@@ -1301,6 +1301,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -1312,6 +1313,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[AttrDict]:
@@ -1322,6 +1324,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Awaitable[AttrDict]:
@@ -1432,6 +1435,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> P115PathType:
@@ -1442,6 +1446,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[P115PathType]:
@@ -1451,6 +1456,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        force_directory: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> P115PathType | Awaitable[P115PathType]:
@@ -1462,7 +1468,13 @@ class P115FileSystemBase(Generic[P115PathType]):
             elif isinstance(id_or_path, dict):
                 attr = cast(AttrDict, id_or_path)
             else:
-                attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+                attr = yield partial(
+                    self.attr, 
+                    id_or_path, 
+                    pid=pid, 
+                    force_directory=force_directory, 
+                    async_=async_, 
+                )
             attr["fs"] = self
             return path_class(attr)
         return run_gen_step(gen_step, async_=async_)
@@ -1509,7 +1521,13 @@ class P115FileSystemBase(Generic[P115PathType]):
                 id_or_path = fspath(id_or_path)
             if not id_or_path or id_or_path == ".":
                 return self.id
-            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+            attr = yield partial(
+                self.attr, 
+                id_or_path, 
+                pid=pid, 
+                force_directory=True, 
+                async_=async_, 
+            )
             if self.id == attr["id"]:
                 return self.id
             elif attr["is_directory"]:

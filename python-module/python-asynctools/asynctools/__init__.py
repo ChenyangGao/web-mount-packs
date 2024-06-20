@@ -2,11 +2,11 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "as_thread", "ensure_async", "ensure_await", "ensure_coroutine", "ensure_aiter", 
     "async_map", "async_filter", "async_reduce", "async_zip", "async_chain", 
-    "call_as_aiter", "to_list", 
+    "async_all", "async_any", "call_as_aiter", "to_list", 
 ]
 
 from asyncio import to_thread
@@ -23,7 +23,12 @@ T = TypeVar("T")
 
 
 @decorated
-def as_thread(func: Callable[Args, T], /, *args, **kwds) -> Awaitable[T]:
+def as_thread(
+    func: Callable[Args, T], 
+    /, 
+    *args: Args.args, 
+    **kwds: Args.kwargs, 
+) -> Awaitable[T]:
     def wrapfunc(*args, **kwds):
         try:
             return func(*args, **kwds)
@@ -35,7 +40,7 @@ def as_thread(func: Callable[Args, T], /, *args, **kwds) -> Awaitable[T]:
 def ensure_async(
     func: Callable[Args, T | Awaitable[T]], 
     /, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> Callable[Args, Awaitable[T]]:
     if iscoroutinefunction(func):
         return func
@@ -81,7 +86,7 @@ def ensure_coroutine(o, /) -> Coroutine:
 def ensure_aiter(
     it: Iterable[T] | AsyncIterable[T], 
     /, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator[T]:
     if isinstance(it, AsyncIterable):
         return aiter(it)
@@ -125,7 +130,7 @@ async def async_map(
     iterable: Iterable | AsyncIterable, 
     /, 
     *iterables: Iterable | AsyncIterable, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator[T]:
     fn = ensure_async(func, threaded=threaded)
     if iterables:
@@ -140,7 +145,7 @@ async def async_filter(
     func: Callable[[T], bool], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
-    threaded: bool = True
+    threaded: bool = False, 
 ) -> AsyncIterator[T]:
     fn = ensure_async(func, threaded=threaded)
     async for arg in ensure_aiter(iterable, threaded=threaded):
@@ -153,7 +158,7 @@ async def async_reduce(
     iterable, 
     initial=undefined, 
     /, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator:
     ait = ensure_aiter(iterable, threaded=threaded)
     if initial is undefined:
@@ -172,7 +177,7 @@ async def async_zip(
     iterable, 
     /, 
     *iterables, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator:
     iterable = ensure_aiter(iterable, threaded=threaded)
     if iterables:
@@ -189,7 +194,7 @@ async def async_zip(
 
 async def async_chain(
     *iterables, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator:
     for it in iterables:
         async for e in ensure_aiter(it, threaded=threaded):
@@ -199,7 +204,7 @@ async def async_chain(
 async def async_chain_from_iterable(
     iterable, 
     /, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator:
     async for it in ensure_aiter(iterable, threaded=False):
         async for e in ensure_aiter(it, threaded=threaded):
@@ -208,11 +213,33 @@ async def async_chain_from_iterable(
 setattr(async_chain, "from_iterable", async_chain_from_iterable)
 
 
+async def async_all(
+    iterable, 
+    /, 
+    threaded: bool = False, 
+) -> bool:
+    async for e in ensure_aiter(iterable, threaded=threaded):
+        if not e:
+            return False
+    return True
+
+
+async def async_any(
+    iterable, 
+    /, 
+    threaded: bool = False, 
+) -> bool:
+    async for e in ensure_aiter(iterable, threaded=threaded):
+        if e:
+            return True
+    return False
+
+
 async def call_as_aiter(
     func: Callable[[], T] | Callable[[], Awaitable[T]], 
     /, 
     sentinel = undefined, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator[T]:
     func = ensure_async(func, threaded=threaded)
     try:
@@ -231,6 +258,10 @@ async def call_as_aiter(
         pass
 
 
-async def to_list(it: Iterable[T] | AsyncIterable[T], /) -> list[T]:
-    return [e async for e in ensure_aiter(it)]
+async def to_list(
+    it: Iterable[T] | AsyncIterable[T], 
+    /, 
+    threaded: bool = False, 
+) -> list[T]:
+    return [e async for e in ensure_aiter(it, threaded=threaded)]
 

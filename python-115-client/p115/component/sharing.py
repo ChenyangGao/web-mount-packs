@@ -4,7 +4,7 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Sharing"]
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from typing import Literal
 
 from .client import check_response, P115Client
@@ -13,12 +13,20 @@ from .fs import P115Path
 
 class P115Sharing:
     "自己的分享列表"
-    __slots__ = "client",
+    __slots__ = "client", "request", "async_request"
 
-    def __init__(self, client: str | P115Client, /):
+    def __init__(
+        self, 
+        client: str | P115Client, 
+        /, 
+        request: None | Callable = None, 
+        async_request: None | Callable = None, 
+    ):
         if isinstance(client, str):
             client = P115Client(client)
         self.client = client
+        self.request = request
+        self.async_request = async_request
 
     def __contains__(self, code_or_id: int | str, /) -> bool:
         if isinstance(code_or_id, str):
@@ -67,6 +75,8 @@ class P115Sharing:
         /, 
         is_asc: Literal[0, 1] = 1, 
         order: str = "file_name", 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         """创建分享链接
         :param file_ids: 文件列表，有多个时用逗号 "," 隔开或者传入可迭代器
@@ -90,14 +100,23 @@ class P115Sharing:
         })
 
     @check_response
-    def clear(self, /) -> dict:
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict:
         "清空分享列表"
         return self.client.share_update({
             "share_code": ",".join(item["share_code"] for item in self), 
             "action": "cancel", 
         })
 
-    def code_of(self, code_or_id: int | str, /) -> str:
+    def code_of(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> str:
         "获取 id 对应的分享码"
         if isinstance(code_or_id, str):
             return code_or_id
@@ -108,6 +127,8 @@ class P115Sharing:
         code_or_id: int | str, 
         /, 
         default=None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ):
         "用分享码或 id 查询分享信息"
         if isinstance(code_or_id, str):
@@ -123,6 +144,8 @@ class P115Sharing:
         /, 
         offset: int = 0, 
         page_size: int = 1 << 10, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> Iterator[dict]:
         "迭代获取分享信息"
         if offset < 0:
@@ -147,6 +170,8 @@ class P115Sharing:
         /, 
         offset: int = 0, 
         limit: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> list[dict]:
         "获取分享信息列表"
         if limit <= 0:
@@ -158,6 +183,7 @@ class P115Sharing:
         self, 
         code_or_id_s: int | str | Iterable[int | str], 
         /, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         "用分享码或 id 查询并删除分享"
         if isinstance(code_or_id_s, (int, str)):
@@ -176,6 +202,7 @@ class P115Sharing:
         self, 
         code_or_id: int | str, 
         /, 
+        async_: Literal[False, True] = False, 
         **payload, 
     ) -> dict:
         """用分享码或 id 查询并更新分享信息

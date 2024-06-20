@@ -14,7 +14,7 @@ from collections.abc import (
 )
 from copy import deepcopy
 from datetime import datetime
-from functools import partial
+from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper
 from itertools import accumulate, islice
 from json import JSONDecodeError
@@ -109,6 +109,15 @@ def normalize_info(
 
 class P115Path(P115PathBase):
     fs: P115FileSystem
+
+    @cached_property
+    def ancestors(self, /) -> list[dict]:
+        return self.fs.get_ancestors(self.id)
+
+    # TODO: 可能需要使用 python 3.12 的 @override
+    @cached_property # type: ignore
+    def path(self, /) -> str:
+        return joins([a["name"] for a in self.ancestors])
 
     @property
     def length(self, /):
@@ -1444,16 +1453,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 ancestors_paths: list[str] = [(dirname := f"{dirname}/{escape(name)}") for name in patht[1:]]
                 dirname = ""
                 ancestors_paths2: list[str] = [(dirname := f"{dirname}/{name}") for name in patht[1:]]
-                ancestors_with_slashes = tuple(accumulate("/" in name for name in patht[1:]))
+                ancestors_with_slashes: tuple[int, ...] = tuple(accumulate("/" in name for name in patht[1:]))
             else:
                 dirname = joins(ancestor_patht)
                 ancestors_paths = [(dirname := f"{dirname}/{escape(name)}") for name in patht]
                 dirname = "/".join(ancestor_patht)
                 ancestors_paths2 = [(dirname := f"{dirname}/{name}") for name in patht]
-                ancestors_with_slashes = tuple(accumulate(
-                    ("/" in name for name in patht), 
-                    initial=sum("/" in name for name in patht[:len(ancestor_patht)]), # type: ignore
-                ))[1:]
+                initial = sum("/" in name for name in ancestor_patht)
+                ancestors_with_slashes = tuple(accumulate(("/" in name for name in patht), initial=initial))[1:]
 
             path_to_id = self.path_to_id
             if path_to_id:
@@ -1599,8 +1606,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        refresh: bool = True, 
         force_directory: bool = False, 
+        refresh: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -1611,8 +1618,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        refresh: bool = True, 
         force_directory: bool = False, 
+        refresh: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[AttrDict]:
@@ -1622,8 +1629,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        refresh: bool = True, 
         force_directory: bool = False, 
+        refresh: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Awaitable[AttrDict]:

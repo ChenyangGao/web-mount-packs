@@ -5,12 +5,12 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Offline", "P115OfflineClearEnum"]
 
 from asyncio import run
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from enum import Enum
 from hashlib import sha1
 from time import time
 from types import MappingProxyType
-from typing import Self
+from typing import Literal, Self
 
 from magnet2torrent import Magnet2Torrent # type: ignore
 
@@ -40,15 +40,23 @@ class P115OfflineClearEnum(Enum):
 
 class P115Offline:
     "离线任务列表"
-    __slots__ = ("client", "_sign_time")
+    __slots__ = "client", "_sign_time", "request", "async_request"
 
     client: P115Client
     _sign_time: MappingProxyType
 
-    def __init__(self, /, client: str | P115Client):
+    def __init__(
+        self, 
+        /, 
+        client: str | P115Client, 
+        request: None | Callable = None, 
+        async_request: None | Callable = None, 
+    ):
         if isinstance(client, str):
             client = P115Client(client)
         self.client = client
+        self.request = request
+        self.async_request = async_request
 
     def __contains__(self, hash: str, /) -> bool:
         return any(item["info_hash"] == hash for item in self)
@@ -129,6 +137,8 @@ class P115Offline:
         /, 
         pid: None | int = None, 
         savepath: None | str = None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         "用（1 个或若干个）链接创建离线任务"
         payload: dict
@@ -154,6 +164,8 @@ class P115Offline:
         pid: None | int = None, 
         savepath: None | str = None, 
         predicate: None | str | Callable[[dict], bool] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         "用 BT 种子创建离线任务"
         resp = check_response(self.torrent_info(torrent_or_magnet_or_sha1_or_fid))
@@ -183,6 +195,8 @@ class P115Offline:
         self, 
         /, 
         flag: int | str | P115OfflineClearEnum = P115OfflineClearEnum.all, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         """清空离线任务列表
         :param flag: 操作目标
@@ -196,11 +210,24 @@ class P115Offline:
         flag = P115OfflineClearEnum(flag)
         return check_response(self.client.offline_clear(flag.value))
 
-    def get(self, hash: str, /, default=None):
+    def get(
+        self, 
+        hash: str, 
+        /, 
+        default=None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ):
         "用 infohash 查询离线任务"
         return next((item for item in self if item["info_hash"] == hash), default)
 
-    def iter(self, /, start_page: int = 1) -> Iterator[dict]:
+    def iter(
+        self, 
+        /, 
+        start_page: int = 1, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[dict]:
         """迭代获取离线任务
         :start_page: 开始页数，从 1 开始计数，迭代从这个页数开始，到最大页数结束
         """
@@ -224,7 +251,13 @@ class P115Offline:
                 return
             yield from resp["tasks"]
 
-    def list(self, /, page: int = 0) -> list[dict]:
+    def list(
+        self, 
+        /, 
+        page: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> list[dict]:
         """获取离线任务列表
         :param page: 获取第 `page` 页的数据，从 1 开始计数，如果小于等于 0 则返回全部
         """
@@ -237,6 +270,8 @@ class P115Offline:
         hashes: str | Iterable[str], 
         /, 
         remove_files: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> dict:
         """用 infohash 查询并移除（1 个或若干个）离线任务
         :param hashes: （1 个或若干个）离线任务的 infohash
@@ -253,7 +288,12 @@ class P115Offline:
         payload.update(self.sign_time)
         return check_response(self.client.offline_remove(payload))
 
-    def torrent_info(self, torrent_or_magnet_or_sha1_or_fid: int | bytes | str, /) -> dict:
+    def torrent_info(
+        self, 
+        torrent_or_magnet_or_sha1_or_fid: int | bytes | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict:
         """获取种子的信息
         :param torrent_or_magnet_or_sha1_or_fid: BT 种子
             - bytes: 种子的二进制数据（如果种子从未被人上传过 115，就会先被上传）

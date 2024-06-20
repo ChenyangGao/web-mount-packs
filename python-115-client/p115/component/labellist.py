@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115LabelList"]
 
-from collections.abc import Iterator
-from typing import Literal
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from functools import partial
+from typing import overload, Literal
+
+from asynctools import async_any, to_list
+from iterutils import run_gen_step
+from undefined import undefined
 
 from .client import check_response, P115Client
 from .fs import P115Path
@@ -13,45 +20,42 @@ from .fs import P115Path
 
 class P115LabelList:
     "标签列表"
-    __slots__ = "client",
+    __slots__ = "client", "request", "async_request"
 
-    def __init__(self, client: str | P115Client, /):
+    def __init__(
+        self, 
+        /, 
+        client: str | P115Client, 
+        request: None | Callable = None, 
+        async_request: None | Callable = None, 
+    ):
         if isinstance(client, str):
             client = P115Client(client)
         self.client = client
+        self.request = request
+        self.async_request = async_request
 
     def __contains__(self, id_or_name: int | str, /) -> bool:
-        if isinstance(id_or_name, int):
-            return self.client.label_edit({"id": id_or_name})["code"] != 21005
-        else:
-            name = id_or_name
-            return any(item["name"] == name for item in self.iter(keyword=name))
+        return self.has(id_or_name)
 
     def __delitem__(self, id_or_name: int | str, /):
         self.remove(id_or_name)
 
     def __getitem__(self, id_or_name: int | str, /) -> dict:
-        if isinstance(id_or_name, int):
-            id = str(id_or_name)
-            for item in self.iter():
-                if item["id"] == id:
-                    return item
-        else:
-            name = id_or_name
-            for item in self.iter(keyword=name):
-                if item["name"] == name:
-                    return item
-        raise LookupError(f"no such id: {id!r}")
+        return self.get(id_or_name, default=undefined)
 
     def __setitem__(self, id_or_name: int | str, value: str | dict, /):
         self.edit(id_or_name, value)
+
+    def __aiter__(self, /) -> AsyncIterator[dict]:
+        return self.iter(async_=True)
 
     def __iter__(self, /) -> Iterator[dict]:
         return self.iter()
 
     def __len__(self, /) -> int:
         "计算共有多少个标签"
-        return check_response(self.client.label_list({"limit": 1}))["data"]["total"]
+        return self.get_length()
 
     def __repr__(self, /) -> str:
         cls = type(self)
@@ -61,21 +65,89 @@ class P115LabelList:
             name = module + "." + name
         return f"<{name}(client={self.client!r}) at {hex(id(self))}>"
 
+    @overload
     def add(
         self, 
         /, 
         *labels: str, 
+        async_: Literal[False] = False, 
     ) -> list[dict]:
+        ...
+    @overload
+    def add(
+        self, 
+        /, 
+        *labels: str, 
+        async_: Literal[True], 
+    ) -> Awaitable[list[dict]]:
+        ...
+    def add(
+        self, 
+        /, 
+        *labels: str, 
+        async_: Literal[False, True] = False, 
+    ) -> list[dict] | Awaitable[list[dict]]:
         """添加（若干个）标签
         标签的格式是 "{label_name}" 或 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
         """
-        return check_response(self.client.label_add(*labels))["data"]
+        def gen_step():
+            resp = yield partial(
+                self.client.label_add, 
+                *labels, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            return check_response(resp)["data"]
+        return run_gen_step(gen_step, async_=async_)
 
-    def clear(self, /):
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ):
         "清空标签列表"
-        self.client.label_del(",".join(item["id"] for item in self.iter()))
+        def gen_step():
+            if async_:
+                ls = yield partial(
+                    to_list, 
+                    (item["id"] async for item in self.iter(async_=True)), 
+                )
+                ids = ",".join(ls)
+            else:
+                ids = ",".join(item["id"] for item in self.iter())
+            yield partial(
+                self.client.label_del, 
+                ids, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+        return run_gen_step(gen_step, async_=async_)
 
-    def edit(self, id_or_name: int | str, value: str | dict, /) -> dict:
+    @overload
+    def edit(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        value: str | dict, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def edit(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        value: str | dict, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
+    def edit(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        value: str | dict, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Awaitable[dict]:
         """用名称或 id 查询并编辑标签
         如果 value 是 str，则视为修改标签的名称，否则视为 payload
         payload:
@@ -83,26 +155,176 @@ class P115LabelList:
             - color: str = <default> # 标签颜色，支持 css 颜色语法
             - sort: int = <default>  # 序号
         """
-        id = self.id_of(id_or_name)
-        if isinstance(value, str):
-            payload = {"id": id, "name": value}
-        else:
-            payload = {**value, "id": id}
-        return self.client.label_edit(payload)
+        def gen_step():
+            id = yield partial(
+                self.id_of, 
+                id_or_name, 
+                async_=async_, 
+            )
+            if isinstance(value, str):
+                payload = {"id": id, "name": value}
+            else:
+                payload = {**value, "id": id}
+            return (yield partial(
+                self.client.label_edit, 
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
-    def get(self, id_or_name: int | str, /, default=None):
+    def get(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        default=None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ):
         "用名称或 id 查询标签信息"
-        try:
-            return self[id_or_name]
-        except LookupError:
+        def gen_step():
+            sentinel = object()
+            if isinstance(id_or_name, int):
+                id = str(id_or_name)
+                if async_:
+                    ret = yield partial(
+                        anext, 
+                        (item async for item in self.iter(async_=True) if item["id"] == id), 
+                        sentinel, 
+                    )
+                else:
+                    ret = yield partial(
+                        next, 
+                        (item for item in self.iter() if item["id"] == id), 
+                        sentinel, 
+                    )
+            else:
+                name = id_or_name
+                if async_:
+                    ret = yield partial(
+                        anext, 
+                        (item async for item in self.iter(keyword=name, async_=True) if item["name"] == name), 
+                        sentinel, 
+                    )
+                else:
+                    ret = yield partial(
+                        next, 
+                        (item for item in self.iter(keyword=name) if item["name"] == name), 
+                        sentinel, 
+                    )
+            if ret is not sentinel:
+                return ret
+            if default is undefined:
+                raise LookupError(f"no such item: {id_or_name!r}")
             return default
+        return run_gen_step(gen_step, async_=async_)
 
-    def id_of(self, id_or_name: int | str, /) -> int:
+    @overload
+    def get_length(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> int:
+        ...
+    @overload
+    def get_length(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[int]:
+        ...
+    def get_length(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Awaitable[int]:
+        def gen_step():
+            resp = yield partial(
+                self.client.label_list, 
+                {"limit": 1}, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            return check_response(resp)["data"]["total"]
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def has(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> bool:
+        ...
+    @overload
+    def has(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[bool]:
+        ...
+    def has(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Awaitable[bool]:
+        def gen_step():
+            if isinstance(id_or_name, int):
+                resp = yield partial(
+                    self.client.label_edit, 
+                    {"id": id_or_name}, 
+                    request=self.async_request if async_ else self.request, 
+                    async_=async_, 
+                )
+                return resp["code"] != 21005
+            else:
+                name = id_or_name
+                if async_:
+                    return (yield partial(
+                        async_any, 
+                        (item["name"] == name async for item in self.iter(keyword=name, async_=True)), 
+                    ))
+                else:
+                    return any(item["name"] == name for item in self.iter(keyword=name))
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def id_of(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> int:
+        ...
+    @overload
+    def id_of(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[int]:
+        ...
+    def id_of(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Awaitable[int]:
         "获取名称对应的 id"
-        if isinstance(id_or_name, int):
-            return id_or_name
-        return self[id_or_name]["id"]
+        def gen_step():
+            if isinstance(id_or_name, int):
+                return id_or_name
+            return (yield partial(
+                self.get, 
+                id_or_name, 
+                default=undefined, 
+                async_=async_, 
+            ))["id"]
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def iter(
         self, 
         /, 
@@ -111,7 +333,34 @@ class P115LabelList:
         keyword: str = "", 
         sort: Literal["", "name", "create_time", "update_time"] = "", 
         order: Literal["", "asc", "desc"] = "", 
+        *, 
+        async_: Literal[False] = False, 
     ) -> Iterator[dict]:
+        ...
+    @overload
+    def iter(
+        self, 
+        /, 
+        offset: int = 0, 
+        page_size: int = 11500, 
+        keyword: str = "", 
+        sort: Literal["", "name", "create_time", "update_time"] = "", 
+        order: Literal["", "asc", "desc"] = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[dict]:
+        ...
+    def iter(
+        self, 
+        /, 
+        offset: int = 0, 
+        page_size: int = 11500, 
+        keyword: str = "", 
+        sort: Literal["", "name", "create_time", "update_time"] = "", 
+        order: Literal["", "asc", "desc"] = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[dict] | AsyncIterator[dict]:
         """迭代获取标签信息
         :param offset: 索引偏移，从 0 开始
         :param page_size: 一页大小
@@ -133,26 +382,72 @@ class P115LabelList:
             "sort": sort, 
             "order": order, 
         }
-        count = 0
-        while True:
-            resp = check_response(self.client.label_list(payload))
-            total = resp["data"]["total"]
-            if count == 0:
-                count = total
-            elif count != total:
-                raise RuntimeError("detected count changes during iteration")
-            ls = resp["data"]["list"]
-            yield from ls
-            if len(ls) < page_size:
-                break
-            payload["offset"] += page_size # type: ignore
+        label_list = self.client.label_list
+        if async_:
+            async def request():
+                count = 0
+                while True:
+                    resp = await check_response(label_list(
+                        payload, 
+                        request=self.async_request, 
+                        async_=True, 
+                    ))
+                    total = resp["data"]["total"]
+                    if count == 0:
+                        count = total
+                    elif count != total:
+                        raise RuntimeError("detected count changes during iteration")
+                    ls = resp["data"]["list"]
+                    for item in ls:
+                        yield item
+                    if len(ls) < page_size:
+                        break
+                    payload["offset"] += page_size # type: ignore
+        else:
+            def request():
+                count = 0
+                while True:
+                    resp = check_response(label_list(
+                        payload, 
+                        request=self.request, 
+                    ))
+                    total = resp["data"]["total"]
+                    if count == 0:
+                        count = total
+                    elif count != total:
+                        raise RuntimeError("detected count changes during iteration")
+                    ls = resp["data"]["list"]
+                    yield from ls
+                    if len(ls) < page_size:
+                        break
+                    payload["offset"] += page_size # type: ignore
+        return request()
 
+    @overload
     def iter_files(
         self, 
         id_or_name: int | str, 
         /, 
+        async_: Literal[False] = False, 
         **search_kwargs, 
     ) -> Iterator[P115Path]:
+        ...
+    @overload
+    def iter_files(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[True], 
+        **search_kwargs, 
+    ) -> AsyncIterator[P115Path]:
+        ...
+    def iter_files(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **search_kwargs, 
+    ) -> Iterator[P115Path] | AsyncIterator[P115Path]:
         """用名字或 id 搜索打上此标签的文件，返回迭代器
         search_kwargs:
             - aid: int | str = 1
@@ -189,10 +484,22 @@ class P115LabelList:
                 # - 应用: 6
                 # - 书籍: 7
         """
-        search_kwargs["file_label"] = self.id_of(id_or_name)
-        search_kwargs.setdefault("cid", 0)
-        return self.client.fs.search(**search_kwargs)
+        def gen_step():
+            search_kwargs["file_label"] = yield partial(
+                self.id_of, 
+                id_or_name, 
+                async_=async_, 
+            )
+            search_kwargs.setdefault("cid", 0)
+            return (yield partial(
+                self.client.fs.search, 
+                **search_kwargs, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            ))
+        return run_gen_step(gen_step, async_=async_, as_iter=True)
 
+    @overload
     def list(
         self, 
         /, 
@@ -201,7 +508,34 @@ class P115LabelList:
         keyword: str = "", 
         sort: Literal["", "name", "create_time", "update_time"] = "", 
         order: Literal["", "asc", "desc"] = "", 
+        *, 
+        async_: Literal[False] = False, 
     ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        keyword: str = "", 
+        sort: Literal["", "name", "create_time", "update_time"] = "", 
+        order: Literal["", "asc", "desc"] = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[list[dict]]:
+        ...
+    def list(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        keyword: str = "", 
+        sort: Literal["", "name", "create_time", "update_time"] = "", 
+        order: Literal["", "asc", "desc"] = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> list[dict] | Awaitable[list[dict]]:
         """获取标签信息列表
         :param offset: 索引偏移，从 0 开始
         :param limit: 返回数据条数，如果小于等于 0，则不限
@@ -212,23 +546,75 @@ class P115LabelList:
             - 更新时间: "update_time"
         :param order: 排序顺序："asc"(升序), "desc"(降序)
         """
-        if limit <= 0:
-            return list(self.iter(
-                offset, 
-                keyword=keyword, 
-                sort=sort, 
-                order=order, 
-            ))
-        return check_response(self.client.label_list({
-            "offset": offset, 
-            "limit": limit, 
-            "keyword": keyword, 
-            "sort": sort, 
-            "order": order, 
-        }))["data"]["list"]
+        def gen_step():
+            if limit <= 0:
+                if async_:
+                    return (yield partial(
+                        to_list, 
+                        self.iter(
+                            offset, 
+                            keyword=keyword, 
+                            sort=sort, 
+                            order=order, 
+                            async_=True, 
+                        ), 
+                    ))
+                else:
+                    return list(self.iter(
+                        offset, 
+                        keyword=keyword, 
+                        sort=sort, 
+                        order=order, 
+                    ))
+            resp = yield partial(
+                self.client.label_list, 
+                {
+                    "offset": offset, 
+                    "limit": limit, 
+                    "keyword": keyword, 
+                    "sort": sort, 
+                    "order": order, 
+                }, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            return check_response(resp)["data"]["list"]
+        return run_gen_step(gen_step, async_=async_)
 
-    def remove(self, id_or_name: int | str, /) -> dict:
+    @overload
+    def remove(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def remove(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
+    def remove(
+        self, 
+        id_or_name: int | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Awaitable[dict]:
         """用名字或 id 查询并删除标签"
         """
-        return check_response(self.client.label_del(self.id_of(id_or_name)))
+        def gen_step():
+            id = yield partial(self.id_of, id_or_name, async_=async_)
+            resp = yield partial(
+                self.client.label_del, 
+                id, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            return check_response(resp)
+        return run_gen_step(gen_step, async_=async_)
+
+    set = edit
 
