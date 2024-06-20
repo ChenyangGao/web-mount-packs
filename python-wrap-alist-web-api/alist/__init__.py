@@ -2417,7 +2417,7 @@ class AlistClient:
         if ensure_ascii:
             return self.origin + "/d" + quote(path, safe="@[]:/&=!$&'()*+,;=")
         else:
-            return self.origin + "/d" + path.translate({38: "%26", 61: "%3D"})
+            return self.origin + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
 
     @staticmethod
     def open(
