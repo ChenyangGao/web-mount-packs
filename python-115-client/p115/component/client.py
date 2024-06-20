@@ -27,7 +27,7 @@ from http.cookies import Morsel
 from inspect import iscoroutinefunction
 from itertools import chain, count, takewhile
 from json import dumps, loads
-from os import fsdecode, fspath, fstat, stat, PathLike
+from os import fsdecode, fspath, fstat, isatty, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
 from socket import getdefaulttimeout, setdefaulttimeout
@@ -718,7 +718,7 @@ class P115Client:
                 if open_qrcode_on_console:
                     qr = QRCode(border=1)
                     qr.add_data(qrcode)
-                    qr.print_ascii(tty=True)
+                    qr.print_ascii(tty=isatty(1))
                 else:
                     await startfile_async("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"])
                 while True:
@@ -753,7 +753,7 @@ class P115Client:
             if open_qrcode_on_console:
                 qr = QRCode(border=1)
                 qr.add_data(qrcode)
-                qr.print_ascii(tty=True)
+                qr.print_ascii(tty=isatty(1))
             else:
                 startfile("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"])
             while True:
@@ -4143,10 +4143,10 @@ class P115Client:
             info = check_response(resp)["data"]
             file_id = payload["file_id"]
             if not info:
-                raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}")
+                raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}, with response {resp}")
             url = info["url"]
             if strict and not url:
-                raise IsADirectoryError(errno.EISDIR, f"{file_id} is a directory")
+                raise IsADirectoryError(errno.EISDIR, f"{file_id} is a directory, with response {resp}")
             return P115Url(
                 url["url"] if url else "", 
                 id=int(info["fid"]), 
@@ -4317,7 +4317,7 @@ class P115Client:
                 for fid, info in resp["data"].items():
                     url = info["url"]
                     if strict and not url:
-                        raise IsADirectoryError(errno.EISDIR, f"{fid} is a directory")
+                        raise IsADirectoryError(errno.EISDIR, f"{fid} is a directory, with response {resp}")
                     return P115Url(
                         url["url"] if url else "", 
                         id=int(fid), 
@@ -4327,7 +4327,7 @@ class P115Client:
                         is_directory=not url,
                         headers=resp["headers"], 
                     )
-                raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}")
+                raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}, with response {resp}")
         if async_:
             async def async_request() -> P115Url:
                 return get_url(await cast(Awaitable[dict], resp)) 

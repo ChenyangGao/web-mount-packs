@@ -13,19 +13,19 @@ __doc__ = """\
     - 不能直接请求直链，需要携带特定的 Cookie 和 User-Agent
 """
 
-from argparse import ArgumentParser, RawTextHelpFormatter
-from warnings import warn
-
-parser = ArgumentParser(
-    formatter_class=RawTextHelpFormatter, 
-    description=__doc__, 
-)
-parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
-parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
-parser.add_argument("-pc", "--path-persistence-commitment", action="store_true", help="路径持久性承诺，只要你能保证文件不会被移动（可新增删除，但对应的路径不可被其他文件复用），打开此选项，用路径请求直链时，可节约一半时间")
-
 if __name__ == "__main__":
+    from argparse import ArgumentParser, RawTextHelpFormatter
+    from warnings import warn
+
+    parser = ArgumentParser(
+        formatter_class=RawTextHelpFormatter, 
+        description=__doc__, 
+    )
+    parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
+    parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
+    parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为不可并发，这样就可减少 405 响应，以降低扫码的频率")
+    parser.add_argument("-pc", "--path-persistence-commitment", action="store_true", help="路径持久性承诺，只要你能保证文件不会被移动（可新增删除，但对应的路径不可被其他文件复用），打开此选项，用路径请求直链时，可节约一半时间")
+
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
     parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
     parser.add_argument("-r", "--reload", action="store_true", help="此项目所在目录下的文件发生变动时重启，此选项仅用于调试")
@@ -35,16 +35,31 @@ if __name__ == "__main__":
     if args.version:
         print(__version_str__)
         raise SystemExit(0)
-else:
-    from sys import argv
 
-    try:
-        args_start = argv.index("--")
-        args, unknown = parser.parse_known_args(argv[args_start+1:])
-        if unknown:
-            warn(f"unknown args passed: {unknown}")
-    except ValueError:
-        args = parser.parse_args([])
+    cookies = args.cookies
+    cookies_path = args.cookies_path
+    lock_dir_methods = args.lock_dir_methods
+    path_persistence_commitment = args.path_persistence_commitment
+else:
+    from os import environ
+
+    print("""
+\t\t🌍 支持如下环境变量 🛸
+
+    - \x1b[1m\x1b[32mcookies\x1b[0m: 115 登录 cookies，优先级高于 \x1b[1m\x1b[32mcookies_path\x1b[0m
+    - \x1b[1m\x1b[32mcookies_path\x1b[0m: 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 \x1b[4m\x1b[34m115-cookies.txt\x1b[0m 文件中获取，此文件可以在如下路径之一
+        1. 当前工作目录
+        2. 用户根目录
+        3. 此脚本所在目录 下
+    - \x1b[1m\x1b[32mlock_dir_methods\x1b[0m: （\x1b[1m\x1b传入任何值都视为设置，包括空字符串\x1b[0m）对 115 的文件系统进行增删改查的操作（\x1b[1m\x1b但不包括上传和下载\x1b[0m）进行加锁，限制为不可并发，这样就可减少 405 响应，以降低扫码的频率
+    - \x1b[1m\x1b[32mpath_persistence_commitment\x1b[0m: （\x1b[1m\x1b传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1m\x1b可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
+""")
+
+    cookies = environ.get("cookies")
+    cookies_path = environ.get("cookies_path")
+    lock_dir_methods = environ.get("lock_dir_methods") is not None
+    path_persistence_commitment = environ.get("path_persistence_commitment") is not None
+
 
 from asyncio import Lock
 from collections.abc import Mapping, MutableMapping
@@ -69,11 +84,6 @@ from p115 import P115Client, P115Url, AVAILABLE_APPS
 from blacksheep.server.openapi.ui import ReDocUIProvider
 
 CRE_LINE_HEAD_SLASH_sub = re_compile(b"^(?=/)", MULTILINE).sub
-
-cookies = args.cookies
-cookies_path = args.cookies_path
-lock_dir_methods = args.lock_dir_methods
-path_persistence_commitment = args.path_persistence_commitment
 
 cookies_path_mtime = 0
 web_cookies = ""
