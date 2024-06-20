@@ -53,12 +53,12 @@ from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from re import compile as re_compile, MULTILINE
 from sys import exc_info
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 from cachetools import LRUCache, TTLCache
 from blacksheep import (
     get, text, html, file, redirect, 
-    Application, Request, Response, Route, StreamedContent
+    Application, Request, Response, StreamedContent
 )
 from blacksheep.server.openapi.common import ParameterInfo
 from blacksheep.server.openapi.v3 import OpenAPIHandler
@@ -66,6 +66,9 @@ from openapidocs.v3 import Info # type: ignore
 from httpx import HTTPStatusError
 from p115 import P115Client, P115Url, AVAILABLE_APPS
 
+from blacksheep.server.openapi.ui import ReDocUIProvider
+
+CRE_LINE_HEAD_SLASH_sub = re_compile(b"^(?=/)", MULTILINE).sub
 
 cookies = args.cookies
 cookies_path = args.cookies_path
@@ -121,12 +124,13 @@ url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(64, ttl=0.3)
 
 
 app = Application()
+logger = getattr(app, "logger")
 docs = OpenAPIHandler(info=Info(
     title="115 filelist web api docs", 
     version=__version_str__, 
 ))
+docs.ui_providers.append(ReDocUIProvider())
 docs.bind_app(app)
-Route.value_patterns["rest"] = "[\s\S]*"
 
 
 def format_bytes(
@@ -162,15 +166,14 @@ async def relogin(exc=None):
                     cookies_path_mtime = mtime
                     need_update = False
             except FileNotFoundError:
-                app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺\x1b[0m") # type: ignore
+                logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺\x1b[0m")
         if need_update:
             if exc is None:
-                app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码\x1b[0m") # type: ignore
+                logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码\x1b[0m")
             else:
-                app.logger.error( # type: ignore
-                    """{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
                     prompt = "\x1b[1m\x1b[33m[SCAN] 🤖 重新扫码：\x1b[0m", 
-                    exc    = f"    ├ \x1b[31m{type(exc).__qualname__}\x1b[0m: {exc}")
+                    exc    = f"    ├ \x1b[31m{type(exc).__module__}.{type(exc).__qualname__}\x1b[0m: {exc}")
                 )
             await client.login_another_app(
                 device, 
@@ -210,7 +213,7 @@ def normalize_attr(
     data = {k: attr[k] for k in KEYS if k in attr}
     if not attr["is_directory"]:
         pickcode = attr["pickcode"]
-        url = f"{origin}/api/download{quote(attr['path'])}?pickcode={pickcode}"
+        url = f"{origin}/api/download{quote(attr['path'], safe=':/')}?pickcode={pickcode}"
         short_url = f"{origin}/api/download?pickcode={pickcode}"
         if attr["violated"] and attr["size"] < 1024 * 1024 * 115:
             url += "&web=true"
@@ -239,8 +242,13 @@ def redirect_exception_response(func, /):
     return update_wrapper(wrapper, func)
 
 
+@docs(responses={
+    200: "返回对应文件或目录的信息", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/attr")
-@get("/api/attr/{rest:path2}")
+@get("/api/attr/{path:path2}")
 @redirect_exception_response
 async def get_attr(
     request: Request, 
@@ -254,18 +262,22 @@ async def get_attr(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    attr = await call_wrap(fs.attr, (path or unquote(path2)) if id < 0 else id)
+    attr = await call_wrap(fs.attr, (path or path2) if id < 0 else id)
     origin = f"{request.scheme}://{request.host}"
     return normalize_attr(attr, origin)
 
 
+@docs(responses={
+    200: "罗列对应目录", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/list")
-@get("/api/list/{rest:path2}")
+@get("/api/list/{path:path2}")
 @redirect_exception_response
 async def get_list(
     request: Request, 
@@ -279,12 +291,11 @@ async def get_list(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    children = await call_wrap(fs.listdir_attr, (path or unquote(path2)) if id < 0 else id)
+    children = await call_wrap(fs.listdir_attr, (path or path2) if id < 0 else id)
     origin = f"{request.scheme}://{request.host}"
     return [
         normalize_attr(attr, origin)
@@ -292,8 +303,13 @@ async def get_list(
     ]
 
 
+@docs(responses={
+    200: "返回对应文件或目录的祖先节点列表（包含自己）", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/ancestors")
-@get("/api/ancestors/{rest:path2}")
+@get("/api/ancestors/{path:path2}")
 @redirect_exception_response
 async def get_ancestors(
     pickcode: str = "", 
@@ -306,16 +322,20 @@ async def get_ancestors(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    return await call_wrap(fs.get_ancestors, (path or unquote(path2)) if id < 0 else id)
+    return await call_wrap(fs.get_ancestors, (path or path2) if id < 0 else id)
 
 
+@docs(responses={
+    200: "返回对应文件或目录的备注", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/desc")
-@get("/api/desc/{rest:path2}")
+@get("/api/desc/{path:path2}")
 @redirect_exception_response
 async def get_desc(
     pickcode: str = "", 
@@ -328,16 +348,20 @@ async def get_desc(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
     """
     if pickcode:
         id = await call_wrap(fs.get_id_from_pickcode, pickcode)
-    return html(await call_wrap(fs.desc, (path or unquote(path2)) if id < 0 else id))
+    return html(await call_wrap(fs.desc, (path or path2) if id < 0 else id))
 
 
+@docs(responses={
+    200: "返回对应文件的下载链接", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/url")
-@get("/api/url/{rest:path2}")
+@get("/api/url/{path:path2}")
 @redirect_exception_response
 async def get_url(
     request: Request, 
@@ -352,12 +376,12 @@ async def get_url(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
+    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     """
     user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
     if not pickcode:
-        pickcode = await call_wrap(fs.get_pickcode, (path or unquote(path2)) if id < 0 else id)
+        pickcode = await call_wrap(fs.get_pickcode, (path or path2) if id < 0 else id)
     try:
         url = url_cache[(pickcode, user_agent)]
     except KeyError:
@@ -370,8 +394,13 @@ async def get_url(
     return {"url": url, "headers": url["headers"]}
 
 
+@docs(responses={
+    200: "下载对应文件", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/download")
-@get("/api/download/{rest:path2}")
+@get("/api/download/{path:path2}")
 @redirect_exception_response
 async def file_download(
     request: Request, 
@@ -386,8 +415,8 @@ async def file_download(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
+    :param web: 是否使用 web 接口获取下载链接。如果文件被封禁，但小于 115 MB，启用此选项可成功下载文件
     """
     resp = await get_url.__wrapped__(request, pickcode, id, path, path2, web=web)
     url = resp["url"]
@@ -414,8 +443,13 @@ async def file_download(
     return redirect(url)
 
 
+@docs(responses={
+    200: "返回对应文件的 m3u8 文件", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
 @get("/api/m3u8")
-@get("/api/m3u8/{rest:path2}")
+@get("/api/m3u8/{path:path2}")
 @redirect_exception_response
 async def file_m3u8(
     request: Request, 
@@ -430,13 +464,13 @@ async def file_m3u8(
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
-    :param definition: 分辨率。<br />&nbsp;&nbsp;3 - HD<br />&nbsp;&nbsp;4 - UD
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
+    :param definition: 分辨率。<br />&nbsp;&nbsp;3 - HD<br />&nbsp;&nbsp;4 - UD
     """
     global web_cookies
     user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
     if not pickcode:
-        pickcode = await call_wrap(fs.get_pickcode, (path or unquote(path2)) if id < 0 else id)
+        pickcode = await call_wrap(fs.get_pickcode, (path or path2) if id < 0 else id)
     url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
     async with web_login_lock:
         if not web_cookies:
@@ -468,7 +502,7 @@ async def file_m3u8(
         async_=True, 
     )
     return file(
-        re_compile(b"^(?=/)", MULTILINE).sub(b'https://cpats01.115.com', data), 
+        CRE_LINE_HEAD_SLASH_sub(b"https://cpats01.115.com", data), 
         content_type="application/x-mpegurl", 
         file_name=f"{pickcode}.m3u8", 
     )
