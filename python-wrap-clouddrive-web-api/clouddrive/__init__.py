@@ -121,7 +121,7 @@ class CloudDriveClient(Client):
         if ensure_ascii:
             return self.download_baseurl + quote(path, safe="@[]:!$&'()*+,;=")
         else:
-            return self.origin + "/d" + path.translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
+            return self.download_baseurl + path.translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
 
     @staticmethod
     def open(

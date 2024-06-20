@@ -175,11 +175,11 @@ __all__ = ["Client"]
 
 from functools import cached_property
 from typing import Any, Iterator, Never, Optional
+from urllib.parse import urlsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
 from grpc import insecure_channel, Channel # type: ignore
 from grpclib.client import Channel as AsyncChannel # type: ignore
-from yarl import URL
 
 import pathlib, sys
 PROTO_DIR = str(pathlib.Path(__file__).parent / "proto")
@@ -193,7 +193,7 @@ import CloudDrive_grpc # type: ignore
 
 class Client:
     "clouddrive client that encapsulates grpc APIs"
-    origin: URL
+    origin: str
     username: str
     password: str
     download_baseurl: str
@@ -202,14 +202,17 @@ class Client:
     def __init__(
         self, 
         /, 
-        origin: str | URL = "http://localhost:19798", 
+        origin: str = "http://localhost:19798", 
         username: str = "", 
         password: str = "", 
     ):
-        origin = URL(str(origin).rstrip("/"))
+        origin = origin.rstrip("/")
+        urlp = urlsplit(origin)
+        scheme = urlp.scheme or "http"
+        netloc = urlp.netloc or "localhost:19798"
         self.__dict__.update(
             origin = origin, 
-            download_baseurl = f"{origin}/static/http/{origin.authority}/False/", 
+            download_baseurl = f"{scheme}://{netloc}/static/{scheme}/{netloc}/False/", 
             username = username, 
             password = password, 
             metadata = [], 

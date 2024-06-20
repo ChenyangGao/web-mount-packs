@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clouddrive"
-version = "0.0.12.0.2"
+version = "0.0.12.0.4"
 description = "Python wrapper for CloudDrive."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -40,8 +40,6 @@ python-filewrap = ">=0.1"
 python-httpfile = "*"
 python-urlopen = "*"
 requests = "*" # ?
-
-yarl = "*"
 
 [tool.poetry.scripts]
 python-clouddrive = "clouddrive.__main__:main"
