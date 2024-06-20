@@ -57,11 +57,11 @@ def normalize_info(
         parent_id = info["pid"]
         is_directory = True
     info2 =  {
+        "id": int(fid), 
+        "parent_id": int(parent_id), 
         "name": info["n"], 
         "is_directory": is_directory, 
         "size": info.get("s"), 
-        "id": int(fid), 
-        "parent_id": int(parent_id), 
         "sha1": info.get("sha"), 
     }
     for k1, k2, k3 in (
@@ -1289,7 +1289,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     "open_time": last_update, 
                     "ico": "folder", 
                     "fs": self, 
-                    "ancestors": [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}], 
+                    "ancestors": [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}], 
                 }
             attr_cache = self.attr_cache
             get_version = self.get_version
@@ -1337,19 +1337,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if pid:
                     ancestors = attr["ancestors"] = yield partial(self._dir_get_ancestors, pid, async_=async_)
                     ancestors.append({
-                        "name": attr["name"], 
                         "id": attr["id"], 
                         "parent_id": attr["parent_id"], 
+                        "name": attr["name"], 
                         "is_directory": attr["is_directory"], 
                     })
                     path = attr["path"] = joins([a["name"] for a in ancestors])
                 else:
                     attr["ancestors"] = [
-                        {"name": "", "id": 0, "parent_id": 0, "is_directory": True}, 
+                        {"id": 0, "parent_id": 0, "name": "", "is_directory": True}, 
                         {
-                            "name": attr["name"], 
                             "id": attr["id"], 
                             "parent_id": attr["parent_id"], 
+                            "name": attr["name"], 
                             "is_directory": attr["is_directory"], 
                         }, 
                     ]
@@ -1581,13 +1581,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         async_: Literal[False, True] = False, 
     ) -> list[dict] | Awaitable[list[dict]]:
         def gen_step():
-            ls = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
+            ls = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
             if id:
                 resp = yield partial(self.fs_files, {"cid": id, "limit": 1}, async_=async_)
                 ls.extend({
-                    "name": p["name"], 
                     "id": int(p["cid"]), 
                     "parent_id": int(p["pid"]), 
+                    "name": p["name"], 
                     "is_directory": True, 
                 } for p in resp["path"][1:])
             return ls
@@ -1867,12 +1867,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                     async_=True, 
                                 )
                         resp = await get_files(payload, async_=True)
-                        ancestors = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
+                        ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
                         ancestors.extend(
                             {
-                                "name": p["name"], 
                                 "id": int(p["cid"]), 
                                 "parent_id": int(p["pid"]), 
+                                "name": p["name"], 
                                 "is_directory": True, 
                             } for p in resp["path"][1:]
                         )
@@ -2032,12 +2032,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                 request=self.request, 
                             )
                     resp = get_files(payload)
-                    ancestors = [{"name": "", "id": 0, "parent_id": 0, "is_directory": True}]
+                    ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
                     ancestors.extend(
                         {
-                            "name": p["name"], 
                             "id": int(p["cid"]), 
                             "parent_id": int(p["pid"]), 
+                            "name": p["name"], 
                             "is_directory": True, 
                         } for p in resp["path"][1:]
                     )
@@ -3373,6 +3373,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 parent = {
                     "id": delid, 
                     "parent_id": id, 
+                    "name": files["path"][-1]["name"], 
                     "is_directory": True, 
                     "path": "/" + joins([p["name"] for p in files["path"][1:]]), 
                 }
