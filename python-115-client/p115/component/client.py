@@ -500,6 +500,34 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
+    def login_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def login_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def login_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取登录信息
+        GET https://proapi.115.com/pc/user/login_info
+        """
+        api = "https://proapi.115.com/pc/user/login_info"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
     def login_online(
         self, 
         /, 
@@ -3728,9 +3756,9 @@ class P115Client:
             - limit: int = 1000
             - show_type: int = 0
                 # 筛选类型，有多个则用逗号 ',' 隔开:
-                # 0: all
-                # 1: upload_file
-                # 2: browse_document
+                # 0: 所有
+                # 1: 增、删、改、移动、上传、接收、设置标签等文件系统操作
+                # 2: 浏览文件
                 # 3: <UNKNOWN>
                 # 4: account_security
             - type: int = <default>
@@ -3783,18 +3811,24 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
-        """获取增删改操作记录明细
+        """获取 life_list 操作记录明细
         payload:
             - type: str
                 # 操作类型
-                # - "new_folder":    新增文件夹
-                # - "copy_folder":   复制文件夹
-                # - "folder_rename": 文件夹改名
-                # - "move_file":     移动文件或文件夹
-                # - "delete_file":   删除文件或文件夹
-                # - "upload_file":   上传文件
-                # - "rename_file":   文件改名（未实现）
-                # - "copy_file":     复制文件（未实现）
+                # - "browser_image":     浏览图片
+                # - "browser_video":     浏览视频
+                # - "browser_document":  浏览文件
+                # - "new_folder":        新增文件夹
+                # - "copy_folder":       复制文件夹
+                # - "folder_rename":     文件夹改名
+                # - "folder_label":      文件夹设置标签
+                # - "star_file":         设置星标
+                # - "move_file":         移动文件或文件夹
+                # - "delete_file":       删除文件或文件夹
+                # - "upload_file":       上传文件
+                # - "upload_image_file": 上传图片
+                # - "rename_file":       文件改名（未实现）
+                # - "copy_file":         复制文件（未实现）
             - limit: int = 32
             - offset: int = 0
             - date: str = <default> # 默认为今天，格式为 yyyy-mm-dd
@@ -5739,6 +5773,34 @@ class P115Client:
             headers, request_kwargs["data"] = encode_multipart_data(data, {"file": file})
             request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
             return self.request(url=api, method="POST", async_=async_, **request_kwargs)
+
+    @overload
+    def upload_key(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_key(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def upload_key(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取 user_key
+        GET https://proapi.115.com/android/2.0/user/upload_key
+        """
+        api = "https://proapi.115.com/android/2.0/user/upload_key"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
     def upload_init(

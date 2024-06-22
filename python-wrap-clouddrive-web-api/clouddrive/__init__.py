@@ -13,7 +13,7 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 12)
 __all__ = [
-    "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
+    "CLOUDDRIVE_API_MAP", "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
     "CloudDriveDownloadTaskList", "CloudDriveUploadTaskList", 
 ]
 
@@ -43,7 +43,7 @@ from dateutil.parser import parse as dt_parse
 from google.protobuf.json_format import MessageToDict # type: ignore
 from grpc import StatusCode, RpcError # type: ignore
 
-from .client import Client
+from .client import Client, CLOUDDRIVE_API_MAP
 import CloudDrive_pb2 # type: ignore
 
 from filewrap import SupportsRead, SupportsWrite

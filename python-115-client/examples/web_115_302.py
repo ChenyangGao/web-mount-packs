@@ -75,8 +75,8 @@ parser.add_argument("-pc", "--path-persistence-commitment", action="store_true",
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 
 if __name__ == "__main__":
-    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
-    parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值 80")
+    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
+    parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值：80")
     parser.add_argument("-d", "--debug", action="store_true", help="启用 flask 的 debug 模式")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 

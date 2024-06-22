@@ -103,6 +103,7 @@ for name, meta in messages.items():
         dq.extend(messages[ref]["refers"]-refs) # type: ignore
 
 method_defs = []
+method_map = {}
 for name, meta in rpcs.items():
     refs = set()
     argspec = meta["argspec"]
@@ -125,6 +126,7 @@ for name, meta in rpcs.items():
         refs.add(rettype)
         refs.update(messages[rettype]["refers"])
     if argtype == "google.protobuf.Empty":
+        arg_anno = "None"
         method_header = f"def {name}(self, /, async_: bool = False) -> {ret_anno}:"
         method_body = f"return (self.async_stub if async_ else self.stub).{name}(Empty(), metadata=self.metadata)"
     else:
@@ -142,6 +144,7 @@ for name, meta in rpcs.items():
         refs.update(messages[argtype]["refers"])
         method_header = f"def {name}(self, arg: {arg_anno}, /, async_: bool = False) -> {ret_anno}:"
         method_body = f"return (self.async_stub if async_ else self.stub).{name}(arg, metadata=self.metadata)"
+    method_map[name] = "{%s}" % ", ".join(f'"{k}": {v}' for k, v in (("argument", arg_anno), ("return", ret_anno)) if v != "None")
     method_doc_parts = [
         CRE_comment_prefix_sub("", meta["comment"]), 
         " protobuf rpc definition ".center(64, "-"), 
@@ -171,15 +174,16 @@ file.write("""\
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["Client"]
+__all__ = ["Client", "CLOUDDRIVE_API_MAP"]
 
 from functools import cached_property
 from typing import Any, Iterator, Never, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
 from grpc import insecure_channel, Channel # type: ignore
 from grpclib.client import Channel as AsyncChannel # type: ignore
+from yarl import URL
 
 import pathlib, sys
 PROTO_DIR = str(pathlib.Path(__file__).parent / "proto")
@@ -191,9 +195,14 @@ import CloudDrive_pb2_grpc # type: ignore
 import CloudDrive_grpc # type: ignore
 
 
+CLOUDDRIVE_API_MAP = {
+""" + "\n".join(f'    "{k}": {v}, ' for k, v in method_map.items()) + """
+}
+
+
 class Client:
     "clouddrive client that encapsulates grpc APIs"
-    origin: str
+    origin: URL
     username: str
     password: str
     download_baseurl: str
@@ -211,7 +220,7 @@ class Client:
         scheme = urlp.scheme or "http"
         netloc = urlp.netloc or "localhost:19798"
         self.__dict__.update(
-            origin = origin, 
+            origin = URL(urlunsplit(urlp._replace(scheme=scheme, netloc=netloc))), 
             download_baseurl = f"{scheme}://{netloc}/static/{scheme}/{netloc}/False/", 
             username = username, 
             password = password, 

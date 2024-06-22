@@ -193,8 +193,7 @@ class P115LabelList:
                         sentinel, 
                     )
                 else:
-                    ret = yield partial(
-                        next, 
+                    ret = next(
                         (item for item in self.iter() if item["id"] == id), 
                         sentinel, 
                     )
@@ -207,8 +206,7 @@ class P115LabelList:
                         sentinel, 
                     )
                 else:
-                    ret = yield partial(
-                        next, 
+                    ret = next(
                         (item for item in self.iter(keyword=name) if item["name"] == name), 
                         sentinel, 
                     )

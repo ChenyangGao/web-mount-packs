@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Sharing"]
 
-from collections.abc import Awaitable, Callable, Iterable, Iterator
-from typing import Literal
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from functools import partial
+from typing import overload, Literal
+
+from asynctools import async_any, to_list
+from iterutils import run_gen_step
+from undefined import undefined
 
 from .client import check_response, P115Client
 from .fs import P115Path
@@ -29,32 +36,23 @@ class P115Sharing:
         self.async_request = async_request
 
     def __contains__(self, code_or_id: int | str, /) -> bool:
-        if isinstance(code_or_id, str):
-            return self.client.share_info(code_or_id)["state"]
-        snap_id = str(code_or_id)
-        return any(item["snap_id"] == snap_id for item in self)
+        return self.has(code_or_id)
 
     def __delitem__(self, code_or_id: int | str, /):
         return self.remove(code_or_id)
 
     def __getitem__(self, code_or_id: int | str, /) -> dict:
-        if isinstance(code_or_id, str):
-            resp = self.client.share_info(code_or_id)
-            if resp["state"]:
-                return resp["data"]
-            raise LookupError(f"no such share_code: {code_or_id!r}, with message: {resp!r}")
-        snap_id = str(code_or_id)
-        for item in self:
-            if item["snap_id"] == snap_id:
-                return item
-        raise LookupError(f"no such snap_id: {snap_id!r}")
+        return self.get(code_or_id, default=undefined)
+
+    def __aiter__(self, /) -> AsyncIterator[dict]:
+        return self.iter(async_=True)
 
     def __iter__(self, /) -> Iterator[dict]:
         return self.iter()
 
     def __len__(self, /) -> int:
         "计算共有多少个分享"
-        return check_response(self.client.share_list({"limit": 1}))["count"]
+        return self.get_length()
 
     def __repr__(self, /) -> str:
         cls = type(self)
@@ -66,9 +64,30 @@ class P115Sharing:
 
     @property
     def receive_path(self, /) -> P115Path:
-        return self.client.fs.as_path("我的接收")
+        return self.get_receive_path()
 
-    @check_response
+    @overload
+    def add(
+        self, 
+        file_ids: int | str | Iterable[int | str], 
+        /, 
+        is_asc: Literal[0, 1] = 1, 
+        order: str = "file_name", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def add(
+        self, 
+        file_ids: int | str | Iterable[int | str], 
+        /, 
+        is_asc: Literal[0, 1] = 1, 
+        order: str = "file_name", 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
     def add(
         self, 
         file_ids: int | str | Iterable[int | str], 
@@ -77,7 +96,7 @@ class P115Sharing:
         order: str = "file_name", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """创建分享链接
         :param file_ids: 文件列表，有多个时用逗号 "," 隔开或者传入可迭代器
         :param is_asc: 是否升序排列
@@ -93,34 +112,86 @@ class P115Sharing:
             file_ids = ",".join(map(str, file_ids))
             if not file_ids:
                 raise ValueError("no `file_id` specified") 
-        return self.client.share_send({
-            "file_ids": file_ids, 
-            "is_asc": is_asc, 
-            "order": order, 
-        })
+        return check_response(self.client.share_send( # type: ignore
+            {
+                "file_ids": file_ids, 
+                "is_asc": is_asc, 
+                "order": order, 
+            }, 
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+        ))
 
-    @check_response
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def clear(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
     def clear(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         "清空分享列表"
-        return self.client.share_update({
-            "share_code": ",".join(item["share_code"] for item in self), 
-            "action": "cancel", 
-        })
+        def gen_step():
+            if async_:
+                ls = yield partial(
+                    to_list, 
+                    (item["share_code"] async for item in self.iter(async_=True)), 
+                )
+                codes = ",".join(ls)
+            else:
+                codes = ",".join(item["share_code"] for item in self.iter())
+            return check_response((yield partial(
+                self.client.share_update, 
+                {"share_code": codes, "action": "cancel"}, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )))
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def code_of(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def code_of(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[str]:
+        ...
     def code_of(
         self, 
         code_or_id: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> str:
+    ) -> str | Awaitable[str]:
         "获取 id 对应的分享码"
-        if isinstance(code_or_id, str):
-            return code_or_id
-        return self[code_or_id]["share_code"]
+        def gen_step():
+            if isinstance(code_or_id, str):
+                return code_or_id
+            return (yield partial(
+                self.get, 
+                code_or_id, 
+                default=undefined, 
+                async_=async_, 
+            ))["share_code"]
+        return run_gen_step(gen_step, async_=async_)
 
     def get(
         self, 
@@ -131,14 +202,153 @@ class P115Sharing:
         async_: Literal[False, True] = False, 
     ):
         "用分享码或 id 查询分享信息"
-        if isinstance(code_or_id, str):
-            resp = self.client.share_info(code_or_id)
-            if resp["state"]:
-                return resp["data"]
+        def gen_step():
+            if isinstance(code_or_id, str):
+                resp = yield partial(
+                    self.client.share_info, 
+                    code_or_id, 
+                    request=self.async_request if async_ else self.request, 
+                    async_=async_, 
+                )
+                if resp["state"]:
+                    return resp["data"]
+                if default is not undefined:
+                    return default
+                raise LookupError(f"no such share_code: {code_or_id!r}, with message: {resp!r}")
+            sentinel = object()
+            snap_id = str(code_or_id)
+            if async_:
+                ret = yield partial(
+                    anext, 
+                    (item async for item in self.iter(async_=True) if item["snap_id"] == snap_id), 
+                    sentinel, 
+                )
+            else:
+                ret = next(
+                    (item for item in self.iter() if item["snap_id"] == snap_id), 
+                    sentinel, 
+                )
+            if ret is not sentinel:
+                return ret
+            if default is undefined:
+                raise LookupError(f"no such snap_id: {snap_id!r}")
             return default
-        snap_id = str(code_or_id)
-        return next((item for item in self if item["snap_id"] == snap_id), default)
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def get_length(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> int:
+        ...
+    @overload
+    def get_length(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[int]:
+        ...
+    def get_length(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Awaitable[int]:
+        def gen_step():
+            resp = yield partial(
+                self.client.share_list, 
+                {"limit": 1}, 
+                request=self.request, 
+                async_request=self.async_request, 
+            )
+            return check_response(resp)["count"]
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def get_receive_path(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> P115Path:
+        ...
+    @overload
+    def get_receive_path(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[P115Path]:
+        ...
+    def get_receive_path(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> P115Path | Awaitable[P115Path]:
+        return self.client.get_fs(
+            self.client, 
+            request=self.request, 
+            async_request=self.async_request, 
+        ).as_path("/我的接收", async_=async_)
+
+    @overload
+    def has(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> bool:
+        ...
+    @overload
+    def has(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[bool]:
+        ...
+    def has(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Awaitable[bool]:
+        def gen_step():
+            if isinstance(code_or_id, str):
+                return (yield partial(
+                    self.client.share_info, 
+                    code_or_id, 
+                    request=self.request, 
+                    async_request=self.async_request, 
+                ))["state"]
+            snap_id = str(code_or_id)
+            if async_:
+                return (yield partial(
+                    async_any, 
+                    (item["snap_id"] == snap_id async for item in self.iter(async_=True)), 
+                ))
+            else:
+                return any(item["snap_id"] == snap_id for item in self.iter())
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def iter(
+        self, 
+        /, 
+        offset: int = 0, 
+        page_size: int = 1 << 10, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Iterator[dict]:
+        ...
+    @overload
+    def iter(
+        self, 
+        /, 
+        offset: int = 0, 
+        page_size: int = 1 << 10, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[dict]:
+        ...
     def iter(
         self, 
         /, 
@@ -146,7 +356,7 @@ class P115Sharing:
         page_size: int = 1 << 10, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[dict] | AsyncIterator[dict]:
         "迭代获取分享信息"
         if offset < 0:
             offset = 0
@@ -154,17 +364,60 @@ class P115Sharing:
             page_size = 1 << 10
         payload = {"offset": offset, "limit": page_size}
         count = 0
-        while True:
-            resp = check_response(self.client.share_list(payload))
-            if count == 0:
-                count = resp["count"]
-            elif count != resp["count"]:
-                raise RuntimeError("detected count changes during iteration")
-            yield from resp["list"]
-            if len(resp["list"]) < page_size:
-                break
-            payload["offset"] += page_size
+        if async_:
+            async def request():
+                while True:
+                    resp = await check_response(self.client.share_list(
+                        payload, 
+                        request=self.async_request, 
+                        async_=True, 
+                    ))
+                    if count == 0:
+                        count = resp["count"]
+                    elif count != resp["count"]:
+                        raise RuntimeError("detected count changes during iteration")
+                    for attr in resp["list"]:
+                        yield attr 
+                    if len(resp["list"]) < page_size:
+                        break
+                    payload["offset"] += page_size
+        else:
+            def request():
+                while True:
+                    resp = check_response(self.client.share_list(
+                        payload, 
+                        request=self.request, 
+                    ))
+                    if count == 0:
+                        count = resp["count"]
+                    elif count != resp["count"]:
+                        raise RuntimeError("detected count changes during iteration")
+                    yield from resp["list"]
+                    if len(resp["list"]) < page_size:
+                        break
+                    payload["offset"] += page_size
+        return request()
 
+    @overload
+    def list(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Awaitable[list[dict]]:
+        ...
     def list(
         self, 
         /, 
@@ -172,39 +425,100 @@ class P115Sharing:
         limit: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict]:
+    ) -> list[dict] | Awaitable[list[dict]]:
         "获取分享信息列表"
-        if limit <= 0:
-            return list(self.iter(offset))
-        return check_response(self.client.share_list({"offset": offset, "limit": limit}))["list"]
+        def gen_step():
+            if limit <= 0:
+                if async_:
+                    return (yield partial(
+                        to_list, 
+                        self.iter(offset, async_=True), 
+                    ))
+                else:
+                    return list(self.iter(offset))
+            resp = yield partial(
+                self.client.share_list, 
+                {"offset": offset, "limit": limit}, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            return check_response(resp)["list"]
+        return run_gen_step(gen_step, async_=async_)
 
-    @check_response
+    @overload
+    def remove(
+        self, 
+        code_or_id_s: int | str | Iterable[int | str], 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def remove(
+        self, 
+        code_or_id_s: int | str | Iterable[int | str], 
+        /, 
+        async_: Literal[True], 
+    ) -> Awaitable[dict]:
+        ...
     def remove(
         self, 
         code_or_id_s: int | str | Iterable[int | str], 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         "用分享码或 id 查询并删除分享"
-        if isinstance(code_or_id_s, (int, str)):
-            share_code = self.code_of(code_or_id_s)
-        else:
-            share_code = ",".join(map(self.code_of, code_or_id_s))
-            if not share_code:
-                raise ValueError("no `share_code` or `snap_id` specified")
-        return self.client.share_update({
-            "share_code": share_code, 
-            "action": "cancel", 
-        })
+        def gen_step():
+            if isinstance(code_or_id_s, (int, str)):
+                share_code = yield partial(
+                    self.code_of, 
+                    code_or_id_s, 
+                    async_=async_, 
+                )
+            else:
+                if async_:
+                    ls = yield partial(
+                        to_list, 
+                        (await self.code_of(code, async_=True) for code in code_or_id_s), # type: ignore
+                    )
+                    share_code = ",".join(ls)
+                else:
+                    share_code = ",".join(map(self.code_of, code_or_id_s))
+                if not share_code:
+                    raise ValueError("no `share_code` or `snap_id` specified")
+            return check_response((yield partial(
+                self.client.share_update, 
+                {"share_code": share_code, "action": "cancel"}, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )))
+        return run_gen_step(gen_step, async_=async_)
 
-    @check_response
+    @overload
+    def update(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[False] = False, 
+        **payload, 
+    ) -> dict:
+        ...
+    @overload
+    def update(
+        self, 
+        code_or_id: int | str, 
+        /, 
+        async_: Literal[True], 
+        **payload, 
+    ) -> Awaitable[dict]:
+        ...
     def update(
         self, 
         code_or_id: int | str, 
         /, 
         async_: Literal[False, True] = False, 
         **payload, 
-    ) -> dict:
+    ) -> dict | Awaitable[dict]:
         """用分享码或 id 查询并更新分享信息
         payload:
             - receive_code: str = <default>         # 访问密码（口令）
@@ -214,6 +528,17 @@ class P115Sharing:
             - share_channel: int = <default>        # 分享渠道代码（不用管）
             - action: str = <default>               # 操作: 取消分享 "cancel"
         """
-        payload["share_code"] = self.code_of(code_or_id)
-        return self.client.share_update(payload)
+        def gen_step():
+            payload["share_code"] = yield partial(
+                self.code_of, 
+                code_or_id, 
+                async_=async_, 
+            )
+            return check_response((yield partial(
+                self.client.share_update, 
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )))
+        return run_gen_step(gen_step, async_=async_)
 

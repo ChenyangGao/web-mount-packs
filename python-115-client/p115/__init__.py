@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9, 6, 5)
+__version__ = (0, 0, 9, 7)
 
 AVAILABLE_APPS = (
     "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 

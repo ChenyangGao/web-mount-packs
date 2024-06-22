@@ -2,15 +2,16 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["Client"]
+__all__ = ["Client", "CLOUDDRIVE_API_MAP"]
 
 from functools import cached_property
 from typing import Any, Iterator, Never, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
 from grpc import insecure_channel, Channel # type: ignore
 from grpclib.client import Channel as AsyncChannel # type: ignore
+from yarl import URL
 
 import pathlib, sys
 PROTO_DIR = str(pathlib.Path(__file__).parent / "proto")
@@ -22,9 +23,134 @@ import CloudDrive_pb2_grpc # type: ignore
 import CloudDrive_grpc # type: ignore
 
 
+CLOUDDRIVE_API_MAP = {
+    "GetSystemInfo": {"return": CloudDrive_pb2.CloudDriveSystemInfo}, 
+    "GetToken": {"argument": CloudDrive_pb2.GetTokenRequest, "return": CloudDrive_pb2.JWTToken}, 
+    "Login": {"argument": CloudDrive_pb2.UserLoginRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "Register": {"argument": CloudDrive_pb2.UserRegisterRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "SendResetAccountEmail": {"argument": CloudDrive_pb2.SendResetAccountEmailRequest}, 
+    "ResetAccount": {"argument": CloudDrive_pb2.ResetAccountRequest}, 
+    "SendConfirmEmail": {}, 
+    "ConfirmEmail": {"argument": CloudDrive_pb2.ConfirmEmailRequest}, 
+    "GetAccountStatus": {"return": CloudDrive_pb2.AccountStatusResult}, 
+    "GetSubFiles": {"argument": CloudDrive_pb2.ListSubFileRequest, "return": Iterator[CloudDrive_pb2.SubFilesReply]}, 
+    "GetSearchResults": {"argument": CloudDrive_pb2.SearchRequest, "return": Iterator[CloudDrive_pb2.SubFilesReply]}, 
+    "FindFileByPath": {"argument": CloudDrive_pb2.FindFileByPathRequest, "return": CloudDrive_pb2.CloudDriveFile}, 
+    "CreateFolder": {"argument": CloudDrive_pb2.CreateFolderRequest, "return": CloudDrive_pb2.CreateFolderResult}, 
+    "RenameFile": {"argument": CloudDrive_pb2.RenameFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "RenameFiles": {"argument": CloudDrive_pb2.RenameFilesRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "MoveFile": {"argument": CloudDrive_pb2.MoveFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "DeleteFile": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "DeleteFilePermanently": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "DeleteFiles": {"argument": CloudDrive_pb2.MultiFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "DeleteFilesPermanently": {"argument": CloudDrive_pb2.MultiFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "AddOfflineFiles": {"argument": CloudDrive_pb2.AddOfflineFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "RemoveOfflineFiles": {"argument": CloudDrive_pb2.RemoveOfflineFilesRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "ListOfflineFilesByPath": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.OfflineFileListResult}, 
+    "ListAllOfflineFiles": {"argument": CloudDrive_pb2.OfflineFileListAllRequest, "return": CloudDrive_pb2.OfflineFileListAllResult}, 
+    "GetFileDetailProperties": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileDetailProperties}, 
+    "GetSpaceInfo": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.SpaceInfo}, 
+    "GetCloudMemberships": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.CloudMemberships}, 
+    "GetRuntimeInfo": {"return": CloudDrive_pb2.RuntimeInfo}, 
+    "GetRunningInfo": {"return": CloudDrive_pb2.RunInfo}, 
+    "Logout": {"argument": CloudDrive_pb2.UserLogoutRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "CanAddMoreMountPoints": {"return": CloudDrive_pb2.FileOperationResult}, 
+    "GetMountPoints": {"return": CloudDrive_pb2.GetMountPointsResult}, 
+    "AddMountPoint": {"argument": CloudDrive_pb2.MountOption, "return": CloudDrive_pb2.MountPointResult}, 
+    "RemoveMountPoint": {"argument": CloudDrive_pb2.MountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
+    "Mount": {"argument": CloudDrive_pb2.MountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
+    "Unmount": {"argument": CloudDrive_pb2.MountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
+    "UpdateMountPoint": {"argument": CloudDrive_pb2.UpdateMountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
+    "GetAvailableDriveLetters": {"return": CloudDrive_pb2.GetAvailableDriveLettersResult}, 
+    "HasDriveLetters": {"return": CloudDrive_pb2.HasDriveLettersResult}, 
+    "LocalGetSubFiles": {"argument": CloudDrive_pb2.LocalGetSubFilesRequest, "return": Iterator[CloudDrive_pb2.LocalGetSubFilesResult]}, 
+    "GetAllTasksCount": {"return": CloudDrive_pb2.GetAllTasksCountResult}, 
+    "GetDownloadFileCount": {"return": CloudDrive_pb2.GetDownloadFileCountResult}, 
+    "GetDownloadFileList": {"return": CloudDrive_pb2.GetDownloadFileListResult}, 
+    "GetUploadFileCount": {"return": CloudDrive_pb2.GetUploadFileCountResult}, 
+    "GetUploadFileList": {"argument": CloudDrive_pb2.GetUploadFileListRequest, "return": CloudDrive_pb2.GetUploadFileListResult}, 
+    "CancelAllUploadFiles": {}, 
+    "CancelUploadFiles": {"argument": CloudDrive_pb2.MultpleUploadFileKeyRequest}, 
+    "PauseAllUploadFiles": {}, 
+    "PauseUploadFiles": {"argument": CloudDrive_pb2.MultpleUploadFileKeyRequest}, 
+    "ResumeAllUploadFiles": {}, 
+    "ResumeUploadFiles": {"argument": CloudDrive_pb2.MultpleUploadFileKeyRequest}, 
+    "CanAddMoreCloudApis": {"return": CloudDrive_pb2.FileOperationResult}, 
+    "APILogin115Editthiscookie": {"argument": CloudDrive_pb2.Login115EditthiscookieRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APILogin115QRCode": {"argument": CloudDrive_pb2.Login115QrCodeRequest, "return": Iterator[CloudDrive_pb2.QRCodeScanMessage]}, 
+    "APILoginAliyundriveOAuth": {"argument": CloudDrive_pb2.LoginAliyundriveOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APILoginAliyundriveRefreshtoken": {"argument": CloudDrive_pb2.LoginAliyundriveRefreshtokenRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APILoginAliyunDriveQRCode": {"argument": CloudDrive_pb2.LoginAliyundriveQRCodeRequest, "return": Iterator[CloudDrive_pb2.QRCodeScanMessage]}, 
+    "APILoginBaiduPanOAuth": {"argument": CloudDrive_pb2.LoginBaiduPanOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APILoginOneDriveOAuth": {"argument": CloudDrive_pb2.LoginOneDriveOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "ApiLoginGoogleDriveOAuth": {"argument": CloudDrive_pb2.LoginGoogleDriveOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "ApiLoginGoogleDriveRefreshToken": {"argument": CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "ApiLoginXunleiOAuth": {"argument": CloudDrive_pb2.LoginXunleiOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "ApiLogin123panOAuth": {"argument": CloudDrive_pb2.Login123panOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APILogin189QRCode": {"return": Iterator[CloudDrive_pb2.QRCodeScanMessage]}, 
+    "APILoginPikPak": {"argument": CloudDrive_pb2.UserLoginRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APILoginWebDav": {"argument": CloudDrive_pb2.LoginWebDavRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "APIAddLocalFolder": {"argument": CloudDrive_pb2.AddLocalFolderRequest, "return": CloudDrive_pb2.APILoginResult}, 
+    "RemoveCloudAPI": {"argument": CloudDrive_pb2.RemoveCloudAPIRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "GetAllCloudApis": {"return": CloudDrive_pb2.CloudAPIList}, 
+    "GetCloudAPIConfig": {"argument": CloudDrive_pb2.GetCloudAPIConfigRequest, "return": CloudDrive_pb2.CloudAPIConfig}, 
+    "SetCloudAPIConfig": {"argument": CloudDrive_pb2.SetCloudAPIConfigRequest}, 
+    "GetSystemSettings": {"return": CloudDrive_pb2.SystemSettings}, 
+    "SetSystemSettings": {"argument": CloudDrive_pb2.SystemSettings}, 
+    "SetDirCacheTimeSecs": {"argument": CloudDrive_pb2.SetDirCacheTimeRequest}, 
+    "GetEffectiveDirCacheTimeSecs": {"argument": CloudDrive_pb2.GetEffectiveDirCacheTimeRequest, "return": CloudDrive_pb2.GetEffectiveDirCacheTimeResult}, 
+    "GetOpenFileTable": {"argument": CloudDrive_pb2.GetOpenFileTableRequest, "return": CloudDrive_pb2.OpenFileTable}, 
+    "GetDirCacheTable": {"return": CloudDrive_pb2.DirCacheTable}, 
+    "GetReferencedEntryPaths": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.StringList}, 
+    "GetTempFileTable": {"return": CloudDrive_pb2.TempFileTable}, 
+    "PushTaskChange": {"return": Iterator[CloudDrive_pb2.GetAllTasksCountResult]}, 
+    "PushMessage": {"return": Iterator[CloudDrive_pb2.CloudDrivePushMessage]}, 
+    "GetCloudDrive1UserData": {"return": CloudDrive_pb2.StringResult}, 
+    "RestartService": {}, 
+    "ShutdownService": {}, 
+    "HasUpdate": {"return": CloudDrive_pb2.UpdateResult}, 
+    "CheckUpdate": {"return": CloudDrive_pb2.UpdateResult}, 
+    "DownloadUpdate": {}, 
+    "UpdateSystem": {}, 
+    "GetMetaData": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileMetaData}, 
+    "GetOriginalPath": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.StringResult}, 
+    "ChangePassword": {"argument": CloudDrive_pb2.ChangePasswordRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "CreateFile": {"argument": CloudDrive_pb2.CreateFileRequest, "return": CloudDrive_pb2.CreateFileResult}, 
+    "CloseFile": {"argument": CloudDrive_pb2.CloseFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
+    "WriteToFileStream": {"argument": Iterator[CloudDrive_pb2.WriteFileRequest], "return": CloudDrive_pb2.WriteFileResult}, 
+    "WriteToFile": {"argument": CloudDrive_pb2.WriteFileRequest, "return": CloudDrive_pb2.WriteFileResult}, 
+    "GetPromotions": {"return": CloudDrive_pb2.GetPromotionsResult}, 
+    "UpdatePromotionResult": {}, 
+    "GetCloudDrivePlans": {"return": CloudDrive_pb2.GetCloudDrivePlansResult}, 
+    "JoinPlan": {"argument": CloudDrive_pb2.JoinPlanRequest, "return": CloudDrive_pb2.JoinPlanResult}, 
+    "BindCloudAccount": {"argument": CloudDrive_pb2.BindCloudAccountRequest}, 
+    "TransferBalance": {"argument": CloudDrive_pb2.TransferBalanceRequest}, 
+    "ChangeEmail": {"argument": CloudDrive_pb2.ChangeUserNameEmailRequest}, 
+    "GetBalanceLog": {"return": CloudDrive_pb2.BalanceLogResult}, 
+    "CheckActivationCode": {"argument": CloudDrive_pb2.StringValue, "return": CloudDrive_pb2.CheckActivationCodeResult}, 
+    "ActivatePlan": {"argument": CloudDrive_pb2.StringValue, "return": CloudDrive_pb2.JoinPlanResult}, 
+    "CheckCouponCode": {"argument": CloudDrive_pb2.CheckCouponCodeRequest, "return": CloudDrive_pb2.CouponCodeResult}, 
+    "GetReferralCode": {"return": CloudDrive_pb2.StringValue}, 
+    "BackupGetAll": {"return": CloudDrive_pb2.BackupList}, 
+    "BackupAdd": {"argument": CloudDrive_pb2.Backup}, 
+    "BackupRemove": {"argument": CloudDrive_pb2.StringValue}, 
+    "BackupUpdate": {"argument": CloudDrive_pb2.Backup}, 
+    "BackupAddDestination": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
+    "BackupRemoveDestination": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
+    "BackupSetEnabled": {"argument": CloudDrive_pb2.BackupSetEnabledRequest}, 
+    "BackupSetFileSystemWatchEnabled": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
+    "BackupUpdateStrategies": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
+    "BackupRestartWalkingThrough": {"argument": CloudDrive_pb2.StringValue}, 
+    "CanAddMoreBackups": {"return": CloudDrive_pb2.FileOperationResult}, 
+    "GetMachineId": {"return": CloudDrive_pb2.StringResult}, 
+    "GetOnlineDevices": {"return": CloudDrive_pb2.OnlineDevices}, 
+    "KickoutDevice": {"argument": CloudDrive_pb2.DeviceRequest}, 
+}
+
+
 class Client:
     "clouddrive client that encapsulates grpc APIs"
-    origin: str
+    origin: URL
     username: str
     password: str
     download_baseurl: str
@@ -42,7 +168,7 @@ class Client:
         scheme = urlp.scheme or "http"
         netloc = urlp.netloc or "localhost:19798"
         self.__dict__.update(
-            origin = origin, 
+            origin = URL(urlunsplit(urlp._replace(scheme=scheme, netloc=netloc))), 
             download_baseurl = f"{scheme}://{netloc}/static/{scheme}/{netloc}/False/", 
             username = username, 
             password = password, 
