@@ -2,8 +2,8 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__doc__ = "🌍🚢 alist 网络代理抓包 🕷️🕸️"
+__version__ = (0, 0, 2)
+__doc__ = "\t\t🌍🚢 alist 网络代理抓包 🕷️🕸️"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 
@@ -16,7 +16,10 @@ DEFAULT_METHODS = [
 parser = ArgumentParser(
     formatter_class=RawTextHelpFormatter, 
     description=__doc__, 
-    epilog="""本工具可以自己提供 collect 函数的定义，因此具体一定的可定制性
+    epilog="""\t\t🔧🔨 使用技巧 🔩🪛
+
+本工具可以自己提供 collect 函数的定义，因此具有一定的可定制性
+
 1. 把日志输出到本地文件
 
 .. code: python
@@ -24,14 +27,11 @@ parser = ArgumentParser(
     python alist_proxy.py -c '
     import logging
     from logging.handlers import TimedRotatingFileHandler
-    from sys import maxsize
 
     logger = logging.getLogger("alist")
     logger.setLevel(logging.INFO)
-    handler = TimedRotatingFileHandler("alist.log", when="midnight", backupCount=365)
-    formatter = logging.Formatter("[%(asctime)s] %(message)s")
-    handler.setFormatter(formatter)
-
+    handler = TimedRotatingFileHandler("alist.log", when="midnight", backupCount=3650)
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s"))
     logger.addHandler(handler)
 
     collect = logger.info
@@ -42,13 +42,10 @@ parser = ArgumentParser(
 .. code: python
 
     python alist_proxy.py -c '
-    import pymongo
+    from pymongo import MongoClient
 
-    client = pymongo.MongoClient("localhost", 27017)
-    db = client.log
-    col = db.alist
-
-    collect = lambda event: col.insert_one(event)
+    client = MongoClient("localhost", 27017)
+    collect = client.log.alist.insert_one
     '
 
 3. 使用 sqlite 收集采集到的日志，单独开启一个线程作为工作线程
@@ -81,6 +78,87 @@ parser = ArgumentParser(
             con.rollback()
             raise
     '
+
+4. 如果并发量特别大，可以按批插入数据，以 mongodb 为例
+
+第 1 种策略是收集到一定数量时，进行批量插入
+
+.. code: python
+
+    python alist_proxy.py -c '
+    from atexit import register
+    from threading import Lock
+
+    from pymongo import MongoClient
+
+    client = MongoClient("localhost", 27017)
+
+    BATCHSIZE = 100
+
+    cache = []
+    push = cache.append
+    insert_many = client.log.alist.insert_many
+    cache_lock = Lock()
+
+    def work():
+        with cache_lock:
+            if len(cache) >= BATCHSIZE:
+                insert_many(cache)
+                cache.clear()
+
+    def collect(event):
+        push(event)
+        work()
+
+    def end_work():
+        with cache_lock:
+            if cache:
+                insert_many(cache)
+                cache.clear()
+
+    register(end_work)
+    '
+
+第 2 种策略是定期进行批量插入
+
+.. code: python
+
+    python alist_proxy.py -c '
+    from atexit import register
+    from time import sleep
+    from _thread import start_new_thread
+
+    from pymongo import MongoClient
+
+    client = MongoClient("localhost", 27017)
+
+    INTERVAL = 1
+    running = True
+
+    cache = []
+    collect = cache.append
+    insert_many = client.log.alist.insert_many
+
+    def worker():
+        while running:
+            length = len(cache)
+            if length:
+                insert_many(cache[:length])
+                del cache[:length]
+            sleep(INTERVAL)
+
+    def end_work():
+        global running
+        running = False
+        if cache:
+            cache_copy = cache.copy()
+            cache.clear()
+            insert_many(cache_copy)
+
+    register(end_work)
+
+    start_new_thread(worker, ())
+    '
 """
 )
 parser.add_argument("-b", "--base-url", default="http://localhost:5244", 
@@ -88,7 +166,7 @@ parser.add_argument("-b", "--base-url", default="http://localhost:5244",
 parser.add_argument("-m", "--method", metavar="method", dest="methods", default=DEFAULT_METHODS, nargs="*", 
                     help=f"被代理的 http 方法，默认值：{DEFAULT_METHODS}")
 parser.add_argument("-c", "--collect", default="", help="""\
-提供一段代码，里面必须暴露一个名为 collect 的函数，这个函数会被用来收集信息，这个函数接受一个位置参数，用来传入信息
+提供一段代码，里面必须暴露一个名为 collect 的函数，这个函数接受一个位置参数，用来传入 1 条日志
 除此以外，我还会给这个函数注入一些全局变量
     - app: 这个 flask 应用对象
     - request: 当前的请求对象
@@ -96,6 +174,7 @@ parser.add_argument("-c", "--collect", default="", help="""\
 默认的行为是把信息输出到日志里面，代码为
 
     collect = lambda event: app.logger.info(repr(event))
+
 """)
 parser.add_argument("-q", "--queue-collect", action="store_true", 
                     help=f"单独启动个线程用来执行收集，通过队列进行中转")
@@ -128,6 +207,7 @@ from json import loads
 from shutil import COPY_BUFSIZE # type: ignore
 from re import compile as re_compile
 from textwrap import dedent
+from traceback import format_exc
 
 try:
     from flask import request, Flask, Response
@@ -206,18 +286,16 @@ def redirect(path: str):
             "payload": dict(payload), 
         }
     }
-
-    content_type = request.headers.get("content-type") or ""
-    if content_type.startswith("application/json"):
-        data = payload["body"] = request.get_data()
-        result["request"]["payload"]["json"] = loads(data.decode(get_charset(content_type)))
-    elif content_type.startswith(("text/", "application/xml", "application/x-www-form-urlencoded")):
-        data = payload["body"] = request.get_data()
-        result["request"]["payload"]["text"] = data.decode(get_charset(content_type))
-    else:
-        payload["body"] = iter(partial(request.stream.read, COPY_BUFSIZE), b"")
-
     try:
+        content_type = request.headers.get("content-type") or ""
+        if content_type.startswith("application/json"):
+            data = payload["body"] = request.get_data()
+            result["request"]["payload"]["json"] = loads(data.decode(get_charset(content_type)))
+        elif content_type.startswith(("text/", "application/xml", "application/x-www-form-urlencoded")):
+            data = payload["body"] = request.get_data()
+            result["request"]["payload"]["text"] = data.decode(get_charset(content_type))
+        else:
+            payload["body"] = iter(partial(request.stream.read, COPY_BUFSIZE), b"")
         response = urllib3_request( # type: ignore
             **payload, 
             timeout         = None, 
@@ -242,6 +320,12 @@ def redirect(path: str):
             return Response(content, response.status, headers)
         else:
             return Response(response, response.status, list(response.headers.items()))
+    except BaseException as e:
+        result["exception"] = {
+            "reason": f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
+            "traceback": format_exc(), 
+        }
+        raise
     finally:
         try:
             collect(result)

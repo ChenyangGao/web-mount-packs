@@ -4,11 +4,8 @@
 "扫码获取 115 cookie（网页版）"
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = [
-    "AppEnum", "get_qrcode_token", "get_qrcode_status", "post_qrcode_result", 
-    "get_qrcode", "login_with_qrcode", 
-]
+__version__ = (0, 0, 2)
+__all__ = ["APPS", "QrcodeScanHandler"]
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -55,8 +52,8 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>115 扫码助手</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/styles/default.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/highlight.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         body {
             display: flex;
@@ -73,7 +70,7 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
         .top-container {
             display: flex;
             flex: 1;
-            height: 300px;
+            height: 700px;
             margin-top: 50px;
         }
 
@@ -90,6 +87,7 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
             flex: 1;
             justify-content: center;
             align-items: center;
+            width: 560px;
         }
 
         .bottom-item {
@@ -121,17 +119,11 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
         }
 
         select {
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
             width: 200px;
             padding: 10px;
             border: 1px solid #ccc;
             border-radius: 5px;
             background-color: #fff;
-            background-image: url('data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMDAwMDAwIiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMTYgMTYiIHdpZHRoPSIyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNNC4yOTMgNi41ODdhMSAxIDAgMDAtMS40MjkgMS40MjdsNSA1Yy40MzQuNDM0IDEuMTM3LjQzNCAxLjU3NyAwbDUtNWEuOTk5Ljk5OSAwIDAwLTEuNDE2LTEuNDE3TDEwIDguODU0IDUuNzE0IDYuNTg3YTEgMSAwIDAwLTEuNDIzLjAwMXoiLz48L3N2Zz4=');
-            background-repeat: no-repeat;
-            background-position: right 10px center;
             background-size: 16px 16px;
             cursor: pointer;
             font-size: 16px;
@@ -164,41 +156,34 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
             height: 20px
         }
 
-        .output-box-container {
-            display: flex;
-            align-items: center;
-            width: 600px;
-            background-color: #fff;
-            padding: 10px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-            text-align: center;
-        }
-
         .output-box {
             flex-grow: 1;
-            padding: 10px;
             border: 1px solid #ddd;
             border-radius: 4px;
-            background-color: #f9f9f9;
             overflow-x: auto;
-            white-space: pre-wrap;
             word-wrap: break-word;
+            width: 500px;
         }
 
         .copy-button {
-            margin-left: 10px;
-            padding: 10px 20px;
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 5px 5px;
+            color: white;
             border: none;
             border-radius: 4px;
-            background-color: #007BFF;
-            color: #fff;
             cursor: pointer;
-            transition: background-color 0.3s;
+            opacity: 0.7;
         }
 
         .copy-button:hover {
-            background-color: #0056b3;
+            opacity: 1;
+            background-color: rgba(128, 128, 128, 0.5);
+        }
+
+        pre {
+            position: relative;
         }
 
         .json-container {
@@ -208,23 +193,6 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
             border-radius: 8px;
             margin-left: 20px;
             overflow: scroll;
-        }
-
-        .alert {
-            padding: 20px;
-            background-color: #f44336; /* Red */
-            color: white;
-            opacity: 1;
-            transition: opacity 0.6s; /* 600ms transition for fade-out effect */
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-        }
-
-        .alert.hide {
-            opacity: 0;
-            visibility: hidden;
         }
     </style>
 </head>
@@ -245,16 +213,13 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
             </select>
         </div>
         <div class="top-item json-container">
-            <pre><code class="json" id="result"><p style="font-size: 20px; display: flex; align-items: center; justify-content: center; height: 300px">这里将会输出响应</p></code></pre>
+            <pre><code class="language-json" id="result"><p style="font-size: 20px; display: flex; align-items: center; justify-content: center; height: 300px">这里将会输出响应</p></code></pre>
         </div>
     </div>
     <div class="bottom-container">
         <div class="bottom-item">
-            <div class="output-box-container">
-                <div id="cookie" class="output-box">
-                    这里将会输出 cookies
-                </div>
-                <button class="copy-button">复制</button>
+            <div class="output-box">
+                <pre><code class="language-config" id="cookie"><p style="font-size: 20px; display: flex; align-items: center; justify-content: center">这里将会输出 cookie</p></code></pre>
             </div>
         </div>
     </div>
@@ -337,6 +302,25 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
         document.getElementById("result").textContent = JSON.stringify(json, null, 2);
         document.getElementById("cookie").textContent = Object.entries(json.data.cookie).map(([k, v]) => `${k}=${v}`).join("; ");
         hljs.highlightAll();
+        document.querySelectorAll('pre code').forEach((block) => {
+            // Create copy button
+            let button = document.createElement('button');
+            button.className = 'copy-button';
+            button.innerText = '📋';
+            block.parentElement.appendChild(button);
+
+            button.addEventListener('click', () => {
+                // Copy to clipboard
+                navigator.clipboard.writeText(block.innerText).then(() => {
+                    button.innerText = '✅';
+                    setTimeout(() => {
+                        button.innerText = '📋';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                });
+            });
+        });
     }
 
     async function waitingForScan() {
@@ -352,9 +336,30 @@ class QrcodeScanHandler(BaseHTTPRequestHandler):
 
     waitingForScan()
     </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            hljs.registerLanguage('config', function(hljs) {
+                return {
+                    contains: [
+                        {
+                            className: 'name',
+                            begin: '\\b[a-zA-Z0-9_-]+\\b(?==)',
+                            relevance: 10
+                        },
+                        {
+                            className: 'string',
+                            begin: '=',
+                            end: ';|$',
+                            excludeBegin: true,
+                            relevance: 0
+                        }
+                    ]
+                };
+            });
+        });
+    </script>
 </body>
-</html>
-"""
+</html>"""
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
