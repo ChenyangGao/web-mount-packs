@@ -78,7 +78,7 @@ from blacksheep import (
 from blacksheep.server.openapi.common import ParameterInfo
 from blacksheep.server.openapi.ui import ReDocUIProvider
 from blacksheep.server.openapi.v3 import OpenAPIHandler
-from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware, XForwardedHeadersMiddleware
+from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
 from openapidocs.v3 import Info # type: ignore
 from httpx import HTTPStatusError
 from p115 import P115Client, P115Url, AVAILABLE_APPS
@@ -146,7 +146,7 @@ docs.bind_app(app)
 
 @app.on_middlewares_configuration
 def configure_forwarded_headers(app):
-    app.middlewares[:0] = [XForwardedHeadersMiddleware(), ForwardedHeadersMiddleware()]
+    app.middlewares.insert(0, ForwardedHeadersMiddleware())
 
 
 def format_bytes(
@@ -527,5 +527,5 @@ async def file_m3u8(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=args.host, proxy_headers=True, forwarded_allow_ips="*", port=args.port, reload=args.reload)
+    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, proxy_headers=True, forwarded_allow_ips="*")
 
