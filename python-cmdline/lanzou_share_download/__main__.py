@@ -147,7 +147,7 @@ if predicate_code:
             from runpy import run_path
             ns = run_path(init_code_path, ns)
     from util.predicate import make_predicate # type: ignore
-    predicate = make_predicate(predicate_code, predicate_type)
+    predicate = make_predicate(predicate_code, ns, type=predicate_type)
 else:
     predicate = None
 
