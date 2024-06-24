@@ -227,6 +227,11 @@ def normalize_attr(
         "score", "hidden", "described", "violated", "ancestors", 
     )
     data = {k: attr[k] for k in KEYS if k in attr}
+    data["id"] = str(data["id"])
+    data["parent_id"] = str(data["parent_id"])
+    for info in data["ancestors"]:
+        info["id"] = str(info["id"])
+        info["parent_id"] = str(info["parent_id"])
     if not attr["is_directory"]:
         pickcode = attr["pickcode"]
         url = f"{origin}/api/download{quote(attr['path'], safe=':/')}?pickcode={pickcode}"
