@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2)
+__version__ = (0, 2, 1)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -643,12 +643,19 @@ def pull(
                     files=sum(not a["is_directory"] for a in subattrs), 
                     size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
                 )
+                files_seen: set[tuple[str, str, int]] = set()
                 pending_to_remove: list[int] = []
                 for subattr in subattrs:
                     subname = subattr["name"]
                     subpath = subattr["path"]
                     is_directory = subattr["is_directory"]
                     key = subname, is_directory
+                    if not is_directory:
+                        file_key = (subname, subattr["sha1"], subattr["size"])
+                        if file_key in files_seen:
+                            continue
+                        else:
+                            files_seen.add(file_key)
                     if key in subdattrs:
                         subdattr = subdattrs[key]
                         subdpath = subdattr["path"]
@@ -707,26 +714,23 @@ def pull(
                 update_success(1)
             else:
                 size = src_attr["size"]
-                for i in reversed(range(3)):
-                    resp = client.upload_file_init(
-                        name, 
-                        pid=dst_pid, 
-                        filesize=size, 
-                        filesha1=src_attr["sha1"], 
-                        read_range_bytes_or_hash=lambda rng, url=src_attr["url"]: read_bytes_range(url, rng), 
-                        request=do_request, 
-                    )
-                    status = resp["status"]
-                    statuscode = resp.get("statuscode", 0)
-                    if status == 2 and statuscode == 0:
-                        break
-                    elif status == 1 and statuscode == 0:
-                        should_direct_upload = direct_upload_max_size is None or size <= direct_upload_max_size
-                        if not should_direct_upload:
-                            raise OSError(f"文件超出给定的直接上传大小限制：{size} > {direct_upload_max_size}，秒传失败返回信息: {resp}")
-                        if size < 1024 * 1024 and i:
-                            continue
-                        logger.warning("""\
+                resp = client.upload_file_init(
+                    name, 
+                    pid=dst_pid, 
+                    filesize=size, 
+                    filesha1=src_attr["sha1"], 
+                    read_range_bytes_or_hash=lambda rng, url=src_attr["url"]: read_bytes_range(url, rng), 
+                    request=do_request, 
+                )
+                status = resp["status"]
+                statuscode = resp.get("statuscode", 0)
+                if status == 2 and statuscode == 0:
+                    pass
+                elif status == 1 and statuscode == 0:
+                    should_direct_upload = direct_upload_max_size is None or size <= direct_upload_max_size
+                    if not should_direct_upload:
+                        raise OSError(f"文件超出给定的直接上传大小限制：{size} > {direct_upload_max_size}，秒传失败返回信息: {resp}")
+                    logger.warning("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
     ├ attr = {attr}
     ├ response = {resp}""".format(
@@ -738,12 +742,16 @@ def pull(
                             attr     = highlight_object(src_attr), 
                             resp     = highlight_as_json(resp), 
                         ))
-                        resp = client.upload_file_sample(urlopen(src_attr["url"]), name, pid=dst_pid, request=do_request)
-                        break
-                    elif status == 0 and statuscode in (0, 413):
-                        raise Retryable(resp)
-                    else:
-                        raise OSError(resp)
+                    resp = client.upload_file_sample(
+                        urlopen(src_attr["url"]), 
+                        filename=name, 
+                        pid=dst_pid, 
+                        request=do_request, 
+                    )
+                elif status == 0 and statuscode in (0, 413):
+                    raise Retryable(resp)
+                else:
+                    raise OSError(resp)
                 resp_data = resp["data"]
                 if debug: logger.debug("""\
 {emoji} {prompt}{src_path} ➜ {name} in {pid}
