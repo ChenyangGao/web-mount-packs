@@ -1967,7 +1967,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             else:
                 attr = yield partial(self.attr, pid, async_=async_)
                 ppath = attr["path"]
-            if not (patht and parent):
+            if not (patht or parent):
                 return ppath
             ppatht = splits(ppath)[0]
             if parent:

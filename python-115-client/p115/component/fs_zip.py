@@ -310,7 +310,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
 
             parent: int | AttrDict
             for i in reversed(range(len(ancestors_paths)-1)):
-                if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[len(patht)-i]) + "/")):
+                if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
                     parent = yield partial(self._attr, id, async_=async_)
                     i += 1
                     break

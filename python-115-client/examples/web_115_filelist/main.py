@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __version_str__ = ".".join(map(str, __version__))
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
@@ -443,23 +443,22 @@ async def file_download(
     url = resp["url"]
     headers = resp["headers"]
     if web:
-        bytes_range = request.get_first_header(b"Range")
-        if bytes_range:
+        if bytes_range := request.get_first_header(b"Range"):
             headers["Range"] = bytes_range.decode("utf-8")
-            stream = await client.request(url, headers=headers, parse=None, async_=True)
-            return Response(
-                206, 
-                headers=[(k.encode("utf-8"), v.encode("utf-8")) for k, v in stream.headers.items()], 
-                content=StreamedContent(
-                    (stream.headers.get("Content-Type") or "application/octet-stream").encode("utf-8"), 
-                    partial(stream.aiter_bytes, 1 << 16), 
-                ), 
-            )
         stream = await client.request(url, headers=headers, parse=None, async_=True)
-        return file(
-            partial(stream.aiter_bytes, 1 << 16), 
-            content_type=stream.headers.get("Content-Type") or "application/octet-stream", 
-            file_name=url["file_name"], 
+        resp_headers = [
+            (k.encode("utf-8"), v.encode("utf-8")) 
+            for k, v in stream.headers.items() 
+            if k.lower() not in ("content-type", "content-disposition", "date")
+        ]
+        resp_headers.append((b"Content-Disposition", b'attachment; filename="%s"' % quote(url["file_name"]).encode("ascii")))
+        return Response(
+            stream.status_code, 
+            headers=resp_headers, 
+            content=StreamedContent(
+                (stream.headers.get("Content-Type") or "application/octet-stream").encode("utf-8"), 
+                partial(stream.aiter_bytes, 1 << 16), 
+            ), 
         )
     return redirect(url)
 

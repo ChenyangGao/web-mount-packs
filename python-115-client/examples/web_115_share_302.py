@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __doc__ = """\
     🕸️ 获取 115 分享上的文件信息和下载链接 🕷️
 
@@ -60,6 +60,8 @@ parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高�
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-r", "--root", default=0, help="选择一个根 路径 或 id，默认值 0")
+parser.add_argument("-P", "--password", default="", help="密码，如果提供了密码，那么每次访问必须携带请求参数 ?password={password}")
 
 if __name__ == "__main__":
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
@@ -85,7 +87,7 @@ try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
     from p115 import P115Client, AVAILABLE_APPS
-    from posixpatht import escape
+    from posixpatht import escape as escape_name
 except ImportError:
     from sys import executable
     from subprocess import run
@@ -93,17 +95,21 @@ except ImportError:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
     from p115 import P115Client, AVAILABLE_APPS
-    from posixpatht import escape
+    from posixpatht import escape as escape_name
+
+import errno
 
 from collections.abc import Callable
 from functools import partial, update_wrapper
+from html import escape
 from io import BytesIO
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
-from urllib.parse import quote, unquote, urlsplit
+from typing import cast
+from urllib.parse import unquote, urlsplit
 
 
 if getdefaulttimeout() is None:
@@ -115,6 +121,8 @@ cookies_path = args.cookies_path
 cookies_path_mtime = 0
 lock_dir_methods = args.lock_dir_methods
 use_request = args.use_request
+root = args.root
+password = args.password
 
 login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None
@@ -218,8 +226,8 @@ if device not in AVAILABLE_APPS:
 fs = client.get_share_fs(share_link, request=do_request)
 
 KEYS = (
-    "id", "parent_id", "name", "path", "sha1", "pickcode", "is_directory", "size", 
-    "format_size", "time", "timestamp", "thumb", "url", "short_url", "ancestors", 
+    "id", "parent_id", "name", "path", "relpath", "sha1", "pickcode", "is_directory", 
+    "size", "format_size", "time", "timestamp", "thumb", "url", "short_url", "ancestors", 
 )
 application = Flask(__name__)
 Compress(application)
@@ -249,6 +257,8 @@ def redirect_exception_response(func, /):
             return func(*args, **kwds)
         except StatusError as exc:
             return str(exc), get_status_code(exc)
+        except PermissionError as exc:
+            return str(exc), 403 # Forbidden
         except FileNotFoundError as exc:
             return str(exc), 404 # Not Found
         except OSError as exc:
@@ -318,6 +328,8 @@ def index():
             return send_file(BytesIO(b'<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="16" height="16" rx="8" fill="#2777F8"/><path d="M4.5874 6.99646C4.60631 6.96494 4.61891 6.92713 4.63152 6.90192C5.17356 5.81784 5.7219 4.74006 6.25764 3.64969C6.38999 3.37867 6.60429 3.25891 6.88792 3.25891H9.39012C9.71786 3.25891 10.0582 3.25261 10.3859 3.25891C10.7326 3.26521 11.0729 3.19589 11.4007 3.08243C11.4259 3.07613 11.4637 3.05722 11.4826 3.06352C11.5646 3.06983 11.6087 3.15807 11.5772 3.24C11.4196 3.56145 11.2557 3.88289 11.0793 4.20433C10.9532 4.43123 10.7515 4.55098 10.4994 4.55098H7.72618C7.42364 4.55098 7.20305 4.68334 7.077 4.96697C6.95094 5.23168 6.81228 5.49009 6.67992 5.75481C6.66101 5.78002 6.65471 5.80523 6.6358 5.83674C6.81858 5.88087 7.00767 5.91238 7.18414 5.94389C7.73249 6.06365 8.29343 6.1834 8.81026 6.4166C9.5792 6.75695 10.2158 7.25487 10.6444 7.97969C10.9091 8.42088 11.0667 8.88098 11.0982 9.3915C11.1927 10.5638 10.7578 11.5219 9.88176 12.2845C9.28296 12.8013 8.58336 13.1038 7.80812 13.2488C7.35432 13.3308 6.89422 13.3559 6.44042 13.3244C5.92359 13.2803 5.42567 13.1479 4.95927 12.9084C4.95296 12.9022 4.94036 12.9022 4.91515 12.8833C5.00969 12.8895 5.07271 12.9022 5.14205 12.9022C5.85426 12.9652 6.54756 12.8833 7.21566 12.6564C7.79551 12.4546 8.32494 12.1584 8.74723 11.6857C9.09388 11.295 9.28927 10.8475 9.35229 10.3306C9.44684 9.61841 9.18212 9.03855 8.72202 8.52173C8.24931 8.00489 7.66315 7.67716 7.00767 7.45655C6.49715 7.28639 5.98662 7.16663 5.45088 7.091C5.17986 7.04688 4.90254 7.02167 4.63152 6.99646C4.61891 7.00906 4.61261 7.00906 4.5874 6.99646Z" fill="white"/></svg>'), mimetype="image/svg+xml")
         case "figplayer":
             return redirect("https://omiapps.com/resource/app/icons/potplayerx.png")
+        case "fileball":
+            return send_file(BytesIO(b'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 6.5C0 2.91015 2.91015 0 6.5 0H25.5C29.0899 0 32 2.91015 32 6.5V25.5C32 29.0899 29.0899 32 25.5 32H6.5C2.91015 32 0 29.0899 0 25.5V6.5Z" fill="#FFCA28"/><path fill-rule="evenodd" clip-rule="evenodd" d="M7.75 7.875C6.50736 7.875 5.5 8.88236 5.5 10.125V21.875C5.5 23.1176 6.50736 24.125 7.75 24.125H24.25C25.4926 24.125 26.5 23.1176 26.5 21.875V12.025C26.5 10.7726 25.4774 9.7613 24.2251 9.77514L15.3125 9.875L13.1891 8.17631C12.9453 7.98126 12.6424 7.875 12.3302 7.875H7.75ZM16 20.7917C17.933 20.7917 19.5 19.2247 19.5 17.2917C19.5 15.3587 17.933 13.7917 16 13.7917C14.067 13.7917 12.5 15.3587 12.5 17.2917C12.5 19.2247 14.067 20.7917 16 20.7917Z" fill="white"/><path d="M15.5623 15.8389C15.476 15.7814 15.365 15.776 15.2735 15.825C15.1821 15.8739 15.125 15.9692 15.125 16.0729V18.3229C15.125 18.4267 15.1821 18.522 15.2735 18.5709C15.365 18.6199 15.476 18.6145 15.5623 18.557L17.2498 17.432C17.328 17.3798 17.375 17.292 17.375 17.1979C17.375 17.1039 17.328 17.0161 17.2498 16.9639L15.5623 15.8389Z" fill="white"/></svg>'), mimetype="image/svg+xml")
         case "iina":
             return send_file(BytesIO(b'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect y="0.000244141" width="32" height="32" rx="7.51807" fill="url(#paint0_linear_10408_1309)"/><rect x="5.5" y="13.3784" width="2.00482" height="5.35904" rx="1.00241" fill="url(#paint1_linear_10408_1309)"/><rect x="9.02173" y="11.7976" width="2.62169" height="7.78795" rx="1.31084" fill="url(#paint2_linear_10408_1309)"/><path d="M13.2881 14.1557C13.2881 10.8731 13.2881 9.23184 14.1967 8.44754C14.4469 8.23163 14.7356 8.06495 15.0476 7.95629C16.1812 7.56155 17.6025 8.38219 20.4453 10.0235L23.8046 11.9629C26.6474 13.6042 28.0687 14.4248 28.2937 15.6039C28.3556 15.9285 28.3556 16.2618 28.2937 16.5864C28.0687 17.7654 26.6474 18.5861 23.8046 20.2274L20.4453 22.1668C17.6025 23.8081 16.1812 24.6287 15.0476 24.234C14.7356 24.1253 14.4469 23.9587 14.1967 23.7427C13.2881 22.9584 13.2881 21.3172 13.2881 18.0346L13.2881 14.1557Z" fill="url(#paint3_linear_10408_1309)"/><defs><linearGradient id="paint0_linear_10408_1309" x1="16" y1="0.000244141" x2="16" y2="32.0002" gradientUnits="userSpaceOnUse"><stop stop-color="#4E4E4E"/><stop offset="1" stop-color="#262525"/></linearGradient><linearGradient id="paint1_linear_10408_1309" x1="5.5" y1="16.0387" x2="7.50482" y2="15.7495" gradientUnits="userSpaceOnUse"><stop stop-color="#8148EF"/><stop offset="1" stop-color="#4A2CC4"/></linearGradient><linearGradient id="paint2_linear_10408_1309" x1="9.02173" y1="15.6636" x2="11.6536" y2="15.322" gradientUnits="userSpaceOnUse"><stop stop-color="#4435E1"/><stop offset="1" stop-color="#3E5EFA"/></linearGradient><linearGradient id="paint3_linear_10408_1309" x1="25.4842" y1="15.653" x2="13.4168" y2="12.8771" gradientUnits="userSpaceOnUse"><stop stop-color="#00DDFE"/><stop offset="1" stop-color="#0092FA"/></linearGradient></defs></svg>'), mimetype="image/svg+xml")
         case "infuse":
@@ -341,58 +353,80 @@ def index():
 @application.get("/<path:path>")
 @redirect_exception_response
 def query(path: str):
+    if password and request.args.get("password") != password:
+        raise PermissionError(errno.EACCES, "wrong password")
     scheme = request.environ.get("HTTP_X_FORWARDED_PROTO") or "http"
     netloc = unquote(urlsplit(request.url).netloc)
     origin = f"{scheme}://{netloc}"
     fid = request.args.get("id")
+    path = fs.abspath(unquote(request.args.get("path") or path).lstrip("/"))
+
     def update_attr(attr):
-        path_url = attr.get("path_url") or "%s%s" % (origin, quote(attr["path"], safe=":/"))
-        attr["short_url"] = f"{origin}?id={attr['id']}"
+        relpath = attr["relpath"] = attr["path"][len(cast(str, root_dir)):]
+        path_url = "%s/%s" % (origin, relpath.translate({0x23: "%23", 0x3F: "%3F"}))
         attr["url"] = f"{path_url}?id={attr['id']}"
+        attr["short_url"] = f"{origin}?id={attr['id']}"
         attr["format_size"] = format_bytes(attr["size"])
+        if password:
+            attr["url"] += "&password=" + password
+            attr["short_url"] += "&password=" + password
         return attr
+
     match request.args.get("method"):
         case "attr":
-            if fid is not None:
-                attr = relogin_wrap(fs.attr, int(fid))
+            if root_dir is None:
+                attr = relogin_wrap(fs.attr, root)
             else:
-                path = unquote(request.args.get("path") or path)
-                attr = relogin_wrap(fs.attr, path)
+                if fid is not None:
+                    attr = relogin_wrap(fs.attr, int(fid))
+                else:
+                    attr = relogin_wrap(fs.attr, path)
+                if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
+                    raise PermissionError(errno.EACCES, "out of root range")
             update_attr(attr)
             json_str = dumps({k: attr.get(k) for k in KEYS})
             return Response(json_str, content_type='application/json; charset=utf-8')
         case "list":
+            if root_dir is None:
+                raise NotADirectoryError(errno.ENOTDIR, "root is not directory")
             if fid is not None:
                 children = relogin_wrap(fs.listdir_attr, int(fid))
             else:
-                path = unquote(request.args.get("path") or path)
                 children = relogin_wrap(fs.listdir_attr, path)
+            if children and root != 0 and not any(info["id"] == root for info in children[0]["ancestors"][:-1]):
+                raise PermissionError(errno.EACCES, "out of root range")
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
             ])
             return Response(json_str, content_type='application/json; charset=utf-8')
+
+    if root_dir is None:
+        return get_url(root)
     if fid is not None:
         attr = relogin_wrap(fs.attr, int(fid))
     else:
-        path = unquote(request.args.get("path") or path)
         attr = relogin_wrap(fs.attr, path)
+    if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
+        raise PermissionError(errno.EACCES, "out of root range")
     if not attr["is_directory"]:
         return get_url(attr["id"])
     children = relogin_wrap(fs.listdir_attr, attr["id"])
     for subattr in children:
-        subattr["path_url"] = "%s%s" % (origin, quote(subattr["path"], safe=":/"))
         update_attr(subattr)
     fid = attr["id"]
-    if fid == 0:
-        header = f'<strong><a href="{origin}?id=0&method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
+    if fid == root:
+        header = f'<strong><a href="/?id={root}&method=list&password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>'
     else:
-        ancestors = relogin_wrap(fs.get_ancestors, int(attr["id"]))
-        info = ancestors[-1]
-        header = f'<strong><a href="{origin}?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
-                f'<strong><a href="{origin}?id={info["id"]}" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>/' 
-                for info in ancestors[1:-1]
-            ) + f'<strong><a href="{origin}?id={info["id"]}&method=list" style="border: 1px solid black; text-decoration: none">{escape(info["name"])}</a></strong>'
+        ancestors = attr["ancestors"]
+        last_info = ancestors[-1]
+        for i, info in enumerate(ancestors):
+            if info["id"] == root:
+                break
+        header = f'<strong><a href="/?id={root}&password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
+                f'<strong><a href="/?id={info["id"]}&password={password}" style="border: 1px solid black; text-decoration: none">{escape(escape_name(info["name"]))}</a></strong>/' 
+                for info in ancestors[i+1:-1]
+            ) + f'<strong><a href="/?id={last_info["id"]}&method=list&password={password}" style="border: 1px solid black; text-decoration: none">{escape(escape_name(last_info["name"]))}</a></strong>'
     return render_template_string(
         """\
 <!DOCTYPE html>
@@ -538,9 +572,9 @@ def query(path: str):
       </tr>
     </thead>
     <tbody>
-      {%- if attr["id"] != 0 %}
+      {%- if attr["id"] != root %}
       <tr>
-        <td colspan="6"><a href="/?id={{ attr["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
+        <td colspan="6"><a href="/?id={{ attr["parent_id"] }}&password={{ password }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
       </tr>
       {%- endif %}
       {%- for attr in children %}
@@ -550,14 +584,15 @@ def query(path: str):
         <td style="max-width: 800px; word-wrap: break-word"><i class="file-type tp-{{ attr.get("ico") or "folder" }}"></i><a href="{{ url }}">{{ name }}</a></td>
         <td style="width: 160px; word-wrap: break-word;">
           {%- if not attr["is_directory"] %}
-          <a class="popup" href="iina://weblink?url={{ url }}"><img class="icon" src="/?pic=iina" /><span class="popuptext">IINA</span></a>
+          <a class="popup" href="iina://weblink?url={{ url | urlencode }}"><img class="icon" src="/?pic=iina" /><span class="popuptext">IINA</span></a>
           <a class="popup" href="potplayer://{{ url }}"><img class="icon" src="/?pic=potplayer" /><span class="popuptext">PotPlayer</span></a>
           <a class="popup" href="vlc://{{ url }}"><img class="icon" src="/?pic=vlc" /><span class="popuptext">VLC</span></a>
-          <a class="popup" href="intent:{{ attr["short_url"] }}#Intent;package=com.mxtech.videoplayer.pro;S.title={{ name }};end"><img class="icon" src="/?pic=mxplayer" /><span class="popuptext">MX Player</span></a>
-          <a class="popup" href="infuse://x-callback-url/play?url={{ url }}"><img class="icon" src="/?pic=infuse" /><span class="popuptext">infuse</span></a>
+          <a class="popup" href="filebox://play?url={{ url | urlencode }}"><img class="icon" src="/?pic=fileball" /><span class="popuptext">Fileball</span></a>
+          <a class="popup" href="intent:{{ attr["short_url"] | urlencode }}#Intent;package=com.mxtech.videoplayer.pro;S.title={{ name }};end"><img class="icon" src="/?pic=mxplayer" /><span class="popuptext">MX Player</span></a>
+          <a class="popup" href="infuse://x-callback-url/play?url={{ url | urlencode }}"><img class="icon" src="/?pic=infuse" /><span class="popuptext">infuse</span></a>
           <a class="popup" href="nplayer-{{ url }}"><img class="icon" src="/?pic=nplayer" /><span class="popuptext">nPlayer</span></a>
-          <a class="popup" href="omniplayer://weblink?url={{ url }}"><img class="icon" src="/?pic=omniplayer" /><span class="popuptext">OmniPlayer</span></a>
-          <a class="popup" href="figplayer://weblink?url={{ url }}"><img class="icon" src="/?pic=figplayer" /><span class="popuptext">Fig Player</span></a>
+          <a class="popup" href="omniplayer://weblink?url={{ url | urlencode }}"><img class="icon" src="/?pic=omniplayer" /><span class="popuptext">OmniPlayer</span></a>
+          <a class="popup" href="figplayer://weblink?url={{ url | urlencode }}"><img class="icon" src="/?pic=figplayer" /><span class="popuptext">Fig Player</span></a>
           <a class="popup" href="mpv://{{ url }}"><img class="icon" src="/?pic=mpv" /><span class="popuptext">MPV</span></a>
           {%- endif %}
         </td>
@@ -566,7 +601,7 @@ def query(path: str):
         {%- else %}
         <td style="text-align: right;"><span class="popup">{{ attr["format_size"] }}<span class="popuptext">{{ attr["size"] }}</span></span></td>
         {%- endif %}
-        <td><a href="{{ attr["path_url"] }}?id={{ attr["id"] }}&method=attr">attr</a></td>
+        <td><a href="/?id={{ attr["id"] }}&method=attr&password={{ password }}">attr</a></td>
         <td>{{ attr["time"] }}</td>
       </tr>
       {%- endfor %}
@@ -578,7 +613,32 @@ def query(path: str):
         children=children, 
         origin=origin, 
         header=header, 
+        root=root, 
+        password=password, 
     )
+
+
+root_dir: None | str
+if root == 0:
+    root_dir = "/"
+elif not root.strip("./"):
+    root = 0
+    root_dir = "/"
+else:
+    if not root.startswith("0") and root.isascii() and root.isdecimal():
+        root = int(root)
+    try:
+        relogin_wrap(fs.chdir, root)
+    except NotADirectoryError:
+        root_attr = relogin_wrap(fs.attr, root)
+        root = root_attr["id"]
+        root_dir = None
+    else:
+        root = fs.id
+        if root == 0:
+            root_dir = "/"
+        else:
+            root_dir = fs.path + "/"
 
 
 if __name__ == "__main__":

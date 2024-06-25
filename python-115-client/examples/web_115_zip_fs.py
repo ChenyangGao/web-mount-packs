@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上的某个压缩包中的文件信息和下载链接 🕷️
 
@@ -57,6 +57,8 @@ parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高�
 parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-r", "--root", default="/", help="选择一个根 路径，默认值 '/'")
+parser.add_argument("-P", "--password", default="", help="密码，如果提供了密码，那么每次访问必须携带请求参数 ?password={password}")
 
 if __name__ == "__main__":
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值 '0.0.0.0'")
@@ -90,7 +92,7 @@ except ImportError:
     from flask_compress import Compress # type: ignore
     from p115 import P115Client, AVAILABLE_APPS
 
-import posixpath
+import errno
 
 from collections.abc import Callable
 from functools import partial, update_wrapper
@@ -98,9 +100,11 @@ from html import escape
 from io import BytesIO
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
+from posixpath import basename, split as splitpath
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
+from typing import cast
 from urllib.parse import quote, unquote, urlsplit
 
 
@@ -113,6 +117,8 @@ cookies_path = args.cookies_path
 cookies_path_mtime = 0
 lock_dir_methods = args.lock_dir_methods
 use_request = args.use_request
+root = args.root
+password = args.password
 
 login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None
@@ -128,6 +134,29 @@ except ImportError:
     except ImportError:
         from json import dumps as odumps, loads
     dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+
+if not cookies:
+    if cookies_path:
+        try:
+            cookies = open(cookies_path).read()
+        except FileNotFoundError:
+            pass
+    else:
+        seen = set()
+        for dir_ in (".", expanduser("~"), dirname(__file__)):
+            dir_ = realpath(dir_)
+            if dir_ in seen:
+                continue
+            seen.add(dir_)
+            try:
+                path = joinpath(dir_, "115-cookies.txt")
+                cookies = open(path).read()
+                cookies_path_mtime = stat(path).st_mtime_ns
+                if cookies:
+                    cookies_path = path
+                    break
+            except FileNotFoundError:
+                pass
 
 client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
@@ -182,29 +211,6 @@ match use_request:
         def get_status_code(e):
             return e.status
 
-if not cookies:
-    if cookies_path:
-        try:
-            cookies = open(cookies_path).read()
-        except FileNotFoundError:
-            pass
-    else:
-        seen = set()
-        for dir_ in (".", expanduser("~"), dirname(__file__)):
-            dir_ = realpath(dir_)
-            if dir_ in seen:
-                continue
-            seen.add(dir_)
-            try:
-                path = joinpath(dir_, "115-cookies.txt")
-                cookies = open(path).read()
-                cookies_path_mtime = stat(path).st_mtime_ns
-                if cookies:
-                    cookies_path = path
-                    break
-            except FileNotFoundError:
-                pass
-
 device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
     # 115 浏览器版
@@ -224,8 +230,8 @@ else:
 fs = client.get_zip_fs(pickcode, request=do_request)
 
 KEYS = (
-    "name", "path", "is_directory", "size", "format_size", "time", 
-    "timestamp", "url", 
+    "name", "path", "relpath", "is_directory", "size", "format_size", 
+    "time", "timestamp", "url", 
 )
 application = Flask(__name__)
 Compress(application)
@@ -255,6 +261,8 @@ def redirect_exception_response(func, /):
             return func(*args, **kwds)
         except StatusError as exc:
             return str(exc), get_status_code(exc)
+        except PermissionError as exc:
+            return str(exc), 403 # Forbidden
         except FileNotFoundError as exc:
             return str(exc), 404 # Not Found
         except OSError as exc:
@@ -274,20 +282,18 @@ def get_url(path: str):
     headers = url["headers"]
     if request.args.get("method") == "url":
         return {"url": url, "headers": headers}
-    bytes_range = request_headers.get("Range")
-    if bytes_range:
+    if bytes_range := request_headers.get("Range"):
         headers["Range"] = bytes_range
-        resp = urlopen(url, headers=headers)
-        return Response(
-            resp, 
-            headers=dict(request_headers), 
-            status=206, 
-            mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
-        )
     resp = urlopen(url, headers=headers)
-    return send_file(
+    resp_headers = {
+        k: v for k, v in resp.headers.items() 
+        if k.lower() not in ("connection", "date")
+    }
+    resp_headers["Content-Disposition"] = 'attachment; filename="%s"' % quote(basename(path))
+    return Response(
         resp, 
-        mimetype=resp.headers.get("Content-Type") or "application/octet-stream", 
+        headers=resp_headers, 
+        status=resp.status, 
     )
 
 
@@ -343,6 +349,8 @@ def index():
             return send_file(BytesIO(b'<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="16" height="16" rx="8" fill="#2777F8"/><path d="M4.5874 6.99646C4.60631 6.96494 4.61891 6.92713 4.63152 6.90192C5.17356 5.81784 5.7219 4.74006 6.25764 3.64969C6.38999 3.37867 6.60429 3.25891 6.88792 3.25891H9.39012C9.71786 3.25891 10.0582 3.25261 10.3859 3.25891C10.7326 3.26521 11.0729 3.19589 11.4007 3.08243C11.4259 3.07613 11.4637 3.05722 11.4826 3.06352C11.5646 3.06983 11.6087 3.15807 11.5772 3.24C11.4196 3.56145 11.2557 3.88289 11.0793 4.20433C10.9532 4.43123 10.7515 4.55098 10.4994 4.55098H7.72618C7.42364 4.55098 7.20305 4.68334 7.077 4.96697C6.95094 5.23168 6.81228 5.49009 6.67992 5.75481C6.66101 5.78002 6.65471 5.80523 6.6358 5.83674C6.81858 5.88087 7.00767 5.91238 7.18414 5.94389C7.73249 6.06365 8.29343 6.1834 8.81026 6.4166C9.5792 6.75695 10.2158 7.25487 10.6444 7.97969C10.9091 8.42088 11.0667 8.88098 11.0982 9.3915C11.1927 10.5638 10.7578 11.5219 9.88176 12.2845C9.28296 12.8013 8.58336 13.1038 7.80812 13.2488C7.35432 13.3308 6.89422 13.3559 6.44042 13.3244C5.92359 13.2803 5.42567 13.1479 4.95927 12.9084C4.95296 12.9022 4.94036 12.9022 4.91515 12.8833C5.00969 12.8895 5.07271 12.9022 5.14205 12.9022C5.85426 12.9652 6.54756 12.8833 7.21566 12.6564C7.79551 12.4546 8.32494 12.1584 8.74723 11.6857C9.09388 11.295 9.28927 10.8475 9.35229 10.3306C9.44684 9.61841 9.18212 9.03855 8.72202 8.52173C8.24931 8.00489 7.66315 7.67716 7.00767 7.45655C6.49715 7.28639 5.98662 7.16663 5.45088 7.091C5.17986 7.04688 4.90254 7.02167 4.63152 6.99646C4.61891 7.00906 4.61261 7.00906 4.5874 6.99646Z" fill="white"/></svg>'), mimetype="image/svg+xml")
         case "figplayer":
             return redirect("https://omiapps.com/resource/app/icons/potplayerx.png")
+        case "fileball":
+            return send_file(BytesIO(b'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 6.5C0 2.91015 2.91015 0 6.5 0H25.5C29.0899 0 32 2.91015 32 6.5V25.5C32 29.0899 29.0899 32 25.5 32H6.5C2.91015 32 0 29.0899 0 25.5V6.5Z" fill="#FFCA28"/><path fill-rule="evenodd" clip-rule="evenodd" d="M7.75 7.875C6.50736 7.875 5.5 8.88236 5.5 10.125V21.875C5.5 23.1176 6.50736 24.125 7.75 24.125H24.25C25.4926 24.125 26.5 23.1176 26.5 21.875V12.025C26.5 10.7726 25.4774 9.7613 24.2251 9.77514L15.3125 9.875L13.1891 8.17631C12.9453 7.98126 12.6424 7.875 12.3302 7.875H7.75ZM16 20.7917C17.933 20.7917 19.5 19.2247 19.5 17.2917C19.5 15.3587 17.933 13.7917 16 13.7917C14.067 13.7917 12.5 15.3587 12.5 17.2917C12.5 19.2247 14.067 20.7917 16 20.7917Z" fill="white"/><path d="M15.5623 15.8389C15.476 15.7814 15.365 15.776 15.2735 15.825C15.1821 15.8739 15.125 15.9692 15.125 16.0729V18.3229C15.125 18.4267 15.1821 18.522 15.2735 18.5709C15.365 18.6199 15.476 18.6145 15.5623 18.557L17.2498 17.432C17.328 17.3798 17.375 17.292 17.375 17.1979C17.375 17.1039 17.328 17.0161 17.2498 16.9639L15.5623 15.8389Z" fill="white"/></svg>'), mimetype="image/svg+xml")
         case "iina":
             return send_file(BytesIO(b'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect y="0.000244141" width="32" height="32" rx="7.51807" fill="url(#paint0_linear_10408_1309)"/><rect x="5.5" y="13.3784" width="2.00482" height="5.35904" rx="1.00241" fill="url(#paint1_linear_10408_1309)"/><rect x="9.02173" y="11.7976" width="2.62169" height="7.78795" rx="1.31084" fill="url(#paint2_linear_10408_1309)"/><path d="M13.2881 14.1557C13.2881 10.8731 13.2881 9.23184 14.1967 8.44754C14.4469 8.23163 14.7356 8.06495 15.0476 7.95629C16.1812 7.56155 17.6025 8.38219 20.4453 10.0235L23.8046 11.9629C26.6474 13.6042 28.0687 14.4248 28.2937 15.6039C28.3556 15.9285 28.3556 16.2618 28.2937 16.5864C28.0687 17.7654 26.6474 18.5861 23.8046 20.2274L20.4453 22.1668C17.6025 23.8081 16.1812 24.6287 15.0476 24.234C14.7356 24.1253 14.4469 23.9587 14.1967 23.7427C13.2881 22.9584 13.2881 21.3172 13.2881 18.0346L13.2881 14.1557Z" fill="url(#paint3_linear_10408_1309)"/><defs><linearGradient id="paint0_linear_10408_1309" x1="16" y1="0.000244141" x2="16" y2="32.0002" gradientUnits="userSpaceOnUse"><stop stop-color="#4E4E4E"/><stop offset="1" stop-color="#262525"/></linearGradient><linearGradient id="paint1_linear_10408_1309" x1="5.5" y1="16.0387" x2="7.50482" y2="15.7495" gradientUnits="userSpaceOnUse"><stop stop-color="#8148EF"/><stop offset="1" stop-color="#4A2CC4"/></linearGradient><linearGradient id="paint2_linear_10408_1309" x1="9.02173" y1="15.6636" x2="11.6536" y2="15.322" gradientUnits="userSpaceOnUse"><stop stop-color="#4435E1"/><stop offset="1" stop-color="#3E5EFA"/></linearGradient><linearGradient id="paint3_linear_10408_1309" x1="25.4842" y1="15.653" x2="13.4168" y2="12.8771" gradientUnits="userSpaceOnUse"><stop stop-color="#00DDFE"/><stop offset="1" stop-color="#0092FA"/></linearGradient></defs></svg>'), mimetype="image/svg+xml")
         case "infuse":
@@ -366,50 +374,62 @@ def index():
 @application.get("/<path:path>")
 @redirect_exception_response
 def query(path: str):
+    if password and request.args.get("password") != password:
+        raise PermissionError(errno.EACCES, "wrong password")
     scheme = request.environ.get("HTTP_X_FORWARDED_PROTO") or "http"
     netloc = unquote(urlsplit(request.url).netloc)
     origin = f"{scheme}://{netloc}"
+    path = fs.abspath(unquote(request.args.get("path") or path).lstrip("/"))
+
     def update_attr(attr):
-        attr["url"] = "%s%s" % (origin, quote(attr["path"], safe=":/"))
+        relpath = attr["relpath"] = attr["path"][len(cast(str, root_dir)):]
+        attr["url"] = "%s/%s" % (origin, relpath.translate({0x23: "%23", 0x3F: "%3F"}))
+        if password:
+            attr["url"] += "&password=" + password
         attr["format_size"] = format_bytes(attr["size"])
         return attr
+
     match request.args.get("method"):
         case "attr":
-            path = unquote(request.args.get("path") or path)
-            attr = relogin_wrap(fs.attr, path)
+            if root_dir is None:
+                attr = relogin_wrap(fs.attr, root)
+            else:
+                attr = relogin_wrap(fs.attr, path)
             update_attr(attr)
             json_str = dumps({k: attr.get(k) for k in KEYS})
             return Response(json_str, content_type='application/json; charset=utf-8')
         case "list":
-            path = unquote(request.args.get("path") or path)
+            if root_dir is None:
+                raise NotADirectoryError(errno.ENOTDIR, "root is not directory")
             children = relogin_wrap(fs.listdir_attr, path)
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
             ])
             return Response(json_str, content_type='application/json; charset=utf-8')
-    path = unquote(request.args.get("path") or path)
+
+    if root_dir is None:
+        return get_url(root)
     attr = relogin_wrap(fs.attr, path)
-    path = attr["path"]
     if not attr["is_directory"]:
         return get_url(path)
     children = relogin_wrap(fs.listdir_attr, path)
     for subattr in children:
         update_attr(subattr)
-    if path == "/":
-        header = f'<strong><a href="{origin}?method=list" style="border: 1px solid black; text-decoration: none">/</a></strong>'
+    dir_ = path[len(root_dir):]
+    if not dir_:
+        header = f'<strong><a href="/?method=list&password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>'
     else:
-        ancestors = []
-        dir_ = path
-        while dir_ != "/":
-            subdir, name = posixpath.split(dir_)
+        ancestors: list[tuple[str, str]] = []
+        while dir_:
+            subdir, name = splitpath(dir_)
             ancestors.append((dir_, name))
             dir_ = subdir
         info = ancestors[0]
-        header = f'<strong><a href="{origin}" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
-                f'<strong><a href="{origin}{quote(path, safe=":/")}" style="border: 1px solid black; text-decoration: none">{escape(name)}</a></strong>/' 
+        header = f'<strong><a href="/?password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>' + "".join(
+                f'<strong><a href="/{quote(path, safe="/")}?password={password}" style="border: 1px solid black; text-decoration: none">{escape(name)}</a></strong>/' 
                 for path, name in reversed(ancestors[1:])
-            ) + f'<strong><a href="{origin}{quote(path, safe=":/")}?method=list" style="border: 1px solid black; text-decoration: none">{escape(attr["name"])}</a></strong>'
+            ) + f'<strong><a href="/{quote(info[0], safe="/")}?method=list&password={password}" style="border: 1px solid black; text-decoration: none">{escape(info[1])}</a></strong>'
     return render_template_string(
         """\
 <!DOCTYPE html>
@@ -596,6 +616,20 @@ def query(path: str):
         origin=origin, 
         header=header, 
     )
+
+
+root_dir: None | str
+if not root.strip("./"):
+    root = "/"
+    root_dir = "/"
+else:
+    root = fs.abspath(root)
+    try:
+        relogin_wrap(fs.chdir, root)
+    except NotADirectoryError:
+        root_dir = None
+    else:
+        root_dir = root if root == "/" else root + "/"
 
 
 if __name__ == "__main__":
