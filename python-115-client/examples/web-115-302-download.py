@@ -12,6 +12,7 @@ parser = ArgumentParser(
     description=__doc__, 
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
+parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
 parser.add_argument("-p", "--src-path", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
 parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
@@ -45,9 +46,8 @@ from textwrap import indent
 from threading import Lock
 from traceback import format_exc
 from typing import cast, ContextManager, NamedTuple, TypedDict
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote, urljoin
-from urllib.request import urlopen, Request
 
 try:
     from concurrenttools import thread_batch
@@ -55,18 +55,27 @@ try:
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     )
     from texttools import cycle_text, rotate_text
-    from urlopen import download
+    from urllib3.exceptions import MaxRetryError, RequestError
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
+    from download import download
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", 
-         "python-concurrenttools", "python-texttools", "python-urlopen", "rich"], check=True)
+         "python-concurrenttools", "python-texttools", "python-download", "rich", "urllib3_request"], check=True)
     from concurrenttools import thread_batch
     from rich.progress import (
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     )
     from texttools import cycle_text, rotate_text
-    from urlopen import download
+    from urllib3.exceptions import MaxRetryError, RequestError
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
+    from download import download
+
+
+urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
 
 
 @dataclass
@@ -115,34 +124,37 @@ def attr(
     id_or_path: int | str = 0, 
     /, 
     base_url: str = "http://localhost", 
+    password: str = "", 
 ) -> dict:
+    params: dict = {"method": "attr"}
+    if password:
+        params["password"] = password
     if isinstance(id_or_path, int):
-        url = f"{base_url}?id={id_or_path}&method=attr"
+        params["id"] = id_or_path
     else:
-        url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
-        if resp.headers.get("Content-Encoding") == "gzip":
-            resp = GzipFile(fileobj=resp)
-        return load(resp)
+        params["path"] = id_or_path
+    return urlopen(base_url, params=params, parse=True)
 
 
 def listdir(
     id_or_path: int | str = 0, 
     /, 
     base_url: str = "http://localhost", 
+    password: str = "", 
 ) -> list[dict]:
+    params: dict = {"method": "list"}
+    if password:
+        params["password"] = password
     if isinstance(id_or_path, int):
-        url = f"{base_url}?id={id_or_path}&method=list"
+        params["id"] = id_or_path
     else:
-        url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    with urlopen(Request(url, headers={"Accept-Encoding": "gzip"}), timeout=60) as resp:
-        if resp.headers.get("Content-Encoding") == "gzip":
-            resp = GzipFile(fileobj=resp)
-        return load(resp)
+        params["path"] = id_or_path
+    return urlopen(base_url, params=params, parse=True)
 
 
 def main() -> Result:
     base_url = args.base_url
+    password = args.password
     src_path = args.src_path
     dst_path = args.dst_path
     max_workers = args.max_workers
@@ -280,7 +292,7 @@ def main() -> Result:
                     sub_entries = {}
                     console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
 
-                subattrs = listdir(task_id, base_url)
+                subattrs = listdir(task_id, base_url, password)
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -320,6 +332,7 @@ def main() -> Result:
                     dst_path, 
                     resume=resume, 
                     make_reporthook=partial(add_report, attr=attr), 
+                    urlopen=urlopen, 
                 )
                 console_print(f"[bold green][GOOD][/bold green] 📝 下载文件: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
                 update_success(1, 1, attr["size"])
@@ -332,7 +345,7 @@ def main() -> Result:
                 if isinstance(e, HTTPError):
                     retryable = not (400 <= cast(int, e.status) < 500)
                 else:
-                    retryable = isinstance(e, URLError)
+                    retryable = isinstance(e, (MaxRetryError, RequestError))
             else:
                 retryable = task.times <= max_retries
             if retryable:
@@ -360,7 +373,7 @@ def main() -> Result:
             src_id = int(src_path)
     else:
         src_id = src_path
-    src_attr = attr(src_id, base_url)
+    src_attr = attr(src_id, base_url, password)
     is_directory = src_attr["is_directory"]
     name = escape_name(src_attr["name"])
     dst_path = normpath(dst_path)

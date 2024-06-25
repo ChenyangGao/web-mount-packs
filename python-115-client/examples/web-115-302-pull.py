@@ -12,6 +12,7 @@ parser = ArgumentParser(
     description=__doc__, 
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值: http://localhost")
+parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
 parser.add_argument("-p", "--src-path", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: 0")
 parser.add_argument("-t", "--dst-path", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: 0")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
@@ -101,6 +102,7 @@ COLORS_8_BIT: dict[str, int] = {
 }
 
 base_url = args.base_url
+password = args.password
 src_path = args.src_path
 dst_path = args.dst_path
 cookies = args.cookies
@@ -341,24 +343,32 @@ def ensure_cm(cm):
 
 def attr(
     id_or_path: int | str = 0, 
-    base_url: str = base_url, 
+    base_url: str = "http://localhost", 
+    password: str = "", 
 ) -> dict:
+    params: dict = {"method": "attr"}
+    if password:
+        params["password"] = password
     if isinstance(id_or_path, int):
-        url = f"{base_url}?id={id_or_path}&method=attr"
+        params["id"] = id_or_path
     else:
-        url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=attr"
-    return urlopen(url, parse=True)
+        params["path"] = id_or_path
+    return urlopen(base_url, params=params, parse=True)
 
 
 def listdir(
     id_or_path: int | str = 0, 
-    base_url: str = base_url, 
+    base_url: str = "http://localhost", 
+    password: str = "", 
 ) -> list[dict]:
+    params: dict = {"method": "list"}
+    if password:
+        params["password"] = password
     if isinstance(id_or_path, int):
-        url = f"{base_url}?id={id_or_path}&method=list"
+        params["id"] = id_or_path
     else:
-        url = f"{base_url}?path={quote(id_or_path, safe=':/')}&method=list"
-    return urlopen(url, parse=True)
+        params["path"] = id_or_path
+    return urlopen(base_url, params=params, parse=True)
 
 
 def read_bytes_range(url: str, bytes_range: str = "0-") -> bytes:
@@ -627,7 +637,7 @@ def pull(
                         (attr["name"], attr["is_directory"]): attr 
                         for attr in relogin_wrap(fs.listdir_attr, dst_id)
                     }
-                subattrs = listdir(task_id, base_url)
+                subattrs = listdir(task_id, base_url, password)
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -801,7 +811,7 @@ def pull(
             src_id = int(src_path)
     else:
         src_id = src_path
-    src_attr = attr(src_id, base_url)
+    src_attr = attr(src_id, base_url, password)
     dst_attr = None
     name = src_attr["name"]
     is_directory = src_attr["is_directory"]
