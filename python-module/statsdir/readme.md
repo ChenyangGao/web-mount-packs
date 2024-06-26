@@ -19,7 +19,7 @@ pip install -U statsdir
 >>> help(statsdir)
 Help on function statsdir in module statsdir:
 
-statsdir(top=None, /, min_depth: int = 0, max_depth: int = -1, predicate: None | collections.abc.Callable[..., None | bool] = None, onerror: bool | collections.abc.Callable[[OSError], bool] = False, follow_symlinks: bool = False, key: None | collections.abc.Callable = None) -> dict
+statsdir(top=None, /, min_depth: int = 0, max_depth: int = -1, predicate: None | collections.abc.Callable[..., None | bool] = None, onerror: bool | collections.abc.Callable[[OSError], Any] = False, follow_symlinks: bool = False, key: None | collections.abc.Callable = None) -> dict
     目录树遍历统计。
     
     :param top: 根路径，默认为当前目录。
@@ -58,8 +58,8 @@ statsdir(top=None, /, min_depth: int = 0, max_depth: int = -1, predicate: None |
 提供一个命令行工具，用于导出目录树
 
 ```console
-$ python -m statsdir -h
-usage: __main__.py [-h] [-m MIN_DEPTH] [-M MAX_DEPTH] [-s SELECT] [-se] [-k KEY] [-ke] [-fl] [-v] [paths ...]
+$ statsdir -h
+usage: statsdir [-h] [-m MIN_DEPTH] [-M MAX_DEPTH] [-s SELECT] [-se] [-k KEY] [-ke] [-fl] [-v] [paths ...]
 
 目录树遍历统计
 

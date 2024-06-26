@@ -1381,7 +1381,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -1392,7 +1392,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[AttrDict]:
@@ -1402,12 +1402,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Awaitable[AttrDict]:
         def gen_step():
-            nonlocal path, pid, force_directory
+            nonlocal path, pid, ensure_dir
 
             if pid is None:
                 pid = self.id
@@ -1417,14 +1417,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 return (yield partial(self._attr, pid, async_=async_))
             parents = 0
             if isinstance(path, str):
-                if not force_directory:
-                    force_directory = path_is_dir_form(path)
+                if not ensure_dir:
+                    ensure_dir = path_is_dir_form(path)
                 patht, parents = splits(path)
                 if not (patht or parents):
                     return (yield partial(self._attr, pid, async_=async_))
             else:
-                if not force_directory:
-                    force_directory = path[-1] == ""
+                if not ensure_dir:
+                    ensure_dir = path[-1] == ""
                 patht = [path[0], *(p for p in path[1:] if p)]
             if patht == [""]:
                 return self._attr(0)
@@ -1465,7 +1465,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             path_to_id = self.path_to_id
             if path_to_id:
                 fullpath = ancestors_paths[-1]
-                if not force_directory and (id := path_to_id.get(fullpath)):
+                if not ensure_dir and (id := path_to_id.get(fullpath)):
                     try:
                         attr = yield partial(self._attr, id, async_=async_)
                         if attr["path"] == fullpath:
@@ -1498,7 +1498,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     id = yield from get_dir_id(ancestors_paths2[-1])
                     return (yield partial(self._attr, id, async_=async_))
                 except FileNotFoundError:
-                    if force_directory:
+                    if ensure_dir:
                         raise
 
             parent: int | AttrDict
@@ -1531,7 +1531,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         nonlocal attr, parent
                         async for attr in self.iterdir(parent, async_=True):
                             if attr["name"] == name:
-                                if force_directory or i < last_idx:
+                                if ensure_dir or i < last_idx:
                                     if attr["is_directory"]:
                                         parent = attr
                                         break
@@ -1549,7 +1549,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 for i, name in enumerate(patht[i:], i):
                     for attr in self.iterdir(parent):
                         if attr["name"] == name:
-                            if force_directory or i < last_idx:
+                            if ensure_dir or i < last_idx:
                                 if attr["is_directory"]:
                                     parent = attr
                                     break
@@ -1606,7 +1606,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         refresh: bool = True, 
         *, 
         async_: Literal[False] = False, 
@@ -1618,7 +1618,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         refresh: bool = True, 
         *, 
         async_: Literal[True], 
@@ -1629,7 +1629,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         refresh: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
@@ -1652,10 +1652,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     self._attr_path, 
                     id_or_path, 
                     pid=pid, 
-                    force_directory=force_directory, 
+                    ensure_dir=ensure_dir, 
                     async_=async_, 
                 ))
-            if force_directory and not attr["is_directory"]:
+            if ensure_dir and not attr["is_directory"]:
                 raise NotADirectoryError(
                     errno.ENOTDIR, 
                     f"{attr['id']} (id={attr['id']}) is not directory"
@@ -1805,7 +1805,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             attr = await self._attr_path(
                                 id_or_path, 
                                 pid=pid, 
-                                force_directory=True, 
+                                ensure_dir=True, 
                                 async_=True, 
                             )
                     if not attr["is_directory"]:
@@ -1973,7 +1973,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     elif isinstance(id_or_path, (AttrDict, path_class)):
                         attr = self._attr(id_or_path["id"])
                     else:
-                        attr = self._attr_path(id_or_path, pid=pid, force_directory=True)
+                        attr = self._attr_path(id_or_path, pid=pid, ensure_dir=True)
                 if not attr["is_directory"]:
                     raise NotADirectoryError(
                         errno.ENOTDIR, 
@@ -3107,7 +3107,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         self._attr_path, 
                         [name], 
                         pid=pid, 
-                        force_directory=True, 
+                        ensure_dir=True, 
                         async_=async_, 
                     )
                 except FileNotFoundError:
@@ -3191,7 +3191,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         get_attr, 
                         [name], 
                         pid=pid, 
-                        force_directory=True, 
+                        ensure_dir=True, 
                         async_=async_, 
                     )
                 except FileNotFoundError:
@@ -3364,7 +3364,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 self.attr, 
                 id_or_path, 
                 pid=pid, 
-                force_directory=True, 
+                ensure_dir=True, 
                 async_=async_, 
             )
             id = attr["id"]
@@ -3655,7 +3655,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 self.attr, 
                 id_or_path, 
                 pid=pid, 
-                force_directory=True, 
+                ensure_dir=True, 
                 async_=async_, 
             )
             id = attr["id"]

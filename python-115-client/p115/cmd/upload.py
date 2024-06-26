@@ -370,7 +370,7 @@ def main(args):
                         subdattrs = {}
                         console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
                 except FileExistsError:
-                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, force_directory=True)
+                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, ensure_dir=True)
                 if subdattrs is None:
                     dst_id = cast(Mapping, dst_attr)["id"]
                     subdattrs = {

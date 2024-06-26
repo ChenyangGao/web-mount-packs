@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "iterdir"
-version = "0.0.5.2"
+version = "0.0.6"
 description = "python iterate over path tree."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,6 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+
+[tool.poetry.scripts]
+python-iterdir = "iterdir.__main__:main"
+iterdir = "iterdir.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]

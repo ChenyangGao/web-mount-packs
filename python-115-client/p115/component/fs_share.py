@@ -342,7 +342,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -353,7 +353,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[AttrDict]:
@@ -363,12 +363,12 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         path: str | PathLike[str] | Sequence[str], 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Awaitable[AttrDict]:
         def gen_step():
-            nonlocal path, pid, force_directory
+            nonlocal path, pid, ensure_dir
 
             if isinstance(path, PathLike):
                 path = fspath(path)
@@ -379,14 +379,14 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
 
             parents = 0
             if isinstance(path, str):
-                if not force_directory:
-                    force_directory = path_is_dir_form(path)
+                if not ensure_dir:
+                    ensure_dir = path_is_dir_form(path)
                 patht, parents = splits(path)
                 if not (patht or parents):
                     return (yield partial(self._attr, pid, async_=async_))
             else:
-                if not force_directory:
-                    force_directory = path[-1] == ""
+                if not ensure_dir:
+                    ensure_dir = path[-1] == ""
                 patht = [path[0], *(p for p in path[1:] if p)]
             if patht == [""]:
                 return self._attr(0)
@@ -420,7 +420,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             fullpath = ancestors_paths[-1]
             path_to_id = self.path_to_id
             if path_to_id:
-                if not force_directory and (id := path_to_id.get(fullpath)):
+                if not ensure_dir and (id := path_to_id.get(fullpath)):
                     return (yield partial(self._attr, id, async_=async_))
                 if (id := path_to_id.get(fullpath + "/")):
                     return (yield partial(self._attr, id, async_=async_))
@@ -451,7 +451,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                         nonlocal attr, parent
                         async for attr in self.iterdir(parent, async_=True):
                             if attr["name"] == name:
-                                if force_directory or i < last_idx:
+                                if ensure_dir or i < last_idx:
                                     if attr["is_directory"]:
                                         parent = attr
                                         break
@@ -469,7 +469,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 for i, name in enumerate(patht[i:], i):
                     for attr in self.iterdir(parent):
                         if attr["name"] == name:
-                            if force_directory or i < last_idx:
+                            if ensure_dir or i < last_idx:
                                 if attr["is_directory"]:
                                     parent = attr
                                     break
@@ -491,7 +491,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -502,7 +502,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[AttrDict]:
@@ -512,7 +512,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Awaitable[AttrDict]:
@@ -530,10 +530,10 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     self._attr_path, 
                     id_or_path, 
                     pid=pid, 
-                    force_directory=force_directory, 
+                    ensure_dir=ensure_dir, 
                     async_=async_, 
                 ))
-            if force_directory and not attr["is_directory"]:
+            if ensure_dir and not attr["is_directory"]:
                 raise NotADirectoryError(
                     errno.ENOTDIR, 
                     f"{attr['id']} (id={attr['id']}) is not directory"
@@ -741,7 +741,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     self._attr_path, 
                     id_or_path, 
                     pid=pid, 
-                    force_directory=True, 
+                    ensure_dir=True, 
                     async_=async_, 
                 )
             if not attr["is_directory"]:

@@ -482,12 +482,8 @@ def pull(
         "elapsed": "", 
         # 源路径
         "src_path": "", 
-        # 源路径属性
-        "src_attr": {}, 
         # 目标路径
         "dst_path": "", 
-        # 目标路径属性
-        "dst_attr": {}, 
         # 任务总数
         "tasks": {"total": 0, "files": 0, "dirs": 0, "size": 0}, 
         # 成功任务数
@@ -630,7 +626,7 @@ def pull(
                             resp     = highlight_as_json(resp), 
                         ))
                 except FileExistsError:
-                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, force_directory=True)
+                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, ensure_dir=True)
                 if subdattrs is None:
                     dst_id = cast(Mapping, dst_attr)["id"]
                     subdattrs = {

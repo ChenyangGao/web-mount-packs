@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = ["DirEntry", "iterdir"]
 
 from collections import deque
@@ -15,7 +15,7 @@ from os.path import (
     abspath, commonpath, basename, isfile, isdir, islink, join as joinpath, realpath, 
 )
 from pathlib import Path
-from typing import cast, overload, Generic, Never, Optional, TypeVar
+from typing import cast, overload, Any, Generic, Never, Optional, TypeVar
 
 
 AnyStr = TypeVar("AnyStr", bytes, str)
@@ -87,7 +87,7 @@ def _iterdir_bfs(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[PathType], Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
 ) -> Iterator[PathType]:
     dq: deque[tuple[int, PathType]] = deque()
     push, pop = dq.append, dq.popleft
@@ -129,7 +129,7 @@ def _iterdir_dfs(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[PathType], Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
 ) -> Iterator[PathType]:
     if not max_depth:
         return
@@ -186,7 +186,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[DirEntry[str]], Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry[str]]: ...
 @overload
@@ -197,7 +197,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[DirEntry[AnyStr]], Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry[AnyStr]]: ...
 @overload
@@ -208,7 +208,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[Path], Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[Path]: ...
 @overload
@@ -219,7 +219,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[[AnyStr], Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[AnyStr]: ...
 def iterdir(
@@ -229,7 +229,7 @@ def iterdir(
     min_depth: int = 1, 
     max_depth: int = 1, 
     predicate: Optional[Callable[..., Optional[bool]]] = None, 
-    onerror: bool | Callable[[OSError], bool] = False, 
+    onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator:
     """遍历目录树

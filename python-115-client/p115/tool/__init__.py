@@ -20,7 +20,8 @@ CAPTCHA_CRACK: Callable[[bytes], str]
 
 def login_scan_cookie(
     client: str | P115Client, 
-    app: str = "web", 
+    app: str = "", 
+    replace: bool = False, 
 ) -> str:
     """扫码登录 115 网盘，获取绑定到特定 app 的 cookie
     app 至少有 23 个可用值，目前找出 13 个：
@@ -72,11 +73,9 @@ def login_scan_cookie(
     """
     if isinstance(client, str):
         client = P115Client(client)
-    uid = client.login_qrcode_token()["data"]["uid"]
-    client.login_qrcode_scan(uid)
-    client.login_qrcode_scan_confirm(uid)
-    data = client.login_qrcode_result({"account": uid, "app": app})
-    return "; ".join(f"{k}={v}" for k, v in data["data"]["cookie"].items())
+    if not app:
+        app = client.login_device()["icon"]
+    return client.login_another_app(app, replace=replace).cookies
 
 
 def crack_captcha(

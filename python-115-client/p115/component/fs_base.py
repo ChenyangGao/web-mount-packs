@@ -20,6 +20,7 @@ from collections.abc import (
 from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper, UnsupportedOperation
 from inspect import isawaitable
+from itertools import chain, pairwise
 from mimetypes import guess_type
 from os import fsdecode, fspath, lstat, makedirs, scandir, stat, stat_result, PathLike
 from os import path as ospath
@@ -32,6 +33,7 @@ from typing import (
 )
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
+from warnings import filterwarnings
 
 from asynctools import async_map
 from download import DownloadTask
@@ -43,6 +45,8 @@ from posixpatht import basename, commonpath, dirname, escape, joins, normpath, s
 
 from .client import check_response, P115Client, P115Url
 
+
+filterwarnings("ignore", category=SyntaxWarning)
 
 AttrDict: TypeAlias = dict # TODO: TypedDict with extra keys
 IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str] | AttrDict
@@ -520,7 +524,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[Self], None | bool] = None, 
+        predicate: None | Callable[[Self], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         *, 
         async_: Literal[False] = False, 
@@ -534,7 +538,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[Self], None | bool] = None, 
+        predicate: None | Callable[[Self], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         *, 
         async_: Literal[True], 
@@ -547,7 +551,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[Self], None | bool] = None, 
+        predicate: None | Callable[[Self], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -1072,6 +1076,25 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def suffixes(self, /) -> tuple[str, ...]:
         return tuple("." + part for part in basename(self.path).split(".")[1:])
 
+    def tree(
+        self, 
+        /, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: bool | Callable[[OSError], Any] = False, 
+        predicate: None | Callable[[AttrDict], Literal[None, 1, False, True]] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ):
+        return self.fs.tree(
+            self, 
+            min_depth=min_depth, 
+            max_depth=max_depth, 
+            onerror=onerror, 
+            predicate=predicate, 
+            async_=async_, 
+        )
+
     @property
     def url(self, /) -> P115Url:
         ns = self.__dict__
@@ -1301,7 +1324,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -1313,7 +1336,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[AttrDict]:
@@ -1324,7 +1347,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Awaitable[AttrDict]:
@@ -1435,7 +1458,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
     ) -> P115PathType:
@@ -1446,7 +1469,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
     ) -> Awaitable[P115PathType]:
@@ -1456,7 +1479,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
-        force_directory: bool = False, 
+        ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> P115PathType | Awaitable[P115PathType]:
@@ -1472,7 +1495,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     self.attr, 
                     id_or_path, 
                     pid=pid, 
-                    force_directory=force_directory, 
+                    ensure_dir=ensure_dir, 
                     async_=async_, 
                 )
             attr["fs"] = self
@@ -1525,7 +1548,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 self.attr, 
                 id_or_path, 
                 pid=pid, 
-                force_directory=True, 
+                ensure_dir=True, 
                 async_=async_, 
             )
             if self.id == attr["id"]:
@@ -2328,7 +2351,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
@@ -2345,6 +2368,8 @@ class P115FileSystemBase(Generic[P115PathType]):
                     return
                 elif pred:
                     yield path
+                    if pred is 1:
+                        return
                 min_depth = 1
             if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
                 return
@@ -2355,8 +2380,11 @@ class P115FileSystemBase(Generic[P115PathType]):
                     pred = predicate(path) if predicate else True
                     if pred is None:
                         continue
-                    elif pred and depth >= min_depth:
-                        yield path
+                    elif pred:
+                        if depth >= min_depth:
+                            yield path
+                        if pred is 1:
+                            continue
                     if path.is_dir() and (max_depth < 0 or depth < max_depth):
                         push((depth, path))
             except OSError as e:
@@ -2372,7 +2400,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> AsyncIterator[P115PathType]:
@@ -2391,6 +2419,8 @@ class P115FileSystemBase(Generic[P115PathType]):
                     return
                 elif pred:
                     yield path
+                    if pred is 1:
+                        return
                 min_depth = 1
             if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
                 return
@@ -2403,8 +2433,11 @@ class P115FileSystemBase(Generic[P115PathType]):
                         pred = await pred
                     if pred is None:
                         continue
-                    elif pred and depth >= min_depth:
-                        yield path
+                    elif pred:
+                        if depth >= min_depth:
+                            yield path
+                        if pred is 1:
+                            continue
                     if path.is_dir() and (max_depth < 0 or depth < max_depth):
                         push((depth, path))
             except OSError as e:
@@ -2423,13 +2456,13 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
         if not max_depth:
             return
-        global_yield_me = True
+        global_yield_me: Literal[1, False, True] = True
         if min_depth > 1:
             global_yield_me = False
             min_depth -= 1
@@ -2440,6 +2473,8 @@ class P115FileSystemBase(Generic[P115PathType]):
                 return
             elif pred:
                 yield path
+                if pred is 1:
+                    return
             if path.is_file():
                 return
             min_depth = 1
@@ -2458,7 +2493,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     yield_me = pred 
                 if yield_me and topdown:
                     yield path
-                if path.is_dir():
+                if yield_me is not 1 and path.is_dir():
                     yield from self._iter_dfs(
                         path, 
                         topdown=topdown, 
@@ -2483,13 +2518,13 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         **kwargs, 
     ) -> AsyncIterator[P115PathType]:
         if not max_depth:
             return
-        global_yield_me = True
+        global_yield_me: Literal[1, False, True] = True
         if min_depth > 1:
             global_yield_me = False
             min_depth -= 1
@@ -2502,6 +2537,8 @@ class P115FileSystemBase(Generic[P115PathType]):
                 return
             elif pred:
                 yield path
+                if pred is 1:
+                    return
             if path.is_file():
                 return
             min_depth = 1
@@ -2522,7 +2559,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     yield_me = pred 
                 if yield_me and topdown:
                     yield path
-                if path.is_dir():
+                if yield_me is not 1 and path.is_dir():
                     async for subpath in self._iter_dfs_async(
                         path, 
                         topdown=topdown, 
@@ -2551,7 +2588,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         *, 
         async_: Literal[False] = False, 
@@ -2567,7 +2604,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         *, 
         async_: Literal[True], 
@@ -2582,7 +2619,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[P115PathType], None | bool] = None, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -3097,6 +3134,60 @@ class P115FileSystemBase(Generic[P115PathType]):
             errno.ENOSYS, 
             "`stat()` is currently not supported, use `attr()` instead."
         )
+
+    def tree(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        min_depth: int = 0, 
+        max_depth: int = -1, 
+        onerror: bool | Callable[[OSError], Any] = False, 
+        predicate: None | Callable[[AttrDict], Literal[None, 1, False, True]] = None, 
+        _depth: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ):
+        def gen_step():
+            can_step_in: bool = max_depth < 0 or _depth < max_depth
+            if _depth == 0 and min_depth <= 0:
+                print(".")
+            try:
+                ls = yield partial(
+                    self.listdir_attr, 
+                    top, 
+                    async_=async_, 
+                )
+            except OSError as e:
+                if callable(onerror):
+                    onerror(e)
+                elif onerror:
+                    raise
+            pred: Literal[None, 1, False, True] = True
+            next_depth = _depth + 1
+            for attr, nattr in pairwise(chain(ls, (None,))):
+                attr = cast(AttrDict, attr)
+                if predicate is not None:
+                    pred = predicate(attr)
+                    if pred is None:
+                        continue
+                if next_depth >= min_depth and pred:
+                    print('│   ' * _depth, end="")
+                    if nattr is not None:
+                        print('├── ' + attr["name"])
+                    else:
+                        print('└── ' + attr["name"])
+                    if pred is 1:
+                        continue
+                if can_step_in and attr["is_directory"]:
+                    self.tree(
+                        attr, 
+                        min_depth=min_depth, 
+                        max_depth=max_depth, 
+                        onerror=onerror, 
+                        predicate=predicate, 
+                        _depth=next_depth, 
+                    )
+        return run_gen_step(gen_step, async_=async_)
 
     def _walk_bfs(
         self, 

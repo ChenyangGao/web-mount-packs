@@ -168,7 +168,7 @@ def cut_iter(
 
 
 def run_gen_step(
-    gen_step: Generator[Callable, Any, T] | Callable[[], Generator[Callable, Any, T]], 
+    gen_step: Generator[Any, Any, T] | Callable[[], Generator[Any, Any, T]], 
     *, 
     async_: bool = False, 
     threaded: bool = False, 
@@ -191,9 +191,14 @@ def run_gen_step(
                     func = send(None)
                 while True:
                     try:
-                        ret = func()
-                        if isawaitable(ret):
-                            ret = await ret
+                        if isawaitable(func):
+                            ret = await func
+                        elif callable(func):
+                            ret = func()
+                            if isawaitable(ret):
+                                ret = await ret
+                        else:
+                            ret = func
                     except BaseException as e:
                         if threaded:
                             func = await to_thread(throw, e)
@@ -233,7 +238,7 @@ def run_gen_step(
             func = send(None)
             while True:
                 try:
-                    ret = func()
+                    ret = func() if callable(func) else ret
                 except BaseException as e:
                     func = throw(e)
                 else:

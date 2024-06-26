@@ -58,7 +58,7 @@ from http_response import get_content_length, get_filename, get_total_length, is
 from httpfile import HTTPFileReader
 from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport, TimeoutException
 from httpx_request import request
-from iterutils import through, async_through, wrap_iter, wrap_aiter
+from iterutils import through, async_through, run_gen_step, wrap_iter, wrap_aiter
 from multidict import CIMultiDict
 from qrcode import QRCode # type: ignore
 from startfile import startfile, startfile_async # type: ignore
@@ -206,7 +206,7 @@ class P115Client:
     """115 的客户端对象
     :param cookies: 115 的 cookies，要包含 UID、CID 和 SEID，如果为 None，则会要求人工扫二维码登录
     :param app: 人工扫二维码后绑定的 app
-    :param open_qrcode_on_console: 在命令行输出二维码，否则在浏览器中打开
+    :param console_qrcode: 在命令行输出二维码，否则在浏览器中打开
 
     设备列表如下：
 
@@ -241,7 +241,7 @@ class P115Client:
         /, 
         cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel] = None, 
         app: str = "web", 
-        open_qrcode_on_console: bool = True, 
+        console_qrcode: bool = True, 
     ):
         self.__dict__.update(
             headers = CIMultiDict({
@@ -253,7 +253,7 @@ class P115Client:
             cookies = Cookies(), 
         )
         if cookies is None:
-            resp = self.login_with_qrcode(app, open_qrcode_on_console=open_qrcode_on_console)
+            resp = self.login_with_qrcode(app, console_qrcode=console_qrcode)
             cookies = resp["data"]["cookie"]
         if cookies:
             setattr(self, "cookies", cookies)
@@ -560,7 +560,7 @@ class P115Client:
         self, 
         /, 
         app: str, 
-        open_qrcode_on_console: bool,
+        console_qrcode: bool,
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> Self:
@@ -570,7 +570,7 @@ class P115Client:
         self, 
         /, 
         app: str, 
-        open_qrcode_on_console: bool,
+        console_qrcode: bool,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[Self]:
@@ -579,7 +579,7 @@ class P115Client:
         self, 
         /, 
         app: str = "web", 
-        open_qrcode_on_console: bool = True,
+        console_qrcode: bool = True,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> Self | Awaitable[Self]:
@@ -633,28 +633,22 @@ class P115Client:
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
-        if async_:
-            async def async_request():
-                nonlocal async_
-                async_ = cast(Literal[True], async_)
-                if not (await self.login_status(async_=async_, **request_kwargs)):
-                    self.cookies = (await self.login_with_qrcode(
-                        app, 
-                        open_qrcode_on_console=open_qrcode_on_console, 
-                        async_=async_, 
-                        **request_kwargs, 
-                    ))["data"]["cookie"]
-                return self
-            return async_request()
-        else:
-            if not self.login_status(**request_kwargs):
-                self.cookies = self.login_with_qrcode(
+        def gen_step():
+            status = yield partial(
+                self.login_status, 
+                async_=async_, 
+                **request_kwargs
+            )
+            if not status:
+                resp = yield partial(
+                    self.login_with_qrcode, 
                     app, 
-                    open_qrcode_on_console=open_qrcode_on_console, 
+                    console_qrcode=console_qrcode, 
                     async_=async_, 
                     **request_kwargs, 
-                )["data"]["cookie"]
-            return self
+                )
+                self.cookies = resp["data"]["cookie"]
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     @classmethod
@@ -662,7 +656,7 @@ class P115Client:
         cls, 
         /, 
         app: str, 
-        open_qrcode_on_console: bool,
+        console_qrcode: bool,
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -673,7 +667,7 @@ class P115Client:
         cls, 
         /, 
         app: str, 
-        open_qrcode_on_console: bool,
+        console_qrcode: bool,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Awaitable[dict]:
@@ -683,7 +677,7 @@ class P115Client:
         cls, 
         /, 
         app: str = "web", 
-        open_qrcode_on_console: bool = True,
+        console_qrcode: bool = True,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Awaitable[dict]:
@@ -737,57 +731,32 @@ class P115Client:
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
-        if async_:
-            async def async_request():
-                nonlocal async_
-                async_ = cast(Literal[True], async_)
-                qrcode_token = (await cls.login_qrcode_token(async_=async_, **request_kwargs))["data"]
-                qrcode = qrcode_token.pop("qrcode")
-                if open_qrcode_on_console:
-                    qr = QRCode(border=1)
-                    qr.add_data(qrcode)
-                    qr.print_ascii(tty=isatty(1))
-                else:
-                    await startfile_async("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"])
-                while True:
-                    try:
-                        resp = await cls.login_qrcode_status(
-                            qrcode_token, async_=async_, **request_kwargs)
-                    except TimeoutException:
-                        continue
-                    status = resp["data"].get("status")
-                    if status == 0:
-                        print("[status=0] qrcode: waiting")
-                    elif status == 1:
-                        print("[status=1] qrcode: scanned")
-                    elif status == 2:
-                        print("[status=2] qrcode: signed in")
-                        break
-                    elif status == -1:
-                        raise LoginError("[status=-1] qrcode: expired")
-                    elif status == -2:
-                        raise LoginError("[status=-2] qrcode: canceled")
-                    else:
-                        raise LoginError(f"qrcode: aborted with {resp!r}")
-                return await cls.login_qrcode_result(
-                    {"account": qrcode_token["uid"], "app": app}, 
-                    async_=async_, 
-                    **request_kwargs, 
-                )
-            return async_request()
-        else:
-            qrcode_token = cls.login_qrcode_token(async_=async_, **request_kwargs)["data"]
+        def gen_step():
+            resp = yield partial(
+                cls.login_qrcode_token, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+            qrcode_token = resp["data"]
             qrcode = qrcode_token.pop("qrcode")
-            if open_qrcode_on_console:
+            if console_qrcode:
                 qr = QRCode(border=1)
                 qr.add_data(qrcode)
                 qr.print_ascii(tty=isatty(1))
             else:
-                startfile("https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"])
+                url = "https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + qrcode_token["uid"]
+                if async_:
+                    yield partial(startfile_async, url)
+                else:
+                    startfile(url)
             while True:
                 try:
-                    resp = cls.login_qrcode_status(
-                        qrcode_token, async_=async_, **request_kwargs)
+                    resp = yield partial(
+                        cls.login_qrcode_status, 
+                        qrcode_token, 
+                        async_=async_, 
+                        **request_kwargs, 
+                    )
                 except TimeoutException:
                     continue
                 status = resp["data"].get("status")
@@ -804,11 +773,13 @@ class P115Client:
                     raise LoginError("[status=-2] qrcode: canceled")
                 else:
                     raise LoginError(f"qrcode: aborted with {resp!r}")
-            return cls.login_qrcode_result(
+            return (yield partial(
+                cls.login_qrcode_result, 
                 {"account": qrcode_token["uid"], "app": app}, 
                 async_=async_, 
                 **request_kwargs, 
-            )
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def login_another_app(
@@ -870,46 +841,38 @@ class P115Client:
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
-        if async_:
-            async def async_request():
-                nonlocal async_
-                async_ = cast(Literal[True], async_)
-                uid = check_response(await self.login_qrcode_token(
-                    async_=async_, **request_kwargs, 
-                ))["data"]["uid"]
-                check_response(await self.login_qrcode_scan(
-                    uid, async_=async_, **request_kwargs))
-                check_response(await self.login_qrcode_scan_confirm(
-                    uid, async_=async_, **request_kwargs))
-                data = check_response(await self.login_qrcode_result(
-                    {"account": uid, "app": app}, 
-                    async_=async_, 
-                    **request_kwargs, 
-                ))
-                if replace:
-                    self.cookies = data["data"]["cookie"]
-                    return self
-                else:
-                    return type(self)(data["data"]["cookie"])
-            return async_request()
-        else:
-            uid = check_response(self.login_qrcode_token(
-                async_=async_, **request_kwargs, 
-            ))["data"]["uid"]
-            check_response(self.login_qrcode_scan(
-                uid, async_=async_, **request_kwargs))
-            check_response(self.login_qrcode_scan_confirm(
-                uid, async_=async_, **request_kwargs))
-            data = check_response(self.login_qrcode_result(
+        def gen_step():
+            uid = check_response((yield partial(
+                self.login_qrcode_token, 
+                async_=async_, 
+                **request_kwargs, 
+            )))["data"]["uid"]
+            check_response((yield partial(
+                self.login_qrcode_scan, 
+                uid, 
+                async_=async_, 
+                **request_kwargs, 
+            )))
+            check_response((yield partial(
+                self.login_qrcode_scan_confirm, 
+                uid, 
+                async_=async_, 
+                **request_kwargs, 
+            )))
+            cookies = check_response((yield partial(
+                self.login_qrcode_result, 
                 {"account": uid, "app": app}, 
                 async_=async_, 
                 **request_kwargs, 
-            ))
+            )))["data"]["cookie"]
             if replace:
-                self.cookies = data["data"]["cookie"]
+                self.cookies = cookies
                 return self
+            elif async_:
+                return (yield partial(to_thread, type(self), cookies))
             else:
-                return type(self)(data["data"]["cookie"])
+                return type(self)(cookies)
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def login_qrcode_scan(
@@ -1184,53 +1147,29 @@ class P115Client:
         else:
             return request(url=api, **request_kwargs)
 
-    @overload
-    def logout(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> None:
-        ...
-    @overload
-    def logout(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Awaitable[None]:
-        ...
     def logout(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> None | Awaitable[None]:
+    ):
         """退出当前设备的登录状态
         """
-        if async_:
-            async def async_request():
-                nonlocal async_
-                async_ = cast(Literal[True], async_)
-                login_devices = await self.login_devices(async_=async_, **request_kwargs)
-                if login_devices["state"]:
-                    current_device = next(d for d in login_devices["data"]["list"] if d["is_current"])
-                    await self.logout_by_ssoent(
-                        current_device["ssoent"], 
-                        async_=async_, 
-                        **request_kwargs, 
-                    )
-            return async_request()
-        else:
-            login_devices = self.login_devices(async_=async_, **request_kwargs)
+        def gen_step():
+            login_devices = yield partial(
+                self.login_devices, 
+                async_=async_, 
+                **request_kwargs, 
+            )
             if login_devices["state"]:
                 current_device = next(d for d in login_devices["data"]["list"] if d["is_current"])
-                self.logout_by_ssoent(
+                yield partial(
+                    self.logout_by_ssoent, 
                     current_device["ssoent"], 
                     async_=async_, 
                     **request_kwargs, 
                 )
-            return None
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def logout_by_app(
@@ -4177,10 +4116,16 @@ class P115Client:
             info = check_response(resp)["data"]
             file_id = payload["file_id"]
             if not info:
-                raise FileNotFoundError(errno.ENOENT, f"no such id: {file_id!r}, with response {resp}")
+                raise FileNotFoundError(
+                    errno.ENOENT, 
+                    f"no such id: {file_id!r}, with response {resp}", 
+                )
             url = info["url"]
             if strict and not url:
-                raise IsADirectoryError(errno.EISDIR, f"{file_id} is a directory, with response {resp}")
+                raise IsADirectoryError(
+                    errno.EISDIR, 
+                    f"{file_id} is a directory, with response {resp}", 
+                )
             return P115Url(
                 url["url"] if url else "", 
                 id=int(info["fid"]), 
@@ -4351,7 +4296,10 @@ class P115Client:
                 for fid, info in resp["data"].items():
                     url = info["url"]
                     if strict and not url:
-                        raise IsADirectoryError(errno.EISDIR, f"{fid} is a directory, with response {resp}")
+                        raise IsADirectoryError(
+                            errno.EISDIR, 
+                            f"{fid} is a directory, with response {resp}", 
+                        )
                     return P115Url(
                         url["url"] if url else "", 
                         id=int(fid), 
@@ -4361,7 +4309,10 @@ class P115Client:
                         is_directory=not url,
                         headers=resp["headers"], 
                     )
-                raise FileNotFoundError(errno.ENOENT, f"no such pickcode: {pickcode!r}, with response {resp}")
+                raise FileNotFoundError(
+                    errno.ENOENT, 
+                    f"no such pickcode: {pickcode!r}, with response {resp}", 
+                )
         if async_:
             async def async_request() -> P115Url:
                 return get_url(await cast(Awaitable[dict], resp)) 
@@ -4936,7 +4887,7 @@ class P115Client:
             else:
                 file = bytes_ensure_part_iter(cast(Iterable, file), partsize)
         if async_:
-            async def async_request():
+            async def request():
                 nonlocal async_
                 async_ = cast(Literal[True], async_)
                 for part_number in count(part_number_start):
@@ -4955,7 +4906,6 @@ class P115Client:
                     yield part
                     if part["Size"] < partsize:
                         break
-            return async_request()
         else:
             def request():
                 for part_number in count(part_number_start):
@@ -4974,7 +4924,7 @@ class P115Client:
                     yield part
                     if part["Size"] < partsize:
                         break
-            return request()
+        return request()
 
     @overload
     def _oss_multipart_part_iter(
@@ -8727,5 +8677,3 @@ from .offline import P115Offline
 from .recyclebin import P115Recyclebin
 from .sharing import P115Sharing
 
-
-# TODO: 使用生成器来实现同步和异步代码的复用

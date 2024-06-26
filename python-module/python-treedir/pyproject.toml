@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-iterutils"
-version = "0.0.4.5"
-description = "Python another itertools."
+name = "python-treedir"
+version = "0.0.1"
+description = "Iterate a directory in a tree-like format."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-keywords = ["iterable", "iterutils"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-treedir"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-treedir"
+keywords = ["treedir", "tree"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,11 +27,14 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-asynctools = "*"
+
+[tool.poetry.scripts]
+python-treedir = "treedir.__main__:main"
+treedir = "treedir.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterutils"
+include = "treedir"
