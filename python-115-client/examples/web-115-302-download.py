@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __doc__ = "从 115 的挂载下载文件"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -13,7 +13,7 @@ parser = ArgumentParser(
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
 parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
-parser.add_argument("-p", "--src-path", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
+parser.add_argument("-p", "--src-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：/")
 parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
@@ -367,13 +367,11 @@ def main() -> Result:
                     raise BaseExceptionGroup('max retries exceed', task.reasons)
 
     if isinstance(src_path, str):
-        if not src_path.strip("./"):
-            src_id = 0
+        if src_path == "0":
+            src_path = 0
         elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
-            src_id = int(src_path)
-    else:
-        src_id = src_path
-    src_attr = attr(src_id, base_url, password)
+            src_path = int(src_path)
+    src_attr = attr(src_path, base_url, password)
     is_directory = src_attr["is_directory"]
     name = escape_name(src_attr["name"])
     dst_path = normpath(dst_path)
@@ -395,7 +393,7 @@ def main() -> Result:
         else:
             dst_path = joinpath(dst_path, name)
             makedirs(dst_path)
-    unfinished_tasks: dict[int, Task] = {cast(int, src_id): Task(src_attr, dst_path)}
+    unfinished_tasks: dict[int, Task] = {src_attr["id"]: Task(src_attr, dst_path)}
     success_tasks: dict[int, Task] = {}
     failed_tasks: dict[int, Task] = {}
     all_tasks: Tasks = {

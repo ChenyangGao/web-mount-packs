@@ -4,6 +4,11 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 9, 7)
 
+from warnings import filterwarnings
+
+filterwarnings("ignore", category=DeprecationWarning)
+filterwarnings("ignore", category=SyntaxWarning)
+
 AVAILABLE_APPS = (
     "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
     "windows", "mac", "linux", "wechatmini", "alipaymini", 

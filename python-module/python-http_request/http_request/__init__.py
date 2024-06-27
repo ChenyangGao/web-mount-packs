@@ -2,14 +2,17 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "cookies_str_to_dict", "headers_str_to_dict", 
     "encode_multipart_data", "encode_multipart_data_async", 
 ]
 
-from itertools import chain
 from collections.abc import AsyncIterable, AsyncIterator, ItemsView, Iterable, Iterator, Mapping
+from itertools import chain
+from mimetypes import guess_type
+from os import fsdecode
+from os.path import basename
 from re import compile as re_compile, Pattern
 from typing import runtime_checkable, Any, Final, Protocol, TypeVar
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -87,15 +90,17 @@ def ensure_bytes(s, /) -> Buffer:
 
 
 def encode_multipart_data(
-    data: Mapping[str, Any], 
-    files: Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer]], 
+    data: None | Mapping[str, Any] = None, 
+    files: None | Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer]] = None, 
     boundary: None | str = None, 
 ) -> tuple[dict, Iterator[Buffer]]:
     if not boundary:
-        boundary = uuid4().bytes.hex()
+        boundary = uuid4().hex
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
     def encode_data(data) -> Iterator[Buffer]:
+        if not data:
+            return
         if isinstance(data, Mapping):
             data = ItemsView(data)
         for name, value in data:
@@ -105,15 +110,51 @@ def encode_multipart_data(
             yield b"\r\n"
 
     def encode_files(files) -> Iterator[Buffer]:
+        if not files:
+            return
         if isinstance(files, Mapping):
             files = ItemsView(files)
         for name, file in files:
+            headers: dict[bytes, bytes] = {b"Content-Disposition": b'form-data; name="%s"' % quote(name).encode("ascii")}
+            filename: bytes | str = ""
+            if isinstance(file, (list, tuple)):
+                match file:
+                    case [file]:
+                        pass
+                    case [file_name, file]:
+                        pass
+                    case [file_name, file, file_type]:
+                        if file_type:
+                            headers[b"Content-Type"] = ensure_bytes(file_type)
+                    case [file_name, file, file_type, file_headers, *rest]:
+                        if isinstance(file_headers, Mapping):
+                            file_headers = ItemsView(file_headers)
+                        for k, v in file_headers:
+                            headers[ensure_bytes(k).title()] = ensure_bytes(v)
+                        if file_type:
+                            headers[b"Content-Type"] = ensure_bytes(file_type)
+            if isinstance(file, Buffer):
+                pass
+            elif isinstance(file, str):
+                file = file.encode("utf-8")
+            elif hasattr(file, "read"):
+                file = bio_chunk_iter(file)
+                if not filename:
+                    path = getattr(file, name, None)
+                    if path:
+                        filename = basename(path)
+                        if b"Content-Type" not in headers:
+                            headers[b"Content-Type"] = ensure_bytes(guess_type(fsdecode(filename))[0] or b"application/octet-stream")
+            if filename:
+                headers[b"Content-Disposition"] += b'; filename="%s"' % quote(filename).encode("ascii")
+            else:
+                headers[b"Content-Disposition"] += b'; filename="%032x"' % uuid4().int
             yield boundary_line
-            yield b'Content-Disposition: form-data; name="%s"\r\nContent-Type: application/octet-stream\r\n\r\n' % bytes(quote(name), "ascii")
+            for entry in headers.items():
+                yield b"%s: %s\r\n" % entry
+            yield b"\r\n"
             if isinstance(file, Buffer):
                 yield file
-            elif hasattr(file, "read"):
-                yield from bio_chunk_iter(file)
             else:
                 yield from file
             yield b"\r\n"
@@ -123,15 +164,17 @@ def encode_multipart_data(
 
 
 def encode_multipart_data_async(
-    data: Mapping[str, Any], 
-    files: Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer]], 
+    data: None | Mapping[str, Any] = None, 
+    files: None | Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer]] = None, 
     boundary: None | str = None, 
 ) -> tuple[dict, AsyncIterator[Buffer]]:
     if not boundary:
-        boundary = uuid4().bytes.hex()
+        boundary = uuid4().hex
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
     async def encode_data(data) -> AsyncIterator[Buffer]:
+        if not data:
+            return
         if isinstance(data, Mapping):
             data = ItemsView(data)
         for name, value in data:
@@ -141,19 +184,56 @@ def encode_multipart_data_async(
             yield b"\r\n"
 
     async def encode_files(files) -> AsyncIterator[Buffer]:
+        if not files:
+            return
         if isinstance(files, Mapping):
             files = ItemsView(files)
         for name, file in files:
+            headers: dict[bytes, bytes] = {b"Content-Disposition": b'form-data; name="%s"' % quote(name).encode("ascii")}
+            filename: bytes | str = ""
+            if isinstance(file, (list, tuple)):
+                match file:
+                    case [file]:
+                        pass
+                    case [file_name, file]:
+                        pass
+                    case [file_name, file, file_type]:
+                        if file_type:
+                            headers[b"Content-Type"] = ensure_bytes(file_type)
+                    case [file_name, file, file_type, file_headers, *rest]:
+                        if isinstance(file_headers, Mapping):
+                            file_headers = ItemsView(file_headers)
+                        for k, v in file_headers:
+                            headers[ensure_bytes(k).title()] = ensure_bytes(v)
+                        if file_type:
+                            headers[b"Content-Type"] = ensure_bytes(file_type)
+            if isinstance(file, Buffer):
+                pass
+            elif isinstance(file, str):
+                file = file.encode("utf-8")
+            elif hasattr(file, "read"):
+                file = bio_chunk_async_iter(file)
+                if not filename:
+                    path = getattr(file, name, None)
+                    if path:
+                        filename = basename(path)
+                        if b"Content-Type" not in headers:
+                            headers[b"Content-Type"] = ensure_bytes(guess_type(fsdecode(filename))[0] or b"application/octet-stream")
+            else:
+                file = ensure_aiter(file)
+            if filename:
+                headers[b"Content-Disposition"] += b'; filename="%s"' % quote(filename).encode("ascii")
+            else:
+                headers[b"Content-Disposition"] += b'; filename="%032x"' % uuid4().int
             yield boundary_line
-            yield b'Content-Disposition: form-data; name="%s"\r\nContent-Type: application/octet-stream\r\n\r\n' % bytes(quote(name), "ascii")
+            for entry in headers.items():
+                yield b"%s: %s\r\n" % entry
+            yield b"\r\n"
             if isinstance(file, Buffer):
                 yield file
-            elif hasattr(file, "read"):
-                async for b in bio_chunk_async_iter(file):
-                    yield b
             else:
-                async for b in ensure_aiter(file):
-                    yield b
+                async for chunk in file:
+                    yield chunk
             yield b"\r\n"
 
     boundary_line = b"--%s\r\n" % boundary.encode("utf-8")

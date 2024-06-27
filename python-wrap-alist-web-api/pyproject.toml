@@ -27,16 +27,15 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-aiohttp = "*"
 glob_pattern = "*"
 http_response = "*"
+httpx = "*"
+httpx_request = ">=0.0.8.2"
 path_ignore_pattern = "*"
 python-dateutil = "*"
 python-filewrap = ">=0.1"
 python-httpfile = "*"
-python-http_request = "*"
-python-urlopen = "*"
-requests = "*"
+python-http_request = ">=0.0.6"
 
 [tool.poetry.scripts]
 python-alist = "alist.__main__:main"

@@ -33,7 +33,6 @@ from typing import (
 )
 from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
-from warnings import filterwarnings
 
 from asynctools import async_map
 from download import DownloadTask
@@ -45,8 +44,6 @@ from posixpatht import basename, commonpath, dirname, escape, joins, normpath, s
 
 from .client import check_response, P115Client, P115Url
 
-
-filterwarnings("ignore", category=SyntaxWarning)
 
 AttrDict: TypeAlias = dict # TODO: TypedDict with extra keys
 IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str] | AttrDict

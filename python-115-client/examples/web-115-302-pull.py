@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 1)
+__version__ = (0, 2, 2)
 __doc__ = "从运行 web-115-302.py 的服务器上拉取文件到你的 115 网盘"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -13,8 +13,8 @@ parser = ArgumentParser(
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值: http://localhost")
 parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
-parser.add_argument("-p", "--src-path", default=0, help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: 0")
-parser.add_argument("-t", "--dst-path", default=0, help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: 0")
+parser.add_argument("-p", "--src-path", default="/", help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: /")
+parser.add_argument("-t", "--dst-path", default="/", help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: /")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
@@ -809,18 +809,16 @@ def pull(
             del thread_stats[cur_thread]
 
     if isinstance(src_path, str):
-        if not src_path.strip("./"):
-            src_id = 0
+        if src_path == "0":
+            src_path = 0
         elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
-            src_id = int(src_path)
-    else:
-        src_id = src_path
-    src_attr = attr(src_id, base_url, password)
+            src_path = int(src_path)
+    src_attr = attr(src_path, base_url, password)
     dst_attr = None
     name = src_attr["name"]
     is_directory = src_attr["is_directory"]
     if isinstance(dst_path, str):
-        if not dst_path.strip("./"):
+        if dst_path == "0":
             dst_id = 0
         elif not dst_path.startswith("0") and dst_path.isascii() and dst_path.isdecimal():
             dst_id = int(dst_path)

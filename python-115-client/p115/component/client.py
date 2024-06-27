@@ -16,7 +16,7 @@ from collections.abc import (
     Generator, ItemsView, Iterable, Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
-from contextlib import asynccontextmanager, aclosing, closing
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from email.utils import formatdate
 from functools import cached_property, partial, update_wrapper
@@ -8226,17 +8226,16 @@ class P115Client:
             - P115Client.share_download_url
             - P115Client.extract_download_url
         """
-        if headers is None:
-            headers = self.headers
         if async_:
             raise OSError(errno.ENOSYS, "asynchronous mode not implemented")
-        else:
-            return HTTPFileReader(
-                url, 
-                headers=headers, 
-                start=start, 
-                seek_threshold=seek_threshold, 
-            )
+        if headers is None:
+            headers = self.headers
+        return HTTPFileReader(
+            url, 
+            headers=headers, 
+            start=start, 
+            seek_threshold=seek_threshold, 
+        )
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
     def open_upload(self): ...
@@ -8248,7 +8247,6 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
-        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -8261,7 +8259,6 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
-        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -8273,7 +8270,6 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
-        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -8282,26 +8278,31 @@ class P115Client:
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param start: 开始索引，可以为负数（从文件尾部开始）
         :param stop: 结束索引（不含），可以为负数（从文件尾部开始）
-        :param headers: 一些请求头，最好提供一个 "User-Agent"
         :param async_: 是否异步
         :param request_kwargs: 其它请求参数
         """
-        need_get_length = start < 0 or (stop is None or stop < 0)
-        if need_get_length:
-            if headers:
-                headers = {**headers, "Accept-Encoding": "identity"}
-            else:
-                headers = {"Accept-Encoding": "identity"}
-        request_kwargs["headers"] = headers
-        request_kwargs["parse"] = None
-        if async_:
-            async def get_bytes_range_async(start, stop) -> str:
-                if need_get_length:
-                    async with aclosing(self.request(url, async_=async_, **request_kwargs)) as resp:
-                        resp.raise_for_status()
+        def gen_step():
+            def get_bytes_range(start, stop):
+                if start < 0 or (stop and stop < 0):
+                    if headers := request_kwargs.get("headers"):
+                        headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=-1"}
+                    else:
+                        headers = {"Accept-Encoding": "identity", "Range": "bytes=-1"}
+                    resp = yield partial(
+                        self.request, 
+                        url, 
+                        async_=async_, 
+                        **{**request_kwargs, "headers": headers, "parse": None}, 
+                    )
+                    try:
                         length = get_total_length(resp)
-                    if length is None:
-                        raise OSError(errno.ESPIPE, "can't determine content length")
+                        if length is None:
+                            raise OSError(errno.ESPIPE, "can't determine content length")
+                    finally:
+                        if async_ and hasattr(resp, "aclose"):
+                            yield resp.aclose
+                        else:
+                            yield resp.close
                     if start < 0:
                         start += length
                     if start < 0:
@@ -8310,38 +8311,20 @@ class P115Client:
                         return f"{start}-"
                     elif stop < 0:
                         stop += length
-                if stop <= 0 or start >= stop:
-                    return ""
+                if start >= stop:
+                    return None
                 return f"{start}-{stop-1}"
-            async def async_request():
-                bytes_range = await get_bytes_range_async(start, stop)
-                if not bytes_range:
-                    return b""
-                return await self.read_bytes_range(url, bytes_range=bytes_range, async_=async_, **request_kwargs)
-            return async_request()
-        else:
-            def get_bytes_range(start, stop) -> str:
-                if need_get_length:
-                    with closing(self.request(url, async_=async_, **request_kwargs)) as resp:
-                        resp.raise_for_status()
-                        length = get_content_length(resp)
-                    if length is None:
-                        raise OSError(errno.ESPIPE, "can't determine content length")
-                    if start < 0:
-                        start += length
-                    if start < 0:
-                        start = 0
-                    if stop is None:
-                        return f"{start}-"
-                    elif stop < 0:
-                        stop += length
-                if stop <= 0 or start >= stop:
-                    return ""
-                return f"{start}-{stop-1}"
-            bytes_range = get_bytes_range(start, stop)
+            bytes_range = yield from get_bytes_range(start, stop)
             if not bytes_range:
                 return b""
-            return self.read_bytes_range(url, bytes_range=bytes_range, async_=async_, **request_kwargs)
+            return (yield partial(
+                self.read_bytes_range, 
+                url, 
+                bytes_range=bytes_range, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def read_bytes_range(
@@ -8380,7 +8363,7 @@ class P115Client:
         """读取文件一定索引范围的数据
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param bytes_range: 索引范围，语法符合 [HTTP Range Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests)
-        :param headers: 一些请求头，最好提供一个 "User-Agent"
+        :param headers: 请求头
         :param async_: 是否异步
         :param request_kwargs: 其它请求参数
         """
@@ -8389,22 +8372,8 @@ class P115Client:
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         request_kwargs["headers"] = headers
-        request_kwargs["parse"] = None
-        request_kwargs["raise_for_status"] = False
-        if async_:
-            async def async_request():
-                async with aclosing(self.request(url, async_=async_, **request_kwargs)) as resp:
-                    if resp.status_code == 416:
-                        return b""
-                    resp.raise_for_status()
-                    return await resp.read()
-            return async_request()
-        else:
-            with closing(self.request(url, async_=async_, **request_kwargs)) as resp:
-                if resp.status_code == 416:
-                    return b""
-                resp.raise_for_status()
-                return resp.read()
+        request_kwargs.setdefault("parse", False)
+        return self.request(url, async_=async_, **request_kwargs)
 
     @overload
     def read_block(
@@ -8413,7 +8382,6 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -8426,7 +8394,6 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -8438,7 +8405,6 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
-        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -8447,7 +8413,6 @@ class P115Client:
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param size: 下载字节数（最多下载这么多字节，如果遇到 EOF，就可能较小）
         :param offset: 偏移索引，从 0 开始，可以为负数（从文件尾部开始）
-        :param headers: 一些请求头，最好提供一个 "User-Agent"
         :param async_: 是否异步
         :param request_kwargs: 其它请求参数
         """
@@ -8462,7 +8427,6 @@ class P115Client:
             url, 
             start=offset, 
             stop=offset+size, 
-            headers=headers, 
             async_=async_, 
             **request_kwargs, 
         )
