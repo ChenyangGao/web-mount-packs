@@ -13,7 +13,7 @@ parser = ArgumentParser(
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值：http://localhost")
 parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
-parser.add_argument("-p", "--src-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：/")
+parser.add_argument("-p", "--src-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：'/'")
 parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
@@ -368,7 +368,7 @@ def main() -> Result:
 
     if isinstance(src_path, str):
         if src_path == "0":
-            src_path = 0
+            src_path = "/"
         elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
             src_path = int(src_path)
     src_attr = attr(src_path, base_url, password)

@@ -484,13 +484,11 @@ def main(args) -> Result:
     ) as progress:
         console_print = progress.console.print
         if isinstance(src_path, str):
-            if not src_path.strip("./"):
-                src_id = 0
+            if src_path == "0":
+                src_path = "/"
             elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
-                src_id = int(src_path)
-        else:
-            src_id = src_path
-        src_attr = relogin_wrap(fs.attr, src_id)
+                src_path = int(src_path)
+        src_attr = relogin_wrap(fs.attr, src_path)
         is_directory = src_attr["is_directory"]
         name = escape_name(src_attr["name"])
         dst_path = normpath(dst_path)
@@ -512,7 +510,7 @@ def main(args) -> Result:
             else:
                 dst_path = joinpath(dst_path, name)
                 makedirs(dst_path)
-        unfinished_tasks: dict[int, Task] = {cast(int, src_id): Task(src_attr, dst_path)}
+        unfinished_tasks: dict[int, Task] = {src_attr["id"]: Task(src_attr, dst_path)}
         success_tasks: dict[int, Task] = {}
         failed_tasks: dict[int, Task] = {}
         all_tasks: Tasks = {
@@ -554,8 +552,8 @@ parser.add_argument(
     "-a", "--app", default="qandroid", 
     choices=AVAILABLE_APPS, 
     help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
-parser.add_argument("-p", "--src-path", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
-parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录")
+parser.add_argument("-p", "--src-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：'/")
+parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录，即 '.'")
 parser.add_argument("-s", "--share-link", nargs="?", help="""\
 115 的分享链接
     1. 指定了则从分享链接下载

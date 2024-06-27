@@ -13,8 +13,8 @@ parser = ArgumentParser(
 )
 parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载的网址，默认值: http://localhost")
 parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
-parser.add_argument("-p", "--src-path", default="/", help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: /")
-parser.add_argument("-t", "--dst-path", default="/", help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: /")
+parser.add_argument("-p", "--src-path", default="/", help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: '/'")
+parser.add_argument("-t", "--dst-path", default="/", help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: '/'")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
@@ -810,7 +810,7 @@ def pull(
 
     if isinstance(src_path, str):
         if src_path == "0":
-            src_path = 0
+            src_path = "/"
         elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
             src_path = int(src_path)
     src_attr = attr(src_path, base_url, password)
@@ -854,7 +854,7 @@ def pull(
     else:
         task = Task(src_attr, dst_id, name)
 
-    unfinished_tasks: dict[int, Task] = {cast(int, src_attr["id"]): task}
+    unfinished_tasks: dict[int, Task] = {src_attr["id"]: task}
     success_tasks: dict[int, Task] = {}
     failed_tasks: dict[int, Task] = {}
     all_tasks: Tasks = {
