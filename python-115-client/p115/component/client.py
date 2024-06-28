@@ -12,14 +12,14 @@ from asyncio import create_task, to_thread
 from base64 import b64encode
 from binascii import b2a_hex
 from collections.abc import (
-    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable,  
+    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, 
     Generator, ItemsView, Iterable, Iterator, Mapping, Sequence, 
 )
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from email.utils import formatdate
-from functools import cached_property, partial, update_wrapper
+from functools import cached_property, partial
 from hashlib import md5, sha1
 from hmac import digest as hmac_digest
 from http.cookiejar import Cookie, CookieJar
@@ -35,8 +35,7 @@ from _thread import start_new_thread
 from threading import Condition, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
-    cast, overload, Any, Final, Literal, NotRequired, Self, 
-    TypeVar, TypedDict, 
+    cast, overload, Any, Final, Literal, NotRequired, Self, TypedDict, 
 )
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
@@ -73,7 +72,6 @@ from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
-RequestVarT = TypeVar("RequestVarT", dict, Awaitable[dict], Callable[..., dict], Callable[..., Awaitable[dict]])
 RSA_ENCODER: Final = P115RSACipher()
 ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
@@ -90,10 +88,16 @@ def to_base64(s: bytes | str, /) -> str:
     return str(b64encode(s), "ascii")
 
 
-def check_response(fn: RequestVarT, /) -> RequestVarT:
+@overload
+def check_response(resp: dict, /) -> dict:
+    ...
+@overload
+def check_response(resp: Awaitable[dict], /) -> Awaitable[dict]:
+    ...
+def check_response(resp: dict | Awaitable[dict], /) -> dict | Awaitable[dict]:
     """检测 115 的某个接口的响应，如果成功则直接返回，否则根据具体情况抛出一个异常
     """
-    def check(resp: dict):
+    def check(resp: dict) -> dict:
         if resp.get("state", True):
             return resp
         if "errno" in resp:
@@ -145,24 +149,12 @@ def check_response(fn: RequestVarT, /) -> RequestVarT:
                 case 990001:
                     raise AuthenticationError(resp)
         raise OSError(errno.EIO, resp)
-    if isinstance(fn, dict):
-        return check(fn)
-    elif isinstance(fn, Awaitable):
-        async def checkval():
-            return check(await fn)
-        return checkval()
-    elif iscoroutinefunction(fn):
-        async def wrapper(*args, **kwds):
-            return check(await fn(*args, **kwds))
+    if isinstance(resp, dict):
+        return check(resp)
     else:
-        def wrapper(*args, **kwds):
-            ret = fn(*args, **kwds)
-            if isinstance(ret, Awaitable):
-                async def checkval():
-                    return check(await ret)
-                return checkval()
-            return check(ret)
-    return update_wrapper(wrapper, fn)
+        async def check_await() -> dict:
+            return check(await resp)
+        return check_await()
 
 
 class P115Url(str):
@@ -394,14 +386,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def login_status(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         """检查是否已登录
         GET https://my.115.com/?ct=guide&ac=status
         """
@@ -428,14 +420,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def login_check(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """检查当前用户的登录状态
         GET https://passportapi.115.com/app/1.0/web/1.0/check/sso
         """
@@ -456,14 +448,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[None | dict]:
+    ) -> Coroutine[Any, Any, None | dict]:
         ...
     def login_device(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> None | dict | Awaitable[None | dict]:
+    ) -> None | dict | Coroutine[Any, Any, None | dict]:
         """获取当前的登录设备的信息，如果为 None，则说明登录失效
         """
         def parse(resp, content: bytes) -> None | dict:
@@ -488,14 +480,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def login_devices(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取所有的已登录设备的信息，不过当前必须未登录失效
         GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices
         """
@@ -516,14 +508,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def login_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取登录信息
         GET https://proapi.115.com/pc/user/login_info
         """
@@ -544,14 +536,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def login_online(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """当前登录的设备总数和最近登录的设备
         GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online
         """
@@ -576,7 +568,7 @@ class P115Client:
         console_qrcode: bool,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def login(
         self, 
@@ -585,7 +577,7 @@ class P115Client:
         console_qrcode: bool = True,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         """扫码二维码登录，如果已登录则忽略
         app 至少有 23 个可用值，目前找出 13 个：
             - web
@@ -673,7 +665,7 @@ class P115Client:
         console_qrcode: bool,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @classmethod
     def login_with_qrcode(
@@ -683,7 +675,7 @@ class P115Client:
         console_qrcode: bool = True,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """扫码二维码登录，获取响应（如果需要更新此 client 的 cookies，请直接用 login 方法）
         app 至少有 23 个可用值，目前找出 13 个：
             - web
@@ -802,7 +794,7 @@ class P115Client:
         replace: bool,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def login_another_app(
         self, 
@@ -811,7 +803,7 @@ class P115Client:
         replace: bool = False,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         """登录某个设备（同一个设备最多同时一个在线，即最近登录的那个）
         :param app: 要登录的 app
         :param replace: 替换当前 client 对象的 cookie，否则返回新的 client 对象
@@ -893,7 +885,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def login_qrcode_scan(
         self, 
@@ -901,7 +893,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """扫描二维码，payload 数据取自 `login_qrcode_token` 接口响应
         GET https://qrcodeapi.115.com/api/2.0/prompt.php
         payload:
@@ -928,7 +920,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def login_qrcode_scan_confirm(
         self, 
@@ -936,7 +928,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
         GET https://hnqrcodeapi.115.com/api/2.0/slogin.php
         payload:
@@ -967,7 +959,7 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def login_qrcode_scan_cancel(
@@ -976,7 +968,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
         GET https://hnqrcodeapi.115.com/api/2.0/cancel.php
         payload:
@@ -1011,7 +1003,7 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def login_qrcode_status(
@@ -1020,7 +1012,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取二维码的状态（未扫描、已扫描、已登录、已取消、已过期等），payload 数据取自 `login_qrcode_token` 接口响应
         GET https://qrcodeapi.115.com/get/status/
         payload:
@@ -1053,7 +1045,7 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def login_qrcode_result(
@@ -1062,7 +1054,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取扫码登录的结果，包含 cookie
         POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
         payload:
@@ -1094,14 +1086,14 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def login_qrcode_token(
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取登录二维码，扫码可用
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/token/
         """
@@ -1128,7 +1120,7 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     @staticmethod
     def login_qrcode(
@@ -1136,7 +1128,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """下载登录二维码图片
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode
         :params uid: 二维码的 uid
@@ -1192,7 +1184,7 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[None]:
+    ) -> Coroutine[Any, Any, None]:
         ...
     def logout_by_app(
         self, 
@@ -1201,7 +1193,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> None | Awaitable[None]:
+    ) -> None | Coroutine[Any, Any, None]:
         """退出登录状态（可以把某个客户端下线，所有已登录设备可从 `login_devices` 获取）
         GET https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout
 
@@ -1259,7 +1251,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def logout_by_ssoent(
         self, 
@@ -1267,7 +1259,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """退出登录状态（可以把某个客户端下线，所有已登录设备可从 `login_devices` 获取）
         GET https://passportapi.115.com/app/1.0/web/1.0/logout/mange
         payload:
@@ -1322,14 +1314,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取此用户信息
         GET https://my.115.com/?ct=ajax&ac=nav
         """
@@ -1350,14 +1342,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_info2(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取此用户信息（更全）
         GET https://my.115.com/?ct=ajax&ac=get_user_aq
         """
@@ -1378,14 +1370,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_setting(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取此账户的网页版设置（提示：较为复杂，自己抓包研究）
         GET https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
@@ -1408,7 +1400,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_setting_post(
         self, 
@@ -1416,7 +1408,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """修改此账户的网页版设置（提示：较为复杂，自己抓包研究）
         POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
         """
@@ -1437,14 +1429,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_setting2(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
         GET https://webapi.115.com/user/setting
         """
@@ -1467,7 +1459,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_setting2_post(
         self, 
@@ -1475,7 +1467,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
         POST https://webapi.115.com/user/setting
         """
@@ -1496,14 +1488,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_setting3(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
         GET https://proapi.115.com/android/1.0/user/setting
         """
@@ -1526,7 +1518,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_setting3_post(
         self, 
@@ -1534,7 +1526,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
         POST https://proapi.115.com/android/1.0/user/setting
         """
@@ -1555,14 +1547,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_points_sign(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取签到信息
         GET https://proapi.115.com/android/2.0/user/points_sign
         """
@@ -1583,14 +1575,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def user_points_sign_post(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """每日签到（注意：不要用 web，即浏览器，的 cookies，会失败）
         POST https://proapi.115.com/android/2.0/user/points_sign
         """
@@ -1618,14 +1610,14 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def app_version_list(
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前各平台最新版 115 app 下载链接
         GET https://appversion.115.com/1/web/1.0/api/chrome
         """
@@ -1652,14 +1644,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_space_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取使用空间的统计数据（较为简略，更推荐使用 `P115Client.fs_index_info`）
         GET https://proapi.115.com/android/1.0/user/space_info
         """
@@ -1680,14 +1672,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_space_summury(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取数据报告
         POST https://webapi.115.com/user/space_summury
         """
@@ -1712,7 +1704,7 @@ class P115Client:
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_copy(
         self, 
@@ -1721,7 +1713,7 @@ class P115Client:
         pid: int = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """复制文件或文件夹
         POST https://webapi.115.com/files/copy
         payload:
@@ -1756,7 +1748,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_delete(
         self, 
@@ -1764,7 +1756,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """删除文件或文件夹
         POST https://webapi.115.com/rb/delete
         payload:
@@ -1797,7 +1789,7 @@ class P115Client:
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_move(
         self, 
@@ -1806,7 +1798,7 @@ class P115Client:
         pid: int = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """移动文件或文件夹
         POST https://webapi.115.com/files/move
         payload:
@@ -1841,7 +1833,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_rename(
         self, 
@@ -1849,7 +1841,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """重命名文件或文件夹
         POST https://webapi.115.com/files/batch_rename
         payload:
@@ -1880,7 +1872,7 @@ class P115Client:
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_copy(
         self, 
@@ -1889,7 +1881,7 @@ class P115Client:
         pid: int = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
         """
         return self.fs_batch_copy(
@@ -1914,7 +1906,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_delete(
         self, 
@@ -1922,7 +1914,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """删除文件或文件夹，此接口是对 `fs_batch_delete` 的封装
         """
         return self.fs_batch_delete(
@@ -1947,7 +1939,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_file(
         self, 
@@ -1955,7 +1947,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或文件夹的简略信息
         GET https://webapi.115.com/files/file
         payload:
@@ -1982,7 +1974,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files(
         self, 
@@ -1990,7 +1982,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件夹的中的文件列表和基本信息
         GET https://webapi.115.com/files
         payload:
@@ -2063,7 +2055,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files2(
         self, 
@@ -2071,7 +2063,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件夹的中的文件列表和基本信息
         GET https://proapi.115.com/android/2.0/ufile/files
         payload:
@@ -2144,7 +2136,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_getid(
         self, 
@@ -2152,7 +2144,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """由路径获取对应的 id（但只能获取目录，不能获取文件）
         GET https://webapi.115.com/files/getid
         payload:
@@ -2179,7 +2171,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_image(
         self, 
@@ -2187,7 +2179,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取图片的各种链接
         GET https://webapi.115.com/files/image
         payload:
@@ -2214,7 +2206,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_video(
         self, 
@@ -2222,7 +2214,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取视频信息（可以获取 .m3u8 文件链接，但此链接只能 web 的 cookies 才能获取数据）
         GET https://webapi.115.com/files/video
         payload:
@@ -2251,7 +2243,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_video_subtitle(
         self, 
@@ -2259,7 +2251,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取视频字幕
         GET https://webapi.115.com/movies/subtitle
         payload:
@@ -2288,7 +2280,7 @@ class P115Client:
         definition: int, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def fs_files_video_m3u8(
         self, 
@@ -2297,7 +2289,7 @@ class P115Client:
         definition: int = 0, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """获取视频的 m3u8 文件列表，此接口必须用 web 的 cookies。
         如果请求其中的链接，各会得到一个 m3u8 文件，里面有一系列的 ts 视频文件的链接（需要和请求 m3u8 文件时的 User-Agent 一致），但省略了域名 https://cpats01.115.com。
         GET http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}
@@ -2327,7 +2319,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_history(
         self, 
@@ -2335,7 +2327,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的观看历史，主要用于视频
         GET https://webapi.115.com/files/history
         payload:
@@ -2367,7 +2359,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_history_post(
         self, 
@@ -2375,7 +2367,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """更新文件的观看历史，主要用于视频
         GET https://webapi.115.com/files/history
         payload:
@@ -2410,7 +2402,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_history_list(
         self, 
@@ -2418,7 +2410,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取历史记录
         GET https://webapi.115.com/history/list
         payload:
@@ -2458,7 +2450,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_order(
         self, 
@@ -2466,7 +2458,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件夹的中的文件列表和基本信息
         POST https://webapi.115.com/files/order
         payload:
@@ -2505,7 +2497,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_type(
         self, 
@@ -2513,7 +2505,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件夹中某个文件类型的扩展名的（去重）列表
         GET https://webapi.115.com/files/get_second_type
         payload:
@@ -2550,7 +2542,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_edit(
         self, 
@@ -2558,7 +2550,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """设置文件或文件夹（备注、标签等）
         POST https://webapi.115.com/files/edit
         payload:
@@ -2603,7 +2595,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_batch_edit(
         self, 
@@ -2611,7 +2603,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """批量设置文件或文件夹（显示时长等）
         payload:
             - show_play_long[{fid}]: 0 | 1 = 1 # 设置或取消显示时长
@@ -2646,7 +2638,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files_hidden(
         self, 
@@ -2654,7 +2646,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """隐藏或者取消隐藏文件或文件夹
         POST https://webapi.115.com/files/hiddenfiles
         payload:
@@ -2691,7 +2683,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_hidden_switch(
         self, 
@@ -2699,7 +2691,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """切换隐藏模式
         POST https://115.com/?ct=hiddenfiles&ac=switching
         payload:
@@ -2731,7 +2723,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_statistic(
         self, 
@@ -2739,7 +2731,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或文件夹的统计信息（提示：但得不到根目录的统计信息，所以 cid 为 0 时无意义）
         GET https://webapi.115.com/category/get
         payload:
@@ -2767,7 +2759,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_get_repeat(
         self, 
@@ -2775,7 +2767,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """查找重复文件（罗列除此以外的 sha1 相同的文件）
         GET https://webapi.115.com/files/get_repeat_sha
         payload:
@@ -2808,7 +2800,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_index_info(
         self, 
@@ -2816,7 +2808,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前已用空间、可用空间、登录设备等信息
         GET https://webapi.115.com/files/index_info
         payload:
@@ -2843,7 +2835,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_info(
         self, 
@@ -2851,7 +2843,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或文件夹的基本信息
         GET https://webapi.115.com/files/get_info
         payload:
@@ -2878,7 +2870,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_mkdir(
         self, 
@@ -2886,7 +2878,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """新建文件夹
         POST https://webapi.115.com/files/add
         payload:
@@ -2918,7 +2910,7 @@ class P115Client:
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_move(
         self, 
@@ -2927,7 +2919,7 @@ class P115Client:
         pid: int = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """移动文件或文件夹，此接口是对 `fs_batch_move` 的封装
         """
         return self.fs_batch_move(
@@ -2954,7 +2946,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_rename(
         self, 
@@ -2963,7 +2955,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """重命名文件或文件夹，此接口是对 `fs_batch_rename` 的封装
         """
         return self.fs_batch_rename(
@@ -2988,7 +2980,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_search(
         self, 
@@ -2996,7 +2988,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """搜索文件或文件夹（提示：好像最多只能罗列前 10,000 条数据，也就是 limit + offset <= 10_000）
         GET https://webapi.115.com/files/search
         payload:
@@ -3064,7 +3056,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_export_dir(
         self, 
@@ -3072,7 +3064,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """导出目录树
         POST https://webapi.115.com/files/export_dir
         payload:
@@ -3101,7 +3093,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_export_dir_status(
         self, 
@@ -3109,7 +3101,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取导出目录树的完成情况
         GET https://webapi.115.com/files/export_dir
         payload:
@@ -3137,7 +3129,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[ExportDirStatus]:
+    ) -> Coroutine[Any, Any, ExportDirStatus]:
         ...
     def fs_export_dir_future(
         self, 
@@ -3145,7 +3137,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> ExportDirStatus | Awaitable[ExportDirStatus]:
+    ) -> ExportDirStatus | Coroutine[Any, Any, ExportDirStatus]:
         """执行导出目录树，新开启一个线程，用于检查完成状态
         payload:
             file_ids: int | str   # 有多个时，用逗号 "," 隔开
@@ -3171,7 +3163,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_shortcut_get(
         self, 
@@ -3179,7 +3171,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """罗列所有的快捷入口
         GET https://webapi.115.com/category/shortcut
         """
@@ -3202,7 +3194,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_shortcut_set(
         self, 
@@ -3210,7 +3202,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """把一个目录设置或取消为快捷入口
         POST https://webapi.115.com/category/shortcut
         payload:
@@ -3240,7 +3232,7 @@ class P115Client:
         fid_cover: int | str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_cover(
         self, 
@@ -3249,7 +3241,7 @@ class P115Client:
         fid_cover: int | str = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """设置目录的封面，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -3281,7 +3273,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_desc_get(
         self, 
@@ -3289,7 +3281,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或文件夹的备注
         GET https://webapi.115.com/files/desc
         payload:
@@ -3323,7 +3315,7 @@ class P115Client:
         file_desc: str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_desc(
         self, 
@@ -3332,7 +3324,7 @@ class P115Client:
         file_desc: str = "",
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """为文件或文件夹设置备注，最多允许 65535 个字节 (64 KB 以内)，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -3365,7 +3357,7 @@ class P115Client:
         file_label: int | str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_label(
         self, 
@@ -3374,7 +3366,7 @@ class P115Client:
         file_label: int | str = "",
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """为文件或文件夹设置标签，此接口是对 `fs_files_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
@@ -3405,7 +3397,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_label_batch(
         self, 
@@ -3413,7 +3405,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """批量设置标签
         POST https://webapi.115.com/files/batch_label
         payload:
@@ -3448,7 +3440,7 @@ class P115Client:
         score: int,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_score(
         self, 
@@ -3457,7 +3449,7 @@ class P115Client:
         score: int = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """给文件或文件夹评分
         POST https://webapi.115.com/files/score
         payload:
@@ -3486,7 +3478,7 @@ class P115Client:
         star: bool,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_star(
         self, 
@@ -3495,7 +3487,7 @@ class P115Client:
         star: bool = True,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """为文件或文件夹设置或取消星标
         POST https://webapi.115.com/files/star
         payload:
@@ -3522,7 +3514,7 @@ class P115Client:
         *lables: str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def label_add(
         self, 
@@ -3530,7 +3522,7 @@ class P115Client:
         *lables: str,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """添加标签（可以接受多个）
         POST https://webapi.115.com/label/add_multi
 
@@ -3569,7 +3561,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def label_del(
         self, 
@@ -3577,7 +3569,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """删除标签
         POST https://webapi.115.com/label/delete
         payload:
@@ -3604,7 +3596,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def label_edit(
         self, 
@@ -3612,7 +3604,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """编辑标签
         POST https://webapi.115.com/label/edit
         payload:
@@ -3640,7 +3632,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def label_list(
         self, 
@@ -3648,7 +3640,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """罗列标签列表（如果要获取做了标签的文件列表，用 `fs_search` 接口）
         GET https://webapi.115.com/label/list
         payload:
@@ -3682,7 +3674,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def life_list(
         self, 
@@ -3690,7 +3682,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """罗列登录和增删改操作记录（最新几条）
         GET https://life.115.com/api/1.0/web/1.0/life/life_list
         payload:
@@ -3744,7 +3736,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def behavior_detail(
         self, 
@@ -3752,7 +3744,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取 life_list 操作记录明细
         payload:
             - type: str
@@ -3796,14 +3788,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def life_calendar_getoption(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取 115 生活的开关设置
         GET https://life.115.com/api/1.0/web/1.0/calendar/getoption
         """
@@ -3828,7 +3820,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def life_calendar_setoption(
         self, 
@@ -3837,7 +3829,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """设置 115 生活的开关选项
         POST https://life.115.com/api/1.0/web/1.0/calendar/setoption
         payload:
@@ -3876,7 +3868,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_send(
         self, 
@@ -3884,7 +3876,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """创建（自己的）分享
         POST https://webapi.115.com/share/send
         payload:
@@ -3924,7 +3916,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_info(
         self, 
@@ -3932,7 +3924,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取（自己的）分享信息
         GET https://webapi.115.com/share/shareinfo
         payload:
@@ -3959,7 +3951,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_list(
         self, 
@@ -3967,7 +3959,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """罗列（自己的）分享信息列表
         GET https://webapi.115.com/share/slist
         payload:
@@ -3995,7 +3987,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_update(
         self, 
@@ -4003,7 +3995,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """变更（自己的）分享的配置（例如改访问密码，取消分享）
         POST https://webapi.115.com/share/updateshare
         payload:
@@ -4036,7 +4028,7 @@ class P115Client:
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def share_snap(
@@ -4045,7 +4037,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
         GET https://webapi.115.com/share/snap
         payload:
@@ -4088,7 +4080,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_downlist(
         self, 
@@ -4096,7 +4088,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         GET https://proapi.115.com/app/share/downlist
         payload:
@@ -4123,7 +4115,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_receive(
         self, 
@@ -4131,7 +4123,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """接收分享链接的某些文件或文件夹
         POST https://webapi.115.com/share/receive
         payload:
@@ -4167,7 +4159,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def share_download_url(
         self, 
@@ -4178,7 +4170,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -4214,7 +4206,7 @@ class P115Client:
             )
         if async_:
             async def async_request() -> P115Url:
-                return get_url(await cast(Awaitable[dict], resp)) 
+                return get_url(await cast(Coroutine[Any, Any, dict], resp)) 
             return async_request()
         else:
             return get_url(cast(dict, resp))
@@ -4235,7 +4227,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_download_url_app(
         self, 
@@ -4243,7 +4235,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接中某个文件的下载链接
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -4278,7 +4270,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def share_download_url_web(
         self, 
@@ -4286,7 +4278,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接中某个文件的下载链接（网页版接口，不推荐使用）
         GET https://webapi.115.com/share/downurl
         payload:
@@ -4322,7 +4314,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def download_url(
         self, 
@@ -4333,7 +4325,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         """获取文件的下载链接，此接口是对 `download_url_app` 的封装
         """
         if use_web_api:
@@ -4394,7 +4386,7 @@ class P115Client:
                 )
         if async_:
             async def async_request() -> P115Url:
-                return get_url(await cast(Awaitable[dict], resp)) 
+                return get_url(await cast(Coroutine[Any, Any, dict], resp)) 
             return async_request()
         else:
             return get_url(cast(dict, resp))
@@ -4415,7 +4407,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def download_url_app(
         self, 
@@ -4423,7 +4415,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的下载链接
         POST https://proapi.115.com/app/chrome/downurl
         payload:
@@ -4472,7 +4464,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def download_url_web(
         self, 
@@ -4480,7 +4472,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的下载链接（网页版接口，不推荐使用）
         GET https://webapi.115.com/files/download
         payload:
@@ -4638,7 +4630,7 @@ class P115Client:
         token: dict,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def _oss_multipart_upload_init(
         self, 
@@ -4649,7 +4641,7 @@ class P115Client:
         token: dict,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         """帮助函数：分片上传的初始化，获取 upload_id
         """
         request_kwargs["parse"] = lambda resp, content, /: getattr(fromstring(content).find("UploadId"), "text")
@@ -4695,7 +4687,7 @@ class P115Client:
         partsize: int, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def _oss_multipart_upload_part(
         self, 
@@ -4710,7 +4702,7 @@ class P115Client:
         partsize: int = 10 * 1 << 20, # default to: 10 MB
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """帮助函数：上传一个分片，返回一个字典，包含如下字段：
 
             {
@@ -4808,7 +4800,7 @@ class P115Client:
         parts: list[dict],
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def _oss_multipart_upload_complete(
         self, 
@@ -4822,7 +4814,7 @@ class P115Client:
         parts: list[dict],
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """帮助函数：完成分片上传，会执行回调然后 115 上就能看到文件
         """
         request_kwargs["method"] = "POST"
@@ -4869,7 +4861,7 @@ class P115Client:
         upload_id: str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def _oss_multipart_upload_cancel(
         self, 
@@ -4881,7 +4873,7 @@ class P115Client:
         upload_id: str,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         """帮助函数：取消分片上传
         """
         request_kwargs["parse"] = lambda resp: 200 <= resp.status_code < 300 or resp.status_code == 404
@@ -5114,7 +5106,7 @@ class P115Client:
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def _oss_upload(
         self, 
@@ -5128,7 +5120,7 @@ class P115Client:
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """帮助函数：上传文件到阿里云 OSS，一次上传全部（即不进行分片）
         """
         url = self.upload_endpoint_url(bucket, object)
@@ -5243,7 +5235,7 @@ class P115Client:
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def _oss_multipart_upload(
         self, 
@@ -5260,7 +5252,7 @@ class P115Client:
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         url = self.upload_endpoint_url(bucket, object)
         parts: list[dict] = []
         if hasattr(file, "getbuffer"):
@@ -5568,7 +5560,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
     def upload_token(
@@ -5576,7 +5568,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取阿里云 OSS 的 token，用于上传
         GET https://uplb.115.com/3.0/gettoken.php
         """
@@ -5607,7 +5599,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def upload_file_sample_init(
         self, 
@@ -5617,7 +5609,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """网页端的上传接口的初始化，注意：不支持秒传
         POST https://uplb.115.com/3.0/sampleinitupload.php
         """
@@ -5630,7 +5622,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         filename: None | str = None, 
         filesize: int = -1, 
         pid: int = 0, 
@@ -5653,7 +5645,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def upload_file_sample(
         self, 
@@ -5667,7 +5659,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
         """
         file_will_open: None | tuple[str, Any] = None
@@ -5817,14 +5809,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def upload_key(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取 user_key
         GET https://proapi.115.com/android/2.0/user/upload_key
         """
@@ -5845,14 +5837,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def upload_init(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """秒传接口，参数的构造较为复杂，所以请不要直接使用
         POST https://uplb.115.com/4.0/initupload.php
         """
@@ -5885,7 +5877,7 @@ class P115Client:
         sign_val: str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def _upload_file_init(
         self, 
@@ -5898,7 +5890,7 @@ class P115Client:
         sign_val: str = "",
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """秒传接口，此接口是对 `upload_init` 的封装
         """
         def gen_sig() -> str:
@@ -5979,7 +5971,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def upload_file_init(
         self, 
@@ -5992,7 +5984,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """秒传接口，此接口是对 `upload_init` 的封装。
         NOTE: 
             - 文件大小 和 sha1 是必需的，只有 sha1 是没用的。
@@ -6063,7 +6055,7 @@ class P115Client:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         filename: None | str = None, 
         pid: int = 0, 
         filesize: int = -1, 
@@ -6094,7 +6086,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def upload_file(
         self, 
@@ -6112,7 +6104,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """文件上传接口，这是高层封装，推荐使用
         """
         if multipart_resume_data is not None:
@@ -6571,7 +6563,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_push(
         self, 
@@ -6579,7 +6571,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
         POST https://webapi.115.com/files/push_extract
         payload:
@@ -6607,7 +6599,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_push_progress(
         self, 
@@ -6615,7 +6607,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """查询解压缩任务的进度
         GET https://webapi.115.com/files/push_extract
         payload:
@@ -6642,7 +6634,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_info(
         self, 
@@ -6650,7 +6642,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取压缩文件的文件列表，推荐直接用封装函数 `extract_list`
         GET https://webapi.115.com/files/extract_info
         payload:
@@ -6689,7 +6681,7 @@ class P115Client:
         page_count: int, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_list(
         self, 
@@ -6700,7 +6692,7 @@ class P115Client:
         page_count: int = 999, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取压缩文件的文件列表，此方法是对 `extract_info` 的封装，推荐使用
         """
         if not 1 <= page_count <= 999:
@@ -6730,7 +6722,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_add_file(
         self, 
@@ -6738,7 +6730,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """解压缩到某个文件夹，推荐直接用封装函数 `extract_file`
         POST https://webapi.115.com/files/add_extract_file
         payload:
@@ -6779,7 +6771,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_progress(
         self, 
@@ -6787,7 +6779,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取 解压缩到文件夹 任务的进度
         GET https://webapi.115.com/files/add_extract_file
         payload:
@@ -6820,7 +6812,7 @@ class P115Client:
         to_pid: int | str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_file(
         self, 
@@ -6831,7 +6823,7 @@ class P115Client:
         to_pid: int | str = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """解压缩到某个文件夹，是对 `extract_add_file` 的封装，推荐使用
         """
         dirname = dirname.strip("/")
@@ -6916,7 +6908,7 @@ class P115Client:
         path: str, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def extract_download_url(
         self, 
@@ -6925,7 +6917,7 @@ class P115Client:
         path: str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         """获取压缩包中文件的下载链接
         GET https://webapi.115.com/files/extract_down_file
         payload:
@@ -6943,7 +6935,7 @@ class P115Client:
             return P115Url(url, headers=resp["headers"])
         if async_:
             async def async_request() -> P115Url:
-                return get_url(await cast(Awaitable[dict], resp))
+                return get_url(await cast(Coroutine[Any, Any, dict], resp))
             return async_request()
         else:
             return get_url(cast(dict, resp))
@@ -6964,7 +6956,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def extract_download_url_web(
         self, 
@@ -6972,7 +6964,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取压缩包中文件的下载链接
         GET https://webapi.115.com/files/extract_down_file
         payload:
@@ -7025,7 +7017,7 @@ class P115Client:
         secret: str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[None | PushExtractProgress]:
+    ) -> Coroutine[Any, Any, None | PushExtractProgress]:
         ...
     def extract_push_future(
         self, 
@@ -7034,7 +7026,7 @@ class P115Client:
         secret: str = "",
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> None | PushExtractProgress | Awaitable[None | PushExtractProgress]:
+    ) -> None | PushExtractProgress | Coroutine[Any, Any, None | PushExtractProgress]:
         """执行在线解压，如果早就已经完成，返回 None，否则新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_push(
@@ -7068,7 +7060,7 @@ class P115Client:
         to_pid: int | str,
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[ExtractProgress]:
+    ) -> Coroutine[Any, Any, ExtractProgress]:
         ...
     def extract_file_future(
         self, 
@@ -7079,7 +7071,7 @@ class P115Client:
         to_pid: int | str = 0,
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> ExtractProgress | Awaitable[ExtractProgress]:
+    ) -> ExtractProgress | Coroutine[Any, Any, ExtractProgress]:
         """执行在线解压到目录，新开启一个线程，用于检查进度
         """
         resp = check_response(self.extract_file(
@@ -7103,14 +7095,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取关于离线的限制的信息
         GET https://115.com/?ct=offline&ac=space
         """
@@ -7131,14 +7123,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_quota_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前离线配额信息（简略）
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
         """
@@ -7159,14 +7151,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_quota_package_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前离线配额信息（详细）
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
         """
@@ -7187,14 +7179,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_download_path(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前默认的离线下载到的文件夹信息（可能有多个）
         GET https://webapi.115.com/offine/downpath
         """
@@ -7215,14 +7207,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_upload_torrent_path(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前的种子上传到的文件夹，当你添加种子任务后，这个种子会在此文件夹中保存
         GET https://115.com/?ct=lixian&ac=get_id&torrent=1
         """
@@ -7245,7 +7237,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_add_url(
         self, 
@@ -7253,7 +7245,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """添加一个离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
         payload:
@@ -7288,7 +7280,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_add_urls(
         self, 
@@ -7296,7 +7288,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """添加一组离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
         payload:
@@ -7335,7 +7327,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_add_torrent(
         self, 
@@ -7343,7 +7335,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """添加一个种子作为离线任务
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
         payload:
@@ -7377,7 +7369,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_torrent_info(
         self, 
@@ -7385,7 +7377,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """查看种子的文件列表等信息
         POST https://lixian.115.com/lixian/?ct=lixian&ac=torrent
         payload:
@@ -7412,7 +7404,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_remove(
         self, 
@@ -7420,7 +7412,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """删除一组离线任务（无论是否已经完成）
         POST https://lixian.115.com/lixian/?ct=lixian&ac=task_del
         payload:
@@ -7456,7 +7448,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_list(
         self, 
@@ -7464,7 +7456,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前的离线任务列表
         POST https://lixian.115.com/lixian/?ct=lixian&ac=task_lists
         payload:
@@ -7491,7 +7483,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def offline_clear(
         self, 
@@ -7499,7 +7491,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """清空离线任务列表
         POST https://115.com/web/lixian/?ct=lixian&ac=task_clear
         payload:
@@ -7539,7 +7531,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def recyclebin_info(
         self, 
@@ -7547,7 +7539,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：文件信息
         POST https://webapi.115.com/rb/rb_info
         payload:
@@ -7574,7 +7566,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def recyclebin_clean(
         self, 
@@ -7582,7 +7574,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：删除或清空
         POST https://webapi.115.com/rb/clean
         payload:
@@ -7614,7 +7606,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def recyclebin_list(
         self, 
@@ -7622,7 +7614,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：罗列
         GET https://webapi.115.com/rb
         payload:
@@ -7653,7 +7645,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def recyclebin_revert(
         self, 
@@ -7661,7 +7653,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：还原
         POST https://webapi.115.com/rb/revert
         payload:
@@ -7692,14 +7684,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def captcha_sign(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取验证码的签名字符串
         GET https://captchaapi.115.com/?ac=code&t=sign
         """
@@ -7720,14 +7712,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def captcha_code(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """更新验证码，并获取图片数据（含 4 个汉字）
         GET https://captchaapi.115.com/?ct=index&ac=code
         """
@@ -7749,14 +7741,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def captcha_all(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """返回一张包含 10 个汉字的图片，包含验证码中 4 个汉字（有相应的编号，从 0 到 9，计数按照从左到右，从上到下的顺序）
         GET https://captchaapi.115.com/?ct=index&ac=code&t=all
         """
@@ -7780,7 +7772,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def captcha_single(
         self, 
@@ -7788,7 +7780,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """10 个汉字单独的图片，包含验证码中 4 个汉字，编号从 0 到 9
         GET https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}
         """
@@ -7814,7 +7806,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def captcha_verify(
         self, 
@@ -7822,7 +7814,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """提交验证码
         POST https://webapi.115.com/user/captcha
         payload:
@@ -7858,14 +7850,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_get_act_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取许愿树活动的信息
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info
         """
@@ -7886,14 +7878,14 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_home_list(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """首页的许愿树（随机刷新 15 条）
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/home_list
         """
@@ -7916,7 +7908,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_my_desire(
         self, 
@@ -7924,7 +7916,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """我的许愿列表
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire
         payload:
@@ -7960,7 +7952,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_my_aid_desire(
         self, 
@@ -7968,7 +7960,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """我的助愿列表
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire
         payload:
@@ -8004,7 +7996,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_wish(
         self, 
@@ -8012,7 +8004,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """创建许愿
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/wish
         payload:
@@ -8043,7 +8035,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_wish_del(
         self, 
@@ -8051,7 +8043,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """删除许愿
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish
         payload:
@@ -8078,7 +8070,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_aid_desire(
         self, 
@@ -8086,7 +8078,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """创建助愿（如果提供 file_ids，则会创建一个分享链接）
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire
         payload:
@@ -8114,7 +8106,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_aid_desire_del(
         self, 
@@ -8122,7 +8114,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """删除助愿
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire
         payload:
@@ -8149,7 +8141,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_get_desire_info(
         self, 
@@ -8157,7 +8149,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取的许愿信息
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info
         payload:
@@ -8184,7 +8176,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_desire_aid_list(
         self, 
@@ -8192,7 +8184,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取许愿的助愿列表
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list
         payload:
@@ -8225,7 +8217,7 @@ class P115Client:
         /, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def act_xys_adopt(
         self, 
@@ -8233,7 +8225,7 @@ class P115Client:
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """采纳助愿
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/adopt
         payload:
@@ -8267,7 +8259,7 @@ class P115Client:
         start: int, 
         seek_threshold: int,
         async_: Literal[True], 
-    ) -> Awaitable[HTTPFileReader]:
+    ) -> Coroutine[Any, Any, HTTPFileReader]:
         ...
     def open(
         self, 
@@ -8277,7 +8269,7 @@ class P115Client:
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
         async_: Literal[False, True] = False, 
-    ) -> HTTPFileReader | Awaitable[HTTPFileReader]:
+    ) -> HTTPFileReader | Coroutine[Any, Any, HTTPFileReader]:
         """打开下载链接，可以从网盘、网盘上的压缩包内、分享链接中获取：
             - P115Client.download_url
             - P115Client.share_download_url
@@ -8319,7 +8311,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_bytes(
         self, 
@@ -8330,7 +8322,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """读取文件一定索引范围的数据
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param start: 开始索引，可以为负数（从文件尾部开始）
@@ -8405,7 +8397,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_bytes_range(
         self, 
@@ -8416,7 +8408,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """读取文件一定索引范围的数据
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param bytes_range: 索引范围，语法符合 [HTTP Range Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests)
@@ -8454,7 +8446,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_block(
         self, 
@@ -8465,7 +8457,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         """读取文件一定索引范围的数据
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param size: 下载字节数（最多下载这么多字节，如果遇到 EOF，就可能较小）
