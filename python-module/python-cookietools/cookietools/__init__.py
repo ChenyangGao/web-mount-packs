@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "create_cookie", "create_morsel", "cookie_to_morsel", "morsel_to_cookie", 
     "cookies_str_to_dict", "cookies_dict_to_str", 
@@ -13,8 +13,12 @@ from collections.abc import Mapping
 from copy import copy
 from http.cookiejar import Cookie
 from http.cookies import Morsel
+from re import compile as re_compile
 from time import gmtime, strftime, strptime, time
 from typing import cast, Any
+
+
+CRE_COOKIE_SEP_split = re_compile(";\s*").split
 
 
 def create_cookie(
@@ -194,10 +198,7 @@ def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
 
 
 def cookies_str_to_dict(cookies: str, /) -> dict[str, str]:
-    return dict(
-        cookie.split("=", 1)
-        for cookie in cookies.rstrip("; ").split("; ")
-    )
+    return dict(cookie.split("=", 1) for cookie in CRE_COOKIE_SEP_split(cookies) if cookie)
 
 
 def cookies_dict_to_str(cookies: Mapping[str, str], /) -> str:

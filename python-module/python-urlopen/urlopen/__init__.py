@@ -83,7 +83,7 @@ def urlopen(
     params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
     data: None | bytes | str | Mapping | Sequence[tuple[Any, Any]] | Iterable[bytes] = None, 
     json: Any = None, 
-    headers: None | dict[str, str] = {"User-agent": ""}, 
+    headers: None | dict[str, str] = None, 
     timeout: None | int | float = None, 
     cookies: None | CookieJar = None, 
     proxy: None | tuple[str, str] = None, 

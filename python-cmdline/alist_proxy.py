@@ -14,8 +14,8 @@ DEFAULT_METHODS = [
 ]
 
 parser = ArgumentParser(
-    formatter_class=RawTextHelpFormatter, 
     description=__doc__, 
+    formatter_class=RawTextHelpFormatter, 
     epilog="""\t\t🔧🔨 使用技巧 🔩🪛
 
 本工具可以自己提供 collect 函数的定义，因此具有一定的可定制性
@@ -173,7 +173,7 @@ parser.add_argument("-c", "--collect", default="", help="""\
 
 默认的行为是把信息输出到日志里面，代码为
 
-    collect = lambda event: app.logger.info(repr(event))
+    collect = app.logger.info
 
 """)
 parser.add_argument("-q", "--queue-collect", action="store_true", 
@@ -241,7 +241,7 @@ if code:
     exec(code, ns)
     collect = ns["collect"]
 else:
-    collect = lambda event: app.logger.info(repr(event))
+    collect = app.logger.info
 
 queue_collect = args.queue_collect
 if queue_collect:

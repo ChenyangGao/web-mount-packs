@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-cookietools"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python cookietools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-cookietools"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-cookietools"
-keywords = ["cookie", "tools"]
+keywords = ["cookies", "tools", "cookietools"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",

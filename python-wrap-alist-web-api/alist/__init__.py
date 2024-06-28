@@ -4028,9 +4028,9 @@ class AlistFileSystem:
         file = cast(SupportsWrite[bytes], file)
         url = attr["raw_url"]
         if download:
-            download(url, file)
+            download(url, file, headers=self.client.headers)
         else:
-            with urlopen(url) as fsrc:
+            with urlopen(url, headers=self.client.headers) as fsrc:
                 copyfileobj(fsrc, file)
 
     def download_tree(

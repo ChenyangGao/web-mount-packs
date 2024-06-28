@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-"扫码获取 115 cookie（网页版）"
-
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 2)
 __all__ = ["APPS", "QrcodeScanHandler"]
-
-if __name__ == "__main__":
-    from argparse import ArgumentParser, RawTextHelpFormatter
-
-    parser = ArgumentParser(description="""\
-扫码获取 115 cookie
+__doc__ = """扫码获取 115 cookie（网页版）
 
 默认在命令行输出，需要安装 qrcode: pip install qrcode
     - https://pypi.org/project/qrcode/
 可以指定 -o 或 --open-qrcode 直接打开图片扫码
-""", formatter_class=RawTextHelpFormatter)
+"""
+
+if __name__ == "__main__":
+    from argparse import ArgumentParser, RawTextHelpFormatter
+
+    parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
     parser.add_argument(
         "app", nargs="?", default="qandroid", 
         choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 

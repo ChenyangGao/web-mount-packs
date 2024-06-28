@@ -481,7 +481,7 @@ def main(args):
     ) as progress:
         console_print = progress.console.print
         if isinstance(dst_path, str):
-            if not dst_path.strip("./"):
+            if dst_path == "0":
                 dst_id = 0
             elif not dst_path.startswith("0") and dst_path.isascii() and dst_path.isdecimal():
                 dst_id = int(dst_path)
@@ -560,7 +560,7 @@ parser.add_argument(
     choices=AVAILABLE_APPS, 
     help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-p", "--src-path", default=".", help="本地的路径，默认是当前工作目录")
-parser.add_argument("-t", "--dst-path", default=0, help="115 网盘中的文件或目录的 id 或路径，默认值：0")
+parser.add_argument("-t", "--dst-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：'/'")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
                     help="""最大重试次数。

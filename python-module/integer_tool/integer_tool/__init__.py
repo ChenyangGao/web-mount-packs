@@ -9,7 +9,6 @@ __all__ = [
     "sup_pow2", "inf_pow2", "ceildiv", 
 ]
 
-from sys import byteorder
 from typing import Literal
 
 
@@ -66,8 +65,8 @@ def count_1(n: int, /) -> int:
 def int_to_bytes(
     n: int, 
     /, 
-    byteorder: Literal["little", "big"] = byteorder, 
-    signed: bool = True, 
+    byteorder: Literal["little", "big"] = "big", 
+    signed: bool = False, 
 ) -> bytes:
     return int.to_bytes(
         n, 
@@ -80,8 +79,8 @@ def int_to_bytes(
 def int_from_bytes(
     b: bytes | bytearray | memoryview, 
     /, 
-    byteorder: Literal["little", "big"] = byteorder, 
-    signed: bool = True, 
+    byteorder: Literal["little", "big"] = "big", 
+    signed: bool = False, 
 ) -> int:
     return int.from_bytes(b, byteorder=byteorder, signed=signed)
 

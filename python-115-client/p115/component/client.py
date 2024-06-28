@@ -8,7 +8,7 @@ __all__ = ["check_response", "P115Client", "P115Url", "ExportDirStatus", "PushEx
 
 import errno
 
-from asyncio import to_thread
+from asyncio import create_task, to_thread
 from base64 import b64encode
 from binascii import b2a_hex
 from collections.abc import (
@@ -31,6 +31,7 @@ from os import fsdecode, fspath, fstat, isatty, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
 from socket import getdefaulttimeout, setdefaulttimeout
+from _thread import start_new_thread
 from threading import Condition, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
@@ -302,19 +303,21 @@ class P115Client:
         return "; ".join(f"{key}={val}" for key in ("UID", "CID", "SEID") if (val := cookies.get(key)))
 
     @cookies.setter
-    def cookies(self, cookies: str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel], /):
+    def cookies(self, cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel], /):
         """更新 cookies
         """
-        if isinstance(cookies, str):
+        if cookies is None:
+            self.cookiejar.clear()
+            return
+        elif isinstance(cookies, str):
             cookies = cookies.strip()
             if not cookies:
-                self.cookiejar.clear()
                 return
             cookies = cookies_str_to_dict(cookies.strip())
         set_cookie = self.__dict__["cookies"].jar.set_cookie
         if isinstance(cookies, Mapping):
-            for key in cookies:
-                set_cookie(create_cookie(key, cookies[key], domain=".115.com"))
+            for key, val in ItemsView(cookies):
+                set_cookie(create_cookie(key, val, domain=".115.com"))
         else:
             if isinstance(cookies, Cookies):
                 cookies = cookies.jar
@@ -3779,6 +3782,82 @@ class P115Client:
             payload = {"limit": 32, "offset": 0, "date": str(date.today()), **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
+    @overload
+    def life_calendar_getoption(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def life_calendar_getoption(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def life_calendar_getoption(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """获取 115 生活的开关设置
+        GET https://life.115.com/api/1.0/web/1.0/calendar/getoption
+        """
+        api = "https://life.115.com/api/1.0/web/1.0/calendar/getoption"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def life_calendar_setoption(
+        self, 
+        payload: Literal[0, 1] | dict = 1, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def life_calendar_setoption(
+        self, 
+        payload: Literal[0, 1] | dict = 1, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Awaitable[dict]:
+        ...
+    def life_calendar_setoption(
+        self, 
+        payload: Literal[0, 1] | dict = 1, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Awaitable[dict]:
+        """设置 115 生活的开关选项
+        POST https://life.115.com/api/1.0/web/1.0/calendar/setoption
+        payload:
+            - locus: 0 | 1 = 1     # 开启或关闭最近记录
+            - open_life: 0 | 1 = 1 # 显示或关闭
+            - birthday: 0 | 1 = <default>
+            - holiday: 0 | 1 = <default>
+            - lunar: 0 | 1 = <default>
+            - view: 0 | 1 = <default>
+            - diary: 0 | 1 = <default>
+            - del_notice_item: 0 | 1 = <default>
+            - first_week: 0 | 1 = <default>
+        """
+        if isinstance(payload, dict):
+            payload = {"locus": 1, "open_life": 1, **payload}
+        else:
+            payload = {"locus": 1, "open_life": payload}
+        api = "https://life.115.com/api/1.0/web/1.0/calendar/setoption"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
     ########## Share API ##########
 
     @overload
@@ -5843,6 +5922,7 @@ class P115Client:
         data = {
             "appid": 0, 
             "appversion": APP_VERSION, 
+            "success_action_status": "200", 
             "userid": userid, 
             "filename": filename, 
             "filesize": filesize, 
@@ -5859,10 +5939,19 @@ class P115Client:
             request_kwargs["headers"] = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
         else:
             request_kwargs["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
-        request_kwargs["parse"] = lambda resp, content: loads(ECDH_ENCODER.decode(content))
+        request_kwargs["parse"] = lambda resp, content: loads(ECDH_ENCODER.decode(content, decompress=True))
         request_kwargs["params"] = {"k_ec": encoded_token}
         request_kwargs["data"] = ECDH_ENCODER.encode(urlencode(sorted(data.items())))
-        return self.upload_init(async_=async_, **request_kwargs)
+        def gen_step():
+            resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
+            if resp["status"] == 2 and resp["statuscode"] == 0:
+                # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新
+                if async_:
+                    create_task(to_thread(self.upload_init, **request_kwargs))
+                else:
+                    start_new_thread(partial(self.upload_init, **request_kwargs), ())
+            return resp
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def upload_file_init(
@@ -5911,53 +6000,11 @@ class P115Client:
         """
         if filesize >= 1 << 20 and read_range_bytes_or_hash is None:
             raise ValueError("filesize >= 1 MB, thus need pass the `read_range_bytes_or_hash` argument")
-        if async_:
-            async def async_request():
-                nonlocal async_, filesha1, read_range_bytes_or_hash
-                async_ = cast(Literal[True], async_)
-                filesha1 = filesha1.upper()
-                target = f"U_1_{pid}"
-                resp = await self._upload_file_init(
-                    filename, 
-                    filesize, 
-                    filesha1, 
-                    target, 
-                    async_=async_, 
-                    **request_kwargs, 
-                )
-                if resp["status"] == 7 and resp["statuscode"] == 701:
-                    read_range_bytes_or_hash = cast(Callable[[str], str | Buffer], read_range_bytes_or_hash)
-                    sign_key = resp["sign_key"]
-                    sign_check = resp["sign_check"]
-                    data: str | Buffer = await ensure_async(read_range_bytes_or_hash)(sign_check) # type: ignore
-                    if isinstance(data, str):
-                        sign_val = data.upper()
-                    else:
-                        sign_val = sha1(data).hexdigest().upper()
-                    resp = await self._upload_file_init(
-                        filename, 
-                        filesize, 
-                        filesha1, 
-                        target, 
-                        sign_key=sign_key, 
-                        sign_val=sign_val, 
-                        async_=async_, 
-                        **request_kwargs, 
-                    )
-                resp["state"] = True
-                resp["data"] = {
-                    "file_name": filename, 
-                    "file_size": filesize, 
-                    "sha1": filesha1, 
-                    "cid": pid, 
-                    "pickcode": resp["pickcode"], 
-                }
-                return resp
-            return async_request()
-        else:
-            filesha1 = filesha1.upper()
-            target = f"U_1_{pid}"
-            resp = self._upload_file_init(
+        filesha1 = filesha1.upper()
+        target = f"U_1_{pid}"
+        def gen_step():
+            resp = yield partial(
+                self._upload_file_init, 
                 filename, 
                 filesize, 
                 filesha1, 
@@ -5968,22 +6015,31 @@ class P115Client:
             # NOTE: 当文件大于等于 1 MB (1048576 B)，需要 2 次检验 1 个范围哈希，它会给出此文件的 1 个范围区间
             #       ，你读取对应的数据计算 sha1 后上传，以供 2 次检验
             if resp["status"] == 7 and resp["statuscode"] == 701:
-                read_range_bytes_or_hash = cast(Callable[[str], str | Buffer], read_range_bytes_or_hash)
+                if read_range_bytes_or_hash is None:
+                    raise ValueError("filesize >= 1 MB, thus need pass the `read_range_bytes_or_hash` argument")
                 sign_key = resp["sign_key"]
                 sign_check = resp["sign_check"]
-                data = read_range_bytes_or_hash(sign_check)
+                data: str | Buffer
+                if async_:
+                    data = yield partial(
+                        ensure_async(read_range_bytes_or_hash), 
+                        sign_check, 
+                    )
+                else:
+                    data = read_range_bytes_or_hash(sign_check)
                 if isinstance(data, str):
                     sign_val = data.upper()
                 else:
                     sign_val = sha1(data).hexdigest().upper()
-                resp = self._upload_file_init(
+                resp = yield partial(
+                    self._upload_file_init, 
                     filename, 
                     filesize, 
                     filesha1, 
                     target, 
                     sign_key=sign_key, 
-                    sign_val=sign_val,
-                    async_=async_,  
+                    sign_val=sign_val, 
+                    async_=async_, 
                     **request_kwargs, 
                 )
             resp["state"] = True
@@ -5995,6 +6051,7 @@ class P115Client:
                 "pickcode": resp["pickcode"], 
             }
             return resp
+        return run_gen_step(gen_step, async_=async_)
 
     # TODO: 支持进度条和随时暂停，基于迭代器，使用一个 flag，每次迭代检查一下
     # TODO: 返回 task，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait

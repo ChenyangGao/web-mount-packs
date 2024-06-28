@@ -15,7 +15,7 @@ from lz4.block import decompress as lz4_block_decompress # type: ignore
 from Crypto import Random
 from Crypto.Cipher import PKCS1_v1_5, AES
 from Crypto.PublicKey import RSA
-from Crypto.Util.number import bytes_to_long, long_to_bytes
+
 
 NIST224P_BASELEN: Final = 28
 RSA_KEY_SIZE: Final = 16
@@ -105,9 +105,9 @@ class P115RSACipher:
         cipher = PKCS1_v1_5.new(RSA_PUBLIC_KEY)
         text = bytearray()
         for l, r in pairwise(range(0, len(cipher_text) + RSA_BLOCK_SIZE, RSA_BLOCK_SIZE)):
-            n = bytes_to_long(cipher_text[l:r])
+            n = int.from_bytes(cipher_text[l:r])
             m = pow(n, rsa_e, rsa_n)
-            b = long_to_bytes(m)
+            b = int.to_bytes(m, (m.bit_length() + 0b111) >> 3)
             text += b[b.index(0)+1:]
         rand_key = text[0:RSA_KEY_SIZE]
         text = text[RSA_KEY_SIZE:]
@@ -119,58 +119,85 @@ class P115RSACipher:
 class P115ECDHCipher:
 
     def __init__(self):
-        pubkey, secret = type(self).generate_pair()
-        self.pubkey: bytes  = pubkey
+        pub_key, secret = type(self).generate_pair()
+        self.pub_key: bytes = pub_key
+        # NOTE: use AES-128
         self.aes_key: bytes = secret[:16]
         self.aes_iv: bytes  = secret[-16:]
 
     @staticmethod
     def generate_pair() -> tuple[bytes, bytes]:
         sk = SigningKey.generate(NIST224p)
+        pk = sk.verifying_key
         ecdh = ECDH(NIST224p)
         ecdh.load_private_key(sk)
         ecdh.load_received_public_key_bytes(ECDH_REMOTE_PUBKEY)
-        public = ecdh.get_public_key().to_string()
+        public = pk.pubkey.point.to_bytes()
         x, y = public[:NIST224P_BASELEN], public[NIST224P_BASELEN:]
-        pubkey = bytes((NIST224P_BASELEN + 1, 0x02 + (bytes_to_long(y) & 1))) + x
+        pub_key = bytes((NIST224P_BASELEN + 1, 0x02 + (int.from_bytes(y) & 1))) + x
+        # NOTE: Roughly equivalent to
+        # n = int((ecdh.public_key.pubkey.point * int.from_bytes(sk.to_string())).x())
+        # secret = int.to_bytes(n, (n.bit_length() + 0b111) >> 3)
         secret = ecdh.generate_sharedsecret_bytes()
-        return pubkey, secret
+        return pub_key, secret
 
     def encode(self, text: bytes | bytearray | str, /) -> bytes:
+        "加密数据"
         if isinstance(text, str):
             text = bytes(text, "utf-8")
         pad_size = 16 - (len(text) & 15)
-        text += int.to_bytes(pad_size) * pad_size
-        encrypt = AES.new(self.aes_key, AES.MODE_ECB).encrypt
-        cipher_text = bytearray()
-        xor_key = self.aes_iv
-        for l, r in pairwise(range(0, len(text) + 1, 16)):
-            xor_key = encrypt(bytes(x ^ y for x, y in zip(text[l:r], xor_key)))
-            cipher_text += xor_key
-        return bytes(cipher_text)
+        return AES.new(self.aes_key, AES.MODE_CBC, self.aes_iv).encrypt(
+            text + int.to_bytes(pad_size) * pad_size)
 
-    def decode(self, cipher_text: bytes | bytearray, /) -> bytes:
-        cipher_text = cipher_text[:len(cipher_text) & -16]
-        lz4_block = AES.new(self.aes_key, AES.MODE_CBC, self.aes_iv).decrypt(cipher_text)
-        size = lz4_block[0] + (lz4_block[1] << 8)
-        return lz4_block_decompress(lz4_block[2:size+2], 0x2000)
+    def decode(
+        self, 
+        cipher_text: bytes | bytearray, 
+        /, 
+        decompress: bool = False, 
+    ) -> bytes:
+        "解密数据"
+        data = AES.new(self.aes_key, AES.MODE_CBC, self.aes_iv).decrypt(
+            cipher_text[:len(cipher_text) & -16])
+        if decompress:
+            size = data[0] + (data[1] << 8)
+            data = lz4_block_decompress(data[2:size+2], 0x2000)
+        else:
+            padding = data[-1]
+            if all(c == padding for c in data[-padding:]):
+                data = data[:-padding]
+        return data
 
-    def encode_token(self, timestamp: int) -> bytes:
+    def encode_token(self, /, timestamp: int) -> bytes:
+        "接受一个时间戳（单位是秒），返回一个 token，会把 pub_key 和 timestamp 都编码在内"
         r1, r2 = randrange(256), randrange(256)
         token = bytearray()
-        ts = long_to_bytes(timestamp)
-        pubkey = self.pubkey
-        token.extend(pubkey[i]^r1 for i in range(15))
+        ts = int.to_bytes(timestamp, (timestamp.bit_length() + 0b111) >> 3)
+        if isinstance(self, P115ECDHCipher):
+            pub_key = self.pub_key
+        else:
+            pub_key = self
+        token.extend(pub_key[i]^r1 for i in range(15))
         token.append(r1)
         token.append(0x73^r1)
         token.extend((r1,)*3)
         token.extend(r1^ts[3-i] for i in range(4))
-        token.extend(pubkey[i]^r2 for i in range(15, len(pubkey)))
+        token.extend(pub_key[i]^r2 for i in range(15, len(pub_key)))
         token.append(r2)
         token.append(0x01^r2)
         token.extend((r2,)*3)
         crc = crc32(CRC_SALT+token) & 0xffffffff
-        h_crc32 = crc.to_bytes(4, "big", signed=False)
+        h_crc32 = int.to_bytes(crc, 4)
         token.extend(h_crc32[3-i] for i in range(4))
         return b64encode(token)
+
+    @staticmethod
+    def decode_token(data: str | bytes) -> tuple[bytes, int]:
+        "解密 token 数据，返回 pub_key 和 timestamp 的元组"
+        data = b64decode(data)
+        r1 = data[15]
+        r2 = data[39]
+        return (
+            bytes(c ^ r1 for c in data[:15]) + bytes(c ^ r2 for c in data[24:39]), 
+            int.from_bytes(bytes(i ^ r1 for i in data[20:24]), byteorder="little"), 
+        )
 
