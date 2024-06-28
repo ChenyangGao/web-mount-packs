@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 1)
-__doc__ = "115 生活事件监控"
+__doc__ = "115 生活事件监控（周期轮询策略，最大延迟为 1 秒）"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 
@@ -182,17 +182,21 @@ if args.version:
 
 import logging
 
+from datetime import datetime
+from itertools import count
 from os.path import expanduser, dirname, join as joinpath, realpath
 from textwrap import dedent
 from time import sleep, time
 
 try:
     from p115 import P115Client
+    from urllib3_request import request
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", "python-115", "urllib3_request"], check=True)
     from p115 import P115Client
+    from urllib3_request import request
 
 
 logger = logging.getLogger("lift_list_monitor")
@@ -265,13 +269,15 @@ if queue_collect:
 
 
 def main():
-    client.life_calendar_setoption()
+    client.life_calendar_setoption(request=request)
 
+    collection_start_time = str(datetime.now())
+    get_id = count(1).__next__
     end_time = int(time())
     start_time = end_time - 2
     while True:
         try:
-            resp = client.life_list({"show_type": 0, "start_time": start_time, "end_time": end_time})
+            resp = client.life_list({"show_type": 0, "start_time": start_time, "end_time": end_time}, request=request)
         except Exception as e:
             logger.exception(e)
             continue
@@ -279,7 +285,10 @@ def main():
         if data["count"]:
             for items in data["list"]:
                 if "items" not in items:
-                    if items["update_time"] != start_time:
+                    if start_time < items["update_time"] < end_time:
+                        items["update_time_str"] = str(datetime.fromtimestamp(items["update_time"]))
+                        items["collection_start_time"] = collection_start_time
+                        items["collection_id"] = get_id()
                         collect(items)
                     continue
                 behavior_type = items["behavior_type"]
@@ -287,13 +296,16 @@ def main():
                 for item in items["items"]:
                     item["behavior_type"] = behavior_type
                     item["date"] = date
+                    item["update_time_str"] = str(datetime.fromtimestamp(item["update_time"]))
+                    item["collection_start_time"] = collection_start_time
+                    item["collection_id"] = get_id()
                     collect(item)
                 if len(items["items"]) == 10 and items["total"] > 10:
                     seen_items: set[str] = {item["id"] for item in items["items"]}
                     payload = {"offset": 10, "limit": 32, "type": behavior_type, "date": date}
                     while True:
                         try:
-                            resp = client.behavior_detail(payload)
+                            resp = client.behavior_detail(payload, request=request)
                         except Exception as e:
                             logger.exception(e)
                             continue
@@ -305,6 +317,9 @@ def main():
                             seen_items.add(item["id"])
                             item["behavior_type"] = behavior_type
                             item["date"] = date
+                            item["update_time_str"] = str(datetime.fromtimestamp(item["update_time"]))
+                            item["collection_start_time"] = collection_start_time
+                            item["collection_id"] = get_id()
                             collect(item)
                         else:
                             if not resp["data"]["next_page"]:
