@@ -300,7 +300,7 @@ def main():
                     item["collection_start_time"] = collection_start_time
                     item["collection_id"] = get_id()
                     collect(item)
-                if len(items["items"]) == 10 and items["total"] > 10:
+                if behavior_type == "upload_file" or len(items["items"]) == 10 and items["total"] > 10:
                     seen_items: set[str] = {item["id"] for item in items["items"]}
                     payload = {"offset": 0, "limit": 32, "type": behavior_type, "date": date}
                     while True:
