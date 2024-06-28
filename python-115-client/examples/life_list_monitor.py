@@ -302,7 +302,7 @@ def main():
                     collect(item)
                 if len(items["items"]) == 10 and items["total"] > 10:
                     seen_items: set[str] = {item["id"] for item in items["items"]}
-                    payload = {"offset": 10, "limit": 32, "type": behavior_type, "date": date}
+                    payload = {"offset": 0, "limit": 32, "type": behavior_type, "date": date}
                     while True:
                         try:
                             resp = client.behavior_detail(payload, request=request)
