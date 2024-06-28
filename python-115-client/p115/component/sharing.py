@@ -6,9 +6,9 @@ from __future__ import annotations
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Sharing"]
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Iterator
 from functools import partial
-from typing import overload, Literal
+from typing import overload, Any, Literal
 
 from asynctools import async_any, to_list
 from iterutils import run_gen_step
@@ -86,7 +86,7 @@ class P115Sharing:
         order: str = "file_name", 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def add(
         self, 
@@ -96,7 +96,7 @@ class P115Sharing:
         order: str = "file_name", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """创建分享链接
         :param file_ids: 文件列表，有多个时用逗号 "," 隔开或者传入可迭代器
         :param is_asc: 是否升序排列
@@ -134,13 +134,13 @@ class P115Sharing:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def clear(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "清空分享列表"
         def gen_step():
             if async_:
@@ -173,14 +173,14 @@ class P115Sharing:
         code_or_id: int | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def code_of(
         self, 
         code_or_id: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         "获取 id 对应的分享码"
         def gen_step():
             if isinstance(code_or_id, str):
@@ -247,13 +247,13 @@ class P115Sharing:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def get_length(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             resp = yield partial(
                 self.client.share_list, 
@@ -276,13 +276,13 @@ class P115Sharing:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Path]:
+    ) -> Coroutine[Any, Any, P115Path]:
         ...
     def get_receive_path(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> P115Path | Awaitable[P115Path]:
+    ) -> P115Path | Coroutine[Any, Any, P115Path]:
         return self.client.get_fs(
             self.client, 
             request=self.request, 
@@ -303,14 +303,14 @@ class P115Sharing:
         code_or_id: int | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def has(
         self, 
         code_or_id: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             if isinstance(code_or_id, str):
                 return (yield partial(
@@ -416,7 +416,7 @@ class P115Sharing:
         limit: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def list(
         self, 
@@ -425,7 +425,7 @@ class P115Sharing:
         limit: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "获取分享信息列表"
         def gen_step():
             if limit <= 0:
@@ -459,14 +459,14 @@ class P115Sharing:
         code_or_id_s: int | str | Iterable[int | str], 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def remove(
         self, 
         code_or_id_s: int | str | Iterable[int | str], 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "用分享码或 id 查询并删除分享"
         def gen_step():
             if isinstance(code_or_id_s, (int, str)):
@@ -510,7 +510,7 @@ class P115Sharing:
         /, 
         async_: Literal[True], 
         **payload, 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def update(
         self, 
@@ -518,7 +518,7 @@ class P115Sharing:
         /, 
         async_: Literal[False, True] = False, 
         **payload, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """用分享码或 id 查询并更新分享信息
         payload:
             - receive_code: str = <default>         # 访问密码（口令）

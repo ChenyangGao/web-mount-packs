@@ -6,9 +6,9 @@ from __future__ import annotations
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115LabelList"]
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
 from functools import partial
-from typing import overload, Literal
+from typing import overload, Any, Literal
 
 from asynctools import async_any, to_list
 from iterutils import run_gen_step
@@ -79,14 +79,14 @@ class P115LabelList:
         /, 
         *labels: str, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def add(
         self, 
         /, 
         *labels: str, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         """添加（若干个）标签
         标签的格式是 "{label_name}" 或 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
         """
@@ -139,7 +139,7 @@ class P115LabelList:
         /, 
         value: str | dict, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def edit(
         self, 
@@ -147,7 +147,7 @@ class P115LabelList:
         /, 
         value: str | dict, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """用名称或 id 查询并编辑标签
         如果 value 是 str，则视为修改标签的名称，否则视为 payload
         payload:
@@ -229,13 +229,13 @@ class P115LabelList:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def get_length(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             resp = yield partial(
                 self.client.label_list, 
@@ -260,14 +260,14 @@ class P115LabelList:
         id_or_name: int | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def has(
         self, 
         id_or_name: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             if isinstance(id_or_name, int):
                 resp = yield partial(
@@ -302,14 +302,14 @@ class P115LabelList:
         id_or_name: int | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def id_of(
         self, 
         id_or_name: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         "获取名称对应的 id"
         def gen_step():
             if isinstance(id_or_name, int):
@@ -521,7 +521,7 @@ class P115LabelList:
         order: Literal["", "asc", "desc"] = "", 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def list(
         self, 
@@ -533,7 +533,7 @@ class P115LabelList:
         order: Literal["", "asc", "desc"] = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         """获取标签信息列表
         :param offset: 索引偏移，从 0 开始
         :param limit: 返回数据条数，如果小于等于 0，则不限
@@ -593,14 +593,14 @@ class P115LabelList:
         id_or_name: int | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def remove(
         self, 
         id_or_name: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """用名字或 id 查询并删除标签"
         """
         def gen_step():

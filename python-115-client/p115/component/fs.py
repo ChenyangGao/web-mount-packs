@@ -10,7 +10,7 @@ import errno
 
 from collections import deque, ChainMap
 from collections.abc import (
-    AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, 
+    AsyncIterator, Callable, Coroutine, Iterable, Iterator, Mapping, MutableMapping, Sequence, 
 )
 from copy import deepcopy
 from datetime import datetime
@@ -26,7 +26,7 @@ from pathlib import Path
 from posixpath import join as joinpath, splitext
 from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
-from typing import cast, overload, Literal, Self
+from typing import cast, overload, Any, Literal, Self
 from uuid import uuid4
 from warnings import warn
 
@@ -171,7 +171,7 @@ class P115Path(P115PathBase):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[None | Self]:
+    ) -> Coroutine[Any, Any, None | Self]:
         ...
     def copy(
         self, 
@@ -182,7 +182,7 @@ class P115Path(P115PathBase):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> None | Self | Awaitable[None | Self]:
+    ) -> None | Self | Coroutine[Any, Any, None | Self]:
         def gen_step():
             attr = yield partial(
                 self.fs.copy, 
@@ -215,7 +215,7 @@ class P115Path(P115PathBase):
         exist_ok: bool = True, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def mkdir(
         self, 
@@ -223,7 +223,7 @@ class P115Path(P115PathBase):
         exist_ok: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             return type(self)((yield partial(
                 self.fs.makedirs, 
@@ -251,7 +251,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def move(
         self, 
@@ -260,7 +260,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             attr = yield partial(
                 self.fs.move, 
@@ -290,7 +290,7 @@ class P115Path(P115PathBase):
         recursive: bool = True, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def remove(
         self, 
@@ -298,7 +298,7 @@ class P115Path(P115PathBase):
         recursive: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         return self.fs.remove(
             self, 
             recursive=recursive, 
@@ -323,7 +323,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def rename(
         self, 
@@ -332,7 +332,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             attr = yield partial(
                 self.fs.rename, 
@@ -364,7 +364,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def renames(
         self, 
@@ -373,7 +373,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             attr = yield partial(
                 self.fs.renames, 
@@ -405,7 +405,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def replace(
         self, 
@@ -414,7 +414,7 @@ class P115Path(P115PathBase):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             attr = yield partial(
                 self.fs.replace, 
@@ -440,13 +440,13 @@ class P115Path(P115PathBase):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def rmdir(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         return self.fs.rmdir(self, async_=async_)
 
     @overload
@@ -485,13 +485,13 @@ class P115Path(P115PathBase):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def touch(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             return type(self)((yield partial(
                 self.fs.touch, 
@@ -518,7 +518,7 @@ class P115Path(P115PathBase):
         data: Buffer | SupportsRead[Buffer] = b"", 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def write_bytes(
         self, 
@@ -526,7 +526,7 @@ class P115Path(P115PathBase):
         data: Buffer | SupportsRead[Buffer] = b"", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             return type(self)((yield partial(
                 self.fs.write_bytes, 
@@ -558,7 +558,7 @@ class P115Path(P115PathBase):
         newline: None | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def write_text(
         self, 
@@ -569,7 +569,7 @@ class P115Path(P115PathBase):
         newline: None | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             return type(self)((yield partial(
                 self.fs.write_text, 
@@ -667,7 +667,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_mkdir(
         self, 
@@ -676,7 +676,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_mkdir( # type: ignore
             {"cname": name, "pid": pid}, 
             request=self.async_request if async_ else self.request, 
@@ -701,7 +701,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_copy(
         self, 
@@ -710,7 +710,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_copy( # type: ignore
             id, 
             pid, 
@@ -732,14 +732,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_delete(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_delete( # type: ignore
             id, 
             request=self.async_request if async_ else self.request, 
@@ -764,7 +764,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_move(
         self, 
@@ -773,7 +773,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_move( # type: ignore
             id, 
             pid, 
@@ -797,7 +797,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         name: str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_rename(
         self, 
@@ -805,7 +805,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         name: str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_rename( # type: ignore
             id, 
             name, 
@@ -831,7 +831,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_copy(
         self, 
@@ -840,7 +840,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_batch_copy(  # type: ignore
             payload, 
             pid=pid, 
@@ -862,14 +862,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: dict | Iterable[int | str], 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_delete(
         self, 
         payload: dict | Iterable[int | str], 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_batch_delete( # type: ignore
             payload, 
             request=self.async_request if async_ else self.request, 
@@ -894,7 +894,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_move(
         self, 
@@ -903,7 +903,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_batch_move( # type: ignore
             payload, 
             pid=pid, 
@@ -925,14 +925,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: dict | Iterable[tuple[int | str, str]], 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_batch_rename(
         self, 
         payload: dict | Iterable[tuple[int | str, str]], 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_batch_rename( # type: ignore
             payload, 
             request=self.async_request if async_ else self.request, 
@@ -953,14 +953,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_info(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         def gen_step():
             resp = yield partial(
                 self.client.fs_info, 
@@ -998,7 +998,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files(
         self, 
@@ -1006,7 +1006,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         if payload is None:
             id = self.id
             payload = {"cid": id}
@@ -1042,14 +1042,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: str | dict, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_search(
         self, 
         payload: str | dict, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(payload, str):
             payload = {"cid": self.id, "search_value": payload}
         return check_response(self.client.fs_search( # type: ignore
@@ -1080,7 +1080,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def fs_upload(
         self, 
@@ -1091,7 +1091,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         if pid is None:
             pid = self.id
         def gen_step():
@@ -1145,13 +1145,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def space_summury(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_space_summury( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
@@ -1275,14 +1275,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             if id == 0:
                 last_update = datetime.now()
@@ -1395,7 +1395,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr_path(
         self, 
@@ -1405,7 +1405,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             nonlocal path, pid, ensure_dir
 
@@ -1579,14 +1579,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def _dir_get_ancestors(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         def gen_step():
             ls = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
             if id:
@@ -1622,7 +1622,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: bool = True, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def attr(
         self, 
@@ -1633,7 +1633,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "获取属性"
         def gen_step():
             path_class = type(self).path_class
@@ -2137,7 +2137,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[None | AttrDict]:
+    ) -> Coroutine[Any, Any, None | AttrDict]:
         ...
     def copy(
         self, 
@@ -2150,7 +2150,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> None | AttrDict | Awaitable[None | AttrDict]:
+    ) -> None | AttrDict | Coroutine[Any, Any, None | AttrDict]:
         "复制文件"
         def gen_step():
             nonlocal src_path, dst_path
@@ -2298,7 +2298,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[None | AttrDict]:
+    ) -> Coroutine[Any, Any, None | AttrDict]:
         ...
     def copytree(
         self, 
@@ -2310,7 +2310,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> None | AttrDict | Awaitable[None | AttrDict]:
+    ) -> None | AttrDict | Coroutine[Any, Any, None | AttrDict]:
         "复制路径"
         def gen_step():
             nonlocal src_path, dst_path
@@ -2449,7 +2449,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         desc: None | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def desc(
         self, 
@@ -2459,7 +2459,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         desc: None | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         """目录的描述文本（支持 HTML）
         :param desc: 如果为 None，返回描述文本；否则，设置文本
         """
@@ -2502,7 +2502,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def dirlen(
         self, 
@@ -2511,7 +2511,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         "文件夹中的项目数（直属的文件和目录计数）"
         def gen_step():
             id = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
@@ -2541,7 +2541,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def get_ancestors(
         self, 
@@ -2550,7 +2550,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "获取各个上级目录的少量信息（从根目录到当前目录）"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -2575,7 +2575,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         use_web_api: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def get_id_from_pickcode(
         self, 
@@ -2584,7 +2584,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         use_web_api: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         "由 pickcode 获取 id（通过下载接口获取）"
         def gen_step():
             if not pickcode:
@@ -2616,7 +2616,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         use_web_api: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def get_info_from_pickcode(
         self, 
@@ -2625,7 +2625,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         use_web_api: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "由 pickcode 获取一些目录信息（通过下载接口获取）"
         def gen_step():
             resp = yield partial(
@@ -2657,7 +2657,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def get_pickcode(
         self, 
@@ -2666,7 +2666,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         "获取 pickcode"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -2693,7 +2693,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def get_url(
         self, 
@@ -2703,7 +2703,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         "获取下载链接"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -2742,7 +2742,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def get_url_from_pickcode(
         self, 
@@ -2752,7 +2752,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         "由 pickcode 获取下载链接"
         return self.client.download_url(
             pickcode, 
@@ -2783,7 +2783,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         show: None | bool = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def hide(
         self, 
@@ -2793,7 +2793,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         show: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         "把路径隐藏或显示（如果隐藏，只能在隐藏模式中看到）"
         def gen_step():
             if show is None:
@@ -2826,13 +2826,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def hidden_mode(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         "是否进入隐藏模式"
         def gen_step():
             resp = yield partial(
@@ -2861,7 +2861,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         password: str = "", 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def hidden_switch(
         self, 
@@ -2870,7 +2870,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "切换隐藏模式，如果需要进入隐藏模式，需要提供密码"
         def gen_step():
             nonlocal show
@@ -2906,7 +2906,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def is_empty(
         self, 
@@ -2915,7 +2915,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         "路径是否为空文件或空目录"
         def gen_step():
             attr: AttrDict | P115Path
@@ -3021,7 +3021,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def labels(
         self, 
@@ -3030,7 +3030,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "获取路径的标签"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -3057,7 +3057,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         exist_ok: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def makedirs(
         self, 
@@ -3067,7 +3067,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         exist_ok: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "创建目录，如果上级目录不存在，则会进行创建"
         def gen_step():
             nonlocal path, pid
@@ -3141,7 +3141,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def mkdir(
         self, 
@@ -3150,7 +3150,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "创建目录"
         def gen_step():
             nonlocal path, pid
@@ -3232,7 +3232,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def move(
         self, 
@@ -3242,7 +3242,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "重命名路径，如果目标路径是目录，则移动到其中"
         def gen_step():
             nonlocal src_path, dst_path
@@ -3299,7 +3299,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def remove(
         self, 
@@ -3309,7 +3309,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "删除文件"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -3348,7 +3348,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def removedirs(
         self, 
@@ -3357,7 +3357,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "逐级往上尝试删除空目录"
         def gen_step():
             attr = yield partial(
@@ -3412,7 +3412,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         replace: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def rename(
         self, 
@@ -3423,7 +3423,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         replace: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "重命名路径"
         def gen_step():
             nonlocal src_path, dst_path
@@ -3566,7 +3566,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def renames(
         self, 
@@ -3576,7 +3576,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "重命名路径，如果文件被移动到其它目录中，则尝试从原来的上级目录逐级往上删除空目录"
         def gen_step():
             attr = yield partial(self.attr, src_path, pid=pid, async_=async_)
@@ -3607,7 +3607,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def replace(
         self, 
@@ -3617,7 +3617,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "替换路径"
         return self.rename(src_path, dst_path, pid=pid, replace=True, async_=async_)
 
@@ -3639,7 +3639,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def rmdir(
         self, 
@@ -3648,7 +3648,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "删除空目录"
         def gen_step():
             attr = yield partial(
@@ -3692,7 +3692,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def rmtree(
         self, 
@@ -3701,7 +3701,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "删除路径"
         return self.remove(id_or_path, pid, recursive=True, async_=async_)
 
@@ -3725,7 +3725,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         score: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def score(
         self, 
@@ -3735,7 +3735,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         score: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         """路径的分数
         :param star: 如果为 None，返回分数；否则，设置分数
         """
@@ -3896,7 +3896,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         star: None | bool = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def star(
         self, 
@@ -3906,7 +3906,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         star: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         """路径的星标
         :param star: 如果为 None，返回星标是否已设置；如果为 True，设置星标；如果为 False，取消星标
         """
@@ -3946,7 +3946,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[stat_result]:
+    ) -> Coroutine[Any, Any, stat_result]:
         ...
     def stat(
         self, 
@@ -3955,7 +3955,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> stat_result | Awaitable[stat_result]:
+    ) -> stat_result | Coroutine[Any, Any, stat_result]:
         "检查路径的属性，就像 `os.stat`"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -3994,7 +3994,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         is_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def touch(
         self, 
@@ -4004,7 +4004,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         is_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         """检查路径是否存在，当不存在时，如果 is_dir 是 False 时，则创建空文件，否则创建空目录
         """
         def gen_step():
@@ -4047,7 +4047,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def upload(
         self, 
@@ -4060,7 +4060,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "上传文件"
         def gen_step():
             nonlocal path, pid
@@ -4289,7 +4289,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def write_bytes(
         self, 
@@ -4299,7 +4299,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "向文件写入二进制数据，如果文件已存在则替换"
         return self.upload(data, id_or_path, pid=pid, overwrite=True, async_=async_)
 
@@ -4329,7 +4329,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         newline: None | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def write_text(
         self, 
@@ -4342,7 +4342,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         newline: None | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "向文件写入文本数据，如果文件已存在则替换"
         bio = BytesIO()
         if text:

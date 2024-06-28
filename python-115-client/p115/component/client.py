@@ -92,9 +92,9 @@ def to_base64(s: bytes | str, /) -> str:
 def check_response(resp: dict, /) -> dict:
     ...
 @overload
-def check_response(resp: Awaitable[dict], /) -> Awaitable[dict]:
+def check_response(resp: Coroutine[Any, Any, dict], /) -> Awaitable[dict]:
     ...
-def check_response(resp: dict | Awaitable[dict], /) -> dict | Awaitable[dict]:
+def check_response(resp: dict | Coroutine[Any, Any, dict], /) -> dict | Awaitable[dict]:
     """检测 115 的某个接口的响应，如果成功则直接返回，否则根据具体情况抛出一个异常
     """
     def check(resp: dict) -> dict:

@@ -6,9 +6,9 @@ from __future__ import annotations
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Recyclebin"]
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Iterator
 from functools import partial
-from typing import overload, Literal
+from typing import overload, Any, Literal
 
 from asynctools import async_any, to_list
 from iterutils import run_gen_step
@@ -79,7 +79,7 @@ class P115Recyclebin:
         password: None | int | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def clear(
         self, 
@@ -87,7 +87,7 @@ class P115Recyclebin:
         password: None | int | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "清空回收站，如果不传入密码则用 self.password"
         if password is None:
             password = self.password
@@ -139,13 +139,13 @@ class P115Recyclebin:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def get_length(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             resp = yield partial(
                 self.client.recyclebin_list, 
@@ -170,14 +170,14 @@ class P115Recyclebin:
         id_or_name: int | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def has(
         self, 
         id_or_name: int | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             ids = str(id)
             if async_:
@@ -283,7 +283,7 @@ class P115Recyclebin:
         limit: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def list(
         self, 
@@ -292,7 +292,7 @@ class P115Recyclebin:
         limit: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "获取回收站的文件信息列表"
         def gen_step():
             if limit <= 0:
@@ -333,7 +333,7 @@ class P115Recyclebin:
         password: None | int | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def remove(
         self, 
@@ -342,7 +342,7 @@ class P115Recyclebin:
         password: None | int | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "从回收站删除文件（即永久删除），如果不传入密码则用 self.password"
         if isinstance(ids, (int, str)):
             payload = {"rid[0]": ids}
@@ -369,14 +369,14 @@ class P115Recyclebin:
         ids: int | str | Iterable[int | str], 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def revert(
         self, 
         ids: int | str | Iterable[int | str], 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "恢复已删除文件"
         if isinstance(ids, (int, str)):
             payload = {"rid[0]": ids}

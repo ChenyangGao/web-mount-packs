@@ -7,13 +7,13 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["P115Offline", "P115OfflineClearEnum"]
 
 from asyncio import run
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Iterator
 from enum import Enum
 from functools import partial
 from hashlib import sha1
 from time import time
 from types import MappingProxyType
-from typing import overload, Literal, Self
+from typing import overload, Any, Literal, Self
 
 from asynctools import async_any, to_list
 from iterutils import run_gen_step
@@ -153,7 +153,7 @@ class P115Offline:
         savepath: None | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def add(
         self, 
@@ -163,7 +163,7 @@ class P115Offline:
         savepath: None | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "用（1 个或若干个）链接创建离线任务"
         payload: dict
         if isinstance(urls, str):
@@ -207,7 +207,7 @@ class P115Offline:
         predicate: None | str | Callable[[dict], bool] = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def add_torrent(
         self, 
@@ -218,7 +218,7 @@ class P115Offline:
         predicate: None | str | Callable[[dict], bool] = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "用 BT 种子创建离线任务"
         def gen_step():
             resp = yield partial(
@@ -270,7 +270,7 @@ class P115Offline:
         flag: int | str | P115OfflineClearEnum = P115OfflineClearEnum.all, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def clear(
         self, 
@@ -278,7 +278,7 @@ class P115Offline:
         flag: int | str | P115OfflineClearEnum = P115OfflineClearEnum.all, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """清空离线任务列表
         :param flag: 操作目标
             - 已完成: 0, 'completed', P115OfflineClearEnum.completed
@@ -333,13 +333,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def get_length(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             resp = yield partial(
                 self.client.offline_list, 
@@ -361,13 +361,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def get_download_paths_raw(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "离线下载的目录列表"
         def gen_step():
             resp = yield partial(
@@ -390,13 +390,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[list[P115Path]]:
+    ) -> Coroutine[Any, Any, list[P115Path]]:
         ...
     def get_download_paths(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> list[P115Path] | Awaitable[list[P115Path]]:
+    ) -> list[P115Path] | Coroutine[Any, Any, list[P115Path]]:
         "离线下载的目录列表"
         as_path = self.client.get_fs(
             self.client, 
@@ -423,13 +423,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def get_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "获取关于离线的限制的信息"
         return check_response(self.client.offline_info( # type: ignore
             request=self.async_request if async_ else self.request, 
@@ -448,13 +448,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def get_quota_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "获取当前离线配额信息（简略）"
         return check_response(self.client.offline_quota_info( # type: ignore
             request=self.async_request if async_ else self.request, 
@@ -473,13 +473,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def get_quota_package_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         "获取当前离线配额信息（详细）"
         return check_response(self.client.offline_quota_package_info( # type: ignore
             request=self.async_request if async_ else self.request, 
@@ -498,13 +498,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[MappingProxyType]:
+    ) -> Coroutine[Any, Any, MappingProxyType]:
         ...
     def get_sign_time(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> MappingProxyType | Awaitable[MappingProxyType]:
+    ) -> MappingProxyType | Coroutine[Any, Any, MappingProxyType]:
         "签名和时间等信息"
         def gen_step():
             info = yield partial(self.get_info, async_=async_)
@@ -523,13 +523,13 @@ class P115Offline:
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Path]:
+    ) -> Coroutine[Any, Any, P115Path]:
         ...
     def get_torrent_path(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> P115Path | Awaitable[P115Path]:
+    ) -> P115Path | Coroutine[Any, Any, P115Path]:
         "添加 BT 种子任务的默认上传路径"
         client = self.client
         def gen_step():
@@ -564,14 +564,14 @@ class P115Offline:
         /, 
         hash: str, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def has(
         self, 
         /, 
         hash: str, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         if async_:
             return async_any(item["info_hash"] == hash async for item in self.iter(async_=True))
         else:
@@ -665,7 +665,7 @@ class P115Offline:
         page: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def list(
         self, 
@@ -673,7 +673,7 @@ class P115Offline:
         page: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         """获取离线任务列表
         :param page: 获取第 `page` 页的数据，从 1 开始计数，如果小于等于 0 则返回全部
         """
@@ -710,7 +710,7 @@ class P115Offline:
         remove_files: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def remove(
         self, 
@@ -719,7 +719,7 @@ class P115Offline:
         remove_files: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """用 infohash 查询并移除（1 个或若干个）离线任务
         :param hashes: （1 个或若干个）离线任务的 infohash
         :param remove_files: 移除任务时是否也删除已转存的文件
@@ -753,14 +753,14 @@ class P115Offline:
         torrent_or_magnet_or_sha1_or_fid: int | bytes | str, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def torrent_info(
         self, 
         torrent_or_magnet_or_sha1_or_fid: int | bytes | str, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取种子的信息
         :param torrent_or_magnet_or_sha1_or_fid: BT 种子
             - bytes: 种子的二进制数据（如果种子从未被人上传过 115，就会先被上传）

@@ -10,7 +10,7 @@ import errno
 
 from collections import deque
 from collections.abc import (
-    AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, 
+    AsyncIterator, Callable, Coroutine, Iterable, Iterator, Mapping, 
     MutableMapping, Sequence, 
 )
 from copy import deepcopy
@@ -21,7 +21,7 @@ from posixpath import join as joinpath
 from re import compile as re_compile
 from stat import S_IFDIR, S_IFREG
 from time import time
-from typing import cast, overload, Literal, Never, Self
+from typing import cast, overload, Any, Literal, Never, Self
 
 from iterutils import run_gen_step
 from posixpatht import escape, joins, splits, path_is_dir_form
@@ -137,14 +137,14 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         /, 
         payload: dict, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files(
         self, 
         /, 
         payload: dict, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
         :param payload:
             - id: int | str = 0
@@ -186,7 +186,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def downlist(
         self, 
@@ -194,7 +194,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接的某个文件夹中可下载的文件的列表（只含文件，不含文件夹，任意深度，简略信息）
         """
         return check_response(self.client.share_downlist( # type: ignore
@@ -246,14 +246,14 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _search_item(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         dq = deque((self.attr(0),))
         get, put = dq.popleft, dq.append
         if async_:
@@ -291,14 +291,14 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             try:
                 return self.id_to_attr[id]
@@ -356,7 +356,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr_path(
         self, 
@@ -366,7 +366,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             nonlocal path, pid, ensure_dir
 
@@ -505,7 +505,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def attr(
         self, 
@@ -515,7 +515,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "获取属性"
         def gen_step():
             path_class = type(self).path_class
@@ -559,7 +559,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def dirlen(
         self, 
@@ -568,7 +568,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         "文件夹中的项目数（直属的文件和目录计数）"
         def gen_step():
             id = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
@@ -600,7 +600,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def get_ancestors(
         self, 
@@ -609,7 +609,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "获取各个上级目录的少量信息（从根目录到当前目录）"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -636,7 +636,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def get_url(
         self, 
@@ -646,7 +646,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         "获取下载链接"
         def gen_step():
             if isinstance(id_or_path, int):
@@ -834,7 +834,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         to_pid: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def receive(
         self, 
@@ -843,7 +843,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         to_pid: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         """接收分享文件到网盘
         :param ids: 要转存到文件 id（这些 id 归属分享链接）
         :param to_pid: 你的网盘的一个目录 id（这个 id 归属你的网盘）
@@ -888,7 +888,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[stat_result]:
+    ) -> Coroutine[Any, Any, stat_result]:
         ...
     def stat(
         self, 
@@ -897,7 +897,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> stat_result | Awaitable[stat_result]:
+    ) -> stat_result | Coroutine[Any, Any, stat_result]:
         "检查路径的属性，就像 `os.stat`"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)

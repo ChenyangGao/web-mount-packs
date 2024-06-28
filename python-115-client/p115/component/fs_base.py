@@ -14,7 +14,7 @@ import errno
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import (
-    AsyncIterator, Awaitable, Callable, Iterable, Iterator, ItemsView, KeysView, Mapping, 
+    AsyncIterator, Callable, Coroutine, Iterable, Iterator, ItemsView, KeysView, Mapping, 
     Sequence, ValuesView, 
 )
 from functools import cached_property, partial
@@ -166,14 +166,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[dict[int, str]]:
+    ) -> Coroutine[Any, Any, dict[int, str]]:
         ...
     def dictdir(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> dict[int, str] | Awaitable[dict[int, str]]:
+    ) -> dict[int, str] | Coroutine[Any, Any, dict[int, str]]:
         return self.fs.dictdir(self, async_=async_, **kwargs)
 
     @overload
@@ -190,14 +190,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[dict[int, AttrDict]]:
+    ) -> Coroutine[Any, Any, dict[int, AttrDict]]:
         ...
     def dictdir_attr(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> dict[int, AttrDict] | Awaitable[dict[int, AttrDict]]:
+    ) -> dict[int, AttrDict] | Coroutine[Any, Any, dict[int, AttrDict]]:
         return self.fs.dictdir_attr(self, async_=async_, **kwargs)
 
     @overload
@@ -214,14 +214,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[dict[int, Self]]:
+    ) -> Coroutine[Any, Any, dict[int, Self]]:
         ...
     def dictdir_path(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> dict[int, Self] | Awaitable[dict[int, Self]]:
+    ) -> dict[int, Self] | Coroutine[Any, Any, dict[int, Self]]:
         return self.fs.dictdir_path(self, async_=async_, **kwargs)
 
     # TODO: 支持异步
@@ -285,13 +285,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def exists(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         return self.fs.exists(self, async_=async_)
 
     @cached_property
@@ -312,13 +312,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def get_attr(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             attr = yield partial(self.fs.attr, self["id"], async_=async_)
             self.__dict__.clear()
@@ -342,7 +342,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def get_url(
         self, 
@@ -350,7 +350,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         return self.fs.get_url(self, headers=headers, async_=async_)
 
     @overload
@@ -365,13 +365,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def get_parent(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             if self.id == 0:
                 return self
@@ -481,13 +481,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def isdir(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         return self.fs.isdir(self, async_=async_)
 
     @overload
@@ -502,13 +502,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def isfile(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         return self.fs.isfile(self, async_=async_)
 
     def inode(self, /) -> int:
@@ -605,13 +605,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         *names: str, 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def join(
         self, 
         *names: str, 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             if not names:
                 return self
@@ -631,13 +631,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         *paths: str | PathLike[str], 
         async_: Literal[True], 
-    ) -> Awaitable[Self]:
+    ) -> Coroutine[Any, Any, Self]:
         ...
     def joinpath(
         self, 
         *paths: str | PathLike[str], 
         async_: Literal[False, True] = False, 
-    ) -> Self | Awaitable[Self]:
+    ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
             if not paths:
                 return self
@@ -671,14 +671,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[list[str]]:
+    ) -> Coroutine[Any, Any, list[str]]:
         ...
     def listdir(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> list[str] | Awaitable[list[str]]:
+    ) -> list[str] | Coroutine[Any, Any, list[str]]:
         return self.fs.listdir(
             self if self.is_dir() else self["parent_id"], 
             async_=async_, 
@@ -699,14 +699,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[list[AttrDict]]:
+    ) -> Coroutine[Any, Any, list[AttrDict]]:
         ...
     def listdir_attr(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> list[AttrDict] | Awaitable[list[AttrDict]]:
+    ) -> list[AttrDict] | Coroutine[Any, Any, list[AttrDict]]:
         return self.fs.listdir_attr(
             self if self.is_dir() else self["parent_id"], 
             async_=async_, 
@@ -727,14 +727,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         /, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[list[Self]]:
+    ) -> Coroutine[Any, Any, list[Self]]:
         ...
     def listdir_path(
         self, 
         /, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> list[Self] | Awaitable[list[Self]]:
+    ) -> list[Self] | Coroutine[Any, Any, list[Self]]:
         return self.fs.listdir_path(
             self if self.is_dir() else self["parent_id"], 
             async_=async_, 
@@ -828,7 +828,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         stop: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_bytes(
         self, 
@@ -837,7 +837,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         stop: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         return self.fs.read_bytes(self, start, stop, async_=async_)
 
     @overload
@@ -856,7 +856,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         bytes_range: str = "0-", 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_bytes_range(
         self, 
@@ -864,7 +864,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         bytes_range: str = "0-", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         return self.fs.read_bytes_range(self, bytes_range, async_=async_)
 
     @overload
@@ -885,7 +885,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         offset: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_block(
         self, 
@@ -894,7 +894,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         offset: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         if size <= 0:
             return b""
         return self.fs.read_block(self, size, offset, async_=async_)
@@ -919,7 +919,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         newline: None | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def read_text(
         self, 
@@ -929,7 +929,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         newline: None | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         return self.fs.read_text(
             self, 
             encoding=encoding, 
@@ -1052,13 +1052,13 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[stat_result]:
+    ) -> Coroutine[Any, Any, stat_result]:
         ...
     def stat(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> stat_result | Awaitable[stat_result]:
+    ) -> stat_result | Coroutine[Any, Any, stat_result]:
         return self.fs.stat(self, async_=async_)
 
     @cached_property
@@ -1336,7 +1336,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     @abstractmethod
     def attr(
@@ -1347,7 +1347,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         ...
 
     @overload
@@ -1372,7 +1372,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     @abstractmethod
     def get_url(
@@ -1383,7 +1383,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         ...
 
     @overload
@@ -1438,7 +1438,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def abspath(
         self, 
@@ -1446,7 +1446,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         /, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         return self.get_path(path, pid=self.id, async_=async_)
 
     @overload
@@ -1469,7 +1469,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115PathType]:
+    ) -> Coroutine[Any, Any, P115PathType]:
         ...
     def as_path(
         self, 
@@ -1479,7 +1479,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115PathType | Awaitable[P115PathType]:
+    ) -> P115PathType | Coroutine[Any, Any, P115PathType]:
         path_class = type(self).path_class
         def gen_step():
             attr: AttrDict
@@ -1517,7 +1517,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def chdir(
         self, 
@@ -1526,7 +1526,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         path_class = type(self).path_class
         def gen_step():
             nonlocal id_or_path
@@ -1582,7 +1582,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[dict[int, str]]:
+    ) -> Coroutine[Any, Any, dict[int, str]]:
         ...
     def dictdir(
         self, 
@@ -1593,7 +1593,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> dict[int, str] | Awaitable[dict[int, str]]:
+    ) -> dict[int, str] | Coroutine[Any, Any, dict[int, str]]:
         if async_:
             async def request():
                 if full_path:
@@ -1628,7 +1628,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[dict[int, AttrDict]]:
+    ) -> Coroutine[Any, Any, dict[int, AttrDict]]:
         ...
     def dictdir_attr(
         self, 
@@ -1638,7 +1638,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> dict[int, AttrDict] | Awaitable[dict[int, AttrDict]]:
+    ) -> dict[int, AttrDict] | Coroutine[Any, Any, dict[int, AttrDict]]:
         if async_:
             async def request():
                 return {attr["id"]: attr async for attr in self.iterdir(
@@ -1667,7 +1667,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[dict[int, P115PathType]]:
+    ) -> Coroutine[Any, Any, dict[int, P115PathType]]:
         ...
     def dictdir_path(
         self, 
@@ -1677,7 +1677,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> dict[int, P115PathType] | Awaitable[dict[int, P115PathType]]:
+    ) -> dict[int, P115PathType] | Coroutine[Any, Any, dict[int, P115PathType]]:
         path_class = type(self).path_class
         if async_:
             async def request():
@@ -1863,7 +1863,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def exists(
         self, 
@@ -1872,7 +1872,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         path_class = type(self).path_class
         if isinstance(id_or_path, (AttrDict, path_class)):
             id_or_path = id_or_path["id"]
@@ -1908,7 +1908,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[int]:
+    ) -> Coroutine[Any, Any, int]:
         ...
     def get_id(
         self, 
@@ -1917,7 +1917,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> int | Awaitable[int]:
+    ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, int):
@@ -1952,7 +1952,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def get_path(
         self, 
@@ -1961,7 +1961,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, (AttrDict, path_class)):
@@ -2013,7 +2013,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[str]]:
+    ) -> Coroutine[Any, Any, list[str]]:
         ...
     def get_patht(
         self, 
@@ -2022,7 +2022,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[str] | Awaitable[list[str]]:
+    ) -> list[str] | Coroutine[Any, Any, list[str]]:
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, (AttrDict, path_class)):
@@ -2281,7 +2281,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def isdir(
         self, 
@@ -2290,7 +2290,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
@@ -2320,7 +2320,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bool]:
+    ) -> Coroutine[Any, Any, bool]:
         ...
     def isfile(
         self, 
@@ -2329,7 +2329,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bool | Awaitable[bool]:
+    ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
@@ -2688,7 +2688,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[list[str]]:
+    ) -> Coroutine[Any, Any, list[str]]:
         ...
     def listdir(
         self, 
@@ -2699,7 +2699,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> list[str] | Awaitable[list[str]]:
+    ) -> list[str] | Coroutine[Any, Any, list[str]]:
         if async_:
             async def request():
                 if full_path:
@@ -2734,7 +2734,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[list[AttrDict]]:
+    ) -> Coroutine[Any, Any, list[AttrDict]]:
         ...
     def listdir_attr(
         self, 
@@ -2744,7 +2744,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> list[AttrDict] | Awaitable[list[AttrDict]]:
+    ) -> list[AttrDict] | Coroutine[Any, Any, list[AttrDict]]:
         if async_:
             async def request():
                 return [attr async for attr in self.iterdir(
@@ -2773,7 +2773,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> Awaitable[list[P115PathType]]:
+    ) -> Coroutine[Any, Any, list[P115PathType]]:
         ...
     def listdir_path(
         self, 
@@ -2783,7 +2783,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> list[P115PathType] | Awaitable[list[P115PathType]]:
+    ) -> list[P115PathType] | Coroutine[Any, Any, list[P115PathType]]:
         path_class = type(self).path_class
         if async_:
             async def request():
@@ -2846,7 +2846,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_bytes(
         self, 
@@ -2857,7 +2857,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         def gen_step():
             url = yield partial(self.get_url, id_or_path, pid=pid, async_=async_)
             return (yield partial(
@@ -2889,7 +2889,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_bytes_range(
         self, 
@@ -2899,7 +2899,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         def gen_step():
             url = yield partial(self.get_url, id_or_path, pid=pid, async_=async_)
             return (yield partial(
@@ -2932,7 +2932,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[bytes]:
+    ) -> Coroutine[Any, Any, bytes]:
         ...
     def read_block(
         self, 
@@ -2943,7 +2943,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes | Awaitable[bytes]:
+    ) -> bytes | Coroutine[Any, Any, bytes]:
         def gen_step():
             if size <= 0:
                 return b""
@@ -2981,7 +2981,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[str]:
+    ) -> Coroutine[Any, Any, str]:
         ...
     def read_text(
         self, 
@@ -2993,7 +2993,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str | Awaitable[str]:
+    ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
             bio = BytesIO((yield partial(
                 self.read_bytes_range, 
@@ -3117,7 +3117,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[stat_result]:
+    ) -> Coroutine[Any, Any, stat_result]:
         ...
     def stat(
         self, 
@@ -3126,7 +3126,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> stat_result | Awaitable[stat_result]:
+    ) -> stat_result | Coroutine[Any, Any, stat_result]:
         raise UnsupportedOperation(
             errno.ENOSYS, 
             "`stat()` is currently not supported, use `attr()` instead."

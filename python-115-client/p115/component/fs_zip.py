@@ -10,7 +10,7 @@ import errno
 
 from collections import deque
 from collections.abc import (
-    AsyncIterator, Awaitable, Callable, Iterator, Mapping, MutableMapping, Sequence, 
+    AsyncIterator, Callable, Coroutine, Iterator, Mapping, MutableMapping, Sequence, 
 )
 from copy import deepcopy
 from datetime import datetime
@@ -19,7 +19,7 @@ from itertools import count, islice
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
-from typing import cast, overload, Literal, Never, Self
+from typing import cast, overload, Any, Literal, Never, Self
 
 from iterutils import run_gen_step
 from posixpatht import escape, joins, splits, path_is_dir_form
@@ -120,7 +120,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         page_count: int = 999, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[dict]:
+    ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_files(
         self, 
@@ -130,7 +130,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         page_count: int = 999, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> dict | Awaitable[dict]:
+    ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.extract_list( # type: ignore
             pickcode=self.pickcode, 
             path=path, 
@@ -159,14 +159,14 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         id: int, 
         /, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr(
         self, 
         id: int, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             try:
                 return self.id_to_attr[id]
@@ -234,7 +234,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr_path(
         self, 
@@ -244,7 +244,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             nonlocal path, pid, ensure_dir
 
@@ -383,7 +383,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def attr(
         self, 
@@ -393,7 +393,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Awaitable[AttrDict]:
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         "获取属性"
         def gen_step():
             path_class = type(self).path_class
@@ -454,7 +454,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[list[dict]]:
+    ) -> Coroutine[Any, Any, list[dict]]:
         ...
     def get_ancestors(
         self, 
@@ -463,7 +463,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Awaitable[list[dict]]:
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "获取各个上级目录的少量信息（从根目录到当前目录）"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -490,7 +490,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[P115Url]:
+    ) -> Coroutine[Any, Any, P115Url]:
         ...
     def get_url(
         self, 
@@ -500,7 +500,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Awaitable[P115Url]:
+    ) -> P115Url | Coroutine[Any, Any, P115Url]:
         "获取下载链接"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -653,7 +653,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Awaitable[stat_result]:
+    ) -> Coroutine[Any, Any, stat_result]:
         ...
     def stat(
         self, 
@@ -662,7 +662,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> stat_result | Awaitable[stat_result]:
+    ) -> stat_result | Coroutine[Any, Any, stat_result]:
         "检查路径的属性，就像 `os.stat`"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
