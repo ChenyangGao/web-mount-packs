@@ -8,24 +8,27 @@ __all__ = ["AlistClient", "check_response"]
 
 import errno
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Iterator, Mapping
+from asyncio import to_thread
+from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Iterable, Mapping
 from functools import cached_property, partial
 from hashlib import sha256
 from http.cookiejar import CookieJar
-from io import TextIOWrapper
+from inspect import iscoroutinefunction
 from json import loads
-from os import fstat, PathLike
+from os import fsdecode, fstat, PathLike
 from typing import overload, Any, Literal, Self
 from urllib.parse import quote
 
-from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
+from asynctools import ensure_aiter, to_list
+from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead
 from httpfile import HTTPFileReader
 from http_request import complete_url, encode_multipart_data, encode_multipart_data_async, SupportsGeturl
-from http_response import get_total_length
+from http_response import get_total_length, get_content_length, is_chunked
 from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport
 from httpx_request import request
 from iterutils import run_gen_step
 from multidict import CIMultiDict
+from yarl import URL
 
 
 parse_json = lambda _, content: loads(content)
@@ -273,7 +276,7 @@ class AlistClient:
         self, 
         /, 
         async_: Literal[False] = False, 
-    ) -> str | Coroutine[Any, Any, str]:
+    ) -> str:
         ...
     @overload
     def get_base_path(
@@ -1016,13 +1019,13 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # TODO: file 需要和 p115 协调
     @overload
     def fs_form(
         self, 
-        file: bytes | str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
         /, 
-        remote_path: str, 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] ), 
+        path: str, 
         as_task: bool = False, 
         *, 
         async_: Literal[False] = False, 
@@ -1032,9 +1035,10 @@ class AlistClient:
     @overload
     def fs_form(
         self, 
-        file: bytes | str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
         /, 
-        remote_path: str, 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        path: str, 
         as_task: bool = False, 
         *, 
         async_: Literal[True], 
@@ -1043,9 +1047,10 @@ class AlistClient:
         ...
     def fs_form(
         self, 
-        file: bytes | str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
         /, 
-        remote_path: str, 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        path: str, 
         as_task: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -1054,42 +1059,119 @@ class AlistClient:
         """表单上传文件
         - https://alist.nn.ci/guide/api/fs.html#put-表单上传文件
         - https://alist-v3.apifox.cn/api-128101254
-        """
-        if headers := request_kwargs.get("headers"):
-            headers = {**headers, "File-Path": quote(remote_path)}
-        else:
-            headers = {"File-Path": quote(remote_path)}
-        request_kwargs["headers"] = headers
-        if as_task:
-            headers["As-Task"] = "true"
-        if hasattr(file, "read"):
-            file = file
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
-        else:
-            file = open(file, "rb")
-        if async_:
-           update_headers, data = encode_multipart_data_async({}, {"file": file})
-        else:
-           update_headers, data = encode_multipart_data({}, {"file": file})
-        headers.update(update_headers)
-        request_kwargs["data"] = data
-        return self.request(
-            "/api/fs/form", 
-            "PUT", 
-            async_=async_, 
-            **request_kwargs, 
-        )
 
-    # TODO: file 需要和 p115 协调
+        NOTE: AList 上传的限制：
+        1. 上传文件成功不会自动更新缓存（但新增文件夹会更新缓存）
+        2. 上传时路径中包含斜杠 \\，视为路径分隔符 /
+        3. 这个接口不需要预先确定上传的字节数，可以真正实现流式上传
+        """
+        def gen_step():
+            nonlocal file
+            if hasattr(file, "getbuffer"):
+                try:
+                    file = getattr(file, "getbuffer")()
+                except TypeError:
+                    pass
+            if isinstance(file, Buffer):
+                pass
+            elif isinstance(file, SupportsRead):
+                if not async_ and iscoroutinefunction(file.read):
+                    raise TypeError(f"{file!r} with async read in non-async mode")
+            elif isinstance(file, (str, PathLike)):
+                filepath = fsdecode(file)
+                if async_:
+                    try:
+                        from aiofile import async_open
+                    except ImportError:
+                        file = yield partial(to_thread, open, filepath, "rb")
+                    else:
+                        async def request():
+                            async with async_open(filepath) as file:
+                                return self.fs_form(
+                                    file, 
+                                    path, 
+                                    as_task=as_task, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
+                        return (yield request)
+                else:
+                    file = open(filepath, "rb")
+            elif isinstance(file, (URL, SupportsGeturl)):
+                if isinstance(file, URL):
+                    url = str(file)
+                else:
+                    url = file.geturl()
+                if async_:
+                    try:
+                        from aiohttp import request as async_request
+                    except ImportError:
+                        async def request():
+                            async with AsyncClient() as client:
+                                async with client.stream("GET", url) as resp:
+                                    return self.fs_put(
+                                        resp.aiter_bytes(), 
+                                        path, 
+                                        as_task=as_task, 
+                                        async_=True, 
+                                        **request_kwargs, 
+                                    )
+                    else:
+                        async def request():
+                            async with async_request("GET", url) as resp:
+                                return self.fs_put(
+                                    resp.content, 
+                                    path, 
+                                    as_task=as_task, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
+                    return (yield request)
+                else:
+                    from urllib.request import urlopen
+
+                    with urlopen(url) as resp:
+                        return self.fs_put(
+                            resp, 
+                            path, 
+                            as_task=as_task, 
+                            **request_kwargs, 
+                        )
+            elif async_:
+                file = ensure_aiter(file)
+            elif isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
+
+            if headers := request_kwargs.get("headers"):
+                headers = {**headers, "File-Path": quote(path)}
+            else:
+                headers = {"File-Path": quote(path)}
+            request_kwargs["headers"] = headers
+            if as_task:
+                headers["As-Task"] = "true"
+            if async_:
+                update_headers, request_kwargs["data"] = encode_multipart_data_async({}, {"file": file})
+            else:
+                update_headers, request_kwargs["data"] = encode_multipart_data({}, {"file": file})
+            headers.update(update_headers)
+            return (yield partial(
+                self.request, 
+                "/api/fs/form", 
+                "PUT", 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
+
     @overload
     def fs_put(
         self, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         /, 
-        remote_path: str, 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] ), 
+        path: str, 
         as_task: bool = False, 
+        filesize: int = -1, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1098,11 +1180,12 @@ class AlistClient:
     @overload
     def fs_put(
         self, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         /, 
-        remote_path: str, 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        path: str, 
         as_task: bool = False, 
+        filesize: int = -1, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1110,11 +1193,12 @@ class AlistClient:
         ...
     def fs_put(
         self, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         /, 
-        remote_path: str, 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        path: str, 
         as_task: bool = False, 
+        filesize: int = -1, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1124,34 +1208,156 @@ class AlistClient:
         - https://alist-v3.apifox.cn/api-128101260
 
         NOTE: AList 上传的限制：
-        1. 上传文件成功不会自动更新缓存，但新增文件夹会更新缓存
+        1. 上传文件成功不会自动更新缓存（但新增文件夹会更新缓存）
         2. 上传时路径中包含斜杠 \\，视为路径分隔符 /
-        3. put 接口是流式上传，但是不支持 chunked（所以需要在上传前，就能直接确定总上传的字节数）
+        3. put 接口是流式上传，但是不支持 chunked（所以在上传前，就需要能直接确定总上传的字节数）
         """
-        if headers := request_kwargs.get("headers"):
-            headers = {**headers, "File-Path": quote(remote_path)}
-        else:
-            headers = {"File-Path": quote(remote_path)}
-        request_kwargs["headers"] = headers
-        if as_task:
-            headers["As-Task"] = "true"
-        if hasattr(file, "read"):
-            file = file
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
-        else:
-            file = open(file, "rb")
-        headers["Content-Length"] = str(fstat(file.fileno()).st_size)
-        if async_:
-            request_kwargs["data"] = bio_chunk_async_iter(file)
-        else:
-            request_kwargs["data"] = bio_chunk_iter(cast(Iterable, file))
-        return self.request(
-            "/api/fs/put", 
-            "PUT", 
-            async_=async_, 
-            **request_kwargs, 
-        )
+        def gen_step():
+            nonlocal file, filesize
+            if hasattr(file, "getbuffer"):
+                try:
+                    file = getattr(file, "getbuffer")()
+                except TypeError:
+                    pass
+            if isinstance(file, Buffer):
+                if filesize < 0:
+                    filesize = len(file)
+            elif isinstance(file, SupportsRead):
+                if not async_ and iscoroutinefunction(file.read):
+                    raise TypeError(f"{file!r} with async read in non-async mode")
+                if filesize < 0:
+                    try:
+                        filesize = fstat(getattr(file, "fileno")()).st_size
+                    except Exception:
+                        file = yield file.read
+                        filesize = len(file)
+            elif isinstance(file, (str, PathLike)):
+                filepath = fsdecode(file)
+                if async_:
+                    try:
+                        from aiofile import async_open
+                    except ImportError:
+                        file = yield partial(to_thread, open, filepath, "rb")
+                    else:
+                        async def request():
+                            nonlocal filesize
+                            async with async_open(filepath) as file:
+                                if filesize < 0:
+                                    filesize = fstat(file.file.fileno()).st_size
+                                return self.fs_put(
+                                    file, 
+                                    path, 
+                                    as_task=as_task, 
+                                    filesize=filesize, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
+                        return (yield request)
+                else:
+                    file = open(filepath, "rb")
+                if filesize < 0:
+                    filesize = fstat(file.fileno()).st_size
+            elif isinstance(file, (URL, SupportsGeturl)):
+                if isinstance(file, URL):
+                    url = str(file)
+                else:
+                    url = file.geturl()
+                if async_:
+                    try:
+                        from aiohttp import request as async_request
+                    except ImportError:
+                        async def request():
+                            nonlocal file, filesize
+                            async with AsyncClient() as client:
+                                async with client.stream("GET", url) as resp:
+                                    size = filesize if filesize >= 0 else get_content_length(resp)
+                                    if size is None or is_chunked(resp):
+                                        file = await resp.aread()
+                                        filesize = len(file)
+                                    else:
+                                        file = resp.aiter_bytes()
+                                    return self.fs_put(
+                                        file, 
+                                        path, 
+                                        as_task=as_task, 
+                                        filesize=filesize, 
+                                        async_=True, 
+                                        **request_kwargs, 
+                                    )
+                    else:
+                        async def request():
+                            nonlocal file, filesize
+                            async with async_request("GET", url) as resp:
+                                size = filesize if filesize >= 0 else get_content_length(resp)
+                                if size is None or is_chunked(resp):
+                                    file = await resp.read()
+                                    filesize = len(file)
+                                else:
+                                    file = resp.content
+                                return self.fs_put(
+                                    file, 
+                                    path, 
+                                    as_task=as_task, 
+                                    filesize=filesize, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
+                    return (yield request)
+                else:
+                    from urllib.request import urlopen
+
+                    with urlopen(url) as resp:
+                        size = filesize if filesize >= 0 else get_content_length(resp)
+                        if size is None or is_chunked(resp):
+                            file = resp.read()
+                            filesize = len(file)
+                        else:
+                            file = resp
+                        return self.fs_put(
+                            file, 
+                            path, 
+                            as_task=as_task, 
+                            filesize=filesize, 
+                            **request_kwargs, 
+                        )
+            elif async_:
+                if filesize < 0:
+                    chunks = yield partial(to_list, file)
+                    filesize = sum(map(len, chunks))
+                    file = ensure_aiter(chunks)
+                else:
+                    file = ensure_aiter(file)
+            elif isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
+            elif filesize < 0:
+                chunks = list(file)
+                filesize = sum(map(len, chunks))
+                file = iter(chunks)
+
+            if headers := request_kwargs.get("headers"):
+                headers = {**headers, "File-Path": quote(path)}
+            else:
+                headers = {"File-Path": quote(path)}
+            request_kwargs["headers"] = headers
+            if as_task:
+                headers["As-Task"] = "true"
+            headers["Content-Length"] = str(filesize)
+
+            if hasattr(file, "read"):
+                if async_:
+                    file = bio_chunk_async_iter(file)
+                else:
+                    file = bio_chunk_iter(file)
+            request_kwargs["data"] = file
+
+            return (yield partial(
+                self.request, 
+                "/api/fs/put", 
+                "PUT", 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     # [public](https://alist.nn.ci/guide/api/public.html)
 

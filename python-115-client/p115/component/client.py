@@ -54,7 +54,7 @@ from filewrap import (
 )
 from hashtools import file_digest, file_digest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
-from http_response import get_content_length, get_filename, get_total_length, is_range_request
+from http_response import get_content_length, get_filename, get_total_length, is_chunked, is_range_request
 from httpfile import HTTPFileReader
 from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport, TimeoutException
 from httpx_request import request
@@ -5621,8 +5621,8 @@ class P115Client:
     def upload_file_sample(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] ), 
         filename: None | str = None, 
         filesize: int = -1, 
         pid: int = 0, 
@@ -5636,8 +5636,8 @@ class P115Client:
     def upload_file_sample(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         filesize: int = -1, 
         pid: int = 0, 
@@ -5650,8 +5650,8 @@ class P115Client:
     def upload_file_sample(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
+                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         filename: None | str = None, 
         filesize: int = -1, 
         pid: int = 0, 
@@ -5662,125 +5662,158 @@ class P115Client:
     ) -> dict | Coroutine[Any, Any, dict]:
         """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
         """
-        file_will_open: None | tuple[str, Any] = None
-        if hasattr(file, "getbuffer"):
-            try:
-                file = getattr(file, "getbuffer")()
-            except TypeError:
-                pass
-        if isinstance(file, Buffer):
-            if filesize < 0:
-                filesize = len(file)
-        elif isinstance(file, (str, PathLike)):
-            path = fsdecode(file)
-            if not filename:
-                filename = ospath.basename(path)
-            if async_:
-                file_will_open = ("path", path)
-            else:
-                file = open(path, "rb")
+        def gen_step():
+            nonlocal file, filename, filesize
+            if hasattr(file, "getbuffer"):
+                try:
+                    file = getattr(file, "getbuffer")()
+                except TypeError:
+                    pass
+            if isinstance(file, Buffer):
+                if filesize < 0:
+                    filesize = len(file)
+            elif isinstance(file, SupportsRead):
+                if not async_ and iscoroutinefunction(file.read):
+                    raise TypeError(f"{file!r} with async read in non-async mode")
+                if filesize < 0:
+                    try:
+                        filesize = fstat(getattr(file, "fileno")()).st_size
+                    except Exception:
+                        pass
+                if not filename:
+                    try:
+                        filename = ospath.basename(fsdecode(getattr(file, "name")))
+                    except Exception:
+                        pass
+            elif isinstance(file, (str, PathLike)):
+                path = fsdecode(file)
+                if not filename:
+                    filename = ospath.basename(path)
+                if async_:
+                    try:
+                        from aiofile import async_open
+                    except ImportError:
+                        file = yield partial(to_thread, open, path, "rb")
+                    else:
+                        async def request():
+                            nonlocal filesize
+                            async with async_open(path) as file:
+                                if filesize < 0:
+                                    filesize = fstat(file.file.fileno()).st_size
+                                return self.upload_file_sample(
+                                    file, 
+                                    filename, 
+                                    filesize, 
+                                    pid=pid, 
+                                    make_reporthook=make_reporthook, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
+                        return (yield request)
+                else:
+                    file = open(path, "rb")
                 if filesize < 0:
                     filesize = fstat(file.fileno()).st_size
-        elif isinstance(file, SupportsRead):
-            if not async_ and iscoroutinefunction(file.read):
-                raise TypeError(f"{file!r} with async read in non-async mode")
-            if not filename:
-                try:
-                    filename = ospath.basename(fsdecode(getattr(file, "name")))
-                except Exception:
-                    pass
-        elif isinstance(file, (URL, SupportsGeturl)):
-            if isinstance(file, URL):
-                url = str(file)
-            else:
-                url = file.geturl()
-            if async_:
-                file_will_open = ("url", url)
-            else:
-                file = urlopen(url)
-                if not filename:
-                    filename = get_filename(file)
-                if filesize < 0:
-                    length = get_content_length(file)
-                    if length is not None:
-                        filesize = length
-        elif async_:
-            file = ensure_aiter(file)
-        elif isinstance(file, AsyncIterable):
-            raise TypeError(f"async iterable {file!r} in non-async mode")
-        if async_:
-            async def do_request(file, filename):
-                nonlocal async_
-                async_ = cast(Literal[True], async_)
-                file = cast(Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], file)
-                if callable(make_reporthook):
+            elif isinstance(file, (URL, SupportsGeturl)):
+                if isinstance(file, URL):
+                    url = str(file)
+                else:
+                    url = file.geturl()
+                if async_:
+                    try:
+                        from aiohttp import request as async_request
+                    except ImportError:
+                        async def request():
+                            nonlocal file, filesize, filename
+                            async with AsyncClient() as client:
+                                async with client.stream("GET", url) as resp:
+                                    if not filename:
+                                        filename = get_filename(resp)
+                                    size = filesize if filesize >= 0 else get_content_length(resp)
+                                    if size is None or is_chunked(resp):
+                                        file = await resp.aread()
+                                        filesize = len(file)
+                                    else:
+                                        file = resp.aiter_bytes()
+                                    return self.upload_file_sample(
+                                        file, 
+                                        filename, 
+                                        filesize, 
+                                        pid=pid, 
+                                        make_reporthook=make_reporthook, 
+                                        async_=True, 
+                                        **request_kwargs, 
+                                    )
+                    else:
+                        async def request():
+                            nonlocal file, filesize, filename
+                            async with async_request("GET", url) as resp:
+                                if not filename:
+                                    filename = get_filename(resp)
+                                size = filesize if filesize >= 0 else get_content_length(resp)
+                                if size is None or is_chunked(resp):
+                                    file = await resp.read()
+                                    filesize = len(file)
+                                else:
+                                    file = resp.content
+                                return self.upload_file_sample(
+                                    file, 
+                                    filename, 
+                                    filesize, 
+                                    pid=pid, 
+                                    make_reporthook=make_reporthook, 
+                                    async_=True, 
+                                    **request_kwargs, 
+                                )
+                    return (yield request)
+                else:
+                    from urllib.request import urlopen
+
+                    with urlopen(url) as resp:
+                        if not filename:
+                            filename = get_filename(resp)
+                        size = filesize if filesize >= 0 else get_content_length(resp)
+                        if size is None or is_chunked(resp):
+                            file = resp.read()
+                            filesize = len(file)
+                        else:
+                            file = resp
+                        return self.upload_file_sample(
+                            file, 
+                            filename, 
+                            filesize, 
+                            pid=pid, 
+                            make_reporthook=make_reporthook, 
+                            **request_kwargs, 
+                        )
+            elif async_:
+                file = ensure_aiter(file)
+            elif isinstance(file, AsyncIterable):
+                raise TypeError(f"async iterable {file!r} in non-async mode")
+
+            if callable(make_reporthook):
+                if async_:
                     if isinstance(file, Buffer):
                         file = bytes_to_chunk_async_iter(file)
                     elif isinstance(file, SupportsRead):
                         file = bio_chunk_async_iter(file)
                     file = progress_bytes_async_iter(file, make_reporthook, None if filesize < 0 else filesize)
-                if not filename:
-                    filename = str(uuid4())
-                resp = await self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
-                api = resp["host"]
-                data = {
-                    "name": filename, 
-                    "key": resp["object"], 
-                    "policy": resp["policy"], 
-                    "OSSAccessKeyId": resp["accessid"], 
-                    "success_action_status": "200", 
-                    "callback": resp["callback"], 
-                    "signature": resp["signature"], 
-                }
-                headers, request_kwargs["data"] = encode_multipart_data_async(data, {"file": file})
-                request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
-                return await self.request(url=api, method="POST", async_=async_, **request_kwargs)
-            async def async_request():
-                nonlocal async_, filesize
-                async_ = cast(Literal[True], async_)
-                if file_will_open:
-                    type, path = file_will_open
-                    if type == "path":
-                        try:
-                            from aiofile import async_open
-                        except ImportError:
-                            with open(path, "rb") as f:
-                                filesize = fstat(f.fileno()).st_size
-                                return await do_request(f, filename)
-                        else:
-                            async with async_open(path, "rb") as f:
-                                filesize = fstat(f.file.fileno()).st_size
-                                return await do_request(f, filename)
-                    elif type == "url":
-                        try:
-                            from aiohttp import request
-                        except ImportError:
-                            with (await to_thread(urlopen, url)) as resp:
-                                size = get_content_length(resp)
-                                if size is not None:
-                                    filesize = size
-                                return await do_request(resp, filename or get_filename(resp))
-                        else:
-                            async with request("GET", url) as resp:
-                                size = get_content_length(resp)
-                                if size is not None:
-                                    filesize = size
-                                return await do_request(resp.content, filename or get_filename(resp))
-                    else:
-                        raise ValueError
-                return await do_request(file, filename)
-            return async_request()
-        else:
-            file = cast(Buffer | SupportsRead[Buffer] | Iterable[Buffer], file)
-            if callable(make_reporthook):
-                if isinstance(file, Buffer):
-                    file = bytes_to_chunk_iter(file)
-                elif isinstance(file, SupportsRead):
-                    file = bio_chunk_iter(file)
-                file = progress_bytes_iter(file, make_reporthook, None if filesize < 0 else filesize)
+                else:
+                    if isinstance(file, Buffer):
+                        file = bytes_to_chunk_iter(file)
+                    elif isinstance(file, SupportsRead):
+                        file = bio_chunk_iter(file)
+                    file = progress_bytes_iter(file, make_reporthook, None if filesize < 0 else filesize)
+
             if not filename:
                 filename = str(uuid4())
-            resp = self.upload_file_sample_init(filename, pid, async_=async_, **request_kwargs)
+            resp = yield partial(
+                self.upload_file_sample_init, 
+                filename, 
+                pid=pid, 
+                async_=async_, 
+                **request_kwargs, 
+            )
             api = resp["host"]
             data = {
                 "name": filename, 
@@ -5791,9 +5824,20 @@ class P115Client:
                 "callback": resp["callback"], 
                 "signature": resp["signature"], 
             }
-            headers, request_kwargs["data"] = encode_multipart_data(data, {"file": file})
+
+            if async_:
+                headers, request_kwargs["data"] = encode_multipart_data_async(data, {"file": file})
+            else:
+                headers, request_kwargs["data"] = encode_multipart_data(data, {"file": file})
             request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
-            return self.request(url=api, method="POST", async_=async_, **request_kwargs)
+            return (yield partial(
+                self.request, 
+                url=api, 
+                method="POST", 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def upload_key(

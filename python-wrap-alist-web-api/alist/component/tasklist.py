@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "AlistCopyTaskList", "AlistUploadTaskList", 
@@ -39,7 +41,7 @@ class AlistCopyTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -272,7 +274,7 @@ class AlistCopyTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -281,7 +283,7 @@ class AlistCopyTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -289,7 +291,7 @@ class AlistCopyTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -567,7 +569,7 @@ class AlistUploadTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -800,7 +802,7 @@ class AlistUploadTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -809,7 +811,7 @@ class AlistUploadTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -817,7 +819,7 @@ class AlistUploadTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -1095,7 +1097,7 @@ class AlistOfflineDownloadTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -1328,7 +1330,7 @@ class AlistOfflineDownloadTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -1337,7 +1339,7 @@ class AlistOfflineDownloadTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -1345,7 +1347,7 @@ class AlistOfflineDownloadTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -1623,7 +1625,7 @@ class AlistOfflineDownloadTransferTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -1856,7 +1858,7 @@ class AlistOfflineDownloadTransferTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -1865,7 +1867,7 @@ class AlistOfflineDownloadTransferTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -1873,7 +1875,7 @@ class AlistOfflineDownloadTransferTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -2151,7 +2153,7 @@ class AlistAria2DownTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -2384,7 +2386,7 @@ class AlistAria2DownTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -2393,7 +2395,7 @@ class AlistAria2DownTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -2401,7 +2403,7 @@ class AlistAria2DownTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -2679,7 +2681,7 @@ class AlistAria2TransferTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -2912,7 +2914,7 @@ class AlistAria2TransferTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -2921,7 +2923,7 @@ class AlistAria2TransferTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -2929,7 +2931,7 @@ class AlistAria2TransferTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -3207,7 +3209,7 @@ class AlistQbitDownTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -3440,7 +3442,7 @@ class AlistQbitDownTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -3449,7 +3451,7 @@ class AlistQbitDownTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -3457,7 +3459,7 @@ class AlistQbitDownTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -3735,7 +3737,7 @@ class AlistQbitTransferTaskList:
         self.async_request = async_request
 
     def __contains__(self, tid: str, /) -> bool:
-        return self.has(tid)
+        return self.exists(tid)
 
     def __delitem__(self, tid: str, /):
         self.remove(tid)
@@ -3968,7 +3970,7 @@ class AlistQbitTransferTaskList:
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -3977,7 +3979,7 @@ class AlistQbitTransferTaskList:
     ) -> bool:
         ...
     @overload
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 
@@ -3985,7 +3987,7 @@ class AlistQbitTransferTaskList:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bool]:
         ...
-    def has(
+    def exists(
         self, 
         /, 
         tid: str, 

@@ -83,7 +83,7 @@ def urlopen(
     params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
     data: None | bytes | str | Mapping | Sequence[tuple[Any, Any]] | Iterable[bytes] = None, 
     json: Any = None, 
-    headers: None | dict[str, str] = None, 
+    headers: None | Mapping[str, str] = None, 
     timeout: None | int | float = None, 
     cookies: None | CookieJar = None, 
     proxy: None | tuple[str, str] = None, 
@@ -132,9 +132,13 @@ def urlopen(
             req.data = data
         req.method = method.upper()
     else:
+        if headers:
+            headers = dict(headers)
+        else:
+            headers = {}
         if params:
             url += "?&"["?" in url] + params
-        req = Request(url, data=data, headers=headers or {}, method=method.upper())
+        req = Request(url, data=data, headers=headers, method=method.upper())
     if proxy:
         req.set_proxy(*proxy)
     if context is not None or cookies is not None:
@@ -204,7 +208,7 @@ def download(
     file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
     resume: bool = False, 
     chunksize: int = COPY_BUFSIZE, 
-    headers: None | dict[str, str] = None, 
+    headers: None | Mapping[str, str] = None, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
     **urlopen_kwargs, 
 ) -> str | SupportsWrite[bytes]:
