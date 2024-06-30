@@ -9,9 +9,11 @@ __all__ = ["AlistClient", "check_response"]
 import errno
 
 from asyncio import to_thread
+from base64 import urlsafe_b64encode
 from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Iterable, Mapping
 from functools import cached_property, partial
 from hashlib import sha256
+from hmac import new as hmac_new
 from http.cookiejar import CookieJar
 from inspect import iscoroutinefunction
 from json import loads
@@ -46,6 +48,8 @@ def check_response(resp: dict | Awaitable[dict], /) -> dict | Awaitable[dict]:
         code = resp["code"]
         if 200 <= code < 300:
             return resp
+        elif code == 401:
+            raise OSError(errno.EINVAL, resp)
         elif code == 403:
             raise PermissionError(errno.EACCES, resp)
         elif code == 500:
@@ -54,8 +58,10 @@ def check_response(resp: dict | Awaitable[dict], /) -> dict | Awaitable[dict]:
                 or message.startswith("failed get storage: storage not found")
             ):
                 raise FileNotFoundError(errno.ENOENT, resp)
-            elif resp["message"].endswith("not a folder"):
+            elif message.endswith("not a folder"):
                 raise NotADirectoryError(errno.ENOTDIR, resp)
+            elif message.endswith("not a file"):
+                raise IsADirectoryError(errno.EISDIR, resp)
             elif message.endswith("file exists"):
                 raise FileExistsError(errno.EEXIST, resp)
             elif message.startswith("failed get "):
@@ -97,6 +103,7 @@ class AlistClient:
                 "Accept": "application/json, text/plain, */*", 
                 "Accept-Encoding": "gzip, deflate, br, zstd", 
                 "Connection": "keep-alive", 
+                "User-Agent": "Mozilla/5.0 AppleWebKit/600.0 Chrome/150.0.0.0 Safari/600.0 python-alist/*.*"
             }), 
             cookies = Cookies(), 
         )
@@ -264,11 +271,11 @@ class AlistClient:
     def from_auth(
         cls, 
         /, 
-        token: str, 
+        auth_token: str, 
         origin: str = "http://localhost:5244", 
     ) -> Self:
         client = cls(origin)
-        client.headers["Authorization"] = token
+        client.headers["Authorization"] = auth_token
         return client
 
     @overload
@@ -2314,12 +2321,12 @@ class AlistClient:
         - https://alist-v3.apifox.cn/api-128101287
 
         group 参数的说明：
-            0: 其他设置
+            0: 其他，包括 令牌 和 索引统计（非设置）
             1: 站点
             2: 样式
             3: 预览
             4: 全局
-            5: 其它设置，包括 aria2 和 令牌 等
+            5: aria2 和 qbittorrent
             6: 索引
             7: 单点登录
             8: LDAP
@@ -5033,18 +5040,36 @@ class AlistClient:
 
     ########## Other Encapsulations ##########
 
+    @staticmethod
+    def calc_sign(
+        text: str, 
+        token: str, 
+        suffix: str = "", 
+    ) -> str:
+        h = hmac_new(bytes(token, "utf-8"), digestmod=sha256)
+        h.update(bytes(f"{text}{suffix}", "utf-8"))
+        return urlsafe_b64encode(h.digest()).decode() + f"{suffix}"
+
     def get_url(
         self, 
         /, 
         path: str, 
+        token: str = "", 
+        expire_timestamp: int = 0, 
         ensure_ascii: bool = True, 
     ) -> str:
+        """获取下载链接（非直链）
+        - https://alist.nn.ci/guide/drivers/common.html#download-proxy-url
+        """
         if self.base_path != "/":
             path = self.base_path + path
         if ensure_ascii:
-            return self.origin + "/d" + quote(path, safe="@[]:/!$&'()*+,;=")
+            url = self.origin + "/d" + quote(path, safe="@[]:/!$&'()*+,;=")
         else:
-            return self.origin + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
+            url = self.origin + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
+        if token:
+            url += "?sign=" + self.calc_sign(path, token, f":{expire_timestamp}")
+        return url
 
     # TODO: 支持异步
     @staticmethod

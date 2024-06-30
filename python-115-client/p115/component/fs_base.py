@@ -26,6 +26,7 @@ from os import fsdecode, fspath, lstat, makedirs, scandir, stat, stat_result, Pa
 from os import path as ospath
 from posixpath import join as joinpath, splitext
 from re import compile as re_compile, escape as re_escape
+from shutil import COPY_BUFSIZE # type: ignore
 from stat import S_IFDIR, S_IFREG # TODO: common stat method
 from time import time
 from typing import (
@@ -35,11 +36,11 @@ from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
 
 from asynctools import async_map
-from download import DownloadTask
+from download import AsyncDownloadTask, DownloadTask
 from filewrap import SupportsWrite
 from glob_pattern import translate_iter
 from httpfile import HTTPFileReader
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
 
 from .client import check_response, P115Client, P115Url
@@ -224,25 +225,59 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> dict[int, Self] | Coroutine[Any, Any, dict[int, Self]]:
         return self.fs.dictdir_path(self, async_=async_, **kwargs)
 
-    # TODO: 支持异步
+    @cached_property
+    def directory(self, /) -> Self:
+        return self.get_directory()
+
+    @overload
     def download(
         self, 
         /, 
-        local_dir: bytes | str | PathLike = "", 
+        to_dir: bytes | str | PathLike = "", 
         write_mode: Literal["a", "w", "x", "i"] = "a", 
-        submit: None | bool | Callable[[Callable], Any] = None, 
+        submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        predicate: None | Callable[[P115PathType], bool] = None, 
         onerror: None | bool | Callable[[BaseException], Any] = None, 
-    ) -> Iterator[tuple[P115PathType, str, DownloadTask]]:
+        predicate: None | Callable[[Self], bool] = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Iterator[tuple[Self, str, DownloadTask]]:
+        ...
+    @overload
+    def download(
+        self, 
+        /, 
+        to_dir: bytes | str | PathLike = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = False, 
+        no_root: bool = False, 
+        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        predicate: None | Callable[[Self], bool] = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[tuple[Self, str, AsyncDownloadTask]]:
+        ...
+    def download(
+        self, 
+        /, 
+        to_dir: bytes | str | PathLike = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = False, 
+        no_root: bool = False, 
+        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        predicate: None | Callable[[Self], bool] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[tuple[Self, str, DownloadTask]] | AsyncIterator[tuple[Self, str, AsyncDownloadTask]]:
         return self.fs.download_tree(
             self, 
-            local_dir, 
+            to_dir=to_dir, 
             write_mode=write_mode, 
             submit=submit, 
             no_root=no_root, 
-            predicate=predicate, 
             onerror=onerror, 
+            predicate=predicate, 
+            async_=async_, # type: ignore
         )
 
     @overload
@@ -324,6 +359,34 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             self.__dict__.clear()
             self.__dict__.update(attr)
             return attr
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def get_directory(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Self:
+        ...
+    @overload
+    def get_directory(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Self]:
+        ...
+    def get_directory(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Self | Coroutine[Any, Any, Self]:
+        def gen_step():
+            if self.is_dir():
+                return self
+            return (yield partial(
+                self.get_parent, 
+                async_=async_, 
+            ))
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -792,15 +855,11 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     @cached_property
     def parent(self, /) -> Self:
-        if self.id == 0:
-            return self
-        return type(self)(self.fs.attr(self["parent_id"]))
+        return self.get_parent()
 
     @cached_property
     def parents(self, /) -> tuple[Self, ...]:
-        cls = type(self)
-        get_attr = self.fs.attr
-        return tuple(cls(get_attr(a["id"])) for a in reversed(self["ancestors"][:-1]))
+        return tuple(self.get_parents())
 
     @cached_property
     def parts(self, /) -> tuple[str, ...]:
@@ -1287,7 +1346,7 @@ class P115FileSystemBase(Generic[P115PathType]):
     def __contains__(self, id_or_path: IDOrPathType, /) -> bool:
         return self.exists(id_or_path)
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other, /) -> bool:
         return type(self) is type(other) and self.client == other.client
 
     def __getitem__(self, id_or_path: IDOrPathType, /) -> P115PathType:
@@ -1687,117 +1746,264 @@ class P115FileSystemBase(Generic[P115PathType]):
         else:
             return {attr["id"]: path_class(attr) for attr in self.iterdir(id_or_path, pid=pid, **kwargs)}
 
-    # TODO: 支持异步
+    @overload
     def download(
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        local_path_or_file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
-        pid: None | int = None, 
+        file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = True, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> None | DownloadTask:
-        if not isinstance(local_path_or_file, SupportsWrite):
-            path = cast(bytes | str | PathLike, local_path_or_file)
-            if not path:
-                path = self.attr(id_or_path, pid=pid)["name"]
-            if ospath.lexists(path):
-                if write_mode == "x":
-                    raise FileExistsError(
-                        errno.EEXIST, 
-                        f"local path already exists: {path!r}", 
-                    )
-                elif write_mode == "i":
-                    return None
-        kwargs: dict = {"resume": write_mode == "a"}
-        if callable(submit):
-            kwargs["submit"] = submit
-        task = DownloadTask.create_task(
-            lambda: self.get_url(id_or_path, pid=pid), 
-            local_path_or_file, 
-            headers=lambda: {
-                **self.client.headers, 
-                "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.cookiejar), 
-            }, 
-            **kwargs, 
-        )
-        if callable(submit):
-            task.run()
-        elif submit:
-            task.run_wait()
-        return task
+        ...
+    @overload
+    def download(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = True, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None | AsyncDownloadTask]:
+        ...
+    def download(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = True, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> None | DownloadTask | Coroutine[Any, Any, None | AsyncDownloadTask]:
+        """下载文件到路径或文件
 
-    # TODO: 支持异步
+        :param id_or_path: 文件在 115 网盘上的 id 或路径
+        :param file: 本地路径或可写的文件
+        :param write_mode: 写入模式
+            - a: append，如果文件不存在则创建，存在则追加（断点续传），返回一个任务
+            - w: write， 如果文件不存在则创建，存在则覆盖，返回一个任务
+            - x: exists，如果文件不存在则创建，存在则报错 FileExistsError
+            - i: ignore，如果文件不存在则创建，存在则忽略，返回 None
+        :param submit: 提交执行
+            - 如果为 True，则提交给默认的执行器
+            - 如果为 False，不提交（稍后可执行 start() 方法手动提交，或运行 run() 方法阻塞执行）
+            - 如果为 Callable，则立即调用以提交
+        :param pid: 待下载文件路径在 115 网盘上的上级 id（用于把相对路径转化为绝对路径）
+        :param async_: 是否异步执行
+
+        :return: 返回 None（表示跳过此任务）或任务对象
+        """
+        def gen_step():
+            nonlocal file
+            url = yield partial(
+                self.get_url, 
+                id_or_path, 
+                pid=pid, 
+                async_=async_, 
+            )
+            if not isinstance(file, SupportsWrite):
+                filepath = fsdecode(file)
+                if not filepath:
+                    filepath = url.get("file_name") or ""
+                if ospath.lexists(filepath):
+                    if write_mode == "x":
+                        raise FileExistsError(
+                            errno.EEXIST, 
+                            f"local path already exists: {filepath!r}", 
+                        )
+                    elif write_mode == "i":
+                        return None
+                file = filepath
+
+            kwargs: dict = {
+                "url": url, 
+                "file": file, 
+                "headers": {
+                    **self.client.headers, 
+                    "Cookie": "; ".join(f"{c.name}={c.value}" for c in self.client.cookiejar), 
+                }, 
+                "resume": write_mode == "a", 
+            }
+            if callable(submit):
+                kwargs["submit"] = submit
+            task: AsyncDownloadTask | DownloadTask
+            if async_:
+                def async_response_generator_wrapper(func):
+                    async def wrapper(*args, **kwds):
+                        it = func(*args, **kwds)
+                        resp = await anext(it)
+                        def aclose():
+                            async def none():
+                                pass
+                            resp.aclose = none
+                            return it.aclose()
+                        resp.aclose = aclose
+                        resp.aiter  = it
+                        return resp
+                    return wrapper
+                try:
+                    from aiohttp import request as async_request
+                except ImportError:
+                    from httpx import AsyncClient
+
+                    async def urlopen_for_iter_bytes(url, headers):
+                        async with AsyncClient() as client:
+                            async with client.stream("GET", url, headers=headers, follow_redirects=True) as resp:
+                                yield resp
+                                async for chunk in resp.aiter_bytes(COPY_BUFSIZE):
+                                    yield chunk
+                else:
+                    async def urlopen_for_iter_bytes(url, headers):
+                        async with async_request("GET", url, headers=headers) as resp:
+                            yield resp
+                            read = resp.content.read
+                            while chunk := (await read(COPY_BUFSIZE)):
+                                yield chunk
+                kwargs["urlopen"] = async_response_generator_wrapper(urlopen_for_iter_bytes)
+                kwargs["iter_bytes"] = lambda resp: resp.aiter
+                task = AsyncDownloadTask.create_task(**kwargs)
+            else:
+                task = DownloadTask.create_task(**kwargs)
+            if callable(submit) or submit:
+                yield task.start
+            return task
+        return run_gen_step(gen_step, async_=async_)
+
+    # TODO: 增加条件化重试机制
+    @overload
     def download_tree(
         self, 
         id_or_path: IDOrPathType = "", 
         /, 
-        local_dir: bytes | str | PathLike = "", 
-        pid: None | int = None, 
-        write_mode: Literal["i", "x", "w", "a"] = "a", 
-        submit: None | bool | Callable[[Callable], Any] = None, 
+        to_dir: bytes | str | PathLike = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        predicate: None | Callable[[P115PathType], bool] = None, 
         onerror: None | bool | Callable[[BaseException], Any] = None, 
+        predicate: None | Callable[[P115PathType], bool] = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> Iterator[tuple[P115PathType, str, DownloadTask]]:
-        local_dir = fsdecode(local_dir)
-        if local_dir:
-            makedirs(local_dir, exist_ok=True)
-        attr = self.attr(id_or_path, pid=pid)
-        pathes: Iterable[P115PathType]
-        if attr["is_directory"]:
-            if not no_root:
-                local_dir = ospath.join(local_dir, attr["name"])
-                if local_dir:
-                    makedirs(local_dir, exist_ok=True)
-            pathes = self.scandir(attr["id"])
-        else:
-            path_class = type(self).path_class
-            attr["fs"] = self
-            pathes = (path_class(attr),)
-        mode: Literal["i", "x", "w", "a"]
-        for subpath in filter(predicate, pathes):
-            if subpath["is_directory"]:
-                yield from self.download_tree(
-                    subpath["id"], 
-                    ospath.join(local_dir, subpath["name"]), 
-                    write_mode=write_mode, 
-                    no_root=True, 
-                    predicate=predicate, 
-                    onerror=onerror, 
-                )
-            else:
-                mode = write_mode
+        ...
+    @overload
+    def download_tree(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        to_dir: bytes | str | PathLike = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = False, 
+        no_root: bool = False, 
+        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        predicate: None | Callable[[P115PathType], bool] = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[tuple[P115PathType, str, AsyncDownloadTask]]:
+        ...
+    def download_tree(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        to_dir: bytes | str | PathLike = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = False, 
+        no_root: bool = False, 
+        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        predicate: None | Callable[[P115PathType], bool] = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[tuple[P115PathType, str, DownloadTask]] | AsyncIterator[tuple[P115PathType, str, AsyncDownloadTask]]:
+        def gen_step():
+            nonlocal to_dir
+            to_dir = fsdecode(to_dir)
+            if to_dir:
+                makedirs(to_dir, exist_ok=True)
+            attr = yield partial(
+                self.attr, 
+                id_or_path, 
+                pid=pid, 
+                async_=async_, 
+            )
+            pathes: list[P115PathType]
+            if attr["is_directory"]:
+                if not no_root:
+                    to_dir = ospath.join(to_dir, attr["name"])
+                    if to_dir:
+                        makedirs(to_dir, exist_ok=True)
                 try:
-                    download_path = ospath.join(local_dir, subpath["name"])
-                    remote_size = subpath["size"]
-                    try:
-                        size = lstat(download_path).st_size
-                    except OSError:
-                        pass
-                    else:
-                        if remote_size == size:
-                            continue
-                        elif remote_size < size:
-                            mode = "w"
-                    task = self.download(
-                        subpath["id"], 
-                        download_path, 
-                        write_mode=mode, 
-                        submit=False if submit is None else submit, 
+                    pathes = yield partial(
+                        self.listdir_path, 
+                        attr, 
+                        async_=async_, 
                     )
-                except KeyboardInterrupt:
-                    raise
-                except BaseException as exc:
-                    if onerror is None or onerror is True:
+                except OSError as e:
+                    if callable(onerror):
+                        yield partial(onerror, e)
+                    elif onerror:
                         raise
-                    elif callable(onerror):
-                        onerror(exc)
+                    return
+            else:
+                attr["fs"] = self
+                pathes = [type(self).path_class(attr)]
+            mode: Literal["i", "x", "w", "a"]
+            for subpath in filter(predicate, pathes):
+                if subpath["is_directory"]:
+                    yield YieldFrom(partial(
+                        self.download_tree, 
+                        subpath, 
+                        ospath.join(to_dir, subpath["name"]), 
+                        submit=submit, 
+                        write_mode=write_mode, 
+                        no_root=True, 
+                        predicate=predicate, 
+                        onerror=onerror, 
+                        async_=async_, 
+                    ))
                 else:
-                    if task is not None:
-                        yield subpath, download_path, task
-                        if submit is None:
-                            task.run_wait()
+                    mode = write_mode
+                    try:
+                        download_path = ospath.join(to_dir, subpath["name"])
+                        remote_size = subpath["size"]
+                        try:
+                            size = lstat(download_path).st_size
+                        except OSError:
+                            pass
+                        else:
+                            if remote_size == size:
+                                continue
+                            elif remote_size < size:
+                                mode = "w"
+                        task = yield partial(
+                            self.download, 
+                            subpath, 
+                            download_path, 
+                            write_mode=mode, 
+                            submit=submit, 
+                            async_=async_, 
+                        )
+                        if task is not None:
+                            yield Yield((subpath, download_path, task))
+                            if not submit and task.pending:
+                                yield task.start
+                    except (KeyboardInterrupt, GeneratorExit):
+                        raise
+                    except BaseException as e:
+                        if callable(onerror):
+                            yield partial(onerror, e)
+                        elif onerror:
+                            raise
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def enumdir(

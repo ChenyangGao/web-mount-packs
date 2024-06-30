@@ -14,6 +14,7 @@ from collections.abc import (
     AsyncIterable, Awaitable, Callable, Coroutine, ItemsView, Iterable, 
     Iterator, KeysView, Mapping, ValuesView, 
 )
+from datetime import datetime
 from functools import cached_property, partial, update_wrapper
 from hashlib import sha256
 from http.cookiejar import Cookie, CookieJar
@@ -24,9 +25,8 @@ from mimetypes import guess_type
 from os import fsdecode, fspath, fstat, makedirs, scandir, stat_result, path as ospath, PathLike
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split as splitpath, splitext
 from re import compile as re_compile, escape as re_escape
-from shutil import copyfileobj, SameFileError
+from shutil import copyfileobj, SameFileError, COPY_BUFSIZE
 from stat import S_IFDIR, S_IFREG
-from time import time
 from typing import cast, overload, Any, IO, Literal, Never, Optional, TypeAlias
 from types import MappingProxyType, MethodType
 from urllib.parse import quote
@@ -34,12 +34,13 @@ from uuid import uuid4
 from warnings import filterwarnings, warn
 
 from dateutil.parser import parse as dt_parse
+from download import AsyncDownloadTask, DownloadTask
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead, SupportsWrite
 from glob_pattern import translate_iter
 from httpfile import HTTPFileReader
 from http_request import complete_url, encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from httpx_request import request
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from multidict import CIMultiDict
 from urlopen import urlopen
 from yarl import URL
@@ -65,7 +66,7 @@ class method:
         raise TypeError("can't set value")
 
 
-def parse_as_timestamp(s: Optional[str] = None, /) -> float:
+def parse_as_timestamp(s: None | str = None, /) -> float:
     if not s:
         return 0.0
     if s.startswith("0001-01-01"):
@@ -86,14 +87,14 @@ class AlistPath(Mapping, PathLike[str]):
         self, 
         /, 
         fs: AlistFileSystem, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
         **attr, 
     ):
         attr.update(fs=fs, path=fs.abspath(path), password=password)
         super().__setattr__("__dict__", attr)
 
-    def __and__(self, path: str | PathLike[str], /) -> AlistPath:
+    def __and__(self, path: PathType, /) -> AlistPath:
         return type(self)(
             self.fs, 
             commonpath((self["path"], self.fs.abspath(path))), 
@@ -114,7 +115,7 @@ class AlistPath(Mapping, PathLike[str]):
         return self["path"]
 
     def __getitem__(self, key, /):
-        if key not in self.__dict__ and not self.__dict__.get("last_update"):
+        if key not in self.__dict__ and not self.__dict__.get("accessed"):
             self()
         return self.__dict__[key]
 
@@ -161,12 +162,12 @@ class AlistPath(Mapping, PathLike[str]):
     def __str__(self, /) -> str:
         return self["path"]
 
-    def __truediv__(self, path: str | PathLike[str], /) -> AlistPath:
+    def __truediv__(self, path: PathType, /) -> AlistPath:
         return self.joinpath(path)
 
     @property
     def is_attr_loaded(self, /) -> bool:
-        return "last_update" in self.__dict__
+        return "accessed" in self.__dict__
 
     def set_password(self, value, /):
         self.__dict__["password"] = str(value)
@@ -194,9 +195,9 @@ class AlistPath(Mapping, PathLike[str]):
     def copy(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
-        dst_password: Optional[str] = None, 
-        overwrite_or_ignore: Optional[bool] = None, 
+        dst_path: PathType, 
+        dst_password: None | str = None, 
+        overwrite_or_ignore: None | bool = None, 
     ) -> Optional[AlistPath]:
         if dst_password is None:
             dst_password = self.password
@@ -214,15 +215,15 @@ class AlistPath(Mapping, PathLike[str]):
     def download(
         self, 
         /, 
-        local_dir: bytes | str | PathLike = "", 
+        to_dir: bytes | str | PathLike = "", 
         no_root: bool = False, 
         write_mode: Literal["", "x", "w", "a"] = "w", 
         download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ):
         return self.fs.download_tree(
             self, 
-            local_dir, 
+            to_dir, 
             no_root=no_root, 
             write_mode=write_mode, 
             download=download, 
@@ -275,12 +276,12 @@ class AlistPath(Mapping, PathLike[str]):
     def iter(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> Iterator[AlistPath]:
         return self.fs.iter(
             self, 
@@ -292,7 +293,7 @@ class AlistPath(Mapping, PathLike[str]):
             refresh=refresh, 
         )
 
-    def joinpath(self, *paths: str | PathLike[str]) -> AlistPath:
+    def joinpath(self, *paths: PathType) -> AlistPath:
         if not paths:
             return self
         path = self["path"]
@@ -306,7 +307,7 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         page: int = 1, 
         per_page: int = 0, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> list[str]:
         return self.fs.listdir(
             self, 
@@ -320,7 +321,7 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         page: int = 1, 
         per_page: int = 0, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> list[dict]:
         return self.fs.listdir_attr(
             self, 
@@ -334,7 +335,7 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         page: int = 1, 
         per_page: int = 0, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> list[AlistPath]:
         return self.fs.listdir_path(
             self, 
@@ -355,7 +356,7 @@ class AlistPath(Mapping, PathLike[str]):
         return re_compile(pattern).fullmatch(self["path"]) is not None
 
     @property
-    def media_type(self, /) -> Optional[str]:
+    def media_type(self, /) -> None | str:
         if not self.is_file():
             return None
         return guess_type(self["path"])[0] or "application/octet-stream"
@@ -366,8 +367,8 @@ class AlistPath(Mapping, PathLike[str]):
     def move(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
-        dst_password: Optional[str] = None, 
+        dst_path: PathType, 
+        dst_password: None | str = None, 
     ) -> AlistPath:
         if dst_password is None:
             dst_password = self.password
@@ -389,9 +390,9 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         mode: str = "r", 
         buffering: Optional[int] = None, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
         headers: Optional[Mapping] = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
@@ -451,9 +452,9 @@ class AlistPath(Mapping, PathLike[str]):
     def read_text(
         self, 
         /, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
     ) -> str:
         return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
 
@@ -486,8 +487,8 @@ class AlistPath(Mapping, PathLike[str]):
     def rename(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
-        dst_password: Optional[str] = None, 
+        dst_path: PathType, 
+        dst_password: None | str = None, 
     ) -> AlistPath:
         if dst_password is None:
             dst_password = self.password
@@ -503,8 +504,8 @@ class AlistPath(Mapping, PathLike[str]):
     def renames(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
-        dst_password: Optional[str] = None, 
+        dst_path: PathType, 
+        dst_password: None | str = None, 
     ) -> AlistPath:
         if dst_password is None:
             dst_password = self.password
@@ -520,8 +521,8 @@ class AlistPath(Mapping, PathLike[str]):
     def replace(
         self, 
         /, 
-        dst_path: str | PathLike[str], 
-        dst_password: Optional[str] = None, 
+        dst_path: PathType, 
+        dst_password: None | str = None, 
     ) -> AlistPath:
         if dst_password is None:
             dst_password = self.password
@@ -557,7 +558,7 @@ class AlistPath(Mapping, PathLike[str]):
             self.password, 
         )
 
-    def samefile(self, path: str | PathLike[str], /) -> bool:
+    def samefile(self, path: PathType, /) -> bool:
         if type(self) is type(path):
             return self == path
         return path in ("", ".") or self["path"] == self.fs.abspath(path)
@@ -593,11 +594,11 @@ class AlistPath(Mapping, PathLike[str]):
     def walk(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         return self.fs.walk(
             self, 
@@ -611,11 +612,11 @@ class AlistPath(Mapping, PathLike[str]):
     def walk_attr(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
         return self.fs.walk_attr(
             self, 
@@ -629,11 +630,11 @@ class AlistPath(Mapping, PathLike[str]):
     def walk_path(
         self, 
         /, 
-        topdown: Optional[bool] = True, 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[AlistPath], list[AlistPath]]]:
         return self.fs.walk_path(
             self, 
@@ -664,9 +665,9 @@ class AlistPath(Mapping, PathLike[str]):
         self, 
         /, 
         text: str = "", 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
     ):
         self.fs.write_text(
             self, 
@@ -691,7 +692,7 @@ class AlistFileSystem:
         self, 
         /, 
         client: AlistClient, 
-        path: str | PathLike[str] = "/", 
+        path: PathType = "/", 
         refresh: bool = False, 
         request_kwargs: Optional[dict] = None, 
         request: None | Callable = None, 
@@ -712,24 +713,30 @@ class AlistFileSystem:
             async_request=async_request, 
         )
 
-    def __contains__(self, path: str | PathLike[str], /) -> bool:
+    def __contains__(self, path: PathType, /) -> bool:
         return self.exists(path)
 
-    def __delitem__(self, path: str | PathLike[str], /):
+    def __eq__(self, other, /) -> bool:
+        return type(self) is type(other) and self.client == other.client
+
+    def __delitem__(self, path: PathType, /):
         self.rmtree(path)
 
-    def __getitem__(self, path: str | PathLike[str], /) -> AlistPath:
+    def __getitem__(self, path: PathType, /) -> AlistPath:
         return self.as_path(path)
+
+    def __aiter__(self, /) -> AsyncIterator[AlistPath]:
+        return self.iter(max_depth=-1, async_=True)
 
     def __iter__(self, /) -> Iterator[AlistPath]:
         return self.iter(max_depth=-1)
 
-    def __itruediv__(self, path: str | PathLike[str], /) -> AlistFileSystem:
+    def __itruediv__(self, path: PathType, /) -> Self:
         self.chdir(path)
         return self
 
     def __len__(self, /) -> int:
-        return self.get_directory_capacity(self.path, _check=False)
+        return self.dirlen(self.path)
 
     def __repr__(self, /) -> str:
         cls = type(self)
@@ -740,12 +747,18 @@ class AlistFileSystem:
         return f"{name}(client={self.client!r}, path={self.path!r}, refresh={self.refresh!r}, request_kwargs={self.request_kwargs!r})"
 
     def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attribute")
+        if attr == "refresh":
+            self.__dict__["refresh"] = bool(val)
+        elif attr == "token":
+            self.__dict__["token"] = str(token)
+        else:
+            raise TypeError(f"can't set attribute: {attr!r}")
 
+    # TODO 需要优化
     def __setitem__(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         file: None | str | bytes | bytearray | memoryview | PathLike = None, 
     ):
         if file is None:
@@ -774,13 +787,77 @@ class AlistFileSystem:
     def from_auth(
         cls, 
         /, 
-        token: str, 
+        auth_token: str, 
         origin: str = "http://localhost:5244", 
     ):
-        return cls(AlistClient.from_auth(token, origin=origin))
+        return cls(AlistClient.from_auth(auth_token, origin=origin))
 
-    def set_refresh(self, value: bool, /):
-        self.__dict__["refresh"] = value
+    @cached_property
+    def token(self, /) -> str:
+        return self.get_token()
+
+    @overload
+    def get_token(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def get_token(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def get_token(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            resp = yield partial(
+                self.client.admin_setting_list, 
+                payload={"group": 0}, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            )
+            token = next(item["value"] for item in check_response(resp)["data"] if item["key"] == "token")
+            self.__dict__["token"] = token
+            return token
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def reset_token(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def reset_token(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def reset_token(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            resp = yield partial(
+                self.client.admin_setting_reset_token, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            )
+            token = check_response(resp)["data"]
+            self.__dict__["token"] = token
+            return token
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def fs_batch_rename(
@@ -788,7 +865,6 @@ class AlistFileSystem:
         /, 
         rename_pairs: Iterable[tuple[str, str]], 
         src_dir: PathType = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -799,7 +875,6 @@ class AlistFileSystem:
         /, 
         rename_pairs: Iterable[tuple[str, str]], 
         src_dir: PathType = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -809,15 +884,13 @@ class AlistFileSystem:
         /, 
         rename_pairs: Iterable[tuple[str, str]], 
         src_dir: PathType = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
-        src_dir = cast(str, src_dir)
         payload = {
             "src_dir": src_dir, 
             "rename_objects": [{
@@ -836,10 +909,9 @@ class AlistFileSystem:
     def fs_copy(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -848,10 +920,9 @@ class AlistFileSystem:
     def fs_copy(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -859,23 +930,20 @@ class AlistFileSystem:
     def fs_copy(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
         if isinstance(dst_dir, (AttrDict, AlistPath)):
-            dst_dir = dst_dir["path"]
-        elif _check:
+            dst_dir = cast(str, dst_dir["path"])
+        else:
             dst_dir = self.abspath(dst_dir)
-        src_dir = cast(str, src_dir)
-        dst_dir = cast(str, dst_dir)
         payload = {"src_dir": src_dir, "dst_dir": dst_dir, "names": names}
         return check_response(self.client.fs_copy( # type: ignore
             payload, 
@@ -888,10 +956,9 @@ class AlistFileSystem:
     def fs_dirs(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -900,10 +967,9 @@ class AlistFileSystem:
     def fs_dirs(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -911,23 +977,20 @@ class AlistFileSystem:
     def fs_dirs(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
         if refresh is None:
             refresh = self.refresh
-        path = cast(str, path)
-        refresh = cast(bool, refresh)
         payload = {
             "path": path, 
             "password": password, 
@@ -946,9 +1009,8 @@ class AlistFileSystem:
         /, 
         file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
                 URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        path: str | PathLike[str], 
+        path: PathType, 
         as_task: bool = False, 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -959,9 +1021,8 @@ class AlistFileSystem:
         /, 
         file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
                 URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        path: str | PathLike[str], 
+        path: PathType, 
         as_task: bool = False, 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -971,17 +1032,15 @@ class AlistFileSystem:
         /, 
         file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
                 URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        path: str | PathLike[str], 
+        path: PathType, 
         as_task: bool = False, 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
-            path = path["path"]
-        elif _check:
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         return check_response(self.client.fs_form( # type: ignore
             file, 
             path, 
@@ -995,9 +1054,8 @@ class AlistFileSystem:
     def fs_get(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1006,9 +1064,8 @@ class AlistFileSystem:
     def fs_get(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1016,19 +1073,17 @@ class AlistFileSystem:
     def fs_get(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         payload = {"path": path, "password": password}
         return check_response(self.client.fs_get( # type: ignore
             payload, 
@@ -1041,12 +1096,11 @@ class AlistFileSystem:
     def fs_list(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1055,12 +1109,11 @@ class AlistFileSystem:
     def fs_list(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1068,25 +1121,22 @@ class AlistFileSystem:
     def fs_list(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
         if refresh is None:
             refresh = self.refresh
-        path = cast(str, path)
-        refresh = cast(bool, refresh)
         payload = {
             "path": path, 
             "password": password, 
@@ -1130,8 +1180,7 @@ class AlistFileSystem:
     def fs_mkdir(
         self, 
         /, 
-        path: str | PathLike[str], 
-        _check: bool = True, 
+        path: PathType, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1140,8 +1189,7 @@ class AlistFileSystem:
     def fs_mkdir(
         self, 
         /, 
-        path: str | PathLike[str], 
-        _check: bool = True, 
+        path: PathType, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1149,16 +1197,14 @@ class AlistFileSystem:
     def fs_mkdir(
         self, 
         /, 
-        path: str | PathLike[str], 
-        _check: bool = True, 
+        path: PathType, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
-            path = path["path"]
-        elif _check:
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             return {"code": 200}
         return check_response(self.client.fs_mkdir( # type: ignore
@@ -1172,10 +1218,9 @@ class AlistFileSystem:
     def fs_move(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1184,10 +1229,9 @@ class AlistFileSystem:
     def fs_move(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1195,25 +1239,22 @@ class AlistFileSystem:
     def fs_move(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if not names:
             return {"code": 200}
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
         if isinstance(dst_dir, (AttrDict, AlistPath)):
-            dst_dir = dst_dir["path"]
-        elif _check:
+            dst_dir = cast(str, dst_dir["path"])
+        else:
             dst_dir = self.abspath(dst_dir)
-        src_dir = cast(str, src_dir)
-        dst_dir = cast(str, dst_dir)
         if src_dir == dst_dir:
             return {"code": 200}
         payload = {"src_dir": src_dir, "dst_dir": dst_dir, "names": names}
@@ -1230,9 +1271,9 @@ class AlistFileSystem:
         /, 
         file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
                 URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        path: str | PathLike[str], 
+        path: PathType, 
         as_task: bool = False, 
-        _check: bool = True, 
+        filesize: int = -1, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1243,9 +1284,9 @@ class AlistFileSystem:
         /, 
         file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
                 URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        path: str | PathLike[str], 
+        path: PathType, 
         as_task: bool = False, 
-        _check: bool = True, 
+        filesize: int = -1, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1255,21 +1296,21 @@ class AlistFileSystem:
         /, 
         file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
                 URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        path: str | PathLike[str], 
+        path: PathType, 
         as_task: bool = False, 
-        _check: bool = True, 
+        filesize: int = -1, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
-            path = path["path"]
-        elif _check:
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         return check_response(self.client.fs_put( # type: ignore
             file, 
             path, 
             as_task=as_task, 
+            filesize=filesize, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **self.request_kwargs, 
@@ -1279,9 +1320,8 @@ class AlistFileSystem:
     def fs_recursive_move(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
-        _check: bool = True, 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1290,9 +1330,8 @@ class AlistFileSystem:
     def fs_recursive_move(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
-        _check: bool = True, 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1300,22 +1339,19 @@ class AlistFileSystem:
     def fs_recursive_move(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
-        dst_dir: str | PathLike[str], 
-        _check: bool = True, 
+        src_dir: PathType, 
+        dst_dir: PathType, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
         if isinstance(dst_dir, (AttrDict, AlistPath)):
-            dst_dir = dst_dir["path"]
-        elif _check:
+            dst_dir = cast(str, dst_dir["path"])
+        else:
             dst_dir = self.abspath(dst_dir)
-        src_dir = cast(str, src_dir)
-        dst_dir = cast(str, dst_dir)
         payload = {"src_dir": src_dir, "dst_dir": dst_dir}
         return check_response(self.client.fs_recursive_move( # type: ignore
             payload, 
@@ -1330,8 +1366,7 @@ class AlistFileSystem:
         /, 
         src_name_regex: str, 
         new_name_regex: str, 
-        src_dir: str | PathLike[str] = "", 
-        _check: bool = True, 
+        src_dir: PathType = "", 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1342,8 +1377,7 @@ class AlistFileSystem:
         /, 
         src_name_regex: str, 
         new_name_regex: str, 
-        src_dir: str | PathLike[str] = "", 
-        _check: bool = True, 
+        src_dir: PathType = "", 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1353,16 +1387,14 @@ class AlistFileSystem:
         /, 
         src_name_regex: str, 
         new_name_regex: str, 
-        src_dir: str | PathLike[str] = "", 
-        _check: bool = True, 
+        src_dir: PathType = "", 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
-        src_dir = cast(str, src_dir)
         payload = {
             "src_dir": src_dir, 
             "src_name_regex": src_name_regex, 
@@ -1379,9 +1411,8 @@ class AlistFileSystem:
     def fs_remove(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
+        src_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1390,9 +1421,8 @@ class AlistFileSystem:
     def fs_remove(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
+        src_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1400,19 +1430,17 @@ class AlistFileSystem:
     def fs_remove(
         self, 
         /, 
-        src_dir: str | PathLike[str], 
+        src_dir: PathType, 
         names: list[str], 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if not names:
             return {"code": 200}
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
-        src_dir = cast(str, src_dir)
         payload = {"names": names, "dir": src_dir}
         return check_response(self.client.fs_remove( # type: ignore
             payload, 
@@ -1425,8 +1453,7 @@ class AlistFileSystem:
     def fs_remove_empty_directory(
         self, 
         /, 
-        src_dir: str | PathLike[str] = "", 
-        _check: bool = True, 
+        src_dir: PathType = "", 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1435,8 +1462,7 @@ class AlistFileSystem:
     def fs_remove_empty_directory(
         self, 
         /, 
-        src_dir: str | PathLike[str] = "", 
-        _check: bool = True, 
+        src_dir: PathType = "", 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1444,16 +1470,14 @@ class AlistFileSystem:
     def fs_remove_empty_directory(
         self, 
         /, 
-        src_dir: str | PathLike[str] = "", 
-        _check: bool = True, 
+        src_dir: PathType = "", 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(src_dir, (AttrDict, AlistPath)):
-            src_dir = src_dir["path"]
-        elif _check:
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
-        src_dir = cast(str, src_dir)
         payload = {"src_dir": src_dir}
         return check_response(self.client.fs_remove_empty_directory( # type: ignore
             payload, 
@@ -1495,9 +1519,8 @@ class AlistFileSystem:
     def fs_rename(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         name: str, 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1506,9 +1529,8 @@ class AlistFileSystem:
     def fs_rename(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         name: str, 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1516,17 +1538,15 @@ class AlistFileSystem:
     def fs_rename(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         name: str, 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(path, (AttrDict, AlistPath)):
-            path = path["path"]
-        elif _check:
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         payload = {"path": path, "name": name}
         return check_response(self.client.fs_rename( # type: ignore
             payload, 
@@ -1540,12 +1560,11 @@ class AlistFileSystem:
         self, 
         /, 
         keywords: str, 
-        src_dir: str | PathLike[str] = "", 
+        src_dir: PathType = "", 
         scope: Literal[0, 1, 2] = 0, 
         page: int = 1, 
         per_page: int = 0, 
         password: str = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1555,12 +1574,11 @@ class AlistFileSystem:
         self, 
         /, 
         keywords: str, 
-        src_dir: str | PathLike[str] = "", 
+        src_dir: PathType = "", 
         scope: Literal[0, 1, 2] = 0, 
         page: int = 1, 
         per_page: int = 0, 
         password: str = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1569,22 +1587,20 @@ class AlistFileSystem:
         self, 
         /, 
         keywords: str, 
-        src_dir: str | PathLike[str] = "", 
+        src_dir: PathType = "", 
         scope: Literal[0, 1, 2] = 0, 
         page: int = 1, 
         per_page: int = 0, 
         password: str = "", 
-        _check: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if isinstance(src_dir, (AttrDict, AlistPath)):
             if not password:
-                password = src_dir.password
-            src_dir = src_dir["path"]
-        elif _check:
+                password = src_dir.get("password", "")
+            src_dir = cast(str, src_dir["path"])
+        else:
             src_dir = self.abspath(src_dir)
-        src_dir = cast(str, src_dir)
         payload = {
             "parent": src_dir, 
             "keywords": keywords, 
@@ -1600,12 +1616,16 @@ class AlistFileSystem:
             **self.request_kwargs, 
         ))
 
-    def abspath(self, /, path: str | PathLike[str] = "") -> str:
+    def abspath(
+        self, 
+        /, 
+        path: PathType = "", 
+    ) -> str:
         if path == "/":
             return "/"
         elif path in ("", "."):
             return self.path
-        elif isinstance(path, AlistPath):
+        elif isinstance(path, (AttrDict, AlistPath)):
             return path["path"]
         path = fspath(path)
         if path.startswith("/"):
@@ -1615,380 +1635,764 @@ class AlistFileSystem:
     def as_path(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
     ) -> AlistPath:
-        if not isinstance(path, AlistPath):
-            if _check:
-                path = self.abspath(path)
-            path = AlistPath(self, path, password)
-        elif password:
-            path = AlistPath(self, path["path"], password)
-        return path
+        if isinstance(path, AlistPath):
+            if not password or password == path.get("password"):
+                return path
+            return AlistPath(**{**path, "password": password})
+        elif isinstance(path, AttrDict):
+            if not password or password == path.get("password"):
+                return AlistPath(**path)
+            return AlistPath(**{**path, "password": password})
+        return AlistPath(fs=self, path=self.abspath(path), password=password)
 
+    @overload
     def attr(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
-    ) -> dict:
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
-            path = self.abspath(path)
-        path = cast(str, path)
-        attr = self.fs_get(path, password, _check=False)["data"]
-        last_update = time()
-        attr["ctime"] = int(parse_as_timestamp(attr.get("created")))
-        attr["mtime"] = int(parse_as_timestamp(attr.get("modified")))
-        attr["atime"] = int(last_update)
-        attr["path"] = path
-        attr["password"] = password
-        attr["last_update"] = last_update
-        return attr
+        refresh: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> AttrDict:
+        ...
+    @overload
+    def attr(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: bool = False, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, AttrDict]:
+        ...
+    def attr(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+        def gen_step():
+            nonlocal path, password
+            if isinstance(path, (AttrDict, AlistPath)):
+                attr = path if isinstance(path, AttrDict) else path.__dict__
+                if not refresh:
+                    return attr
+                if not password:
+                    password = attr.get("password", "")
+                path = cast(str, attr["path"])
+            else:
+                path = self.abspath(path)
+            attr = (yield partial(
+                self.fs_get, 
+                path, 
+                password, 
+                async_=async_, 
+            ))["data"]
+            access_time = datetime.now()
+            attr["accessed"] = access_time.astimezone().strftime("%Y-%m-%dT%H:%M:%S.%f%z")
+            attr["ctime"] = parse_as_timestamp(attr.get("created"))
+            attr["mtime"] = parse_as_timestamp(attr.get("modified"))
+            attr["atime"] = access_time.timestamp()
+            attr["path"] = path
+            attr["password"] = password
+            return attr
+        return run_gen_step(gen_step, async_=async_)
 
     def chdir(
         self, 
         /, 
-        path: str | PathLike[str] = "/", 
+        path: PathType = "/", 
         password: str = "", 
-        _check: bool = True, 
+        *, 
+        async_: Literal[False, True] = False, 
     ):
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+        def gen_step():
+            if isinstance(path, (AttrDict, AlistPath)):
+                if not path["is_dir"]:
+                    raise NotADirectoryError(errno.ENOTDIR, path)
+                self.__dict__["path"] = path["path"]
+                return
             path = self.abspath(path)
-        path = cast(str, path)
-        if path == self.path:
-            pass
-        elif path == "/":
-            self.__dict__["path"] = "/"
-        elif self.attr(path, password, _check=False)["is_dir"]:
-            self.__dict__["path"] = path
-        else:
-            raise NotADirectoryError(errno.ENOTDIR, path)
+            if path == self.path:
+                pass
+            elif path == "/":
+                self.__dict__["path"] = "/"
+            else:
+                attr = yield partial(
+                    self.attr, 
+                    path, 
+                    password, 
+                    async_=async_, 
+                )
+                if attr["is_dir"]:
+                    self.__dict__["path"] = path
+                else:
+                    raise NotADirectoryError(errno.ENOTDIR, attr)
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def copy(
         self, 
         /, 
-        src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
+        src_path: PathType, 
+        dst_path: PathType, 
         src_password: str = "", 
         dst_password: str = "", 
-        overwrite_or_ignore: Optional[bool] = None, 
+        overwrite: bool = False, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
-        _check: bool = True, 
-    ) -> Optional[str]:
-        if isinstance(src_path, (AttrDict, AlistPath)):
-            if not src_password:
-                src_password = src_path.password
-            src_path = src_path["path"]
-        elif _check:
-            src_path = self.abspath(src_path)
-        if isinstance(dst_path, (AttrDict, AlistPath)):
-            if not dst_password:
-                dst_password = dst_path.password
-            dst_path = dst_path["path"]
-        elif _check:
-            dst_path = self.abspath(dst_path)
-        src_path = cast(str, src_path)
-        dst_path = cast(str, dst_path)
-        if _check:
-            src_attr = self.attr(src_path, src_password, _check=False)
-            if src_attr["is_dir"]:
-                if recursive:
-                    return self.copytree(
-                        src_path, 
-                        dst_path, 
-                        src_password, 
-                        dst_password, 
-                        overwrite_or_ignore=overwrite_or_ignore, 
-                        _check=False, 
-                    )
-                if overwrite_or_ignore == False:
-                    return None
-                raise IsADirectoryError(
-                    errno.EISDIR, 
-                    f"source path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}", 
-                )
-        if src_path == dst_path:
-            if overwrite_or_ignore is None:
-                raise SameFileError(src_path)
-            return None
-        cmpath = commonpath((src_path, dst_path))
-        if cmpath == dst_path:
-            if overwrite_or_ignore == False:
-                return None
-            raise PermissionError(
-                errno.EPERM, 
-                f"copy a file as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
-            )
-        elif cmpath == src_path:
-            if overwrite_or_ignore == False:
-                return None
-            raise PermissionError(
-                errno.EPERM, 
-                f"copy a file as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
-            )
-        src_dir, src_name = splitpath(src_path)
-        dst_dir, dst_name = splitpath(dst_path)
-        try:
-            dst_attr = self.attr(dst_path, dst_password, _check=False)
-        except FileNotFoundError:
-            pass
-        else:
-            if dst_attr["is_dir"]:
-                if overwrite_or_ignore == False:
-                    return None
-                raise IsADirectoryError(
-                    errno.EISDIR, 
-                    f"destination path {src_path!r} is a directory: {src_path!r} -> {dst_path!r}", 
-                )
-            elif overwrite_or_ignore is None:
-                raise FileExistsError(
-                    errno.EEXIST, 
-                    f"destination path {dst_path!r} already exists: {src_path!r} -> {dst_path!r}", 
-                )
-            elif not overwrite_or_ignore:
-                return None
-            self.fs_remove(dst_dir, [dst_name], _check=False)
-        if src_name == dst_name:
-            self.fs_copy(src_dir, dst_dir, [src_name], _check=False)
-        else:
-            src_storage = self.storage_of(src_dir, src_password, _check=False)
-            dst_storage = self.storage_of(dst_dir, dst_password, _check=False)
-            if src_storage != dst_storage:
-                if overwrite_or_ignore == False:
-                    return None
-                raise PermissionError(
-                    errno.EPERM, 
-                    f"cross storages replication does not allow renaming: [{src_storage!r}]{src_path!r} -> [{dst_storage!r}]{dst_path!r}", 
-                )
-            tempdirname = str(uuid4())
-            tempdir = joinpath(dst_dir, tempdirname)
-            self.fs_mkdir(tempdir, _check=False)
+        *, 
+        async_: Literal[False] = False, 
+    ) -> None | str | dict:
+        ...
+    @overload
+    def copy(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        overwrite: bool = False, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
+        recursive: bool = False, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None | str | dict]:
+        ...
+    def copy(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        overwrite: bool = False, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
+        recursive: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> None | str | Coroutine[Any, Any, None | str | dict]:
+        def gen_step():
+            nonlocal src_path, dst_path
             try:
-                self.fs_copy(src_dir, tempdir, [src_name], _check=False)
-                self.fs_rename(joinpath(tempdir, src_name), dst_name, _check=False)
-                self.fs_move(tempdir, dst_dir, [dst_name], _check=False)
-            finally:
-                self.fs_remove(dst_dir, [tempdirname], _check=False)
-        return dst_path
+                src_attr = yield partial(
+                    self.attr, 
+                    src_path, 
+                    src_password, 
+                    async_=async_, 
+                )
+                src_path = cast(str, src_attr["path"])
+                if src_attr["is_dir"]:
+                    if recursive:
+                        return (yield partial(
+                            self.copytree, 
+                            src_attr, 
+                            dst_path, 
+                            src_password, 
+                            dst_password, 
+                            overwrite=overwrite, 
+                            onerror=onerror, 
+                            async_=async_, 
+                        ))
+                    raise IsADirectoryError(
+                        errno.EISDIR, 
+                        f"source path is a directory: {src_path!r} -> {dst_path!r}", 
+                    )
 
+                src_password = src_password or src_attr.get("password", "")
+                src_dir, src_name = splitpath(src_path)
+
+                dst_attr: None | AttrDict | AlistPath
+                if isinstance(dst_path, (AttrDict, AlistPath)):
+                    dst_attr = dst_path
+                    dst_path = cast(str, dst_attr["path"])
+                    dst_dir, dst_name = splitpath(dst_path)
+                else:
+                    dst_attr = None
+                    if fspath(dst_path).endswith("/"):
+                        dst_dir, dst_name = dst_path, src_name
+                        dst_path = joinpath(dst_dir, dst_name)
+                    else:
+                        dst_path = self.abspath(dst_path)
+                        dst_dir, dst_name = splitpath(dst_path)
+
+                if src_path == dst_path:
+                    raise SameFileError(src_path)
+                cmpath = commonpath((src_path, dst_path))
+                if cmpath == dst_path:
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a file to its ancestor path is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+                elif cmpath == src_path:
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a file to its descendant path is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+
+                try:
+                    if dst_attr is None:
+                        dst_attr = yield partial(
+                            self.attr, 
+                            dst_path, 
+                            dst_password, 
+                            async_=async_, 
+                        )
+                    dst_password = dst_password or dst_attr.get("password", "")
+                except FileNotFoundError:
+                    yield partial(
+                        self.makedirs, 
+                        dst_dir, 
+                        dst_password, 
+                        exist_ok=True, 
+                        async_=async_, 
+                    )
+                else:
+                    if dst_attr["is_dir"]:
+                        raise IsADirectoryError(
+                            errno.EISDIR, 
+                            f"destination path is a directory: {src_path!r} -> {dst_path!r}", 
+                        )
+                    elif overwrite:
+                        yield partial(
+                            self.remove, 
+                            dst_attr, 
+                            async_=async_, 
+                        )
+                    else:
+                        raise FileExistsError(
+                            errno.EEXIST, 
+                            f"destination path already exists: {src_path!r} -> {dst_path!r}", 
+                        )
+
+                if src_name == dst_name:
+                    resp = yield partial(
+                        self.fs_copy, 
+                        src_dir, 
+                        dst_dir, 
+                        [src_name], 
+                        async_=async_, 
+                    )
+                    tasks = resp["data"]["tasks"]
+                    if not tasks:
+                        return dst_path
+                    task = tasks[0]
+                    task["dst_path"] = dst_path
+                    return task
+                else:
+                    src_storage = yield partial(
+                        self.storage_of, 
+                        src_dir, 
+                        src_password, 
+                        async_=async_, 
+                    )
+                    dst_storage = yield partial(
+                        self.storage_of, 
+                        dst_dir, 
+                        dst_password, 
+                        async_=async_, 
+                    )
+                    if src_storage != dst_storage:
+                        # NOTE: 跨 storage 复制为不同名字的文件，则转化为上传任务
+                        resp = yield partial(
+                            self.fs_put, 
+                            URL(self.get_url(src_path)), 
+                            dst_path, 
+                            as_task=True, 
+                            filesize=src_attr["size"], 
+                            async_=async_, 
+                        )
+                        task = resp["data"]["task"]
+                        task["dst_path"] = dst_path
+                        return task
+
+                    if (yield partial(
+                        self.exists, 
+                        joinpath(dst_dir, src_name), 
+                        async_=async_
+                    )):
+                        yield partial(
+                            self.fs_copy, 
+                            src_dir, 
+                            dst_dir, 
+                            [src_name], 
+                            async_=async_, 
+                        )
+                        yield partial(
+                            self.fs_rename, 
+                            joinpath(dst_dir, src_name), 
+                            dst_name, 
+                            async_=async_, 
+                        )
+                    else:
+                        tempdirname = str(uuid4())
+                        tempdir = joinpath(dst_dir, tempdirname)
+                        yield partial(
+                            self.fs_mkdir, 
+                            tempdir, 
+                            async_=async_, 
+                        )
+                        try:
+                            yield partial(
+                                self.fs_copy, 
+                                src_dir, 
+                                tempdir, 
+                                [src_name], 
+                                async_=async_, 
+                            )
+                            yield partial(
+                                self.fs_rename, 
+                                joinpath(tempdir, src_name), 
+                                dst_name, 
+                                async_=async_, 
+                            )
+                            yield partial(
+                                self.fs_move, 
+                                tempdir, 
+                                dst_dir, 
+                                [dst_name], 
+                                async_=async_, 
+                            )
+                        finally:
+                            yield partial(
+                                self.fs_remove, 
+                                dst_dir, 
+                                [tempdirname], 
+                                async_=async_, 
+                            )
+                    return dst_path
+            except OSError as e:
+                if onerror is True:
+                    raise
+                elif onerror is False or onerror is None:
+                    pass
+                else:
+                    onerror(e)
+                return None
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
     def copytree(
         self, 
         /, 
-        src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
+        src_path: PathType, 
+        dst_path: PathType, 
         src_password: str = "", 
         dst_password: str = "", 
-        overwrite_or_ignore: Optional[bool] = None, 
-        _check: bool = True, 
-    ) -> Optional[str]:
-        if isinstance(src_path, (AttrDict, AlistPath)):
-            if not src_password:
-                src_password = src_path.password
-            src_path = src_path["path"]
-        elif _check:
-            src_path = self.abspath(src_path)
-        if isinstance(dst_path, (AttrDict, AlistPath)):
-            if not dst_password:
-                dst_password = dst_path.password
-            dst_path = dst_path["path"]
-        elif _check:
-            dst_path = self.abspath(dst_path)
-        src_path = cast(str, src_path)
-        dst_path = cast(str, dst_path)
-        if _check:
-            src_attr = self.attr(src_path, src_password, _check=False)
-            if not src_attr["is_dir"]:
-                return self.copy(
+        overwrite: bool = False, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
+        as_task: bool = True, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> None | str | dict:
+        ...
+    @overload
+    def copytree(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        overwrite: bool = False, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
+        as_task: bool = True, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None | str | dict]:
+        ...
+    def copytree(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        overwrite: bool = False, 
+        onerror: None | bool | Callable[[OSError], bool] = True, 
+        as_task: bool = True, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> None | str | dict | Coroutine[Any, Any, None | str | dict]:
+        def gen_step():
+            nonlocal src_path, dst_path
+            try:
+                src_attr = yield partial(
+                    self.attr, 
                     src_path, 
-                    dst_path, 
                     src_password, 
-                    dst_password, 
-                    overwrite_or_ignore=overwrite_or_ignore, 
-                    _check=False, 
+                    async_=async_, 
                 )
-        if src_path == dst_path:
-            if overwrite_or_ignore is None:
-                raise SameFileError(src_path)
-            return None
-        elif commonpath((src_path, dst_path)) == dst_path:
-            if overwrite_or_ignore == False:
-                return None
-            raise PermissionError(
-                errno.EPERM, 
-                f"copy a directory to its subordinate path is not allowed: {src_path!r} ->> {dst_path!r}", 
-            )
-        src_dir, src_name = splitpath(src_path)
-        dst_dir, dst_name = splitpath(dst_path)
-        try:
-            dst_attr = self.attr(dst_path, dst_password, _check=False)
-        except FileNotFoundError:
-            if src_name == dst_name:
-                self.fs_copy(src_dir, dst_dir, [src_name], _check=False)
-                return dst_path
-            self.makedirs(dst_path, dst_password, exist_ok=True, _check=False)
-        else:
-            if not dst_attr["is_dir"]:
-                if overwrite_or_ignore == False:
-                    return None
-                raise NotADirectoryError(
-                    errno.ENOTDIR, 
-                    f"destination is not directory: {src_path!r} ->> {dst_path!r}", 
-                )
-            elif overwrite_or_ignore is None:
-                raise FileExistsError(
-                    errno.EEXIST, 
-                    f"destination already exists: {src_path!r} ->> {dst_path!r}", 
-                )
-        for attr in self.listdir_attr(src_path):
-            if attr["is_dir"]:
-                self.copytree(
-                    joinpath(src_path, attr["name"]), 
-                    joinpath(dst_path, attr["name"]), 
-                    src_password=src_password, 
-                    dst_password=dst_password, 
-                    overwrite_or_ignore=overwrite_or_ignore, 
-                    _check=False, 
-                )
-            else:
-                self.copy(
-                    joinpath(src_path, attr["name"]), 
-                    joinpath(dst_path, attr["name"]), 
-                    src_password=src_password, 
-                    dst_password=dst_password, 
-                    overwrite_or_ignore=overwrite_or_ignore, 
-                    _check=False, 
-                )
-        return dst_path
+                if not src_attr["is_dir"]:
+                    return (yield partial(
+                        self.copy, 
+                        src_attr, 
+                        dst_path, 
+                        src_password, 
+                        dst_password, 
+                        overwrite=overwrite, 
+                        onerror=onerror, 
+                        async_=async_, 
+                    ))
 
-    # TODO: 去除 download 参数
+                src_path = cast(str, src_attr["path"])
+                src_password = src_password or src_attr.get("password", "")
+                src_dir, src_name = splitpath(src_path)
+
+                dst_attr: None | AttrDict | AlistPath
+                if isinstance(dst_path, (AttrDict, AlistPath)):
+                    dst_attr = dst_path
+                    dst_path = cast(str, dst_attr["path"])
+                    dst_dir, dst_name = splitpath(dst_path)
+                else:
+                    dst_attr = None
+                    if fspath(dst_path).endswith("/"):
+                        dst_dir, dst_name = dst_path, src_name
+                        dst_path = joinpath(dst_dir, dst_name)
+                    else:
+                        dst_path = self.abspath(dst_path)
+                        dst_dir, dst_name = splitpath(dst_path)
+
+                if src_path == dst_path:
+                    raise SameFileError(src_path)
+                cmpath = commonpath((src_path, dst_path))
+                if cmpath == dst_path:
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a directory to its ancestor path is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+                elif cmpath == src_path:
+                    raise PermissionError(
+                        errno.EPERM, 
+                        f"copy a directory to its descendant path is not allowed: {src_path!r} -> {dst_path!r}", 
+                    )
+
+                try:
+                    if dst_attr is None:
+                        dst_attr = yield partial(
+                            self.attr, 
+                            dst_path, 
+                            dst_password, 
+                            async_=async_, 
+                        )
+                    dst_password = dst_password or dst_attr.get("password", "")
+                except FileNotFoundError:
+                    yield partial(
+                        self.makedirs, 
+                        dst_dir, 
+                        dst_password, 
+                        exist_ok=True, 
+                        async_=async_, 
+                    )
+                    if src_name == dst_name:
+                        if as_task:
+                            yield partial(
+                                self.fs_copy, 
+                                src_dir, 
+                                dst_dir, 
+                                [src_name], 
+                                async_=async_, 
+                            )
+                            return dst_path
+                    yield partial(
+                        self.fs_mkdir, 
+                        dst_path, 
+                        async_=async_, 
+                    )
+                else:
+                    if not dst_attr["is_dir"]:
+                        raise NotADirectoryError(
+                            errno.ENOTDIR, 
+                            f"destination path is not directory: {src_path!r} -> {dst_path!r}", 
+                        )
+
+                sub_srcattrs = yield partial(
+                    self.listdir_attr, 
+                    src_attr, 
+                    src_password, 
+                    refresh=True, 
+                    async_=async_, 
+                )
+            except OSError as e:
+                if onerror is True:
+                    raise
+                elif onerror is False or onerror is None:
+                    pass
+                else:
+                    onerror(e)
+                return None
+
+            result = {}
+            for sub_srcattr in sub_srcattrs:
+                if sub_srcattr["is_dir"]:
+                    result[sub_srcattr["path"]] = (yield partial(
+                        self.copytree, 
+                        sub_srcattr, 
+                        joinpath(dst_path, sub_srcattr["name"]), 
+                        src_password, 
+                        dst_password, 
+                        overwrite=overwrite, 
+                        onerror=onerror, 
+                        as_task=as_task, 
+                        async_=async_, 
+                    ))
+                else:
+                    result[sub_srcattr["path"]] = (yield partial(
+                        self.copy, 
+                        sub_srcattr, 
+                        joinpath(dst_path, sub_srcattr["name"]), 
+                        src_password, 
+                        dst_password, 
+                        overwrite=overwrite, 
+                        onerror=onerror, 
+                        async_=async_, 
+                    ))
+            return result
+        return run_gen_step(gen_step, async_=async_)
+
+    @property
     def download(
         self, 
         /, 
-        path: str | PathLike[str], 
-        file: bytes | str | PathLike | SupportsWrite[bytes] | TextIOWrapper = "", 
-        write_mode: Literal["", "x", "w", "a"] = "w", 
-        download: None | Callable[[str, SupportsWrite[bytes]], Any] = None, 
+        path: PathType, 
+        file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = True, 
         password: str = "", 
-        _check: bool = True, 
-    ):
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
-            path = self.abspath(path)
-        path = cast(str, path)
-        attr = self.attr(path, password, _check=False)
-        if attr["is_dir"]:
-            raise IsADirectoryError(errno.EISDIR, path)
-        if hasattr(file, "write"):
-            file = file
-            if isinstance(file, TextIOWrapper):
-                file = file.buffer
-        else:
-            local_path = fspath(file)
-            mode: str = write_mode
-            if mode:
-                mode += "b"
-            elif ospath.lexists(local_path):
-                return
-            else:
-                mode = "wb"
-            if local_path:
-                file = open(local_path, mode)
-            else:
-                file = open(basename(path), mode)
-        file = cast(SupportsWrite[bytes], file)
-        url = attr["raw_url"]
-        if download:
-            download(url, file, headers=self.client.headers)
-        else:
-            with urlopen(url, headers=self.client.headers) as fsrc:
-                copyfileobj(fsrc, file)
+        *, 
+        async_: Literal[False] = False, 
+    ) -> None | DownloadTask:
+        ...
+    @property
+    def download(
+        self, 
+        /, 
+        path: PathType, 
+        file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = True, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None | AsyncDownloadTask]:
+        ...
+    def download(
+        self, 
+        /, 
+        path: PathType, 
+        file: bytes | str | PathLike | SupportsWrite[bytes] = "", 
+        write_mode: Literal["a", "w", "x", "i"] = "a", 
+        submit: bool | Callable[[Callable], Any] = True, 
+        password: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> None | DownloadTask | Coroutine[Any, Any, None | AsyncDownloadTask]:
+        """下载文件到路径或文件
 
+        :param path: 文件在 alist 上的路径
+        :param file: 本地路径或可写的文件
+        :param write_mode: 写入模式
+            - a: append，如果文件不存在则创建，存在则追加（断点续传），返回一个任务
+            - w: write， 如果文件不存在则创建，存在则覆盖，返回一个任务
+            - x: exists，如果文件不存在则创建，存在则报错 FileExistsError
+            - i: ignore，如果文件不存在则创建，存在则忽略，返回 None
+        :param submit: 提交执行
+            - 如果为 True，则提交给默认的执行器
+            - 如果为 False，不提交（稍后可执行 start() 方法手动提交，或运行 run() 方法阻塞执行）
+            - 如果为 Callable，则立即调用以提交
+        :param password: 密码，用来获取 alist 上文件的信息
+        :param async_: 是否异步执行
+
+        :return: 返回 None（表示跳过此任务）或任务对象
+        """
+        def gen_step():
+            nonlocal path, file, password
+            url: str = ""
+            if isinstance(path, (AttrDict, AlistPath)):
+                attr = path
+                path = cast(str, attr["path"])
+                if attr["is_dir"]:
+                    raise IsADirectoryError(errno.EISDIR, path)
+                url = attr.get("raw_url", "")
+                if not url and not password:
+                    password = attr.get("password", "")
+            else:
+                path = self.abspath(path)
+
+            if not url:
+                attr = yield partial(
+                    self.attr, 
+                    path, 
+                    password, 
+                    async_=async_, 
+                )
+                if attr["is_dir"]:
+                    raise IsADirectoryError(errno.EISDIR, path)
+                url = attr["raw_url"]
+
+            if not isinstance(file, SupportsWrite):
+                filepath = fspath(file)
+                if not filepath:
+                    filepath = attr["name"]
+                if ospath.lexists(filepath):
+                    if write_mode == "x":
+                        raise FileExistsError(
+                            errno.EEXIST, 
+                            f"local path already exists: {filepath!r}", 
+                        )
+                    elif write_mode == "i":
+                        return None
+                file = filepath
+
+            kwargs: dict = {
+                "url": url, 
+                "file": file, 
+                "headers": dict(self.client.headers), 
+                "resume": write_mode == "a", 
+            }
+            if callable(submit):
+                kwargs["submit"] = submit
+            task: AsyncDownloadTask | DownloadTask
+            if async_:
+                def async_response_generator_wrapper(func):
+                    async def wrapper(*args, **kwds):
+                        it = func(*args, **kwds)
+                        resp = await anext(it)
+                        def aclose():
+                            async def none():
+                                pass
+                            resp.aclose = none
+                            return it.aclose()
+                        resp.aclose = aclose
+                        resp.aiter  = it
+                        return resp
+                    return wrapper
+                try:
+                    from aiohttp import request as async_request
+                except ImportError:
+                    from httpx import AsyncClient
+
+                    async def urlopen_for_iter_bytes(url, headers):
+                        async with AsyncClient() as client:
+                            async with client.stream("GET", url, headers=headers, follow_redirects=True) as resp:
+                                yield resp
+                                async for chunk in resp.aiter_bytes(COPY_BUFSIZE):
+                                    yield chunk
+                else:
+                    async def urlopen_for_iter_bytes(url, headers):
+                        async with async_request("GET", url, headers=headers) as resp:
+                            yield resp
+                            read = resp.content.read
+                            while chunk := (await read(COPY_BUFSIZE)):
+                                yield chunk
+                kwargs["urlopen"] = async_response_generator_wrapper(urlopen_for_iter_bytes)
+                kwargs["iter_bytes"] = lambda resp: resp.aiter
+                task = AsyncDownloadTask.create_task(**kwargs)
+            else:
+                task = DownloadTask.create_task(**kwargs)
+            if callable(submit) or submit:
+                yield task.start
+            return task
+        return run_gen_step(gen_step, async_=async_)
+
+    # TODO: 增加条件化重试机制
+    # TODO: 后台开启一个下载管理器，可以管理各个下载任务，所有任务完成后，下载管理器关闭，下载任务可以排队
+    # TODO: 下载管理器，多线程使用 ThreadPoolExecutor，异步使用 TaskGroup
+    # TODO: 支持异步
+    # TODO: 批量下载，就不会直接下载到打开的文件中，因此断点续传更容易实现
     def download_tree(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
-        local_dir: bytes | str | PathLike = "", 
+        path: PathType = "", 
+        to_dir: bytes | str | PathLike = "", 
         no_root: bool = False, 
         write_mode: Literal["", "x", "w", "a"] = "w", 
-        download: Optional[Callable[[str, SupportsWrite[bytes]], Any]] = None, 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ):
-        is_dir: bool
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.password
-            is_dir = path.is_dir()
-            path = path["path"]
-        elif _check:
-            path = self.abspath(path)
-            is_dir = self.attr(path, password, _check=False)["is_dir"]
-        else:
-            is_dir = True
-        if refresh is None:
-            refresh = self.refresh
-        path = cast(str, path)
-        refresh = cast(bool, refresh)
-        local_dir = fsdecode(local_dir)
-        if local_dir:
-            makedirs(local_dir, exist_ok=True)
-        if is_dir:
-            if not no_root:
-                local_dir = ospath.join(local_dir, basename(path))
-                if local_dir:
-                    makedirs(local_dir, exist_ok=True)
-            for pathobj in self.listdir_path(path, password, refresh=refresh, _check=False):
-                name = pathobj.name
-                if pathobj.is_dir():
-                    self.download_tree(
-                        pathobj["path"], 
-                        ospath.join(local_dir, name), 
-                        no_root=True, 
-                        write_mode=write_mode, 
-                        download=download, 
-                        password=password, 
-                        refresh=refresh, 
-                        _check=False, 
-                    )
-                else:
-                    self.download(
-                        pathobj["path"], 
-                        ospath.join(local_dir, name), 
-                        write_mode=write_mode, 
-                        download=download, 
-                        password=password, 
-                        _check=False, 
-                    )
-        else:
-            self.download(
+        def gen_step():
+            attr = yield partial(
+                self.attr, 
                 path, 
-                ospath.join(local_dir, basename(path)), 
-                write_mode=write_mode, 
-                download=download, 
-                password=password, 
-                _check=False, 
+                password, 
+                async_=async_, 
             )
+            if attr["is_dir"]:
+                yield partial(
+                    self.download, 
+                    attr, 
+                )
+                return
+            is_dir: bool
+            if isinstance(path, (AttrDict, AlistPath)):
+                if not password:
+                    password = path.get("password", "")
+                is_dir = path.is_dir()
+                path = cast(str, path["path"])
+            else:
+                path = self.abspath(path)
+                is_dir = self.attr(path, password, _check=False)["is_dir"]
+
+
+            if refresh is None:
+                refresh = self.refresh
+            to_dir = fsdecode(to_dir)
+            if to_dir:
+                makedirs(to_dir, exist_ok=True)
+            if is_dir:
+                if not no_root:
+                    to_dir = ospath.join(to_dir, basename(path))
+                    if to_dir:
+                        makedirs(to_dir, exist_ok=True)
+                for pathobj in self.listdir_path(path, password, refresh=refresh, _check=False):
+                    name = pathobj.name
+                    if pathobj.is_dir():
+                        self.download_tree(
+                            pathobj["path"], 
+                            ospath.join(to_dir, name), 
+                            no_root=True, 
+                            write_mode=write_mode, 
+                            download=download, 
+                            password=password, 
+                            refresh=refresh, 
+                            _check=False, 
+                        )
+                    else:
+                        self.download(
+                            pathobj["path"], 
+                            ospath.join(to_dir, name), 
+                            write_mode=write_mode, 
+                            download=download, 
+                            password=password, 
+                            _check=False, 
+                        )
+            else:
+                self.download(
+                    path, 
+                    ospath.join(to_dir, basename(path)), 
+                    write_mode=write_mode, 
+                    download=download, 
+                    password=password, 
+                    _check=False, 
+                )
+        return run_gen_step_iter(gen_step, async_=async_)
 
     def exists(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
     ) -> bool:
         try:
             self.attr(path, password, _check=_check)
@@ -1999,38 +2403,44 @@ class AlistFileSystem:
     def getcwd(self, /) -> str:
         return self.path
 
-    def get_directory_capacity(
+    def dirlen(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> int:
         return self.fs_list(path, per_page=1, password=password, refresh=refresh, _check=_check)["data"]["total"]
 
     def get_url(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
+        token: bool | str = "", 
+        expire_timestamp: int = 0, 
         ensure_ascii: bool = True, 
-        _check: bool = True, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
-            path = path["path"]
-        elif _check:
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
-        return self.client.get_url(path, ensure_ascii=ensure_ascii)
+        if token:
+            return self.client.get_url(
+                path, 
+                self.token if token is True else token, 
+                expire_timestamp=expire_timestamp, 
+                ensure_ascii=ensure_ascii, 
+            )
+        else:
+            return self.client.get_url(path, ensure_ascii=ensure_ascii)
 
     def glob(
         self, 
         /, 
         pattern: str = "*", 
-        dirname: str | PathLike[str] = "", 
+        dirname: PathType = "", 
         ignore_case: bool = False, 
         password: str = "", 
-        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         if pattern == "*":
             return self.iter(dirname, password=password, _check=_check)
@@ -2048,9 +2458,9 @@ class AlistFileSystem:
             dirname = "/"
         elif isinstance(dirname, AlistPath):
             if not password:
-                password = dirname.password
+                password = dirname.get("password", "")
             dirname = dirname["path"]
-        elif _check:
+        else:
             dirname = self.abspath(dirname)
         dirname = cast(str, dirname)
         i = 0
@@ -2127,9 +2537,8 @@ class AlistFileSystem:
     def isdir(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ) -> bool:
         try:
             return self.attr(path, password, _check=_check)["is_dir"]
@@ -2139,9 +2548,8 @@ class AlistFileSystem:
     def isfile(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ) -> bool:
         try:
             return not self.attr(path, password, _check=_check)["is_dir"]
@@ -2151,40 +2559,36 @@ class AlistFileSystem:
     def is_empty(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ) -> bool:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         try:
             attr = self.attr(path, password, _check=False)
         except FileNotFoundError:
             return True
         if attr["is_dir"]:
-            return self.get_directory_capacity(path, password, _check=False) == 0
+            return self.dirlen(path, password, _check=False) == 0
         else:
             return attr["size"] == 0
 
     def is_storage(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ) -> bool:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             return True
         try:
@@ -2198,14 +2602,13 @@ class AlistFileSystem:
     def _iter_bfs(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
+        top: PathType = "", 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         password: str = "", 
-        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         dq: deque[tuple[int, AlistPath]] = deque()
         push, pop = dq.append, dq.popleft
@@ -2243,15 +2646,14 @@ class AlistFileSystem:
     def _iter_dfs(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
+        top: PathType = "", 
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         password: str = "", 
-        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         if not max_depth:
             return
@@ -2308,15 +2710,14 @@ class AlistFileSystem:
     def iter(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
-        topdown: Optional[bool] = True, 
+        top: PathType = "", 
+        topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], Optional[bool]]] = None, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         password: str = "", 
-        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         if topdown is None:
             return self._iter_bfs(
@@ -2345,12 +2746,11 @@ class AlistFileSystem:
     def iterdir(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
     ) -> Iterator[dict]:
         yield from self.listdir_attr(
             path, 
@@ -2367,12 +2767,11 @@ class AlistFileSystem:
     def listdir(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
     ) -> list[str]:
         return [item["name"] for item in self.listdir_attr(
             path, 
@@ -2386,23 +2785,20 @@ class AlistFileSystem:
     def listdir_attr(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
     ) -> list[dict]:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
         if refresh is None:
             refresh = self.refresh
-        path = cast(str, path)
-        refresh = cast(bool, refresh)
         if not self.attr(path, password, _check=False)["is_dir"]:
             raise NotADirectoryError(errno.ENOTDIR, path)
         data = self.fs_list(
@@ -2413,28 +2809,24 @@ class AlistFileSystem:
             per_page=per_page, 
             _check=False, 
         )["data"]
-        last_update = time()
         content = data["content"]
         if not content:
             return []
         for attr in content:
             attr["ctime"] = int(parse_as_timestamp(attr.get("created")))
             attr["mtime"] = int(parse_as_timestamp(attr.get("modified")))
-            attr["atime"] = int(last_update)
             attr["path"] = joinpath(path, attr["name"])
             attr["password"] = password
-            attr["last_update"] = last_update
         return content
 
     def listdir_path(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
+        refresh: None | bool = None, 
         page: int = 1, 
         per_page: int = 0, 
-        _check: bool = True, 
     ) -> list[AlistPath]:
         return [
             AlistPath(self, **item) 
@@ -2451,18 +2843,16 @@ class AlistFileSystem:
     def makedirs(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
         exist_ok: bool = False, 
-        _check: bool = True, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             return "/"
         if not exist_ok and self.exists(path, password, _check=False):
@@ -2473,17 +2863,15 @@ class AlistFileSystem:
     def mkdir(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             raise PermissionError(
                 errno.EPERM, 
@@ -2508,23 +2896,22 @@ class AlistFileSystem:
     def move(
         self, 
         /, 
-        src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
+        src_path: PathType, 
+        dst_path: PathType, 
         src_password: str = "", 
         dst_password: str = "", 
-        _check: bool = True, 
     ) -> str:
         if isinstance(src_path, (AttrDict, AlistPath)):
             if not src_password:
-                src_password = src_path.password
+                src_password = src_path.get("password", "")
             src_path = src_path["path"]
-        elif _check:
+        else:
             src_path = self.abspath(src_path)
         if isinstance(dst_path, (AttrDict, AlistPath)):
             if not dst_password:
-                dst_password = dst_path.password
+                dst_password = dst_path.get("password", "")
             dst_path = dst_path["path"]
-        elif _check:
+        else:
             dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
         dst_path = cast(str, dst_path)
@@ -2562,17 +2949,16 @@ class AlistFileSystem:
     def open(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         mode: str = "r", 
         buffering: Optional[int] = None, 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
         headers: Optional[Mapping] = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
         password: str = "", 
-        _check: bool = True, 
     ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
@@ -2595,11 +2981,10 @@ class AlistFileSystem:
     def read_bytes(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         start: int = 0, 
         stop: Optional[int] = None, 
         password: str = "", 
-        _check: bool = True, 
     ) -> bytes:
         path = self.as_path(path, password, _check=_check)
         if path.is_dir():
@@ -2609,10 +2994,9 @@ class AlistFileSystem:
     def read_bytes_range(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         bytes_range: str = "0-", 
         password: str = "", 
-        _check: bool = True, 
     ) -> bytes:
         path = self.as_path(path, password, _check=_check)
         if path.is_dir():
@@ -2622,11 +3006,10 @@ class AlistFileSystem:
     def read_block(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         size: int = 0, 
         offset: int = 0, 
         password: str = "", 
-        _check: bool = True, 
     ) -> bytes:
         if size <= 0:
             return b""
@@ -2638,12 +3021,11 @@ class AlistFileSystem:
     def read_text(
         self, 
         /, 
-        path: str | PathLike[str], 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        path: PathType, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
         password: str = "", 
-        _check: bool = True, 
     ):
         return self.open(
             path, 
@@ -2657,18 +3039,16 @@ class AlistFileSystem:
     def remove(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
         recursive: bool = False, 
-        _check: bool = True, 
     ):
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             if recursive:
                 try:
@@ -2702,20 +3082,18 @@ class AlistFileSystem:
     def removedirs(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ):
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
-        get_directory_capacity = self.get_directory_capacity
+        dirlen = self.dirlen
         remove_storage = self.fs_remove_storage
-        if get_directory_capacity(path, password, _check=False):
+        if dirlen(path, password, _check=False):
             raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
         try:
             storages = self.list_storage()
@@ -2731,7 +3109,7 @@ class AlistFileSystem:
         parent_dir = dirname(path)
         del_dir = ""
         try:
-            while get_directory_capacity(parent_dir, password, _check=False) <= 1:
+            while dirlen(parent_dir, password, _check=False) <= 1:
                 for storage in storages:
                     if storage["mount_path"] == parent_dir:
                         remove_storage(storage["id"])
@@ -2748,24 +3126,23 @@ class AlistFileSystem:
     def rename(
         self, 
         /, 
-        src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
+        src_path: PathType, 
+        dst_path: PathType, 
         src_password: str = "", 
         dst_password: str = "", 
         replace: bool = False, 
-        _check: bool = True, 
     ) -> str:
         if isinstance(src_path, (AttrDict, AlistPath)):
             if not src_password:
-                src_password = src_path.password
+                src_password = src_path.get("password", "")
             src_path = src_path["path"]
-        elif _check:
+        else:
             src_path = self.abspath(src_path)
         if isinstance(dst_path, (AttrDict, AlistPath)):
             if not dst_password:
-                dst_password = dst_path.password
+                dst_password = dst_path.get("password", "")
             dst_path = dst_path["path"]
-        elif _check:
+        else:
             dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
         dst_path = cast(str, dst_path)
@@ -2811,7 +3188,7 @@ class AlistFileSystem:
                     )
                 elif src_attr["is_dir"]:
                     if dst_attr["is_dir"]:
-                        if self.get_directory_capacity(dst_path, dst_password, _check=False):
+                        if self.dirlen(dst_path, dst_password, _check=False):
                             raise OSError(errno.ENOTEMPTY, f"directory {dst_path!r} is not empty: {src_path!r} -> {dst_path!r}")
                     else:
                         raise NotADirectoryError(errno.ENOTDIR, f"{dst_path!r} is not a directory: {src_path!r} -> {dst_path!r}")
@@ -2851,23 +3228,22 @@ class AlistFileSystem:
     def renames(
         self, 
         /, 
-        src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
+        src_path: PathType, 
+        dst_path: PathType, 
         src_password: str = "", 
         dst_password: str = "", 
-        _check: bool = True, 
     ) -> str:
         if isinstance(src_path, (AttrDict, AlistPath)):
             if not src_password:
-                src_password = src_path.password
+                src_password = src_path.get("password", "")
             src_path = src_path["path"]
-        elif _check:
+        else:
             src_path = self.abspath(src_path)
         if isinstance(dst_path, (AttrDict, AlistPath)):
             if not dst_password:
-                dst_password = dst_path.password
+                dst_password = dst_path.get("password", "")
             dst_path = dst_path["path"]
-        elif _check:
+        else:
             dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
         dst_path = cast(str, dst_path)
@@ -2882,11 +3258,10 @@ class AlistFileSystem:
     def replace(
         self, 
         /, 
-        src_path: str | PathLike[str], 
-        dst_path: str | PathLike[str], 
+        src_path: PathType, 
+        dst_path: PathType, 
         src_password: str = "", 
         dst_password: str = "", 
-        _check: bool = True, 
     ) -> str:
         return self.rename(src_path, dst_path, src_password, dst_password, replace=True, _check=_check)
 
@@ -2894,10 +3269,9 @@ class AlistFileSystem:
         self, 
         /, 
         pattern: str = "", 
-        dirname: str | PathLike[str] = "", 
+        dirname: PathType = "", 
         ignore_case: bool = False, 
         password: str = "", 
-        _check: bool = True, 
     ) -> Iterator[AlistPath]:
         if not pattern:
             return self.iter(dirname, password=password, max_depth=-1, _check=_check)
@@ -2910,17 +3284,15 @@ class AlistFileSystem:
     def rmdir(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ):
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         elif self.is_storage(path, password, _check=False):
@@ -2934,19 +3306,17 @@ class AlistFileSystem:
     def rmtree(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         password: str = "", 
-        _check: bool = True, 
     ):
         self.remove(path, password, recursive=True, _check=_check)
 
     def scandir(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> Iterator[AlistPath]:
         for item in self.listdir_attr(
             path, 
@@ -2959,9 +3329,8 @@ class AlistFileSystem:
     def stat(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
     ) -> stat_result:
         attr = self.attr(path, password, _check=_check)
         is_dir = attr.get("is_dir", False)
@@ -2981,17 +3350,15 @@ class AlistFileSystem:
     def storage_of(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if path == "/":
             return "/"
         try:
@@ -3024,17 +3391,15 @@ class AlistFileSystem:
     def touch(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
-        _check: bool = True, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if not self.exists(path, password, _check=False):
             dir_ = dirname(path)
             if not self.attr(dir_, password, _check=False)["is_dir"]:
@@ -3046,11 +3411,10 @@ class AlistFileSystem:
         self, 
         /, 
         file: bytes | str | PathLike | SupportsRead[bytes] | TextIOWrapper, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         password: str = "", 
         as_task: bool = False, 
-        overwrite_or_ignore: Optional[bool] = None, 
-        _check: bool = True, 
+        overwrite_or_ignore: None | bool = None, 
     ) -> str:
         if hasattr(file, "read"):
             if not fspath(path):
@@ -3065,11 +3429,10 @@ class AlistFileSystem:
                 path = ospath.basename(local_path)
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         try:
             attr = self.attr(path, password, _check=False)
         except FileNotFoundError:
@@ -3103,21 +3466,19 @@ class AlistFileSystem:
     def upload_tree(
         self, 
         /, 
-        local_path: str | PathLike[str], 
-        path: str | PathLike[str] = "", 
+        local_path: PathType, 
+        path: PathType = "", 
         password: str = "", 
         as_task: bool = False, 
         no_root: bool = False, 
-        overwrite_or_ignore: Optional[bool] = None, 
-        _check: bool = True, 
+        overwrite_or_ignore: None | bool = None, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
-                password = path.password
-            path = path["path"]
-        elif _check:
+                password = path.get("password", "")
+            path = cast(str, path["path"])
+        else:
             path = self.abspath(path)
-        path = cast(str, path)
         if self.isfile(path):
             raise NotADirectoryError(errno.ENOTDIR, path)
         try:
@@ -3161,21 +3522,20 @@ class AlistFileSystem:
     def _walk_bfs(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
+        top: PathType = "", 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
         dq: deque[tuple[int, str]] = deque()
         push, pop = dq.append, dq.popleft
         if isinstance(top, AlistPath):
             if not password:
-                password = top.password
+                password = top.get("password", "")
             top = top["path"]
-        elif _check:
+        else:
             top = self.abspath(top)
         top = cast(str, top)
         push((0, top))
@@ -3208,14 +3568,13 @@ class AlistFileSystem:
     def _walk_dfs(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
+        top: PathType = "", 
         topdown: bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
         if not max_depth:
             return
@@ -3226,9 +3585,9 @@ class AlistFileSystem:
         yield_me = min_depth <= 0
         if isinstance(top, AlistPath):
             if not password:
-                password = top.password
+                password = top.get("password", "")
             top = top["path"]
-        elif _check:
+        else:
             top = self.abspath(top)
         top = cast(str, top)
         try:
@@ -3265,14 +3624,13 @@ class AlistFileSystem:
     def walk(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
-        topdown: Optional[bool] = True, 
+        top: PathType = "", 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[str], list[str]]]:
         for path, dirs, files in self.walk_attr(
             top, 
@@ -3289,14 +3647,13 @@ class AlistFileSystem:
     def walk_attr(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
-        topdown: Optional[bool] = True, 
+        top: PathType = "", 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[dict], list[dict]]]:
         if topdown is None:
             return self._walk_bfs(
@@ -3323,14 +3680,13 @@ class AlistFileSystem:
     def walk_path(
         self, 
         /, 
-        top: str | PathLike[str] = "", 
-        topdown: Optional[bool] = True, 
+        top: PathType = "", 
+        topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
         onerror: None | bool | Callable = None, 
         password: str = "", 
-        refresh: Optional[bool] = None, 
-        _check: bool = True, 
+        refresh: None | bool = None, 
     ) -> Iterator[tuple[str, list[AlistPath], list[AlistPath]]]:
         for path, dirs, files in self.walk_attr(
             top, 
@@ -3351,11 +3707,10 @@ class AlistFileSystem:
     def write_bytes(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         data: bytes | bytearray | memoryview | SupportsRead[bytes] = b"", 
         password: str = "", 
         as_task: bool = False, 
-        _check: bool = True, 
     ):
         if isinstance(data, (bytes, bytearray, memoryview)):
             data = BytesIO(data)
@@ -3371,14 +3726,13 @@ class AlistFileSystem:
     def write_text(
         self, 
         /, 
-        path: str | PathLike[str], 
+        path: PathType, 
         text: str = "", 
-        encoding: Optional[str] = None, 
-        errors: Optional[str] = None, 
-        newline: Optional[str] = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
         password: str = "", 
         as_task: bool = False, 
-        _check: bool = True, 
     ):
         bio = BytesIO()
         if text:

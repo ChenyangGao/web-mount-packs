@@ -2168,7 +2168,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             onerror=onerror, 
                             async_=async_, 
                         ))
-                    raise IsADirectoryError(errno.EISDIR, f"source path is a directory: {src_path!r}")
+                    raise IsADirectoryError(
+                        errno.EISDIR, 
+                        f"source path is a directory: {src_path!r} -> {dst_path!r}", 
+                    )
 
                 src_patht = yield partial(self.get_patht, src_path, async_=async_)
                 *src_dirt, src_name = src_patht

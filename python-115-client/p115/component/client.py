@@ -7,6 +7,7 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["check_response", "P115Client", "P115Url", "ExportDirStatus", "PushExtractProgress", "ExtractProgress"]
 
 import errno
+import posixpath
 
 from asyncio import create_task, to_thread
 from base64 import b64encode
@@ -3746,6 +3747,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取 life_list 操作记录明细
+        GET https://proapi.115.com/android/1.0/behavior/detail
         payload:
             - type: str
                 # 操作类型
@@ -6968,15 +6970,21 @@ class P115Client:
             - pick_code: str
             - full_name: str
         """
+        path = path.rstrip("/")
         resp = self.extract_download_url_web(
-            {"pick_code": pickcode, "full_name": path.strip("/")}, 
+            {"pick_code": pickcode, "full_name": path.lstrip("/")}, 
             async_=async_, 
             **request_kwargs, 
         )
         def get_url(resp: dict) -> P115Url:
             data = check_response(resp)["data"]
             url = quote(data["url"], safe=":/?&=%#")
-            return P115Url(url, headers=resp["headers"])
+            return P115Url(
+                url, 
+                file_path=path, 
+                file_name=posixpath.basename(path), 
+                headers=resp["headers"], 
+            )
         if async_:
             async def async_request() -> P115Url:
                 return get_url(await cast(Coroutine[Any, Any, dict], resp))

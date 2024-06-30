@@ -33,7 +33,7 @@ class P115OfflineClearEnum(Enum):
     failed_and_files = 5
 
     @classmethod
-    def ensure(cls, val, /) -> Self:
+    def of(cls, val, /) -> Self:
         if isinstance(val, cls):
             return val
         try:
@@ -105,6 +105,14 @@ class P115Offline:
     def info(self, /) -> dict:
         "获取关于离线的限制的信息"
         return self.get_info()
+
+    @property
+    def quota(self, /) -> int:
+        return self.quota_info["quota"]
+
+    @property
+    def quota_total(self, /) -> int:
+        return self.quota_info["total"]
 
     @property
     def quota_info(self, /) -> dict:
@@ -288,7 +296,7 @@ class P115Offline:
             - 已完成+删除源文件: 4, 'completed_and_files', P115OfflineClearEnum.completed_and_files
             - 全部+删除源文件: 5, 'failed_and_files', P115OfflineClearEnum.failed_and_files
         """
-        flag = P115OfflineClearEnum(flag)
+        flag = P115OfflineClearEnum.of(flag)
         return check_response(self.client.offline_clear( # type: ignore
             flag.value, 
             request=self.async_request if async_ else self.request, 

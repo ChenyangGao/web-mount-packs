@@ -2,9 +2,11 @@
 # encoding: utf
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
-    "DownloadProgress", "DownloadTask", "AsyncDownloadTask", 
+    "DownloadTaskStatus", "DownloadProgress", 
+    "DownloadTask", "AsyncDownloadTask", 
+    #"DownloadTaskManager", "AsyncDownloadTaskManager", 
     "download_iter", "download", "download_async_iter", "download_async", 
 ]
 
@@ -20,11 +22,16 @@ __all__ = [
 
 import errno
 
-from collections.abc import AsyncGenerator, Generator, Callable, Generator
+from asyncio import create_task
+from asyncio.exceptions import CancelledError, InvalidStateError
+from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterator
+from enum import IntEnum
+from inspect import isawaitable
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
-from threading import Event
+from threading import Event, Lock
 from typing import cast, Any, NamedTuple, Self
 
 from asynctools import ensure_aiter, ensure_async, as_thread
@@ -47,11 +54,34 @@ else:
         setattr(FileIOWrapperBase, "__getattr__", lambda self, attr, /: getattr(self.file, attr))
 
 
+class DownloadTaskStatus(IntEnum):
+    PENDING = 0
+    RUNNING = 1
+    PAUSED = 2
+    FINISHED = 3
+    CANCELED = 4
+    FAILED = 5
+
+    def __str__(self, /) -> str:
+        return repr(self)
+
+    @classmethod
+    def of(cls, val, /) -> Self:
+        if isinstance(val, cls):
+            return val
+        try:
+            if isinstance(val, str):
+                return cls[val]
+        except KeyError:
+            pass
+        return cls(val)
+
+
 class DownloadProgress(NamedTuple):
     total: int
     downloaded: int
     skipped: int
-    last_incr: int = 0
+    last_increment: int = 0
     extra: Any = None
 
     @property
@@ -71,23 +101,128 @@ class DownloadProgress(NamedTuple):
         return self.completed >= self.total
 
 
-class DownloadTask:
+class BaseDownloadTask(ABC):
+    state: DownloadTaskStatus = DownloadTaskStatus.PENDING
+    progress: None | DownloadProgress = None
+    _exception: None | BaseException
 
-    def __init__(self, /, gen, submit=run_as_thread):
-        if not callable(submit):
-            submit = submit.submit
-        self._submit = submit
-        self._state = "PENDING"
-        self._gen = gen
-        self._done_event = Event()
+    def __init__(self, /):
+        self.done_callbacks: list[Callable[[Self], Any]] = []
+
+    def __del__(self, /):
+        self.cancel()
 
     def __repr__(self, /) -> str:
+        name = type(self).__qualname__
+        state = self.state
+        if state is DownloadTaskStatus.FAILED:
+            return f"<{name} :: state={state!r} progress={self.progress!r} exception={self.exception()!r}>"
+        return f"<{name} :: state={state!r} progress={self.progress!r}>"
+
+    @property
+    def pending(self, /) -> bool:
+        return self.state is DownloadTaskStatus.PENDING
+
+    @property
+    def running(self, /) -> bool:
+        return self.state is DownloadTaskStatus.RUNNING
+
+    @property
+    def paused(self, /) -> bool:
+        return self.state is DownloadTaskStatus.PAUSED
+
+    @property
+    def finished(self, /) -> bool:
+        return self.state is DownloadTaskStatus.FINISHED
+
+    @property
+    def canceled(self, /) -> bool:
+        return self.state is DownloadTaskStatus.CANCELED
+
+    @property
+    def failed(self, /) -> bool:
+        return self.state is DownloadTaskStatus.FAILED
+
+    @property
+    def processing(self, /) -> bool:
+        return self.state in (DownloadTaskStatus.RUNNING, DownloadTaskStatus.PAUSED)
+
+    @property
+    def done(self, /) -> bool:
+        return self.state in (DownloadTaskStatus.FINISHED, DownloadTaskStatus.CANCELED, DownloadTaskStatus.FAILED)
+
+    def cancel(self, /):
+        if not self.done:
+            self.set_exception(CancelledError())
+            self.state = DownloadTaskStatus.CANCELED
+
+    def pause(self, /):
+        if self.processing:
+            self.state = DownloadTaskStatus.PAUSED
+        else:
+            raise InvalidStateError(f"can't pause when state={self.state!r}")
+
+    def exception(self, /) -> None | BaseException:
+        if self.done:
+            return self._exception
+        else:
+            raise InvalidStateError(self.state)
+
+    def set_exception(self, exception, /):
+        self._exception = exception
+
+    def result(self, /):
+        if self.finished:
+            return self._result
+        elif not self.done:
+            raise InvalidStateError(self.state)
+        else:
+            raise cast(BaseException, self._exception)
+
+    def set_result(self, result, /):
+        self._result = result
+
+    def add_done_callback(self, /, callback: Callable[[Self], Any]):
+        if self.done:
+            callback(self)
+        else:
+            self.done_callbacks.append(callback)
+
+    def remove_done_callback(self, /, callback: int | slice | Callable[[Self], Any] = -1):
+        try:
+            if callable(callback):
+                self.done_callbacks.remove(callback)
+            else:
+                del self.done_callbacks[callback]
+        except (IndexError, ValueError):
+            pass
+
+    @abstractmethod
+    def run(self, /):
         match state := self.state:
-            case "FINISHED":
-                return f"<{type(self).__qualname__} :: state={state!r} result={self.result} progress={self.progress!r}>"
-            case "FAILED":
-                return f"<{type(self).__qualname__} :: state={state!r} reason={self.result} progress={self.progress!r}>"
-        return f"<{type(self).__qualname__} :: state={state!r} progress={self.progress!r}>"
+            case DownloadTaskStatus.PENDING | DownloadTaskStatus.PAUSED:
+                self.state = DownloadTaskStatus.RUNNING
+            case DownloadTaskStatus.RUNNING:
+                raise RuntimeError("already running")
+            case _:
+                raise RuntimeError(f"can't run when state={state!r}")
+
+
+class DownloadTask(BaseDownloadTask):
+
+    def __init__(
+        self, 
+        it: Iterator[DownloadProgress], 
+        /, 
+        submit=run_as_thread, 
+    ):
+        super().__init__()
+        if not callable(submit):
+            submit = submit.submit
+        self.submit = submit
+        self._it = it
+        self._state_lock = Lock()
+        self._done_event = Event()
 
     @classmethod
     def create_task(
@@ -99,82 +234,144 @@ class DownloadTask:
     ) -> Self:
         return cls(download_iter(*args, **kwargs), submit=submit)
 
-    @property
-    def closed(self, /) -> bool:
-        return self._state in ("CANCELED", "FAILED", "FINISHED")
+    def add_done_callback(self, /, callback: Callable[[Self], Any]):
+        with self._state_lock:
+            if not self.done:
+                self.done_callbacks.append(callback)
+                return
+        return callback(self)
 
-    @property
-    def progress(self, /) -> None | DownloadProgress:
-        return self.__dict__.get("_progress")
-
-    @property
-    def result(self, /):
-        self._done_event.wait()
-        return self._result
-
-    @result.setter
-    def result(self, val, /):
-        self._result = val
+    def cancel(self, /):
+        with self._state_lock:
+            super().cancel() 
         self._done_event.set()
 
-    @property
-    def state(self, /) -> str:
-        return self._state
-
-    def close(self, /):
-        if self._state in ("CANCELED", "FAILED", "FINISHED"):
-            pass
-        else:
-            state = self._state
-            self._state = "CANCELED"
-            if state != "RUNNING":
-                self.run()
-
     def pause(self, /):
-        if self._state in ("PAUSED", "RUNNING"):
-            self._state = "PAUSED"
-        else:
-            raise RuntimeError(f"can't pause when state={self._state!r}")
+        with self._state_lock:
+            super().pause()
 
-    def _run(self, /):
-        if self._state in ("PENDING", "PAUSED"):
-            self._state = "RUNNING"
-        else:
-            raise RuntimeError(f"can't run when state={self._state!r}")
-        gen = self._gen
+    def exception(self, /, timeout: None | float = None) -> None | BaseException:
+        self._done_event.wait(timeout)
+        return super().exception()
+
+    def set_exception(self, exception, /):
+        super().set_exception(exception)
+        self._done_event.set()
+
+    def result(self, /, timeout: None | float = None):
+        self._done_event.wait(timeout)
+        return super().result()
+
+    def set_result(self, result, /):
+        super().set_result(result)
+        self._done_event.set()
+
+    def run(self, /):
+        super().run()
+        state_lock = self._state_lock
+        it = self._it
+        step = it.__next__
         try:
-            while self._state == "RUNNING":
-                self._progress = next(gen)
+            while self.running:
+                self.progress = step()
         except KeyboardInterrupt:
             raise
         except StopIteration as exc:
-            self._state = "FINISHED"
-            self.result = exc.value
+            with state_lock:
+                self.state = DownloadTaskStatus.FINISHED
+                self.set_result(exc.value)
         except BaseException as exc:
-            self._state = "FAILED"
-            self.result = exc
+            with state_lock:
+                self.state = DownloadTaskStatus.FAILED
+                self.set_exception(exc)
         else:
-            if self._state == "CANCELED":
+            if self.done:
                 try:
-                    gen.close()
-                finally:
-                    self.result = None
+                    getattr(it, "__del__")()
+                except:
+                    pass
+                for callback in self.done_callbacks:
+                    try:
+                        callback(cast(Self, self))
+                    except:
+                        pass
 
-    def run(self, /):
-        return self._submit(self._run)
-
-    def run_wait(self, /):
-        if not self._done_event.is_set():
-            if self._state == "RUNNING":
-                self._done_event.wait()
-            else:
-                self._run()
+    def start(self, /, wait: bool = True):
+        with self._state_lock:
+            if self.state in (DownloadTaskStatus.PENDING, DownloadTaskStatus.PAUSED):
+                self.submit(self.run)
+        if wait and not self.done:
+            self._done_event.wait()
 
 
-class AsyncDownloadTask:
+class AsyncDownloadTask(BaseDownloadTask):
 
-    def __init__(self, /, *args, **kwargs):
-        raise NotImplementedError
+    def __init__(
+        self, 
+        it: AsyncIterator[DownloadProgress], 
+        /, 
+        submit=create_task, 
+    ):
+        super().__init__()
+        if not callable(submit):
+            submit = submit.submit
+        self.submit = submit
+        self._it = it
+
+    @classmethod
+    def create_task(
+        cls, 
+        /, 
+        *args, 
+        submit=create_task, 
+        **kwargs, 
+    ) -> Self:
+        return cls(download_async_iter(*args, **kwargs), submit=submit)
+
+    async def run(self, /):
+        super().run()
+        it = self._it
+        step = it.__anext__
+        try:
+            while self.running:
+                self.progress = await step()
+        except KeyboardInterrupt:
+            raise
+        except StopAsyncIteration as exc:
+            self.state = DownloadTaskStatus.FINISHED
+            self.set_result(None)
+        except BaseException as exc:
+            self.state = DownloadTaskStatus.FAILED
+            self.set_exception(exc)
+        else:
+            if self.canceled:
+                try:
+                    if isinstance(it, AsyncGenerator):
+                        await it.aclose()
+                    else:
+                        getattr(it, "__del__")()
+                except:
+                    pass
+            elif self.done:
+                for callback in self.done_callbacks:
+                    try:
+                        ret = callback(cast(Self, self))
+                        if isawaitable(ret):
+                            await ret
+                    except:
+                        pass
+
+    def start(self, /):
+        if self.state in (DownloadTaskStatus.PENDING, DownloadTaskStatus.PAUSED):
+            return self.submit(self.run())
+
+
+class DownloadTaskManager:
+    ...
+
+
+class AsyncDownloadTaskManager:
+    ...
 
 
 def download_iter(
@@ -307,13 +504,13 @@ def download(
             else:
                 update = reporthook
                 close = getattr(reporthook, "close", None)
-            update(progress.last_incr)
+            update(progress.last_increment)
         if update is None:
             for progress in download_gen:
                 pass
         else:
             for progress in download_gen:
-                update(progress.last_incr)
+                update(progress.last_increment)
         return progress
     finally:
         download_gen.close()
@@ -399,7 +596,10 @@ async def download_async_iter(
             return
 
         if filesize and is_range_request(resp):
-            await ensure_async(resp.close)()
+            if hasattr(resp, "aclose"):
+                await resp.aclose()
+            else:
+                await ensure_async(resp.close)()
             resp = await urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize})
             if not is_range_request(resp):
                 raise OSError(errno.EIO, f"range request failed: {url!r}")
@@ -425,7 +625,10 @@ async def download_async_iter(
             length_downloaded += downlen
             yield DownloadProgress(length or (length_skipped + length_downloaded), length_downloaded, length_skipped, downlen, extra)
     finally:
-        await ensure_async(resp.close)()
+        if hasattr(resp, "aclose"):
+            await resp.aclose()
+        else:
+            await ensure_async(resp.close)()
         if file_async_close:
             await file_async_close()
 
@@ -439,7 +642,7 @@ async def download_async(
     urlopen: Callable = urlopen, 
     iter_bytes: Callable = DEFAULT_ASYNC_ITER_BYTES, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
-):
+) -> DownloadProgress:
     """
     """
     update: None | Callable = None
@@ -468,13 +671,14 @@ async def download_async(
             else:
                 update = ensure_async(reporthook)
                 close = getattr(reporthook, "close", None)
-            await update(progress.last_incr)
+            await update(progress.last_increment)
         if update is None:
             async for progress in download_gen:
                 pass
         else:
             async for progress in download_gen:
-                await update(progress.last_incr)
+                await update(progress.last_increment)
+        return progress
     finally:
         await download_gen.aclose()
         if close is not None:
