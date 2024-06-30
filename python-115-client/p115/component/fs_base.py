@@ -1926,15 +1926,15 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> Iterator[tuple[P115PathType, str, DownloadTask]] | AsyncIterator[tuple[P115PathType, str, AsyncDownloadTask]]:
         def gen_step():
             nonlocal to_dir
-            to_dir = fsdecode(to_dir)
-            if to_dir:
-                makedirs(to_dir, exist_ok=True)
             attr = yield partial(
                 self.attr, 
                 id_or_path, 
                 pid=pid, 
                 async_=async_, 
             )
+            to_dir = fsdecode(to_dir)
+            if to_dir:
+                makedirs(to_dir, exist_ok=True)
             pathes: list[P115PathType]
             if attr["is_directory"]:
                 if not no_root:
@@ -1954,7 +1954,6 @@ class P115FileSystemBase(Generic[P115PathType]):
                         raise
                     return
             else:
-                attr["fs"] = self
                 pathes = [type(self).path_class(attr)]
             mode: Literal["i", "x", "w", "a"]
             for subpath in filter(predicate, pathes):
@@ -1963,11 +1962,11 @@ class P115FileSystemBase(Generic[P115PathType]):
                         self.download_tree, 
                         subpath, 
                         ospath.join(to_dir, subpath["name"]), 
-                        submit=submit, 
                         write_mode=write_mode, 
+                        submit=submit, 
                         no_root=True, 
-                        predicate=predicate, 
                         onerror=onerror, 
+                        predicate=predicate, 
                         async_=async_, 
                     ))
                 else:
