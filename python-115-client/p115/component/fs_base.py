@@ -513,6 +513,27 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def is_absolute(self, /) -> bool:
         return True
 
+    @overload
+    def is_empty(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> bool:
+        ...
+    @overload
+    def is_empty(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, bool]:
+        ...
+    def is_empty(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Coroutine[Any, Any, bool]:
+        return self.fs.is_empty(self, async_=async_)
+
     def is_dir(self, /) -> bool:
         try:
             return self["is_directory"]
@@ -1747,6 +1768,38 @@ class P115FileSystemBase(Generic[P115PathType]):
             return {attr["id"]: path_class(attr) for attr in self.iterdir(id_or_path, pid=pid, **kwargs)}
 
     @overload
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> int:
+        ...
+    @overload
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, int]:
+        ...
+    def dirlen(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> int | Coroutine[Any, Any, int]:
+        def gen_step():
+            return len((yield self.listdir_attr(id_or_path, pid=pid, async_=async_)))
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
     def download(
         self, 
         id_or_path: IDOrPathType, 
@@ -1958,8 +2011,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             mode: Literal["i", "x", "w", "a"]
             for subpath in filter(predicate, pathes):
                 if subpath["is_directory"]:
-                    yield YieldFrom(partial(
-                        self.download_tree, 
+                    yield YieldFrom(self.download_tree(
                         subpath, 
                         ospath.join(to_dir, subpath["name"]), 
                         write_mode=write_mode, 
@@ -1967,8 +2019,8 @@ class P115FileSystemBase(Generic[P115PathType]):
                         no_root=True, 
                         onerror=onerror, 
                         predicate=predicate, 
-                        async_=async_, 
-                    ))
+                        async_=async_, # type: ignore
+                    ), identity=True)
                 else:
                     mode = write_mode
                     try:
@@ -1992,7 +2044,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                             async_=async_, 
                         )
                         if task is not None:
-                            yield Yield((subpath, download_path, task))
+                            yield Yield((subpath, download_path, task), identity=True)
                             if not submit and task.pending:
                                 yield task.start
                     except (KeyboardInterrupt, GeneratorExit):
@@ -2295,178 +2347,125 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
     ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
-        async def to_async_iter(it):
-            for i in it:
-                yield i
-        def to_iter(it, async_: bool = False):
-            if async_:
-                return to_async_iter(it)
-            else:
-                return iter(it)
+        if pattern == "*":
+            return self.iter(dirname, async_=async_)
+        elif len(pattern) >= 2 and not pattern.strip("*"):
+            return self.iter(dirname, max_depth=-1, async_=async_)
         def gen_step():
-            nonlocal pattern
-            if pattern == "*":
-                return self.iter(dirname, async_=async_)
-            elif pattern == "**":
-                return self.iter(dirname, max_depth=-1, async_=async_)
-            path_class = type(self).path_class
+            nonlocal pattern, dirname
             if not pattern:
                 try:
-                    attr = yield partial(self.attr, dirname, async_=async_)
+                    yield Yield(partial(self.as_path, dirname, async_=async_))
                 except FileNotFoundError:
-                    return to_iter((), async_=async_)
-                else:
-                    return to_iter((path_class(attr),), async_=async_)
+                    pass
+                return
             elif not pattern.lstrip("/"):
-                return to_iter((path_class(self.attr(0)),), async_=async_)
-            splitted_pats = tuple(translate_iter(
-                pattern, 
-                allow_escaped_slash=allow_escaped_slash, 
-            ))
-            dirname_as_id = isinstance(dirname, (int, AttrDict, path_class))
-            dirid: int
-            if dirname_as_id:
-                if isinstance(dirname, int):
-                    dirid = dirname
-                else:
-                    dirid = dirname["id"] # type: ignore
+                return Yield(self.as_path(0), identity=True)
+            splitted_pats = tuple(translate_iter(pattern, allow_escaped_slash=allow_escaped_slash))
             if pattern.startswith("/"):
-                dir_ = "/"
+                attr = self.attr(0)
+                pid = 0
+                dirname = "/"
             else:
-                dir_ = yield partial(self.get_path, dirname, async_=async_)
+                attr = yield self.attr(dirname, async_=async_)
+                pid = cast(int, attr["id"])
+                dirname = cast(str, attr["path"])
             i = 0
-            dir2 = ""
+            subpath = ""
             if ignore_case:
                 if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                    pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats))
+                    pattern = joinpath(re_escape(dirname), "/".join(t[0] for t in splitted_pats))
                     match = re_compile("(?i:%s)" % pattern).fullmatch
-                    return self.iter(
-                        dirname, 
+                    yield YieldFrom(self.iter(
+                        attr, 
                         max_depth=-1, 
-                        predicate=lambda p: match(p.path) is not None, 
+                        predicate=lambda p: match(p["path"]) is not None, 
                         async_=async_, 
-                    )
+                    ), identity=True)
+                    return
             else:
                 typ = None
                 for i, (pat, typ, orig) in enumerate(splitted_pats):
                     if typ != "orig":
                         break
-                    dir2 = joinpath(dir2, orig)
-                dir_ = joinpath(dir_, dir2)
+                    subpath = joinpath(subpath, orig)
                 if typ == "orig":
                     try:
-                        if dirname_as_id:
-                            attr = yield partial(self.attr, dir2, pid=dirid, async_=async_)
-                        else:
-                            attr = yield partial(self.attr, dir_, async_=async_)
+                        yield Yield(partial(
+                            self.as_path, 
+                            subpath, 
+                            pid=pid, 
+                            async_=async_, 
+                        ))
                     except FileNotFoundError:
-                        return to_iter((), async_=async_)
-                    else:
-                        return to_iter((path_class(attr),), async_=async_)
+                        pass
+                    return
                 elif typ == "dstar" and i + 1 == len(splitted_pats):
-                    if dirname_as_id:
-                        return self.iter(dir2, pid=dirid, max_depth=-1, async_=async_)
-                    else:
-                        return self.iter(dir_, max_depth=-1, async_=async_)
-                if any(typ == "dstar" for _, typ, _ in splitted_pats):
-                    pattern = joinpath(re_escape(dir_), "/".join(t[0] for t in splitted_pats[i:]))
+                    return YieldFrom(self.iter(
+                        subpath, 
+                        pid=pid, 
+                        max_depth=-1, 
+                        async_=async_, 
+                    ), identity=True)
+                elif any(typ == "dstar" for _, typ, _ in splitted_pats):
+                    pattern = joinpath(re_escape(dirname), "/".join(t[0] for t in splitted_pats[i:]))
                     match = re_compile(pattern).fullmatch
-                    if dirname_as_id:
-                        return self.iter(
-                            dir2, 
-                            pid=dirid, 
-                            max_depth=-1, 
-                            predicate=lambda p: match(p.path) is not None, 
-                            async_=async_, 
-                        )
-                    else:
-                        return self.iter(
-                            dir_, 
-                            max_depth=-1, 
-                            predicate=lambda p: match(p.path) is not None, 
-                            async_=async_, 
-                        )
+                    return YieldFrom(self.iter(
+                        subpath, 
+                        pid=pid, 
+                        max_depth=-1, 
+                        predicate=lambda p: match(p.path) is not None, 
+                        async_=async_, 
+                    ), identity=True)
             cref_cache: dict[int, Callable] = {}
-            if dirname_as_id:
-                attr = yield partial(self.attr, dir2, pid=dirid, async_=async_)
+            if subpath:
+                path = yield partial(
+                    self.as_path, 
+                    subpath, 
+                    pid=pid, 
+                    async_=async_, 
+                )
             else:
-                attr = yield partial(self.attr, dir_, async_=async_)
-            if not attr["is_directory"]:
-                return to_iter((), async_=async_)
-            if async_:
-                async def glob_step_match(path, i):
-                    j = i + 1
-                    at_end = j == len(splitted_pats)
-                    pat, typ, orig = splitted_pats[i]
-                    if typ == "orig":
-                        subpath = path.joinpath(orig)
-                        if at_end:
-                            yield subpath
-                        elif subpath["is_directory"]:
-                            async for val in glob_step_match(subpath, j):
-                                yield val
-                    elif typ == "star":
-                        if at_end:
-                            async for val in path.iter(async_=True):
-                                yield val
-                        else:
-                            async for subpath in path.iter(async_=True):
-                                if subpath["is_directory"]:
-                                    async for val in glob_step_match(subpath, j):
-                                        yield val
+                path = self.as_path(attr)
+            if not path.is_dir():
+                return
+            def glob_step_match(path: P115PathType, i: int):
+                j = i + 1
+                at_end = j == len(splitted_pats)
+                pat, typ, orig = splitted_pats[i]
+                if typ == "orig":
+                    try:
+                        subpath = yield path.joinpath(orig, async_=async_)
+                    except FileNotFoundError:
+                        return
+                    if at_end:
+                        yield Yield(subpath, identity=True)
+                    elif subpath.is_dir():
+                        yield from glob_step_match(subpath, j)
+                elif typ == "star":
+                    if at_end:
+                        yield YieldFrom(path.iter(async_=async_), identity=True)
                     else:
-                        async for subpath in path.iter(async_=True):
-                            try:
-                                cref = cref_cache[i]
-                            except KeyError:
-                                if ignore_case:
-                                    pat = "(?i:%s)" % pat
-                                cref = cref_cache[i] = re_compile(pat).fullmatch
-                            if cref(subpath["name"]):
-                                if at_end:
-                                    yield subpath
-                                elif subpath["is_directory"]:
-                                    async for val in glob_step_match(subpath, j):
-                                        yield val
-            else:
-                def glob_step_match(path, i):
-                    j = i + 1
-                    at_end = j == len(splitted_pats)
-                    pat, typ, orig = splitted_pats[i]
-                    if typ == "orig":
-                        subpath = path.joinpath(orig)
-                        if at_end:
-                            yield subpath
-                        elif subpath["is_directory"]:
-                            yield from glob_step_match(subpath, j)
-                    elif typ == "star":
-                        if at_end:
-                            yield from path.iter()
-                        else:
-                            for subpath in path.iter():
-                                if subpath["is_directory"]:
-                                    yield from glob_step_match(subpath, j)
-                    else:
-                        for subpath in path.iter():
-                            try:
-                                cref = cref_cache[i]
-                            except KeyError:
-                                if ignore_case:
-                                    pat = "(?i:%s)" % pat
-                                cref = cref_cache[i] = re_compile(pat).fullmatch
-                            if cref(subpath["name"]):
-                                if at_end:
-                                    yield subpath
-                                elif subpath["is_directory"]:
-                                    yield from glob_step_match(subpath, j)
-            return glob_step_match(path_class(attr), i)
-        if async_:
-            async def wrap():
-                async for attr in (await run_gen_step(gen_step, async_=True)):
-                    yield attr
-            return wrap()
-        else:
-            return run_gen_step(gen_step)
+                        subpaths = yield path.listdir_path(async_=async_)
+                        for subpath in subpaths:
+                            if subpath.is_dir():
+                                yield from glob_step_match(subpath, j)
+                else:
+                    subpaths = yield path.listdir_path(async_=async_)
+                    for subpath in subpaths:
+                        try:
+                            cref = cref_cache[i]
+                        except KeyError:
+                            if ignore_case:
+                                pat = "(?i:%s)" % pat
+                            cref = cref_cache[i] = re_compile(pat).fullmatch
+                        if cref(subpath.name):
+                            if at_end:
+                                yield Yield(subpath, identity=True)
+                            elif subpath.is_dir():
+                                yield from glob_step_match(subpath, j)
+            yield from glob_step_match(path, i)
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def isdir(
@@ -2546,6 +2545,47 @@ class P115FileSystemBase(Generic[P115PathType]):
                 return False
         return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def is_empty(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> bool:
+        ...
+    @overload
+    def is_empty(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, bool]:
+        ...
+    def is_empty(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> bool | Coroutine[Any, Any, bool]:
+        "路径是否为空文件或空目录"
+        def gen_step():
+            try:
+                attr = yield self.attr(id_or_path, pid=pid, async_=async_)
+            except FileNotFoundError:
+                return True
+            if attr["is_directory"]:
+                return (yield self.dirlen(id_or_path, pid=pid, async_=async_)) == 0
+            else:
+                return attr["size"] == 0
+        return run_gen_step(gen_step, async_=async_)
+
+    # TODO: 之后把 _iter_bfs 和 _iter_bfs_async 合并为一个
     def _iter_bfs(
         self, 
         top: IDOrPathType = "", 
@@ -2650,6 +2690,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 elif onerror:
                     raise
 
+    # TODO: 之后把 _iter_dfs 和 _iter_dfs_async 合并为一个
     def _iter_dfs(
         self, 
         top: IDOrPathType = "", 
@@ -3361,7 +3402,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 )
             except OSError as e:
                 if callable(onerror):
-                    onerror(e)
+                    yield partial(onerror, e)
                 elif onerror:
                     raise
             pred: Literal[None, 1, False, True] = True
@@ -3369,7 +3410,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             for attr, nattr in pairwise(chain(ls, (None,))):
                 attr = cast(AttrDict, attr)
                 if predicate is not None:
-                    pred = predicate(attr)
+                    pred = yield partial(predicate, attr)
                     if pred is None:
                         continue
                 if next_depth >= min_depth and pred:
@@ -3381,16 +3422,19 @@ class P115FileSystemBase(Generic[P115PathType]):
                     if pred is 1:
                         continue
                 if can_step_in and attr["is_directory"]:
-                    self.tree(
+                    yield partial(
+                        self.tree, 
                         attr, 
                         min_depth=min_depth, 
                         max_depth=max_depth, 
                         onerror=onerror, 
                         predicate=predicate, 
                         _depth=next_depth, 
+                        async_=async_, 
                     )
         return run_gen_step(gen_step, async_=async_)
 
+    # TODO: 之后把 _walk_bfs 和 _walk_bfs_aysnc 合并为一个
     def _walk_bfs(
         self, 
         top: IDOrPathType = "", 
@@ -3472,6 +3516,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 elif onerror:
                     raise
 
+    # TODO: 之后把 _walk_dfs 和 _walk_dfs_aysnc 合并为一个
     def _walk_dfs(
         self, 
         top: IDOrPathType = "", 

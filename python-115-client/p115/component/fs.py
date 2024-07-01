@@ -2892,50 +2892,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    def is_empty(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        pid: None | int = None, 
-        *, 
-        async_: Literal[False] = False, 
-    ) -> bool:
-        ...
-    @overload
-    def is_empty(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        pid: None | int = None, 
-        *, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, bool]:
-        ...
-    def is_empty(
-        self, 
-        id_or_path: IDOrPathType = "", 
-        /, 
-        pid: None | int = None, 
-        *, 
-        async_: Literal[False, True] = False, 
-    ) -> bool | Coroutine[Any, Any, bool]:
-        "路径是否为空文件或空目录"
-        def gen_step():
-            attr: AttrDict | P115Path
-            if isinstance(id_or_path, P115Path):
-                attr = id_or_path
-            else:
-                try:
-                    attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
-                except FileNotFoundError:
-                    return True
-            if attr["is_directory"]:
-                dirlen = yield partial(self.dirlen, attr["id"], async_=async_)
-                return dirlen > 0
-            return attr["size"] == 0
-        return run_gen_step(gen_step, async_=async_)
-
-    @overload
     def iter_repeat(
         self, 
         id_or_path: IDOrPathType, 

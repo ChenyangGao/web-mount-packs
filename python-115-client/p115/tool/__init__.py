@@ -5,17 +5,23 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "login_scan_cookie", "crack_captcha", "wish_make", "wish_answer", 
     "wish_list", "wish_aid_list", "wish_adopt", 
+    "parse_115_export_dir_as_dict_iter", "parse_115_export_dir_as_path_iter", 
 ]
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable
-from typing import cast
+from collections.abc import Callable, Iterable, Iterator
+from io import IOBase, TextIOBase, TextIOWrapper
+from os import PathLike
+from posixpath import join as joinpath
+from re import compile as re_compile
+from typing import cast, IO
 
 from concurrenttools import thread_pool_batch
 from p115 import P115Client, check_response
 
 
 CAPTCHA_CRACK: Callable[[bytes], str]
+CRE_TREE_PREFIX_match = re_compile("^(?:\| )+\|-").match
 
 
 def login_scan_cookie(
@@ -242,4 +248,81 @@ def wish_adopt(
     if isinstance(client, str):
         client = P115Client(client)
     return check_response(client.act_xys_adopt({"did": wish_id, "aid": aid_id, "to_cid": to_cid}))
+
+
+def parse_115_export_dir_as_dict_iter(
+    file: bytes | str | PathLike | IOBase, 
+    encoding: str = "utf-16", 
+) -> Iterator[dict]:
+    """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
+
+    :param file: 文件路径或已经打开的文件
+    :param encoding: 文件编码，默认为 "utf-16"
+
+    :return: 把每一行解析为一个字典，迭代返回，格式为
+
+        .. python:
+
+            {
+                "key":        int, # 序号
+                "parent_key": int, # 上级目录的序号
+                "depth":      int, # 深度
+                "name":       str, # 名字
+            }
+    """
+    if isinstance(file, IOBase):
+        if not isinstance(file, TextIOBase):
+            file = TextIOWrapper(cast(IO[bytes], file), encoding=encoding)
+    else:
+        file = open(file, encoding=encoding)
+    stack = [0]
+    for i, r in enumerate(file):
+        match = CRE_TREE_PREFIX_match(r)
+        if match is None:
+            continue
+        prefix = match[0]
+        prefix_length = len(prefix)
+        depth = prefix_length // 2 - 1
+        yield {
+            "key": i, 
+            "parent_key": stack[depth-1], 
+            "depth": depth, 
+            "name": r.removesuffix("\n")[prefix_length:], 
+        }
+        try:
+            stack[depth] = i
+        except IndexError:
+            stack.append(i)
+
+
+def parse_115_export_dir_as_path_iter(
+    file: bytes | str | PathLike | IOBase, 
+    encoding: str = "utf-16", 
+) -> Iterator[str]:
+    """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
+
+    :param file: 文件路径或已经打开的文件
+    :param encoding: 文件编码，默认为 "utf-16"
+
+    :return: 把每一行解析为一个绝对路径，迭代返回
+    """
+    if isinstance(file, IOBase):
+        if not isinstance(file, TextIOBase):
+            file = TextIOWrapper(cast(IO[bytes], file), encoding=encoding)
+    else:
+        file = open(file, encoding=encoding)
+    stack = ["/"]
+    for r in file:
+        match = CRE_TREE_PREFIX_match(r)
+        if match is None:
+            continue
+        prefix = match[0]
+        prefix_length = len(prefix)
+        depth = prefix_length // 2 - 1
+        name = r.removesuffix("\n")[prefix_length:]
+        try:
+            stack[depth] = name
+        except IndexError:
+            stack.append(name)
+        yield joinpath(*stack[:depth+1])
 

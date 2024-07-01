@@ -2,17 +2,19 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 7)
 __all__ = [
     "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
     "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", "run_gen_step", "run_gen_step_iter", 
     "Yield", "YieldFrom", 
 ]
 
+from abc import ABC, abstractmethod
 from asyncio import to_thread
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Iterable, Iterator, 
+    AsyncIterable, AsyncIterator, Callable, Generator, Iterable, Iterator, 
 )
+from dataclasses import dataclass
 from inspect import isawaitable
 from typing import overload, Any, Literal, TypeVar
 
@@ -22,16 +24,24 @@ from asynctools import async_zip, ensure_async, ensure_aiter
 T = TypeVar("T")
 
 
-class Yield:
+@dataclass(slots=True, frozen=True)
+class YieldBase(ABC):
+    value: Any
+    identity: bool = False
+    try_call_me: bool = True
 
-    def __init__(self, value, /):
-        self.value = value
+    @property
+    @abstractmethod
+    def yield_type(self, /) -> int:
+        ...
 
 
-class YieldFrom:
+class Yield(YieldBase):
+    yield_type = 1
 
-    def __init__(self, value, /):
-        self.value = value
+
+class YieldFrom(YieldBase):
+    yield_type = 2
 
 
 def iterable(it, /) -> bool:
@@ -48,23 +58,23 @@ def async_iterable(it, /) -> bool:
         return False
 
 
-def foreach(func: Callable, iterable, /, *iterables):
+def foreach(ret: Callable, iterable, /, *iterables):
     if iterables:
         for args in zip(iterable, *iterables):
-            func(*args)
+            ret(*args)
     else:
         for arg in iterable:
-            func(arg)
+            ret(arg)
 
 
-async def async_foreach(func: Callable, iterable, /, *iterables, threaded: bool = True):
-    func = ensure_async(func, threaded=threaded)
+async def async_foreach(ret: Callable, iterable, /, *iterables, threaded: bool = True):
+    ret = ensure_async(ret, threaded=threaded)
     if iterables:
         async for args in async_zip(iterable, *iterables, threaded=threaded):
-            await func(*args)
+            await ret(*args)
     else:
         async for arg in ensure_aiter(iterable, threaded=threaded):
-            await func(arg)
+            await ret(arg)
 
 
 def through(it: Iterable, /):
@@ -199,29 +209,25 @@ def run_gen_step(
         async def process():
             try:
                 if threaded:
-                    func = await to_thread(send, None)
+                    ret = await to_thread(send, None)
                 else:
-                    func = send(None)
+                    ret = send(None)
                 while True:
                     try:
-                        if isawaitable(func):
-                            ret = await func
-                        elif callable(func):
-                            ret = func()
-                            if isawaitable(ret):
-                                ret = await ret
-                        else:
-                            ret = func
+                        if callable(ret):
+                            ret = ret()
+                        if isawaitable(ret):
+                            ret = await ret
                     except BaseException as e:
                         if threaded:
-                            func = await to_thread(throw, e)
+                            ret = await to_thread(throw, e)
                         else:
-                            func = throw(e)
+                            ret = throw(e)
                     else:
                         if threaded:
-                            func = await to_thread(send, ret)
+                            ret = await to_thread(send, ret)
                         else:
-                            func = send(ret)
+                            ret = send(ret)
             except StopIteration as e:
                 return e.value
             finally:
@@ -248,14 +254,15 @@ def run_gen_step(
         return result
     else:
         try:
-            func = send(None)
+            ret = send(None)
             while True:
                 try:
-                    ret = func() if callable(func) else func
+                    if callable(ret):
+                        ret = ret()
                 except BaseException as e:
-                    func = throw(e)
+                    ret = throw(e)
                 else:
-                    func = send(ret)
+                    ret = send(ret)
         except StopIteration as e:
             result = e.value
             if as_iter:
@@ -298,45 +305,55 @@ def run_gen_step_iter(
     throw = gen.throw
     if async_:
         async def process():
+            async def extract(ret):
+                yield_type = 0
+                identity = False
+                try_call_me = True
+                if isinstance(ret, YieldBase):
+                    identity = ret.identity
+                    try_call_me = ret.try_call_me
+                    yield_type = ret.yield_type
+                    ret = ret.value
+                if not identity:
+                    if try_call_me and callable(ret):
+                        ret = ret()
+                    if isawaitable(ret):
+                        ret = await ret
+                return yield_type, ret
             try:
                 if threaded:
-                    func = await to_thread(send, None)
+                    ret = await to_thread(send, None)
                 else:
-                    func = send(None)
+                    ret = send(None)
                 while True:
-                    yield_type = 0
-                    if isinstance(func, Yield):
-                        yield_type = 1
-                    elif isinstance(func, YieldFrom):
-                        yield_type = 2
-                    if yield_type:
-                        func = func.value
                     try:
-                        if isawaitable(func):
-                            ret = await func
-                        elif callable(func):
-                            ret = func()
-                            if isawaitable(ret):
-                                ret = await ret
-                        else:
-                            ret = func
+                        yield_type, ret = await extract(ret)
+                        match yield_type:
+                            case 1:
+                                yield ret
+                            case 2:
+                                async for val in ensure_aiter(ret, threaded=threaded):
+                                    yield val
                     except BaseException as e:
                         if threaded:
-                            func = await to_thread(throw, e)
+                            ret = await to_thread(throw, e)
                         else:
-                            func = throw(e)
+                            ret = throw(e)
                     else:
-                        if yield_type == 1:
+                        if threaded:
+                            ret = await to_thread(send, ret)
+                        else:
+                            ret = send(ret)
+            except StopIteration as e:
+                ret = e.value
+                if isinstance(ret, YieldBase):
+                    yield_type, ret = await extract(ret)
+                    match yield_type:
+                        case 1:
                             yield ret
-                        elif yield_type == 2:
+                        case 2:
                             async for val in ensure_aiter(ret, threaded=threaded):
                                 yield val
-                        if threaded:
-                            func = await to_thread(send, ret)
-                        else:
-                            func = send(ret)
-            except (StopIteration, GeneratorExit):
-                pass
             finally:
                 if close is not None:
                     if threaded:
@@ -345,30 +362,41 @@ def run_gen_step_iter(
                         close()
     else:
         def process():
+            def extract(ret):
+                yield_type = 0
+                identity = False
+                try_call_me = True
+                if isinstance(ret, YieldBase):
+                    identity = ret.identity
+                    try_call_me = ret.try_call_me
+                    yield_type = ret.yield_type
+                    ret = ret.value
+                if not identity and try_call_me and callable(ret):
+                    ret = ret()
+                return yield_type, ret
             try:
-                func = send(None)
+                ret = send(None)
                 while True:
-                    yield_type = 0
-                    if isinstance(func, Yield):
-                        yield_type = 1
-                    elif isinstance(func, YieldFrom):
-                        yield_type = 2
-                    if yield_type:
-                        func = func.value
                     try:
-                        ret = func() if callable(func) else func
+                        yield_type, ret = extract(ret)
+                        match yield_type:
+                            case 1:
+                                yield ret
+                            case 2:
+                                yield from ret
                     except BaseException as e:
-                        func = throw(e)
+                        ret = throw(e)
                     else:
-                        if yield_type == 1:
-                            yield ret
-                        elif yield_type == 2:
-                            yield from ret
-                        func = send(ret)
+                        ret = send(ret)
             except StopIteration as e:
-                return e.value
-            except GeneratorExit:
-                pass
+                ret = e.value
+                if isinstance(ret, YieldBase):
+                    yield_type, ret = extract(ret)
+                    match yield_type:
+                        case 1:
+                            yield ret
+                        case 2:
+                            yield from ret
             finally:
                 if close is not None:
                     close()
