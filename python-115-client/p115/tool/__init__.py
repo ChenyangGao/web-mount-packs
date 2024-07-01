@@ -5,19 +5,20 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "login_scan_cookie", "crack_captcha", "wish_make", "wish_answer", 
     "wish_list", "wish_aid_list", "wish_adopt", 
-    "parse_115_export_dir_as_dict_iter", "parse_115_export_dir_as_path_iter", 
+    "parse_export_dir_as_dict_iter", "parse_export_dir_as_path_iter", 
+    "export_dir", "export_dir_parse_iter", 
 ]
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
-from io import IOBase, TextIOBase, TextIOWrapper
+from io import TextIOBase, TextIOWrapper
 from os import PathLike
-from posixpath import join as joinpath
 from re import compile as re_compile
 from typing import cast, IO
 
 from concurrenttools import thread_pool_batch
 from p115 import P115Client, check_response
+from posixpatht import escape
 
 
 CAPTCHA_CRACK: Callable[[bytes], str]
@@ -91,7 +92,7 @@ def crack_captcha(
 ) -> bool:
     """破解 115 的图片验证码。如果返回 True，则说明破解成功，否则失败。如果失败，就不妨多运行这个函数几次。
 
-    :param client: 115 客户端
+    :param client: 115 客户端或 cookies
     :param sample_count: 单个文字的采样次数，共会执行 10 * sample_count 次识别
     :param crack: 破解验证码图片，输入图片的二进制数据，输出识别的字符串
 
@@ -156,7 +157,7 @@ def wish_make(
     size: int = 5, 
 ) -> str:
     """许愿树活动：创建许愿（许愿创建后需要等审核）
-    :param client: 115 客户端
+    :param client: 115 客户端或 cookies
     :param content: 许愿内容
     :param size: 答谢空间大小，单位是 GB
 
@@ -176,7 +177,7 @@ def wish_answer(
     file_ids: int | str | Iterable[int | str] = "", 
 ) -> str:
     """许愿树活动：创建助愿（助愿创建后需要等审核）
-    :param client: 115 客户端
+    :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
     :param content: 助愿内容
     :param file_ids: 文件在你的网盘的 id，多个用逗号 "," 隔开
@@ -198,7 +199,7 @@ def wish_list(
     type: int = 0, 
 ) -> list[dict]:
     """许愿树活动：我的许愿列表
-    :param client: 115 客户端
+    :param client: 115 客户端或 cookies
     :param type: 类型
         - 0: 全部
         - 1: 进行中
@@ -220,6 +221,7 @@ def wish_aid_list(
     wish_id: str, 
 ) -> list[dict]:
     """许愿树活动：许愿的助愿列表
+    :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
     """
     if isinstance(client, str):
@@ -240,7 +242,7 @@ def wish_adopt(
     to_cid: int = 0, 
 ) -> dict:
     """许愿树活动：采纳助愿
-    :param client: 115 客户端
+    :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
     :param aid_id: 助愿 id
     :param to_cid: 助愿的分享文件保存到你的网盘中目录的 id
@@ -250,8 +252,8 @@ def wish_adopt(
     return check_response(client.act_xys_adopt({"did": wish_id, "aid": aid_id, "to_cid": to_cid}))
 
 
-def parse_115_export_dir_as_dict_iter(
-    file: bytes | str | PathLike | IOBase, 
+def parse_export_dir_as_dict_iter(
+    file: bytes | str | PathLike | IO, 
     encoding: str = "utf-16", 
 ) -> Iterator[dict]:
     """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
@@ -270,11 +272,10 @@ def parse_115_export_dir_as_dict_iter(
                 "name":       str, # 名字
             }
     """
-    if isinstance(file, IOBase):
-        if not isinstance(file, TextIOBase):
-            file = TextIOWrapper(cast(IO[bytes], file), encoding=encoding)
-    else:
+    if isinstance(file, (bytes | str | PathLike)):
         file = open(file, encoding=encoding)
+    elif not isinstance(file, TextIOBase):
+        file = TextIOWrapper(file, encoding=encoding)
     stack = [0]
     for i, r in enumerate(file):
         match = CRE_TREE_PREFIX_match(r)
@@ -295,8 +296,8 @@ def parse_115_export_dir_as_dict_iter(
             stack.append(i)
 
 
-def parse_115_export_dir_as_path_iter(
-    file: bytes | str | PathLike | IOBase, 
+def parse_export_dir_as_path_iter(
+    file: bytes | str | PathLike | IO, 
     encoding: str = "utf-16", 
 ) -> Iterator[str]:
     """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
@@ -304,14 +305,13 @@ def parse_115_export_dir_as_path_iter(
     :param file: 文件路径或已经打开的文件
     :param encoding: 文件编码，默认为 "utf-16"
 
-    :return: 把每一行解析为一个绝对路径，迭代返回
+    :return: 把每一行解析为一个相对路径（虽然左边第 1 个符号是 "/"），迭代返回
     """
-    if isinstance(file, IOBase):
-        if not isinstance(file, TextIOBase):
-            file = TextIOWrapper(cast(IO[bytes], file), encoding=encoding)
-    else:
+    if isinstance(file, (bytes | str | PathLike)):
         file = open(file, encoding=encoding)
-    stack = ["/"]
+    elif not isinstance(file, TextIOBase):
+        file = TextIOWrapper(file, encoding=encoding)
+    stack = [""]
     for r in file:
         match = CRE_TREE_PREFIX_match(r)
         if match is None:
@@ -319,10 +319,58 @@ def parse_115_export_dir_as_path_iter(
         prefix = match[0]
         prefix_length = len(prefix)
         depth = prefix_length // 2 - 1
-        name = r.removesuffix("\n")[prefix_length:]
+        path = stack[depth-1] + "/" + escape(r.removesuffix("\n")[prefix_length:])
         try:
-            stack[depth] = name
+            stack[depth] = path
         except IndexError:
-            stack.append(name)
-        yield joinpath(*stack[:depth+1])
+            stack.append(path)
+        yield path
+
+
+def export_dir(
+    client: str | P115Client, 
+    export_file_ids: int | str | Iterable[int] = 0, 
+    target_pid: int | str = 0, 
+):
+    """导出目录树
+    :param client: 115 客户端或 cookies
+    :param export_file_ids: 待导出的文件夹 id 或 路径
+    :param target_pid: 导出到的目标文件夹 id 或 路径
+    """
+    if isinstance(client, str):
+        client = P115Client(client)
+    if isinstance(export_file_ids, str):
+        export_file_ids = client.fs.get_id(export_file_ids, pid=0)
+    elif not isinstance(export_file_ids, int):
+        export_file_ids = ",".join(map(str, export_file_ids))
+    if isinstance(target_pid, str):
+        target_pid = client.fs.get_id(target_pid, pid=0)    
+    return client.fs_export_dir_future({"file_ids": export_file_ids, "target": f"U_0_{target_pid}"})
+
+
+def export_dir_parse_iter(
+    client: str | P115Client, 
+    export_file_ids: int | str | Iterable[int] = 0, 
+    target_pid: int | str = 0, 
+    parse_iter: Callable[[IO[bytes]], Iterator] = parse_export_dir_as_path_iter, 
+) -> Iterator:
+    """导出目录树到文件，读取文件并解析后返回生成器，关闭后自动删除导出的文件
+
+    :param client: 115 客户端或 cookies
+    :param export_file_ids: 待导出的文件夹 id 或 路径
+    :param target_pid: 导出到的目标文件夹 id 或 路径
+    :param parse_iter: 解析打开的二进制文件，返回可迭代对象
+
+    :return: 解析导出文件的迭代器
+    """
+    if isinstance(client, str):
+        client = P115Client(client)
+    future = export_dir(client, export_file_ids, target_pid)
+    result = future.result()
+    url = client.download_url(result["pick_code"], use_web_api=True)
+    try:
+        with client.open(url) as file:
+            yield from parse_iter(file)
+    finally:
+        client.fs_delete(result["file_id"])
 

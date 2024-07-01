@@ -2600,6 +2600,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         dq: deque[tuple[int, P115PathType]] = deque()
         push, pop = dq.append, dq.popleft
         path_class = type(self).path_class
+        # TODO: 这里需要检查是否报错
         path = self.as_path(top, pid=pid)
         push((0, path))
         while dq:

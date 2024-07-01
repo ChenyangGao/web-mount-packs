@@ -3145,6 +3145,8 @@ class P115Client:
             target: str = "U_1_0" # 导出目录树到这个目录
             layer_limit: int = <default> # 层级深度，自然数
         """
+        if async_:
+            raise NotImplementedError("asynchronous mode not implemented")
         resp = check_response(self.fs_export_dir(payload, **request_kwargs))
         return ExportDirStatus(self, resp["data"]["export_id"])
 
@@ -7081,6 +7083,8 @@ class P115Client:
     ) -> None | PushExtractProgress | Coroutine[Any, Any, None | PushExtractProgress]:
         """执行在线解压，如果早就已经完成，返回 None，否则新开启一个线程，用于检查进度
         """
+        if async_:
+            raise NotImplementedError("asynchronous mode not implemented")
         resp = check_response(self.extract_push(
             {"pick_code": pickcode, "secret": secret}, 
             **request_kwargs, 
@@ -7126,6 +7130,8 @@ class P115Client:
     ) -> ExtractProgress | Coroutine[Any, Any, ExtractProgress]:
         """执行在线解压到目录，新开启一个线程，用于检查进度
         """
+        if async_:
+            raise NotImplementedError("asynchronous mode not implemented")
         resp = check_response(self.extract_file(
             pickcode, paths, dirname, to_pid, **request_kwargs
         ))
@@ -8328,7 +8334,7 @@ class P115Client:
             - P115Client.extract_download_url
         """
         if async_:
-            raise OSError(errno.ENOSYS, "asynchronous mode not implemented")
+            raise NotImplementedError("asynchronous mode not implemented")
         if headers is None:
             headers = self.headers
         return HTTPFileReader(
@@ -8624,12 +8630,16 @@ class ExportDirStatus(Future):
                 self.set_exception(OSError(errno.ECANCELED, "canceled"))
 
     def _run_check(self, client, export_id: int | str, /):
-        check = check_response(client.fs_export_dir_status)
+        get_status = client.fs_export_dir_status
         payload = {"export_id": export_id}
         def update_progress():
             while self.running():
                 try:
-                    data = check(payload)["data"]
+                    resp = get_status(payload)
+                except:
+                    continue
+                try:
+                    data = check_response(resp)["data"]
                     if data:
                         self.status = 1
                         self.set_result(data)
@@ -8664,12 +8674,16 @@ class PushExtractProgress(Future):
                 self.set_exception(OSError(errno.ECANCELED, "canceled"))
 
     def _run_check(self, client, pickcode: str, /):
-        check = check_response(client.extract_push_progress)
+        check = client.extract_push_progress
         payload = {"pick_code": pickcode}
         def update_progress():
             while self.running():
                 try:
-                    data = check(payload)["data"]
+                    resp = check(payload)
+                except:
+                    continue
+                try:
+                    data = check_response(resp)["data"]
                     extract_status = data["extract_status"]
                     progress = extract_status["progress"]
                     if progress == 100:
@@ -8714,12 +8728,16 @@ class ExtractProgress(Future):
                 self.set_exception(OSError(errno.ECANCELED, "canceled"))
 
     def _run_check(self, client, extract_id: int | str, /):
-        check = check_response(client.extract_progress)
+        check = client.extract_progress
         payload = {"extract_id": extract_id}
         def update_progress():
             while self.running():
                 try:
-                    data = check(payload)["data"]
+                    resp = check(payload)
+                except:
+                    continue
+                try:
+                    data = check_response(resp)["data"]
                     if not data:
                         raise OSError(errno.EINVAL, f"no such extract_id: {extract_id}")
                     progress = data["percent"]

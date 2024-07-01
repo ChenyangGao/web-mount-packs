@@ -101,6 +101,7 @@ class AlistPath(Mapping, PathLike[str]):
             password=self.password, 
         )
 
+    # TODO: 增加异步
     def __call__(self, /) -> AlistPath:
         self.__dict__.update(self.fs.attr(self.path))
         return self
@@ -164,10 +165,6 @@ class AlistPath(Mapping, PathLike[str]):
 
     def __truediv__(self, path: PathType, /) -> AlistPath:
         return self.joinpath(path)
-
-    @property
-    def is_attr_loaded(self, /) -> bool:
-        return "accessed" in self.__dict__
 
     def set_password(self, value, /):
         self.__dict__["password"] = str(value)
@@ -2395,7 +2392,7 @@ class AlistFileSystem:
                         raise
                     return
             else:
-                pathes = [AlistPath(**attr)]
+                pathes = [self.as_path(attr)]
             mode: Literal["i", "x", "w", "a"]
             for subpath in filter(predicate, pathes):
                 if subpath["is_directory"]:
@@ -2894,10 +2891,104 @@ class AlistFileSystem:
                     return False
         return run_gen_step(gen_step, async_=async_)
 
-    def _iter_bfs(
+    @overload
+    def iter_bfs(
         self, 
         /, 
         top: PathType = "", 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[AlistPath], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: None | bool = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Iterator[AlistPath]:
+        ...
+    @overload
+    def iter_bfs(
+        self, 
+        /, 
+        top: PathType = "", 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[AlistPath], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: None | bool = None, 
+        password: str = "", 
+        *, 
+        async_: AsyncLiteral[True], 
+    ) -> AsyncIterator[AlistPath]:
+        ...
+    def iter_bfs(
+        self, 
+        /, 
+        top: PathType = "", 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[AlistPath], None | bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: None | bool = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
+        def gen_step():
+            dq: deque[tuple[int, AlistPath]] = deque()
+            push, pop = dq.append, dq.popleft
+            try:
+                attr = yield self.attr(top, password, async_=async_)
+                if not password:
+                    password = attr.get("password", "")
+            except OSError:
+                if callable(onerror):
+                    yield partial(onerror, e)
+                elif onerror:
+                    raise
+                return
+            push((0, self.as_path(attr)))
+            while dq:
+                depth, path = pop()
+                if min_depth <= 0:
+                    if predicate is None:
+                        pred = True
+                    else:
+                        pred = yield partial(predicate, path)
+                    if pred is None:
+                        return
+                    elif pred:
+                        yield Yield(path, identity=True)
+                    min_depth = 1
+                if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
+                    return
+                depth += 1
+                try:
+                    subpaths = yield self.listdir_path(path, password, refresh=refresh, async_=async_)
+                    for path in subpaths:
+                        if predicate is None:
+                            pred = True
+                        else:
+                            pred = yield partial(predicate, path)
+                        if pred is None:
+                            continue
+                        elif pred and depth >= min_depth:
+                            yield Yield(path, identity=True)
+                        if path.is_dir() and (max_depth < 0 or depth < max_depth):
+                            push((depth, path))
+                except OSError as e:
+                    if callable(onerror):
+                        yield partial(onerror, e)
+                    elif onerror:
+                        raise
+        return run_gen_step_iter(gen_step, async_=async_)
+
+    @overload
+    def iter_dfs(
+        self, 
+        /, 
+        top: PathType = "", 
+        topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
         predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
@@ -2905,42 +2996,26 @@ class AlistFileSystem:
         refresh: None | bool = None, 
         password: str = "", 
         *, 
-        async_: Literal[False, True] = False, 
+        async_: Literal[False] = False, 
     ) -> Iterator[AlistPath]:
-        dq: deque[tuple[int, AlistPath]] = deque()
-        push, pop = dq.append, dq.popleft
-        path = self.as_path(top, password)
-        if not path.is_attr_loaded:
-            path()
-        push((0, path))
-        while dq:
-            depth, path = pop()
-            if min_depth <= 0:
-                pred = predicate(path) if predicate else True
-                if pred is None:
-                    return
-                elif pred:
-                    yield path
-                min_depth = 1
-            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
-                return
-            depth += 1
-            try:
-                for path in self.listdir_path(path, password, refresh=refresh, async_=async_):
-                    pred = predicate(path) if predicate else True
-                    if pred is None:
-                        continue
-                    elif pred and depth >= min_depth:
-                        yield path
-                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
-                        push((depth, path))
-            except OSError as e:
-                if callable(onerror):
-                    onerror(e)
-                elif onerror:
-                    raise
-
-    def _iter_dfs(
+        ...
+    @overload
+    def iter_dfs(
+        self, 
+        /, 
+        top: PathType = "", 
+        topdown: bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: None | bool = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[AlistPath]:
+        ...
+    def iter_dfs(
         self, 
         /, 
         top: PathType = "", 
@@ -2953,59 +3028,96 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[AlistPath]:
-        if not max_depth:
-            return
-        global_yield_me = True
-        if min_depth > 1:
-            global_yield_me = False
-            min_depth -= 1
-        elif min_depth <= 0:
-            path = self.as_path(top, password)
-            if not path.is_attr_loaded:
-                path()
-            pred = predicate(path) if predicate else True
-            if pred is None:
+    ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
+        def gen_step():
+            if not max_depth:
                 return
-            elif pred:
-                yield path
-            if path.is_file():
-                return
-            min_depth = 1
-        if max_depth > 0:
-            max_depth -= 1
-        try:
-            ls = self.listdir_path(top, password, refresh=refresh, async_=async_)
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
-            return
-        for path in ls:
-            yield_me = global_yield_me
-            if yield_me and predicate:
-                pred = predicate(path)
+            global_yield_me = True
+            if min_depth > 1:
+                global_yield_me = False
+                min_depth -= 1
+            elif min_depth <= 0:
+                path = self.as_path(top, password)
+                if "accessed" not in path:
+                    yield path(async_=async_)
+                if predicate is None:
+                    pred = True
+                else:
+                    pred = yield partial(predicate, path)
                 if pred is None:
-                    continue
-                yield_me = pred
-            if yield_me and topdown:
-                yield path
-            if path.is_dir():
-                yield from self.iter(
-                    path, 
-                    topdown=topdown, 
-                    min_depth=min_depth, 
-                    max_depth=max_depth, 
-                    predicate=predicate, 
-                    onerror=onerror, 
-                    refresh=refresh, 
-                    password=password, 
-                    _check=_check, 
-                )
-            if yield_me and not topdown:
-                yield path
+                    return
+                elif pred:
+                    yield Yield(path, identity=True)
+                if path.is_file():
+                    return
+                min_depth = 1
+            if max_depth > 0:
+                max_depth -= 1
+            try:
+                subpaths = yield self.listdir_path(top, password, refresh=refresh, async_=async_)
+            except OSError as e:
+                if callable(onerror):
+                    yield partial(onerror, e)
+                elif onerror:
+                    raise
+                return
+            for path in subpaths:
+                yield_me = global_yield_me
+                if yield_me and predicate is not None:
+                    pred = yield partial(predicate, path)
+                    if pred is None:
+                        continue
+                    yield_me = pred
+                if yield_me and topdown:
+                    yield Yield(path, identity=True)
+                if path.is_dir():
+                    yield YieldFrom(self.iter(
+                        path, 
+                        topdown=topdown, 
+                        min_depth=min_depth, 
+                        max_depth=max_depth, 
+                        predicate=predicate, 
+                        onerror=onerror, 
+                        refresh=refresh, 
+                        password=password, 
+                        async_=async_, 
+                    ), identity=True)
+                if yield_me and not topdown:
+                    yield path
+        return run_gen_step_iter(gen_step, async_=async_)
 
+    @overload
+    def iter(
+        self, 
+        /, 
+        top: PathType = "", 
+        topdown: None | bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: None | bool = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Iterator[AlistPath]:
+        ...
+    @overload
+    def iter(
+        self, 
+        /, 
+        top: PathType = "", 
+        topdown: None | bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        refresh: None | bool = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[AlistPath]:
+        ...
     def iter(
         self, 
         /, 
@@ -3019,9 +3131,9 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[AlistPath]:
+    ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
         if topdown is None:
-            return self._iter_bfs(
+            return self.iter_bfs(
                 top, 
                 min_depth=min_depth, 
                 max_depth=max_depth, 
@@ -3029,10 +3141,10 @@ class AlistFileSystem:
                 onerror=onerror, 
                 refresh=refresh, 
                 password=password, 
-                _check=_check, 
+                async_=async_, 
             )
         else:
-            return self._iter_dfs(
+            return self.iter_dfs(
                 top, 
                 topdown=topdown, 
                 min_depth=min_depth, 
@@ -3041,7 +3153,7 @@ class AlistFileSystem:
                 onerror=onerror, 
                 refresh=refresh, 
                 password=password, 
-                _check=_check, 
+                async_=async_, 
             )
 
     # TODO: 实现分页拉取，而不是一次性取完
@@ -3056,23 +3168,68 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> Iterator[dict]:
-        yield from self.listdir_attr(
-            path, 
-            password, 
-            refresh=refresh, 
-            page=page, 
-            per_page=per_page, 
-            _check=_check, 
-        )
+        def gen_step():
+            if page <= 0 or per_page <= 0:
+                yield from self.listdir_attr(
+                    path, 
+                    password, 
+                    refresh=refresh, 
+                    page=page, 
+                    per_page=per_page, 
+                    async_=async_, 
+                )
+        return run_gen_step_iter(gen_step, async_=async_)
 
+    @overload
+    def list_storage(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> list[dict]:
+        ...
+    @overload
+    def list_storage(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, list[dict]]:
+        ...
     def list_storage(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict]:
-        return self.fs_list_storage()["data"]["content"] or []
+    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
+        def gen_step():
+            resp = yield self.fs_list_storage(async_=async_)
+            return resp["data"]["content"] or []
+        return run_gen_step(gen_step, async_=async_)
 
-    # TODO: 用 fs_dirs 接口实现
+    @overload
+    def listdir(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> list[str]:
+        ...
+    @overload
+    def listdir(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, list[str]]:
+        ...
     def listdir(
         self, 
         /, 
@@ -3083,16 +3240,57 @@ class AlistFileSystem:
         per_page: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[str]:
-        return [item["name"] for item in self.listdir_attr(
-            path, 
-            password, 
-            refresh=refresh, 
-            page=page, 
-            per_page=per_page, 
-            _check=_check, 
-        )]
+    ) -> list[str] | Coroutine[Any, Any, list[str]]:
+        def gen_step():
+            if page <= 0 or per_page <= 0:
+                resp = yield self.fs_dirs(
+                    path, 
+                    password, 
+                    refresh=refresh, 
+                    async_=async_, 
+                )
+                data = resp["data"]
+            else:
+                resp = yield self.fs_list(
+                    path, 
+                    password, 
+                    refresh=refresh, 
+                    page=page, 
+                    per_page=per_page, 
+                    async_=async_, 
+                )
+                data = resp["data"]["content"]
+            if not data:
+                return []
+            return [item["name"] for item in data]
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def listdir_attr(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> list[AttrDict]:
+        ...
+    @overload
+    def listdir_attr(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, list[AttrDict]]:
+        ...
     def listdir_attr(
         self, 
         /, 
@@ -3103,34 +3301,36 @@ class AlistFileSystem:
         per_page: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict]:
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.get("password", "")
-            path = cast(str, path["path"])
-        else:
-            path = self.abspath(path)
-        if refresh is None:
-            refresh = self.refresh
-        if not self.attr(path, password, async_=async_)["is_dir"]:
-            raise NotADirectoryError(errno.ENOTDIR, path)
-        data = self.fs_list(
-            path, 
-            password, 
-            refresh=refresh, 
-            page=page, 
-            per_page=per_page, 
-            async_=async_, 
-        )["data"]
-        content = data["content"]
-        if not content:
-            return []
-        for attr in content:
-            attr["ctime"] = int(parse_as_timestamp(attr.get("created")))
-            attr["mtime"] = int(parse_as_timestamp(attr.get("modified")))
-            attr["path"] = joinpath(path, attr["name"])
-            attr["password"] = password
-        return content
+    ) -> list[AttrDict] | Coroutine[Any, Any, list[AttrDict]]:
+        def gen_step():
+            if isinstance(path, (AttrDict, AlistPath)):
+                if not password:
+                    password = path.get("password", "")
+                path = cast(str, path["path"])
+            else:
+                path = self.abspath(path)
+            if refresh is None:
+                refresh = self.refresh
+            if not self.attr(path, password, async_=async_)["is_dir"]:
+                raise NotADirectoryError(errno.ENOTDIR, path)
+            resp = yield self.fs_list(
+                path, 
+                password, 
+                refresh=refresh, 
+                page=page, 
+                per_page=per_page, 
+                async_=async_, 
+            )
+            content = resp["data"]["content"]
+            if not content:
+                return []
+            for attr in content:
+                attr["ctime"] = parse_as_timestamp(attr.get("created"))
+                attr["mtime"] = parse_as_timestamp(attr.get("modified"))
+                attr["path"] = joinpath(path, attr["name"])
+                attr["password"] = password
+            return content
+        return run_gen_step(gen_step, async_=async_)
 
     def listdir_path(
         self, 
@@ -3151,7 +3351,7 @@ class AlistFileSystem:
                 refresh=refresh, 
                 page=page, 
                 per_page=per_page, 
-                _check=_check, 
+                async_=async_, 
             )
         ]
 
@@ -3285,7 +3485,7 @@ class AlistFileSystem:
     ) -> HTTPFileReader | IO:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        path = self.as_path(path, password, _check=_check)
+        path = self.as_path(path, password, async_=async_)
         if path.is_dir():
             raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
         return self.client.open(
@@ -3311,7 +3511,7 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> bytes:
-        path = self.as_path(path, password, _check=_check)
+        path = self.as_path(path, password, async_=async_)
         if path.is_dir():
             raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
         return self.client.read_bytes(path.url, start, stop)
@@ -3325,7 +3525,7 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> bytes:
-        path = self.as_path(path, password, _check=_check)
+        path = self.as_path(path, password, async_=async_)
         if path.is_dir():
             raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
         return self.client.read_bytes_range(path.url, bytes_range)
@@ -3342,7 +3542,7 @@ class AlistFileSystem:
     ) -> bytes:
         if size <= 0:
             return b""
-        path = self.as_path(path, password, _check=_check)
+        path = self.as_path(path, password, async_=async_)
         if path.is_dir():
             raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
         return self.client.read_block(path.url, size, offset)
@@ -3364,7 +3564,7 @@ class AlistFileSystem:
             errors=errors, 
             newline=newline, 
             password=password, 
-            _check=_check, 
+            async_=async_, 
         ).read()
 
     def remove(
@@ -3604,7 +3804,7 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> str:
-        return self.rename(src_path, dst_path, src_password, dst_password, replace=True, _check=_check)
+        return self.rename(src_path, dst_path, src_password, dst_password, replace=True, async_=async_)
 
     def rglob(
         self, 
@@ -3617,12 +3817,12 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> Iterator[AlistPath]:
         if not pattern:
-            return self.iter(dirname, password=password, max_depth=-1, _check=_check)
+            return self.iter(dirname, password=password, max_depth=-1, async_=async_)
         if pattern.startswith("/"):
             pattern = joinpath("/", "**", pattern.lstrip("/"))
         else:
             pattern = joinpath("**", pattern)
-        return self.glob(pattern, dirname, password=password, ignore_case=ignore_case, _check=_check)
+        return self.glob(pattern, dirname, password=password, ignore_case=ignore_case, async_=async_)
 
     def rmdir(
         self, 
@@ -3656,7 +3856,7 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ):
-        self.remove(path, password, recursive=True, _check=_check)
+        self.remove(path, password, recursive=True, async_=async_)
 
     def scandir(
         self, 
@@ -3669,7 +3869,7 @@ class AlistFileSystem:
             path, 
             password, 
             refresh=refresh, 
-            _check=_check, 
+            async_=async_, 
         ):
             yield AlistPath(self, **item)
 
@@ -3681,7 +3881,7 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> stat_result:
-        attr = self.attr(path, password, _check=_check)
+        attr = self.attr(path, password, async_=async_)
         is_dir = attr.get("is_dir", False)
         return stat_result((
             (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
@@ -3999,7 +4199,7 @@ class AlistFileSystem:
             onerror=onerror, 
             password=password, 
             refresh=refresh, 
-            _check=_check, 
+            async_=async_, 
         ):
             yield path, [a["name"] for a in dirs], [a["name"] for a in files]
 
@@ -4024,7 +4224,7 @@ class AlistFileSystem:
                 onerror=onerror, 
                 password=password, 
                 refresh=refresh, 
-                _check=_check, 
+                async_=async_, 
             )
         else:
             return self._walk_dfs(
@@ -4035,7 +4235,7 @@ class AlistFileSystem:
                 onerror=onerror, 
                 password=password, 
                 refresh=refresh, 
-                _check=_check, 
+                async_=async_, 
             )
 
     def walk_path(
@@ -4059,7 +4259,7 @@ class AlistFileSystem:
             onerror=onerror, 
             password=password, 
             refresh=refresh, 
-            _check=_check, 
+            async_=async_, 
         ):
             yield (
                 path, 
@@ -4085,7 +4285,7 @@ class AlistFileSystem:
             password=password, 
             as_task=as_task, 
             overwrite_or_ignore=True, 
-            _check=_check, 
+            async_=async_, 
         )
 
     def write_text(
@@ -4109,7 +4309,7 @@ class AlistFileSystem:
             tio.write(text)
             tio.flush()
             bio.seek(0)
-        return self.write_bytes(path, bio, password=password, as_task=as_task, _check=_check)
+        return self.write_bytes(path, bio, password=password, as_task=as_task, async_=async_)
 
     cd  = chdir
     cp  = copy
