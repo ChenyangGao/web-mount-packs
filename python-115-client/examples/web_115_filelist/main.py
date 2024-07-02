@@ -21,8 +21,13 @@ if __name__ == "__main__":
         formatter_class=RawTextHelpFormatter, 
         description=__doc__, 
     )
-    parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
-    parser.add_argument("-cp", "--cookies-path", help="存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可以在 1. 当前工作目录、2. 用户根目录 或者 3. 此脚本所在目录 下")
+    parser.add_argument("-c", "--cookies", default="", help="115 登录 cookies，优先级高于 -c/--cookies-path")
+    parser.add_argument("-cp", "--cookies-path", default="", help="""\
+存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
+    1. 当前工作目录
+    2. 用户根目录
+    3. 此脚本所在目录""")
+    parser.add_argument("-wc", "--web-cookies", default="", help="提供一个 web 的 cookies，因为目前使用的获取 .m3u8 的接口，需要 web 的 cookies 才能正确获取数据，如不提供，则将自动扫码获取")
     parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为不可并发，这样就可减少 405 响应，以降低扫码的频率")
     parser.add_argument("-pc", "--path-persistence-commitment", action="store_true", help="路径持久性承诺，只要你能保证文件不会被移动（可新增删除，但对应的路径不可被其他文件复用），打开此选项，用路径请求直链时，可节约一半时间")
 
@@ -38,6 +43,7 @@ if __name__ == "__main__":
 
     cookies = args.cookies
     cookies_path = args.cookies_path
+    web_cookies = args.web_cookies
     lock_dir_methods = args.lock_dir_methods
     path_persistence_commitment = args.path_persistence_commitment
 else:
@@ -51,12 +57,14 @@ else:
         1. 当前工作目录
         2. 用户根目录
         3. 此脚本所在目录 下
+    - \x1b[1m\x1b[32mweb_cookies\x1b[0m: 提供一个 web 的 cookies，因为目前使用的获取 .m3u8 的接口，需要 web 的 cookies 才能正确获取数据，如不提供，则将自动扫码获取
     - \x1b[1m\x1b[32mlock_dir_methods\x1b[0m: （\x1b[1m\x1b传入任何值都视为设置，包括空字符串\x1b[0m）对 115 的文件系统进行增删改查的操作（\x1b[1m\x1b但不包括上传和下载\x1b[0m）进行加锁，限制为不可并发，这样就可减少 405 响应，以降低扫码的频率
     - \x1b[1m\x1b[32mpath_persistence_commitment\x1b[0m: （\x1b[1m\x1b传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1m\x1b可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
 """)
 
-    cookies = environ.get("cookies")
-    cookies_path = environ.get("cookies_path")
+    cookies = environ.get("cookies", "")
+    cookies_path = environ.get("cookies_path", "")
+    web_cookies = environ.get("web_cookies", "")
     lock_dir_methods = environ.get("lock_dir_methods") is not None
     path_persistence_commitment = environ.get("path_persistence_commitment") is not None
 
@@ -84,7 +92,6 @@ from p115 import P115Client, P115Url, AVAILABLE_APPS
 
 
 cookies_path_mtime = 0
-web_cookies = ""
 login_lock = Lock()
 web_login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None

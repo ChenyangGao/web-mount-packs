@@ -74,6 +74,7 @@ parser.add_argument("-cp", "--cookies-path", help="""\
     1. 当前工作目录
     2. 用户根目录
     3. 此脚本所在目录""")
+parser.add_argument("-wc", "--web-cookies", default="", help="提供一个 web 的 cookies，因为目前使用的获取 .m3u8 的接口，需要 web 的 cookies 才能正确获取数据，如不提供，则将自动扫码获取")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-pc", "--path-persistence-commitment", action="store_true", help="路径持久性承诺，只要你能保证文件不会被移动（可新增删除，但对应的路径不可被其他文件复用），打开此选项，用路径请求直链时，可节约一半时间")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
@@ -137,6 +138,7 @@ if getdefaulttimeout() is None:
 
 cookies = args.cookies
 cookies_path = args.cookies_path
+web_cookies = args.web_cookies
 cookies_path_mtime = 0
 lock_dir_methods = args.lock_dir_methods
 path_persistence_commitment = args.path_persistence_commitment
@@ -144,7 +146,6 @@ use_request = args.use_request
 root = args.root
 password = args.password
 
-web_cookies = ""
 login_lock = Lock()
 web_login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None
