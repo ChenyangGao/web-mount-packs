@@ -349,7 +349,7 @@ def get_m3u8(pickcode: str, definition: int = 4):
             data = urlopen(url, parse=False, headers={"User-Agent": user_agent, "Cookie": web_cookies})
             break
         except HTTPError as e:
-            if e.status != 405:
+            if e.status not in (403, 405):
                 raise
             with web_login_lock:
                 web_cookies = client.login_another_app("web", replace=device=="web").cookies

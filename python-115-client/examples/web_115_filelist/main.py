@@ -512,7 +512,7 @@ async def file_m3u8(
             )
             break
         except HTTPStatusError as e:
-            if e.response.status_code != 405:
+            if e.response.status_code not in (403, 405):
                 raise
             async with web_login_lock:
                 web_cookies = (await client.login_another_app("web", replace=device=="web", async_=True)).cookies
