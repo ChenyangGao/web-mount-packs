@@ -333,9 +333,11 @@ def get_url(pickcode: str):
     return redirect(url)
 
 
-def get_m3u8(pickcode: str, definition: int = 4):
+def get_m3u8(pickcode: str):
     global web_cookies
     user_agent = request.headers.get("User-Agent") or ""
+    definition = request.args.get("definition") or "0"
+
     url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
 
     with web_login_lock:
@@ -355,7 +357,7 @@ def get_m3u8(pickcode: str, definition: int = 4):
                 web_cookies = client.login_another_app("web", replace=device=="web").cookies
     if not data:
         raise FileNotFoundError(f"this file does not have .m3u8, pickcode: {pickcode!r}")
-    if definition == 0:
+    if definition == "0":
         return Response(data, mimetype="application/x-mpegurl")
     return redirect(data.split()[-1].decode("ascii"))
 
@@ -728,7 +730,10 @@ def query(path: str):
         {%- if attr["is_directory"] %}
         <td style="text-align: center;">--</td>
         {%- else %}
-        <td style="text-align: right;"><a href="{{ url }}&m3u8=true&password={{ password }}">m3u8</a></td>
+        <td style="text-align: right;">
+            <a href="{{ url }}&m3u8=true&password={{ password }}">ALL(全部)</a><br />
+            <a href="{{ url }}&m3u8=true&password={{ password }}&definition=4">UD(高清)</a>
+        </td>
         {%- endif %}
         <td>{{ attr["etime"] }}</td>
       </tr>
