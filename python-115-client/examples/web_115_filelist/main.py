@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __version_str__ = ".".join(map(str, __version__))
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
@@ -66,14 +66,13 @@ from collections.abc import Mapping, MutableMapping
 from functools import partial, update_wrapper
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
-from re import compile as re_compile, MULTILINE
 from sys import exc_info
 from urllib.parse import quote
 
 from cachetools import LRUCache, TTLCache
 from blacksheep import (
     get, text, html, file, redirect, 
-    Application, Request, Response, StreamedContent
+    Application, Content, Request, Response, StreamedContent
 )
 from blacksheep.server.openapi.common import ParameterInfo
 from blacksheep.server.openapi.ui import ReDocUIProvider
@@ -83,8 +82,6 @@ from openapidocs.v3 import Info # type: ignore
 from httpx import HTTPStatusError
 from p115 import P115Client, P115Url, AVAILABLE_APPS
 
-
-CRE_LINE_HEAD_SLASH_sub = re_compile(b"^(?=/)", MULTILINE).sub
 
 cookies_path_mtime = 0
 web_cookies = ""
@@ -485,7 +482,7 @@ async def file_m3u8(
     :param id: 文件或目录的 id，优先级高于 path
     :param path: 文件或目录的路径，优先级高于 path2
     :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
-    :param definition: 分辨率。<br />&nbsp;&nbsp;3 - HD<br />&nbsp;&nbsp;4 - UD
+    :param definition: 分辨率，默认值 4，如果传入 0，则获取所有 .m3u8 的链接。<br />&nbsp;&nbsp;3 - HD<br />&nbsp;&nbsp;4 - UD
     """
     global web_cookies
     user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
@@ -513,7 +510,12 @@ async def file_m3u8(
             async with web_login_lock:
                 web_cookies = (await client.login_another_app("web", replace=device=="web", async_=True)).cookies
     if not data:
-        raise FileNotFoundError("404: file not found")
+        raise FileNotFoundError("404: .m3u8 of this file was not found")
+    if definition == 0:
+        return Response(
+            200, 
+            content=Content(b"application/x-mpegurl", data), 
+        )
     url = data.split()[-1].decode("ascii")
     data = await client.request(
         url, 
@@ -521,11 +523,37 @@ async def file_m3u8(
         parse=False, 
         async_=True, 
     )
-    return file(
-        CRE_LINE_HEAD_SLASH_sub(b"https://cpats01.115.com", data), 
-        content_type="application/x-mpegurl", 
-        file_name=f"{pickcode}.m3u8", 
-    )
+    return redirect(url)
+
+
+@docs(responses={
+    200: "返回对应视频文件的字幕信息", 
+    404: "文件或目录不存在", 
+    500: "服务器错误"
+})
+@get("/api/subtitle")
+@get("/api/subtitle/{path:path2}")
+@redirect_exception_response
+async def file_subtitle(
+    request: Request, 
+    pickcode: str = "", 
+    id: int = -1, 
+    path: str = "", 
+    path2: str = "", 
+):
+    """获取音视频的字幕信息
+
+    :param pickcode: 文件或目录的 pickcode，优先级高于 id
+    :param id: 文件或目录的 id，优先级高于 path
+    :param path: 文件或目录的路径，优先级高于 path2
+    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
+    """
+    global web_cookies
+    user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
+    if not pickcode:
+        pickcode = await call_wrap(fs.get_pickcode, (path or path2) if id < 0 else id)
+    resp = await call_wrap(client.fs_files_video_subtitle, pickcode)
+    return resp
 
 
 if __name__ == "__main__":

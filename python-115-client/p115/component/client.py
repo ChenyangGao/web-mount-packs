@@ -57,7 +57,7 @@ from hashtools import file_digest, file_digest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_chunked, is_range_request
 from httpfile import HTTPFileReader
-from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport, TimeoutException
+from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport
 from httpx_request import request
 from iterutils import through, async_through, run_gen_step, wrap_iter, wrap_aiter
 from multidict import CIMultiDict
@@ -293,7 +293,7 @@ class P115Client:
         """115 登录的 cookies，包含 UID, CID 和 SEID 这 3 个字段
         """
         cookies = self.__dict__["cookies"]
-        return "; ".join(f"{key}={val}" for key in ("UID", "CID", "SEID") if (val := cookies.get(key)))
+        return "; ".join(f"{key}={val}" for key in ("UID", "CID", "SEID") if (val := cookies.get(key, domain=".115.com")))
 
     @cookies.setter
     def cookies(self, cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel], /):
@@ -753,22 +753,22 @@ class P115Client:
                         async_=async_, 
                         **request_kwargs, 
                     )
-                except TimeoutException:
+                except Exception:
                     continue
-                status = resp["data"].get("status")
-                if status == 0:
-                    print("[status=0] qrcode: waiting")
-                elif status == 1:
-                    print("[status=1] qrcode: scanned")
-                elif status == 2:
-                    print("[status=2] qrcode: signed in")
-                    break
-                elif status == -1:
-                    raise LoginError("[status=-1] qrcode: expired")
-                elif status == -2:
-                    raise LoginError("[status=-2] qrcode: canceled")
-                else:
-                    raise LoginError(f"qrcode: aborted with {resp!r}")
+                match resp["data"].get("status"):
+                    case 0:
+                        print("[status=0] qrcode: waiting")
+                    case 1:
+                        print("[status=1] qrcode: scanned")
+                    case 2:
+                        print("[status=2] qrcode: signed in")
+                        break
+                    case -1:
+                        raise LoginError("[status=-1] qrcode: expired")
+                    case -2:
+                        raise LoginError("[status=-2] qrcode: canceled")
+                    case _:
+                        raise LoginError(f"qrcode: aborted with {resp!r}")
             return (yield partial(
                 cls.login_qrcode_result, 
                 {"account": qrcode_token["uid"], "app": app}, 
@@ -1063,10 +1063,14 @@ class P115Client:
             - app: str = "web"
         """
         if isinstance(payload, (int, str)):
-            payload = {"app": "web", "account": payload}
+            payload = {"account": payload}
+            app = "web"
         else:
             payload = {"app": "web", **payload}
-        api = f"https://passportapi.115.com/app/1.0/{payload['app']}/1.0/login/qrcode/"
+            app = payload.pop("app")
+            if app == "desktop":
+                app = "web"
+        api = f"https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/"
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             return httpx_request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -1228,6 +1232,8 @@ class P115Client:
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
+        if app == "desktop":
+            app = "web"
         api = f"https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout"
         request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Cookie": self.cookies}
         request_kwargs.setdefault("parse", lambda _: None)
@@ -2196,6 +2202,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2205,6 +2213,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2213,17 +2223,32 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取视频信息（可以获取 .m3u8 文件链接，但此链接只能 web 的 cookies 才能获取数据）
+        """获取视频信息
         GET https://webapi.115.com/files/video
-        payload:
+        GET https://v.anxia.com/webapi/files/video
+
+        :param payload: 请求参数，包含以下参数，只传字符串视为 pickcode
             - pickcode: str
             - share_id: int | str = <default>
             - local: 0 | 1 = <default>
+        :param use_anxia_api: 是否使用 https://v.anxia.com 的接口
+            - 如果为 False（默认），使用 "https://webapi.115.com/files/video"
+            - 如果为 True，使用 "https://v.anxia.com/webapi/files/video"
+                - 使用这个接口前，请先请求一次 f"https://v.anxia.com/?pickcode={pickcode}&share_id=0"，否则可能报错 403
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口返回值
         """
-        api = "https://webapi.115.com/files/video"
+        if use_anxia_api:
+            api = "https://v.anxia.com/webapi/files/video"
+        else:
+            api = "https://webapi.115.com/files/video"
         if isinstance(payload, str):
             payload = {"pickcode": payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
@@ -2233,6 +2258,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2242,6 +2269,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2250,15 +2279,29 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取视频字幕
         GET https://webapi.115.com/movies/subtitle
-        payload:
+        GET https://v.anxia.com/webapi/movies/subtitle
+
+        :param payload: 请求参数，包含以下参数，只传字符串视为 pickcode
             - pickcode: str
+        :param use_anxia_api: 是否使用 https://v.anxia.com 的接口
+            - 如果为 False（默认），使用 "https://webapi.115.com/movies/subtitle"
+            - 如果为 True，使用 "https://v.anxia.com/webapi/movies/subtitle"
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口返回值
         """
-        api = "https://webapi.115.com/movies/subtitle"
+        if use_anxia_api:
+            api = "https://v.anxia.com/webapi/movies/subtitle"
+        else:
+            api = "https://webapi.115.com/movies/subtitle"
         if isinstance(payload, str):
             payload = {"pickcode": payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
@@ -2269,6 +2312,8 @@ class P115Client:
         /, 
         pickcode: str, 
         definition: int = 0, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> bytes:
@@ -2278,7 +2323,9 @@ class P115Client:
         self, 
         /, 
         pickcode: str, 
-        definition: int, 
+        definition: int = 0, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bytes]:
@@ -2288,19 +2335,35 @@ class P115Client:
         /, 
         pickcode: str, 
         definition: int = 0, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
-        """获取视频的 m3u8 文件列表，此接口必须用 web 的 cookies。
-        如果请求其中的链接，各会得到一个 m3u8 文件，里面有一系列的 ts 视频文件的链接（需要和请求 m3u8 文件时的 User-Agent 一致），但省略了域名 https://cpats01.115.com。
-        GET http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}
-        :params pickcode: 视频的 pickcode
-        :params definition: 画质，默认列出所有画质。但可进行筛选，常用的为：3: HD, 4: UD
+        """获取视频的 m3u8 文件列表，此接口必须使用 web 的 cookies
 
-        # 还有个接口可以获取不检查 User-Agent 的链接，但需要破解里面一个 rsa 请求参数的生成方法
+        :param pickcode: 视频文件的 pickcode
+        :params definition: 画质，默认列出所有画质。但可进行筛选，常用的为：
+            - 3: HD
+            - 4: UD
+        :param use_anxia_api: 是否使用 https://v.anxia.com 的接口
+            - 如果为 False（默认），使用 f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+                - 使用这个接口得到的 m3u8 文件，其中包含几个不同分辨率的视频的 m3u8 文件链接（此时下载不需要 Cookies）
+            - 如果为 True，使用 f"https://v.anxia.com/site/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+                - 使用这个接口得到的 m3u8 文件，其中包含几个不同分辨率的视频的 m3u8 文件链接（此时下载不需要 Cookies）
+                - 使用这个接口前，请先请求一次 f"https://v.anxia.com/?pickcode={pickcode}&share_id=0"，否则可能报错 403
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口返回值
+
+        # 另外还有个接口不限设备（不强制为 web 的 cookies），但需要破解里面一个 rsa 请求参数的生成方法
         http://videoplay.115.com/m3u8?filesha1={filesha1}&time={int(time.time())}&userid={client.user_id}&rsa={md5_sign}
         """
-        api = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+        if use_anxia_api:
+            api = f"https://v.anxia.com/site/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+        else:
+            api = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
         request_kwargs.setdefault("parse", False)
         return self.request(url=api, async_=async_, **request_kwargs)
 
@@ -2309,6 +2372,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2318,6 +2383,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2326,18 +2393,33 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的观看历史，主要用于视频
         GET https://webapi.115.com/files/history
-        payload:
+        GET https://v.anxia.com/webapi/files/history
+
+        :param payload: 请求参数，包含以下参数，只传字符串视为 pickcode
             - pick_code: str
             - fetch: str = "one"
             - category: int = <default>
             - share_id: int | str = <default>
+        :param use_anxia_api: 是否使用 https://v.anxia.com 的接口
+            - 如果为 False（默认），使用 "https://webapi.115.com/files/history"
+            - 如果为 True，使用 "https://v.anxia.com/webapi/files/history"
+                - 使用这个接口前，请先请求一次 f"https://v.anxia.com/?pickcode={pickcode}&share_id=0"，否则可能报错 403
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口返回值
         """
-        api = "https://webapi.115.com/files/history"
+        if use_anxia_api:
+            api = "https://v.anxia.com/webapi/files/history"
+        else:
+            api = "https://webapi.115.com/files/history"
         if isinstance(payload, str):
             payload = {"fetch": "one", "pick_code": payload}
         else:
@@ -2349,6 +2431,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2358,6 +2442,8 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2366,21 +2452,36 @@ class P115Client:
         self, 
         payload: str | dict, 
         /, 
+        use_anxia_api: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """更新文件的观看历史，主要用于视频
-        GET https://webapi.115.com/files/history
-        payload:
+        POST https://webapi.115.com/files/history
+        POST https://v.anxia.com/webapi/files/history
+
+        :param payload: 请求参数，包含以下参数，只传字符串视为 pickcode
             - pick_code: str
             - op: str = "update"
             - category: int = <default>
             - definition: int = <default>
             - share_id: int | str = <default>
             - time: int = <default>
-            - ...
+            - ...（其它未找全的参数）
+        :param use_anxia_api: 是否使用 https://v.anxia.com 的接口
+            - 如果为 False（默认），使用 "https://webapi.115.com/files/history"
+            - 如果为 True，使用 "https://v.anxia.com/webapi/files/history"
+                - 使用这个接口前，请先请求一次 f"https://v.anxia.com/?pickcode={pickcode}&share_id=0"，否则可能报错 403
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口返回值
         """
-        api = "https://webapi.115.com/files/history"
+        if use_anxia_api:
+            api = "https://v.anxia.com/webapi/files/history"
+        else:
+            api = "https://webapi.115.com/files/history"
         if isinstance(payload, str):
             payload = {"op": "update", "pick_code": payload}
         else:
@@ -5962,7 +6063,6 @@ class P115Client:
         data = {
             "appid": 0, 
             "appversion": APP_VERSION, 
-            "success_action_status": "200", 
             "userid": userid, 
             "filename": filename, 
             "filesize": filesize, 
@@ -5986,6 +6086,7 @@ class P115Client:
             resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
             if resp["status"] == 2 and resp["statuscode"] == 0:
                 # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新
+                request_kwargs["parse"] = lambda resp, content, /: None
                 if async_:
                     create_task(to_thread(self.upload_init, **request_kwargs))
                 else:
@@ -6109,7 +6210,7 @@ class P115Client:
         filesize: int = -1, 
         filesha1: None | str = None, 
         partsize: int = 0, 
-        upload_directly: bool = False, 
+        upload_directly: None | bool = False, 
         multipart_resume_data: None | MultipartResumeData = None, 
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         *, 
@@ -6128,7 +6229,7 @@ class P115Client:
         filesize: int = -1, 
         filesha1: None | str = None, 
         partsize: int = 0, 
-        upload_directly: bool = False, 
+        upload_directly: None | bool = False, 
         multipart_resume_data: None | MultipartResumeData = None, 
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         *, 
@@ -6146,7 +6247,7 @@ class P115Client:
         filesize: int = -1, 
         filesha1: None | str = None, 
         partsize: int = 0, 
-        upload_directly: bool = False, 
+        upload_directly: None | bool = False, 
         multipart_resume_data: None | MultipartResumeData = None, 
         make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         *, 
@@ -6206,7 +6307,17 @@ class P115Client:
                     else:
                         raise OSError(errno.EINVAL, resp)
 
-                    if partsize <= 0:
+                    if upload_directly is None:
+                        return await self.upload_file_sample(
+                            file, 
+                            filename, 
+                            pid=pid, 
+                            filesize=filesize, 
+                            make_reporthook=make_reporthook, 
+                            async_=True, 
+                            **request_kwargs, 
+                        )
+                    elif partsize <= 0:
                         return await self._oss_upload(
                             file, 
                             bucket, 
@@ -6424,7 +6535,17 @@ class P115Client:
                 else:
                     raise OSError(errno.EINVAL, resp)
 
-                if partsize <= 0:
+                if upload_directly is None:
+                    return self.upload_file_sample(
+                        file, 
+                        filename, 
+                        pid=pid, 
+                        filesize=filesize, 
+                        make_reporthook=make_reporthook, 
+                        async_=False, 
+                        **request_kwargs, 
+                    )
+                elif partsize <= 0:
                     return self._oss_upload(
                         file, 
                         bucket, 

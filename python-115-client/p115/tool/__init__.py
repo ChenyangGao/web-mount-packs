@@ -17,7 +17,7 @@ from re import compile as re_compile
 from typing import cast, IO
 
 from concurrenttools import thread_pool_batch
-from p115 import P115Client, check_response
+from p115.component.client import check_response, ExportDirStatus, P115Client
 from posixpatht import escape
 
 
@@ -30,7 +30,7 @@ def login_scan_cookie(
     app: str = "", 
     replace: bool = False, 
 ) -> str:
-    """扫码登录 115 网盘，获取绑定到特定 app 的 cookie
+    """扫码登录 115 网盘，获取绑定到特定 app 的 cookies
     app 至少有 23 个可用值，目前找出 13 个：
         - web
         - ios
@@ -81,7 +81,9 @@ def login_scan_cookie(
     if isinstance(client, str):
         client = P115Client(client)
     if not app:
-        app = client.login_device()["icon"]
+        if (resp := client.login_device()) is None:
+            raise RuntimeError("this cookies may be logged out")
+        app = resp["icon"]
     return client.login_another_app(app, replace=replace).cookies
 
 
@@ -331,7 +333,7 @@ def export_dir(
     client: str | P115Client, 
     export_file_ids: int | str | Iterable[int] = 0, 
     target_pid: int | str = 0, 
-):
+) -> ExportDirStatus:
     """导出目录树
     :param client: 115 客户端或 cookies
     :param export_file_ids: 待导出的文件夹 id 或 路径

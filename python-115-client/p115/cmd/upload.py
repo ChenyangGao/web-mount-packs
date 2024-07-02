@@ -424,7 +424,13 @@ def main(args):
                 update_success(1)
             else:
                 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
-                resp = client.upload_file(src_path, name, pid=dst_pid, make_reporthook=partial(add_report, attr=src_attr))
+                resp = client.upload_file(
+                    src_path, 
+                    name, 
+                    pid=dst_pid, 
+                    make_reporthook=partial(add_report, attr=src_attr), 
+                    upload_directly=None, 
+                )
                 console_print(f"""\
 [bold green][GOOD][/bold green] 📝 上传文件: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
     ├ response = {resp}""")

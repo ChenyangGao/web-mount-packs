@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 5)
+__version__ = (0, 1, 6)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -125,7 +125,6 @@ from html import escape
 from io import BytesIO
 from os import stat
 from os.path import expanduser, dirname, join as joinpath, realpath
-from re import compile as re_compile, MULTILINE
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
@@ -300,7 +299,7 @@ def redirect_exception_response(func, /):
 
 def get_url(pickcode: str):
     if request.args.get("m3u8") not in (None, "false"):
-        return send_file(BytesIO(get_m3u8(pickcode)), mimetype="application/x-mpegurl")
+        return get_m3u8(pickcode)
     use_web_api = request.args.get("web") not in (None, "false")
     request_headers = request.headers
     user_agent = request_headers.get("User-Agent") or ""
@@ -333,10 +332,11 @@ def get_url(pickcode: str):
     return redirect(url)
 
 
-def get_m3u8(pickcode, definition=4) -> bytes:
+def get_m3u8(pickcode: str, definition: int = 4):
     global web_cookies
     user_agent = request.headers.get("User-Agent") or ""
     url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+
     with web_login_lock:
         if not web_cookies:
             if device == "web":
@@ -353,10 +353,10 @@ def get_m3u8(pickcode, definition=4) -> bytes:
             with web_login_lock:
                 web_cookies = client.login_another_app("web", replace=device=="web").cookies
     if not data:
-        raise FileNotFoundError
-    url = data.split()[-1].decode("ascii")
-    data = urlopen(url, headers={"User-Agent": user_agent}, parse=False)
-    return re_compile(b"^(?=/)", MULTILINE).sub(b'https://cpats01.115.com', data)
+        raise FileNotFoundError(f"this file does not have .m3u8, pickcode: {pickcode!r}")
+    if definition == 0:
+        return Response(data, mimetype="application/x-mpegurl")
+    return redirect(data.split()[-1].decode("ascii"))
 
 
 def relogin(exc=None):

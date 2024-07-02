@@ -4,12 +4,7 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 2)
 __all__ = ["APPS", "QrcodeScanHandler"]
-__doc__ = """扫码获取 115 cookie（网页版）
-
-默认在命令行输出，需要安装 qrcode: pip install qrcode
-    - https://pypi.org/project/qrcode/
-可以指定 -o 或 --open-qrcode 直接打开图片扫码
-"""
+__doc__ = "扫码获取 115 cookie（网页版）"
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter

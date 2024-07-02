@@ -3156,7 +3156,32 @@ class AlistFileSystem:
                 async_=async_, 
             )
 
-    # TODO: 实现分页拉取，而不是一次性取完
+    @overload
+    def iterdir(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Iterator[dict]:
+        ...
+    @overload
+    def iterdir(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[dict]:
+        ...
     def iterdir(
         self, 
         /, 
@@ -3167,17 +3192,31 @@ class AlistFileSystem:
         per_page: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[dict] | AsyncIterator[dict]:
         def gen_step():
-            if page <= 0 or per_page <= 0:
-                yield from self.listdir_attr(
+            if page > 0 or per_page <= 0:
+                yield YieldFrom(self.listdir_attr(
                     path, 
                     password, 
                     refresh=refresh, 
                     page=page, 
                     per_page=per_page, 
                     async_=async_, 
-                )
+                ))
+            else:
+                while True:
+                    data = yield self.listdir_attr(
+                        path, 
+                        password, 
+                        refresh=refresh, 
+                        page=page, 
+                        per_page=per_page, 
+                        async_=async_, 
+                    )
+                    yield YieldFrom(data, identity=True)
+                    if len(data) < per_page:
+                        break
+                    page += 1
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -3303,16 +3342,10 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> list[AttrDict] | Coroutine[Any, Any, list[AttrDict]]:
         def gen_step():
-            if isinstance(path, (AttrDict, AlistPath)):
-                if not password:
-                    password = path.get("password", "")
-                path = cast(str, path["path"])
-            else:
-                path = self.abspath(path)
-            if refresh is None:
-                refresh = self.refresh
-            if not self.attr(path, password, async_=async_)["is_dir"]:
-                raise NotADirectoryError(errno.ENOTDIR, path)
+            nonlocal page, per_page
+            if page <= 0 or per_page < 0:
+                page = 1
+                per_page = 0
             resp = yield self.fs_list(
                 path, 
                 password, 
@@ -3321,17 +3354,43 @@ class AlistFileSystem:
                 per_page=per_page, 
                 async_=async_, 
             )
-            content = resp["data"]["content"]
-            if not content:
+            data = resp["data"]["content"]
+            if not data:
                 return []
-            for attr in content:
+            for attr in data:
                 attr["ctime"] = parse_as_timestamp(attr.get("created"))
                 attr["mtime"] = parse_as_timestamp(attr.get("modified"))
                 attr["path"] = joinpath(path, attr["name"])
                 attr["password"] = password
-            return content
+            return data
         return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def listdir_path(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> list[AlistPath]:
+        ...
+    @overload
+    def listdir_path(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, list[AlistPath]]:
+        ...
     def listdir_path(
         self, 
         /, 
@@ -3342,10 +3401,9 @@ class AlistFileSystem:
         per_page: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[AlistPath]:
-        return [
-            AlistPath(self, **item) 
-            for item in self.listdir_attr(
+    ) -> list[AlistPath] | Coroutine[Any, Any, list[AlistPath]]:
+        def gen_step():
+            data = yield self.listdir_attr(
                 path, 
                 password, 
                 refresh=refresh, 
@@ -3353,8 +3411,10 @@ class AlistFileSystem:
                 per_page=per_page, 
                 async_=async_, 
             )
-        ]
+            return [AlistPath(self, **attr) for attr in data]
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def makedirs(
         self, 
         /, 
@@ -3364,18 +3424,41 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> str:
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.get("password", "")
-            path = cast(str, path["path"])
-        else:
-            path = self.abspath(path)
-        if path == "/":
-            return "/"
-        if not exist_ok and self.exists(path, password, async_=async_):
-            raise FileExistsError(errno.EEXIST, path)
-        self.fs_mkdir(path, async_=async_)
-        return path
+        ...
+    @overload
+    def makedirs(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        exist_ok: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def makedirs(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        exist_ok: bool = False, 
+        *, 
+        async_: Literal[True], 
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            if isinstance(path, (AttrDict, AlistPath)):
+                if not password:
+                    password = path.get("password", "")
+                path = cast(str, path["path"])
+            else:
+                path = self.abspath(path)
+            if path == "/":
+                return "/"
+            if not exist_ok and self.exists(path, password, async_=async_):
+                raise FileExistsError(errno.EEXIST, path)
+            self.fs_mkdir(path, async_=async_)
+            return path
+        return run_gen_step(gen_step, async_=async_)
 
     def mkdir(
         self, 
