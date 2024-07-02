@@ -691,7 +691,7 @@ def query(path: str):
         <th>Size</th>
         <th>Attr</th>
         <th>Desc</th>
-        <th>M3U8</th>
+        <th style="width: 70px">M3U8</th>
         <th>Last Modified</th>
       </tr>
     </thead>
@@ -730,8 +730,9 @@ def query(path: str):
         {%- if attr["is_directory"] %}
         <td style="text-align: center;">--</td>
         {%- else %}
-        <td style="text-align: right;">
+        <td style="text-align: right">
             <a href="{{ url }}&m3u8=true&password={{ password }}">ALL(全部)</a><br />
+            <a href="{{ url }}&m3u8=true&password={{ password }}&definition=3">HD(标清)</a><br />
             <a href="{{ url }}&m3u8=true&password={{ password }}&definition=4">UD(高清)</a>
         </td>
         {%- endif %}

@@ -351,6 +351,10 @@ class P115Client:
     ):
         """帮助函数：可执行同步和异步的网络请求
         """
+        if (headers := request_kwargs.get("headers")):
+            request_kwargs["headers"] = {**self.headers, **headers, "Cookie": self.cookies}
+        else:
+            request_kwargs["headers"] = {**self.headers, "Cookie": self.cookies}
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -361,10 +365,6 @@ class P115Client:
                 **request_kwargs, 
             )
         else:
-            if (headers := request_kwargs.get("headers")):
-                request_kwargs["headers"] = {**self.headers, **headers, "Cookie": self.cookies}
-            else:
-                request_kwargs["headers"] = {**self.headers, "Cookie": self.cookies}
             return request(
                 url=url, 
                 method=method, 
@@ -2344,8 +2344,9 @@ class P115Client:
 
         :param pickcode: 视频文件的 pickcode
         :params definition: 画质，默认列出所有画质。但可进行筛选，常用的为：
-            - 3: HD
-            - 4: UD
+            - 0: 各种分辨率（默认）
+            - 3: HD (约为720p)
+            - 4: UD (约为1080p)
         :param use_anxia_api: 是否使用 https://v.anxia.com 的接口
             - 如果为 False（默认），使用 f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
                 - 使用这个接口得到的 m3u8 文件，其中包含几个不同分辨率的视频的 m3u8 文件链接（此时下载不需要 Cookies）
@@ -8418,37 +8419,16 @@ class P115Client:
     ########## Other Encapsulations ##########
 
     # TODO 支持异步
-    @overload
     def open(
         self, 
         /, 
         url: str | Callable[[], str], 
-        headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        async_: Literal[False] = False, 
-    ) -> HTTPFileReader:
-        ...
-    @overload
-    def open(
-        self, 
-        /, 
-        url: str | Callable[[], str], 
-        headers: None | Mapping, 
-        start: int, 
-        seek_threshold: int,
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, HTTPFileReader]:
-        ...
-    def open(
-        self, 
-        /, 
-        url: str | Callable[[], str], 
         headers: None | Mapping = None, 
-        start: int = 0, 
-        seek_threshold: int = 1 << 20, 
+        *, 
         async_: Literal[False, True] = False, 
-    ) -> HTTPFileReader | Coroutine[Any, Any, HTTPFileReader]:
+    ) -> HTTPFileReader:
         """打开下载链接，可以从网盘、网盘上的压缩包内、分享链接中获取：
             - P115Client.download_url
             - P115Client.share_download_url
@@ -8458,6 +8438,8 @@ class P115Client:
             raise NotImplementedError("asynchronous mode not implemented")
         if headers is None:
             headers = self.headers
+        else:
+            headers = {**self.headers, **headers}
         return HTTPFileReader(
             url, 
             headers=headers, 
@@ -8475,6 +8457,7 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -8487,6 +8470,7 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -8498,6 +8482,7 @@ class P115Client:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -8512,25 +8497,13 @@ class P115Client:
         def gen_step():
             def get_bytes_range(start, stop):
                 if start < 0 or (stop and stop < 0):
-                    if headers := request_kwargs.get("headers"):
-                        headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=-1"}
-                    else:
-                        headers = {"Accept-Encoding": "identity", "Range": "bytes=-1"}
-                    resp = yield partial(
-                        self.request, 
+                    length: int = yield self.read_bytes_range(
                         url, 
+                        bytes_range="-1", 
+                        headers=headers, 
                         async_=async_, 
-                        **{**request_kwargs, "headers": headers, "parse": None}, 
+                        **{**request_kwargs, "parse": lambda resp: get_total_length(resp)}, 
                     )
-                    try:
-                        length = get_total_length(resp)
-                        if length is None:
-                            raise OSError(errno.ESPIPE, "can't determine content length")
-                    finally:
-                        if async_ and hasattr(resp, "aclose"):
-                            yield resp.aclose
-                        else:
-                            yield resp.close
                     if start < 0:
                         start += length
                     if start < 0:
@@ -8549,6 +8522,7 @@ class P115Client:
                 self.read_bytes_range, 
                 url, 
                 bytes_range=bytes_range, 
+                headers=headers, 
                 async_=async_, 
                 **request_kwargs, 
             ))
@@ -8600,6 +8574,7 @@ class P115Client:
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         request_kwargs["headers"] = headers
+        request_kwargs.setdefault("method", "GET")
         request_kwargs.setdefault("parse", False)
         return self.request(url, async_=async_, **request_kwargs)
 
@@ -8610,6 +8585,7 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -8622,6 +8598,7 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -8633,6 +8610,7 @@ class P115Client:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -8644,20 +8622,18 @@ class P115Client:
         :param async_: 是否异步
         :param request_kwargs: 其它请求参数
         """
-        if size <= 0:
-            if async_:
-                async def request():
-                    yield b""
-                return request()
-            else:
+        def gen_step():
+            if size <= 0:
                 return b""
-        return self.read_bytes(
-            url, 
-            start=offset, 
-            stop=offset+size, 
-            async_=async_, 
-            **request_kwargs, 
-        )
+            return (yield self.read_bytes(
+                url, 
+                start=offset, 
+                stop=offset+size, 
+                headers=headers, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     @cached_property
     def fs(self, /) -> P115FileSystem:

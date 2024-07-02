@@ -18,6 +18,9 @@ from warnings import filterwarnings
 filterwarnings("ignore", category=DeprecationWarning)
 filterwarnings("ignore", category=SyntaxWarning)
 
+if False:
+    from .component import *
+
 def __getattr__(attr):
     from importlib import import_module
 

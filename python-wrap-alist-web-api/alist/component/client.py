@@ -197,6 +197,10 @@ class AlistClient:
             if not url.startswith("/"):
                 url = "/" + url
             url = self.origin + url
+        if (headers := request_kwargs.get("headers")):
+            request_kwargs["headers"] = {**self.headers, **headers}
+        else:
+            request_kwargs["headers"] = self.headers
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -207,10 +211,6 @@ class AlistClient:
                 **request_kwargs, 
             )
         else:
-            if (headers := request_kwargs.get("headers")):
-                request_kwargs["headers"] = {**self.headers, **headers}
-            else:
-                request_kwargs["headers"] = self.headers
             return request(
                 url=url, 
                 method=method, 
@@ -5072,18 +5072,24 @@ class AlistClient:
         return url
 
     # TODO: 支持异步
-    @staticmethod
     def open(
+        self, 
+        /, 
         url: str | Callable[[], str], 
-        headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
+        headers: None | Mapping = None, 
+        *, 
         async_: Literal[False, True] = False, 
     ) -> HTTPFileReader:
         """打开下载链接，返回可读的文件对象
         """
         if async_:
-            raise OSError(errno.ENOSYS, "asynchronous mode not implemented")
+            raise NotImplementedError("asynchronous mode not implemented")
+        if headers is None:
+            headers = self.headers
+        else:
+            headers = {**self.headers, **headers}
         return HTTPFileReader(
             url, 
             headers=headers, 
@@ -5098,6 +5104,7 @@ class AlistClient:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -5110,6 +5117,7 @@ class AlistClient:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -5121,6 +5129,7 @@ class AlistClient:
         url: str, 
         start: int = 0, 
         stop: None | int = None, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -5135,25 +5144,13 @@ class AlistClient:
         def gen_step():
             def get_bytes_range(start, stop):
                 if start < 0 or (stop and stop < 0):
-                    if headers := request_kwargs.get("headers"):
-                        headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=-1"}
-                    else:
-                        headers = {"Accept-Encoding": "identity", "Range": "bytes=-1"}
-                    resp = yield partial(
-                        self.request, 
+                    length: int = yield self.read_bytes_range(
                         url, 
+                        bytes_range="-1", 
+                        headers=headers, 
                         async_=async_, 
-                        **{**request_kwargs, "headers": headers, "parse": None}, 
+                        **{**request_kwargs, "parse": lambda resp: get_total_length(resp)}, 
                     )
-                    try:
-                        length = get_total_length(resp)
-                        if length is None:
-                            raise OSError(errno.ESPIPE, "can't determine content length")
-                    finally:
-                        if async_ and hasattr(resp, "aclose"):
-                            yield resp.aclose
-                        else:
-                            yield resp.close
                     if start < 0:
                         start += length
                     if start < 0:
@@ -5172,6 +5169,7 @@ class AlistClient:
                 self.read_bytes_range, 
                 url, 
                 bytes_range=bytes_range, 
+                headers=headers, 
                 async_=async_, 
                 **request_kwargs, 
             ))
@@ -5223,6 +5221,7 @@ class AlistClient:
         else:
             headers = {"Accept-Encoding": "identity", "Range": f"bytes={bytes_range}"}
         request_kwargs["headers"] = headers
+        request_kwargs.setdefault("method", "GET")
         request_kwargs.setdefault("parse", False)
         return self.request(url, async_=async_, **request_kwargs)
 
@@ -5233,6 +5232,7 @@ class AlistClient:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -5245,6 +5245,7 @@ class AlistClient:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -5256,6 +5257,7 @@ class AlistClient:
         url: str, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -5267,20 +5269,18 @@ class AlistClient:
         :param async_: 是否异步
         :param request_kwargs: 其它请求参数
         """
-        if size <= 0:
-            if async_:
-                async def request():
-                    yield b""
-                return request()
-            else:
+        def gen_step():
+            if size <= 0:
                 return b""
-        return self.read_bytes(
-            url, 
-            start=offset, 
-            stop=offset+size, 
-            async_=async_, 
-            **request_kwargs, 
-        )
+            return (yield self.read_bytes(
+                url, 
+                start=offset, 
+                stop=offset+size, 
+                headers=headers, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
     @cached_property
     def fs(self, /) -> AlistFileSystem:

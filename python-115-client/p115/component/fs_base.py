@@ -3054,10 +3054,14 @@ class P115FileSystemBase(Generic[P115PathType]):
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
         pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
     ) -> HTTPFileReader | IO:
+        if async_:
+            raise NotImplementedError("asynchronous mode not implemented")
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        url = self.get_url(id_or_path, pid=pid)
+        url = self.get_url(id_or_path, pid=pid, headers=headers, async_=async_)
         return self.client.open(
             url, 
             headers=headers, 

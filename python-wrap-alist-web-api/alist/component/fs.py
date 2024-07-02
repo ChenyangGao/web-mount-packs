@@ -450,14 +450,44 @@ class AlistPath(Mapping, PathLike[str]):
             return b""
         return self.fs.read_block(self, size, offset)
 
+    @overload
     def read_text(
         self, 
         /, 
         encoding: None | str = None, 
         errors: None | str = None, 
         newline: None | str = None, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> str:
-        return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
+        ...
+    @overload
+    def read_text(
+        self, 
+        /, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def read_text(
+        self, 
+        /, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        return self.fs.read_text(
+            self, 
+            encoding=encoding, 
+            errors=errors, 
+            newline=newline, 
+            async_=async_, 
+        )
 
     def relative_to(self, other: PathType, /) -> str:
         if isinstance(other, (AttrDict, AlistPath)):
@@ -817,8 +847,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
-            resp = yield partial(
-                self.client.admin_setting_list, 
+            resp = yield self.client.admin_setting_list(
                 payload={"group": 0}, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -849,8 +878,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
-            resp = yield partial(
-                self.client.admin_setting_reset_token, 
+            resp = yield self.client.admin_setting_reset_token( 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **self.request_kwargs, 
@@ -984,6 +1012,7 @@ class AlistFileSystem:
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
+        "罗列出所有目录"
         if isinstance(path, (AttrDict, AlistPath)):
             if not password:
                 password = path.get("password", "")
@@ -1057,6 +1086,7 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         password: str = "", 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -1067,6 +1097,7 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         password: str = "", 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -1076,6 +1107,7 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         password: str = "", 
+        headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -1086,11 +1118,17 @@ class AlistFileSystem:
         else:
             path = self.abspath(path)
         payload = {"path": path, "password": password}
+        request_kwargs = self.request_kwargs
+        if headers:
+            request_kwargs = dict(request_kwargs)
+            if default_headers := self.request_kwargs.get("headers"):
+                headers = {**default_headers, **headers}
+            request_kwargs["headers"] = headers
         return check_response(self.client.fs_get( # type: ignore
             payload, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
-            **self.request_kwargs, 
+            **request_kwargs, 
         ))
 
     @overload
@@ -1655,6 +1693,7 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         password: str = "", 
+        headers: None | Mapping = None, 
         refresh: bool = False, 
         *, 
         async_: Literal[False] = False, 
@@ -1666,6 +1705,7 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         password: str = "", 
+        headers: None | Mapping = None, 
         refresh: bool = False, 
         *, 
         async_: Literal[True], 
@@ -1676,6 +1716,7 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         password: str = "", 
+        headers: None | Mapping = None, 
         refresh: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -1691,10 +1732,10 @@ class AlistFileSystem:
                 path = cast(str, attr["path"])
             else:
                 path = self.abspath(path)
-            attr = (yield partial(
-                self.fs_get, 
+            attr = (yield self.fs_get(
                 path, 
                 password, 
+                headers=headers, 
                 async_=async_, 
             ))["data"]
             access_time = datetime.now()
@@ -1728,8 +1769,7 @@ class AlistFileSystem:
             elif path == "/":
                 self.__dict__["path"] = "/"
             else:
-                attr = yield partial(
-                    self.attr, 
+                attr = yield self.attr(
                     path, 
                     password, 
                     async_=async_, 
@@ -1786,8 +1826,7 @@ class AlistFileSystem:
         def gen_step():
             nonlocal src_path, dst_path, src_password, dst_password
             try:
-                src_attr = yield partial(
-                    self.attr, 
+                src_attr = yield self.attr(
                     src_path, 
                     src_password, 
                     async_=async_, 
@@ -1795,8 +1834,7 @@ class AlistFileSystem:
                 src_path = cast(str, src_attr["path"])
                 if src_attr["is_dir"]:
                     if recursive:
-                        return (yield partial(
-                            self.copytree, 
+                        return (yield self.copytree(
                             src_attr, 
                             dst_path, 
                             src_password, 
@@ -1844,16 +1882,14 @@ class AlistFileSystem:
 
                 try:
                     if dst_attr is None:
-                        dst_attr = yield partial(
-                            self.attr, 
+                        dst_attr = yield self.attr(
                             dst_path, 
                             dst_password, 
                             async_=async_, 
                         )
                     dst_password = dst_password or dst_attr.get("password", "")
                 except FileNotFoundError:
-                    yield partial(
-                        self.makedirs, 
+                    yield self.makedirs(
                         dst_dir, 
                         dst_password, 
                         exist_ok=True, 
@@ -1866,8 +1902,7 @@ class AlistFileSystem:
                             f"destination path is a directory: {src_path!r} -> {dst_path!r}", 
                         )
                     elif overwrite:
-                        yield partial(
-                            self.remove, 
+                        yield self.remove(
                             dst_attr, 
                             async_=async_, 
                         )
@@ -1878,8 +1913,7 @@ class AlistFileSystem:
                         )
 
                 if src_name == dst_name:
-                    resp = yield partial(
-                        self.fs_copy, 
+                    resp = yield self.fs_copy(
                         src_dir, 
                         dst_dir, 
                         [src_name], 
@@ -1892,22 +1926,19 @@ class AlistFileSystem:
                     task["dst_path"] = dst_path
                     return task
                 else:
-                    src_storage = yield partial(
-                        self.storage_of, 
+                    src_storage = yield self.storage_of(
                         src_dir, 
                         src_password, 
                         async_=async_, 
                     )
-                    dst_storage = yield partial(
-                        self.storage_of, 
+                    dst_storage = yield self.storage_of(
                         dst_dir, 
                         dst_password, 
                         async_=async_, 
                     )
                     if src_storage != dst_storage:
                         # NOTE: 跨 storage 复制为不同名字的文件，则转化为上传任务
-                        resp = yield partial(
-                            self.fs_put, 
+                        resp = yield self.fs_put(
                             URL(self.get_url(src_path)), 
                             dst_path, 
                             as_task=True, 
@@ -1918,20 +1949,17 @@ class AlistFileSystem:
                         task["dst_path"] = dst_path
                         return task
 
-                    if not (yield partial(
-                        self.exists, 
+                    if not (yield self.exists(
                         joinpath(dst_dir, src_name), 
                         async_=async_
                     )):
-                        yield partial(
-                            self.fs_copy, 
+                        yield self.fs_copy(
                             src_dir, 
                             dst_dir, 
                             [src_name], 
                             async_=async_, 
                         )
-                        yield partial(
-                            self.fs_rename, 
+                        yield self.fs_rename(
                             joinpath(dst_dir, src_name), 
                             dst_name, 
                             async_=async_, 
@@ -1939,47 +1967,40 @@ class AlistFileSystem:
                     else:
                         tempdirname = str(uuid4())
                         tempdir = joinpath(dst_dir, tempdirname)
-                        yield partial(
-                            self.fs_mkdir, 
+                        yield self.fs_mkdir(
                             tempdir, 
                             async_=async_, 
                         )
                         try:
-                            yield partial(
-                                self.fs_copy, 
+                            yield self.fs_copy(
                                 src_dir, 
                                 tempdir, 
                                 [src_name], 
                                 async_=async_, 
                             )
-                            yield partial(
-                                self.fs_rename, 
+                            yield self.fs_rename(
                                 joinpath(tempdir, src_name), 
                                 dst_name, 
                                 async_=async_, 
                             )
-                            yield partial(
-                                self.fs_move, 
+                            yield self.fs_move(
                                 tempdir, 
                                 dst_dir, 
                                 [dst_name], 
                                 async_=async_, 
                             )
                         finally:
-                            yield partial(
-                                self.fs_remove, 
+                            yield self.fs_remove(
                                 dst_dir, 
                                 [tempdirname], 
                                 async_=async_, 
                             )
                     return dst_path
             except OSError as e:
-                if onerror is True:
+                if callable(onerror):
+                    yield partial(onerror, e)
+                elif onerror:
                     raise
-                elif onerror is False or onerror is None:
-                    pass
-                else:
-                    onerror(e)
                 return None
         return run_gen_step(gen_step, async_=async_)
 
@@ -2029,15 +2050,13 @@ class AlistFileSystem:
         def gen_step():
             nonlocal src_path, dst_path, src_password, dst_password
             try:
-                src_attr = yield partial(
-                    self.attr, 
+                src_attr = yield self.attr(
                     src_path, 
                     src_password, 
                     async_=async_, 
                 )
                 if not src_attr["is_dir"]:
-                    return (yield partial(
-                        self.copy, 
+                    return (yield self.copy(
                         src_attr, 
                         dst_path, 
                         src_password, 
@@ -2082,16 +2101,14 @@ class AlistFileSystem:
 
                 try:
                     if dst_attr is None:
-                        dst_attr = yield partial(
-                            self.attr, 
+                        dst_attr = yield self.attr(
                             dst_path, 
                             dst_password, 
                             async_=async_, 
                         )
                     dst_password = dst_password or dst_attr.get("password", "")
                 except FileNotFoundError:
-                    yield partial(
-                        self.makedirs, 
+                    yield self.makedirs(
                         dst_dir, 
                         dst_password, 
                         exist_ok=True, 
@@ -2099,16 +2116,14 @@ class AlistFileSystem:
                     )
                     if src_name == dst_name:
                         if as_task:
-                            yield partial(
-                                self.fs_copy, 
+                            yield self.fs_copy(
                                 src_dir, 
                                 dst_dir, 
                                 [src_name], 
                                 async_=async_, 
                             )
                             return dst_path
-                    yield partial(
-                        self.fs_mkdir, 
+                    yield self.fs_mkdir(
                         dst_path, 
                         async_=async_, 
                     )
@@ -2119,27 +2134,23 @@ class AlistFileSystem:
                             f"destination path is not directory: {src_path!r} -> {dst_path!r}", 
                         )
 
-                sub_srcattrs = yield partial(
-                    self.listdir_attr, 
+                sub_srcattrs = yield self.listdir_attr(
                     src_attr, 
                     src_password, 
                     refresh=True, 
                     async_=async_, 
                 )
             except OSError as e:
-                if onerror is True:
+                if callable(onerror):
+                    yield partial(onerror, e)
+                elif onerror:
                     raise
-                elif onerror is False or onerror is None:
-                    pass
-                else:
-                    onerror(e)
                 return None
 
             result = {}
             for sub_srcattr in sub_srcattrs:
                 if sub_srcattr["is_dir"]:
-                    result[sub_srcattr["path"]] = (yield partial(
-                        self.copytree, 
+                    result[sub_srcattr["path"]] = (yield self.copytree(
                         sub_srcattr, 
                         joinpath(dst_path, sub_srcattr["name"]), 
                         src_password, 
@@ -2150,8 +2161,7 @@ class AlistFileSystem:
                         async_=async_, 
                     ))
                 else:
-                    result[sub_srcattr["path"]] = (yield partial(
-                        self.copy, 
+                    result[sub_srcattr["path"]] = (yield self.copy(
                         sub_srcattr, 
                         joinpath(dst_path, sub_srcattr["name"]), 
                         src_password, 
@@ -2233,8 +2243,7 @@ class AlistFileSystem:
                 path = self.abspath(path)
 
             if not url:
-                attr = yield partial(
-                    self.attr, 
+                attr = yield self.attr(
                     path, 
                     password, 
                     async_=async_, 
@@ -2362,8 +2371,7 @@ class AlistFileSystem:
     ) -> Iterator[tuple[AlistPath, str, DownloadTask]] | AsyncIterator[tuple[AlistPath, str, AsyncDownloadTask]]:
         def gen_step():
             nonlocal to_dir
-            attr = yield partial(
-                self.attr, 
+            attr = yield self.attr(
                 path, 
                 password, 
                 async_=async_, 
@@ -2378,8 +2386,7 @@ class AlistFileSystem:
                     if to_dir:
                         makedirs(to_dir, exist_ok=True)
                 try:
-                    pathes = yield partial(
-                        self.listdir_attr, 
+                    pathes = yield self.listdir_attr(
                         attr, 
                         password=password, 
                         refresh=refresh, 
@@ -2406,7 +2413,7 @@ class AlistFileSystem:
                         predicate=predicate, 
                         password=password, 
                         refresh=refresh, 
-                        async_=async_, 
+                        async_=async_, # type: ignore
                     ), identity=True)
                 else:
                     mode = write_mode
@@ -2473,13 +2480,13 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
+            nonlocal path, password
             if isinstance(path, (AttrDict, AlistPath)):
                 path = cast(str, path["path"])
             else:
                 path = self.abspath(path)
             try:
-                yield partial(
-                    self.attr, 
+                yield self.attr(
                     path, 
                     password, 
                     async_=async_, 
@@ -2524,8 +2531,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
-            resp = yield partial(
-                self.fs_list, 
+            resp = yield self.fs_list(
                 path, 
                 password=password, 
                 refresh=refresh, 
@@ -2533,6 +2539,56 @@ class AlistFileSystem:
                 async_=async_, 
             )
             return resp["data"]["total"]
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def get_raw_url(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+     ) -> str:
+        ...
+    @overload
+    def get_raw_url(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+     ) -> Coroutine[Any, Any, str]:
+        ...
+    def get_raw_url(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+     ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            nonlocal path, password
+            if isinstance(path, (AttrDict, AlistPath)):
+                attr = path
+                path = cast(str, attr["path"])
+                if attr["is_dir"]:
+                    raise IsADirectoryError(errno.EISDIR, path)
+                if "raw_url" in attr:
+                    return attr["raw_url"]
+                if not password:
+                    password = attr.get("password", "")
+            else:
+                path = self.abspath(path)
+            attr = yield self.attr(path, password, headers=headers, async_=async_)
+            if attr["is_dir"]:
+                raise IsADirectoryError(errno.EISDIR, path)
+            return attr["raw_url"]
         return run_gen_step(gen_step, async_=async_)
 
     def get_url(
@@ -2605,11 +2661,10 @@ class AlistFileSystem:
                 async_=async_, 
             )
         def gen_step():
-            nonlocal pattern, dirname
+            nonlocal pattern, dirname, password
             if not pattern:
                 try:
-                    attr = yield partial(
-                        self.attr, 
+                    attr = yield self.attr(
                         dirname, 
                         password, 
                         async_=async_, 
@@ -2649,8 +2704,7 @@ class AlistFileSystem:
                     dirname = joinpath(dirname, orig)
                 if typ == "orig":
                     try:
-                        attr = yield partial(
-                            self.attr, 
+                        attr = yield self.attr(
                             dirname, 
                             password, 
                             async_=async_, 
@@ -2746,8 +2800,7 @@ class AlistFileSystem:
     ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             try:
-                attr = yield partial(
-                    self.attr, 
+                attr = yield self.attr(
                     path, 
                     password, 
                     async_=async_, 
@@ -2787,8 +2840,7 @@ class AlistFileSystem:
     ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             try:
-                attr = yield partial(
-                    self.attr, 
+                attr = yield self.attr(
                     path, 
                     password, 
                     async_=async_, 
@@ -2827,6 +2879,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
+            nonlocal path, password
             if isinstance(path, (AttrDict, AlistPath)):
                 attr = path
                 if not password:
@@ -2871,6 +2924,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
+            nonlocal path, password
             if isinstance(path, (AttrDict, AlistPath)):
                 if "hash_info" in path:
                     return path["hash_info"] is None
@@ -2918,7 +2972,7 @@ class AlistFileSystem:
         refresh: None | bool = None, 
         password: str = "", 
         *, 
-        async_: AsyncLiteral[True], 
+        async_: Literal[True], 
     ) -> AsyncIterator[AlistPath]:
         ...
     def iter_bfs(
@@ -2935,13 +2989,14 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
         def gen_step():
+            nonlocal min_depth, max_depth, password
             dq: deque[tuple[int, AlistPath]] = deque()
             push, pop = dq.append, dq.popleft
             try:
                 attr = yield self.attr(top, password, async_=async_)
                 if not password:
                     password = attr.get("password", "")
-            except OSError:
+            except OSError as e:
                 if callable(onerror):
                     yield partial(onerror, e)
                 elif onerror:
@@ -3030,6 +3085,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
         def gen_step():
+            nonlocal min_depth, max_depth
             if not max_depth:
                 return
             global_yield_me = True
@@ -3281,24 +3337,15 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> list[str] | Coroutine[Any, Any, list[str]]:
         def gen_step():
-            if page <= 0 or per_page <= 0:
-                resp = yield self.fs_dirs(
-                    path, 
-                    password, 
-                    refresh=refresh, 
-                    async_=async_, 
-                )
-                data = resp["data"]
-            else:
-                resp = yield self.fs_list(
-                    path, 
-                    password, 
-                    refresh=refresh, 
-                    page=page, 
-                    per_page=per_page, 
-                    async_=async_, 
-                )
-                data = resp["data"]["content"]
+            resp = yield self.fs_list(
+                path, 
+                password, 
+                refresh=refresh, 
+                page=page, 
+                per_page=per_page, 
+                async_=async_, 
+            )
+            data = resp["data"]["content"]
             if not data:
                 return []
             return [item["name"] for item in data]
@@ -3446,6 +3493,7 @@ class AlistFileSystem:
         async_: Literal[True], 
     ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
+            nonlocal path, password
             if isinstance(path, (AttrDict, AlistPath)):
                 if not password:
                     password = path.get("password", "")
@@ -3454,12 +3502,39 @@ class AlistFileSystem:
                 path = self.abspath(path)
             if path == "/":
                 return "/"
-            if not exist_ok and self.exists(path, password, async_=async_):
-                raise FileExistsError(errno.EEXIST, path)
-            self.fs_mkdir(path, async_=async_)
+            try:
+                attr = yield self.attr(path, password, async_=async_)
+            except FileNotFoundError:
+                if attr["is_dir"]:
+                    if not exist_ok:
+                        raise FileExistsError(errno.EEXIST, path)
+                else:
+                    raise NotADirectoryError(errno.ENOTDIR, path)
+            else:
+                yield self.fs_mkdir(path, async_=async_)
             return path
         return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def mkdir(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def mkdir(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def mkdir(
         self, 
         /, 
@@ -3467,34 +3542,58 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str:
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.get("password", "")
-            path = cast(str, path["path"])
-        else:
-            path = self.abspath(path)
-        if path == "/":
-            raise PermissionError(
-                errno.EPERM, 
-                "create root directory is not allowed (because it has always existed)", 
-            )
-        if self.is_storage(path, password, async_=async_):
-            raise PermissionError(
-                errno.EPERM, 
-                f"can't directly create a storage by `mkdir`: {path!r}", 
-            )
-        try:
-            self.attr(path, password, async_=async_)
-        except FileNotFoundError as e:
-            dir_ = dirname(path)
-            if not self.attr(dir_, password, async_=async_)["is_dir"]:
-                raise NotADirectoryError(errno.ENOTDIR, dir_) from e
-            self.fs_mkdir(path, async_=async_)
-            return path
-        else:
-            raise FileExistsError(errno.EEXIST, path)
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            nonlocal path, async_
+            if isinstance(path, (AttrDict, AlistPath)):
+                if not password:
+                    password = path.get("password", "")
+                path = cast(str, path["path"])
+            else:
+                path = self.abspath(path)
+            if path == "/":
+                raise PermissionError(
+                    errno.EPERM, 
+                    "create root directory is not allowed (because it has always existed)", 
+                )
+            try:
+                attr = yield self.attr(path, password, async_=async_)
+            except FileNotFoundError as e:
+                dattr = yield self.attr(dirname(path), password, async_=async_)
+                if not dattr["is_dir"]:
+                    raise NotADirectoryError(errno.ENOTDIR, dattr["path"]) from e
+                yield self.fs_mkdir(path, async_=async_)
+                return path
+            else:
+                if attr["is_dir"]:
+                    raise FileExistsError(errno.EEXIST, path)
+                raise NotADirectoryError(errno.ENOTDIR, path) 
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def move(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def move(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def move(
         self, 
         /, 
@@ -3504,78 +3603,101 @@ class AlistFileSystem:
         dst_password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str:
-        if isinstance(src_path, (AttrDict, AlistPath)):
-            if not src_password:
-                src_password = src_path.get("password", "")
-            src_path = src_path["path"]
-        else:
-            src_path = self.abspath(src_path)
-        if isinstance(dst_path, (AttrDict, AlistPath)):
-            if not dst_password:
-                dst_password = dst_path.get("password", "")
-            dst_path = dst_path["path"]
-        else:
-            dst_path = self.abspath(dst_path)
-        src_path = cast(str, src_path)
-        dst_path = cast(str, dst_path)
-        if src_path == dst_path or dirname(src_path) == dst_path:
-            return src_path
-        cmpath = commonpath((src_path, dst_path))
-        if cmpath == dst_path:
-            raise PermissionError(
-                errno.EPERM, 
-                f"rename a path as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
-            )
-        elif cmpath == src_path:
-            raise PermissionError(
-                errno.EPERM, 
-                f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
-            )
-        src_attr = self.attr(src_path, src_password, async_=async_)
-        try:
-            dst_attr = self.attr(dst_path, dst_password, async_=async_)
-        except FileNotFoundError:
-            return self.rename(src_path, dst_path, src_password, dst_password, async_=async_)
-        else:
-            if dst_attr["is_dir"]:
-                dst_filename = basename(src_path)
-                dst_filepath = joinpath(dst_path, dst_filename)
-                if self.exists(dst_filepath, dst_password, async_=async_):
-                    raise FileExistsError(
-                        errno.EEXIST, 
-                        f"destination path {dst_filepath!r} already exists", 
-                    )
-                self.fs_move(dirname(src_path), dst_path, [dst_filename], async_=async_)
-                return dst_filepath
-            raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists")
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            nonlocal src_path, dst_path, src_password, dst_password
+            src_attr: None | AttrDict | AlistPath
+            dst_attr: None | AttrDict | AlistPath
+            if isinstance(src_path, (AttrDict, AlistPath)):
+                src_attr = src_path
+                if not src_password:
+                    src_password = src_attr.get("password", "")
+                src_path = cast(str, src_attr["path"])
+            else:
+                src_attr = None
+                src_path = self.abspath(src_path)
+            if isinstance(dst_path, (AttrDict, AlistPath)):
+                dst_attr = dst_path
+                if not dst_password:
+                    dst_password = dst_attr.get("password", "")
+                dst_path = cast(str, dst_attr["path"])
+            else:
+                dst_attr = None
+                dst_path = self.abspath(dst_path)
+            if src_path == dst_path or dirname(src_path) == dst_path:
+                return src_path
+            cmpath = commonpath((src_path, dst_path))
+            if cmpath == dst_path:
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"rename a path as its ancestor is not allowed: {src_path!r} -> {dst_path!r}", 
+                )
+            elif cmpath == src_path:
+                raise PermissionError(
+                    errno.EPERM, 
+                    f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
+                )
+            if src_attr is None:
+                src_attr = yield self.attr(src_path, src_password, async_=async_)
+            try:
+                if dst_attr is None:
+                    dst_attr = self.attr(dst_path, dst_password, async_=async_)
+            except FileNotFoundError:
+                return (yield self.rename(
+                    src_attr, 
+                    dst_attr, 
+                    src_password, 
+                    dst_password, 
+                    async_=async_, 
+                ))
+            else:
+                if dst_attr["is_dir"]:
+                    dst_filename = basename(src_path)
+                    dst_filepath = joinpath(dst_path, dst_filename)
+                    if (yield self.exists(dst_filepath, dst_password, async_=async_)):
+                        raise FileExistsError(
+                            errno.EEXIST, 
+                            f"destination path {dst_filepath!r} already exists", 
+                        )
+                    yield self.fs_move(dirname(src_path), dst_path, [dst_filename], async_=async_)
+                    return dst_filepath
+                raise FileExistsError(errno.EEXIST, f"destination path {dst_path!r} already exists")
+        return run_gen_step(gen_step, async_=async_)
 
+    # TODO: 支持异步
     def open(
         self, 
         /, 
         path: PathType, 
         mode: str = "r", 
-        buffering: Optional[int] = None, 
+        buffering: None | int = None, 
         encoding: None | str = None, 
         errors: None | str = None, 
         newline: None | str = None, 
-        headers: Optional[Mapping] = None, 
+        headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
     ) -> HTTPFileReader | IO:
+        if async_:
+            raise NotImplementedError("asynchronous mode not implemented")
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
-        path = self.as_path(path, password, async_=async_)
-        if path.is_dir():
-            raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
+        url = self.get_raw_url(path, password, headers=headers, async_=async_)
+        request_kwargs = self.request_kwargs
+        if headers:
+            request_kwargs = dict(request_kwargs)
+            if default_headers := self.request_kwargs.get("headers"):
+                headers = {**default_headers, **headers}
+            request_kwargs["headers"] = headers
         return self.client.open(
-            path.url, 
-            headers=headers, 
+            url, 
             start=start, 
             seek_threshold=seek_threshold, 
+            async_=async_, 
+            **request_kwargs, 
         ).wrap(
             text_mode="b" not in mode, 
             buffering=buffering, 
@@ -3584,52 +3706,173 @@ class AlistFileSystem:
             newline=newline, 
         )
 
+    @overload
     def read_bytes(
         self, 
         /, 
         path: PathType, 
         start: int = 0, 
         stop: Optional[int] = None, 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> bytes:
+        ...
+    @overload
+    def read_bytes(
+        self, 
+        /, 
+        path: PathType, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def read_bytes(
+        self, 
+        /, 
+        path: PathType, 
+        start: int = 0, 
+        stop: Optional[int] = None, 
+        headers: None | Mapping = None, 
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes:
-        path = self.as_path(path, password, async_=async_)
-        if path.is_dir():
-            raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
-        return self.client.read_bytes(path.url, start, stop)
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        def gen_step():
+            nonlocal headers
+            url = yield self.get_raw_url(path, password, headers=headers, async_=async_)
+            request_kwargs = self.request_kwargs
+            if headers:
+                request_kwargs = dict(request_kwargs)
+                if default_headers := self.request_kwargs.get("headers"):
+                    headers = {**default_headers, **headers}
+                request_kwargs["headers"] = headers
+            return (yield self.client.read_bytes(
+                url, 
+                start, 
+                stop, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def read_bytes_range(
         self, 
         /, 
         path: PathType, 
         bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> bytes:
+        ...
+    @overload
+    def read_bytes_range(
+        self, 
+        /, 
+        path: PathType, 
+        bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def read_bytes_range(
+        self, 
+        /, 
+        path: PathType, 
+        bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes:
-        path = self.as_path(path, password, async_=async_)
-        if path.is_dir():
-            raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
-        return self.client.read_bytes_range(path.url, bytes_range)
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        def gen_step():
+            nonlocal headers
+            url = yield self.get_raw_url(path, password, headers=headers, async_=async_)
+            request_kwargs = self.request_kwargs
+            if headers:
+                request_kwargs = dict(request_kwargs)
+                if default_headers := self.request_kwargs.get("headers"):
+                    headers = {**default_headers, **headers}
+                request_kwargs["headers"] = headers
+            return (yield self.client.read_bytes_range(
+                url, 
+                bytes_range, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def read_block(
         self, 
         /, 
         path: PathType, 
         size: int = 0, 
         offset: int = 0, 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> bytes:
+        ...
+    @overload
+    def read_block(
+        self, 
+        /, 
+        path: PathType, 
+        size: int = 0, 
+        offset: int = 0, 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def read_block(
+        self, 
+        /, 
+        path: PathType, 
+        size: int = 0, 
+        offset: int = 0, 
+        headers: None | Mapping = None, 
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> bytes:
-        if size <= 0:
-            return b""
-        path = self.as_path(path, password, async_=async_)
-        if path.is_dir():
-            raise IsADirectoryError(errno.EISDIR, f"{path['path']!r} is a directory")
-        return self.client.read_block(path.url, size, offset)
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        def gen_step():
+            nonlocal headers
+            if size <= 0:
+                return b""
+            url = yield self.get_raw_url(path, password, headers=headers, async_=async_)
+            request_kwargs = self.request_kwargs
+            if headers:
+                request_kwargs = dict(request_kwargs)
+                if default_headers := self.request_kwargs.get("headers"):
+                    headers = {**default_headers, **headers}
+                request_kwargs["headers"] = headers
+            return (yield self.client.read_block(
+                url, 
+                size, 
+                offset, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
     def read_text(
         self, 
         /, 
@@ -3637,19 +3880,56 @@ class AlistFileSystem:
         encoding: None | str = None, 
         errors: None | str = None, 
         newline: None | str = None, 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def read_text(
+        self, 
+        /, 
+        path: PathType, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def read_text(
+        self, 
+        /, 
+        path: PathType, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ):
-        return self.open(
-            path, 
-            encoding=encoding, 
-            errors=errors, 
-            newline=newline, 
-            password=password, 
-            async_=async_, 
-        ).read()
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            data: bytes = yield self.read_bytes_range(
+                path, 
+                password=password, 
+                headers=headers, 
+                async_=async_, 
+            )
+            bio = BytesIO(data)
+            tio = TextIOWrapper(
+                bio, 
+                encoding=encoding or "utf-8", 
+                errors=errors, 
+                newline=newline, 
+            )
+            return tio.read()
+        return run_gen_step(gen_step, async_=async_)
 
+    #### TODO
     def remove(
         self, 
         /, 
@@ -3755,13 +4035,13 @@ class AlistFileSystem:
         if isinstance(src_path, (AttrDict, AlistPath)):
             if not src_password:
                 src_password = src_path.get("password", "")
-            src_path = src_path["path"]
+            src_path = cast(str, src_path["path"])
         else:
             src_path = self.abspath(src_path)
         if isinstance(dst_path, (AttrDict, AlistPath)):
             if not dst_password:
                 dst_password = dst_path.get("password", "")
-            dst_path = dst_path["path"]
+            dst_path = cast(str, dst_path["path"])
         else:
             dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
@@ -3858,13 +4138,13 @@ class AlistFileSystem:
         if isinstance(src_path, (AttrDict, AlistPath)):
             if not src_password:
                 src_password = src_path.get("password", "")
-            src_path = src_path["path"]
+            src_path = cast(str, src_path["path"])
         else:
             src_path = self.abspath(src_path)
         if isinstance(dst_path, (AttrDict, AlistPath)):
             if not dst_password:
                 dst_password = dst_path.get("password", "")
-            dst_path = dst_path["path"]
+            dst_path = cast(str, dst_path["path"])
         else:
             dst_path = self.abspath(dst_path)
         src_path = cast(str, src_path)
