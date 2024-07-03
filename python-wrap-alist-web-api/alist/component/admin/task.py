@@ -20,7 +20,12 @@ from typing import cast, overload, Any, Literal
 from iterutils import run_gen_step
 from undefined import undefined
 
-from .client import check_response, AlistClient
+from ..client import check_response, AlistClient
+
+
+# TODO: 为任务专门设计的类
+class AlistTask:
+    ...
 
 
 class AlistCopyTaskList:

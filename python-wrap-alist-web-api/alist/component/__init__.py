@@ -12,6 +12,6 @@ from . import fs
 __all__.extend(fs.__all__)
 from .fs import *
 
-from . import tasklist
-__all__.extend(fs.__all__)
-from .tasklist import *
+from . import admin
+__all__.extend(admin.__all__)
+from .admin import *

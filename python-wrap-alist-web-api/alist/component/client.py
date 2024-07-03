@@ -5320,7 +5320,7 @@ class AlistClient:
 
 
 from .fs import AlistFileSystem
-from .tasklist import (
+from .admin.task import (
     AlistCopyTaskList, AlistOfflineDownloadTaskList, 
     AlistOfflineDownloadTransferTaskList, AlistUploadTaskList, 
     AlistAria2DownTaskList, AlistAria2TransferTaskList, 

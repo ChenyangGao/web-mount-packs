@@ -429,7 +429,8 @@ def main(args):
                     name, 
                     pid=dst_pid, 
                     make_reporthook=partial(add_report, attr=src_attr), 
-                    upload_directly=None, 
+                    # NOTE: 1 GB 以内使用网页版上传接口，这个接口的优势是上传完成后会自动产生 115 生活事件
+                    upload_directly=None if src_attr["size"] <= 1 << 30 else False, 
                 )
                 console_print(f"""\
 [bold green][GOOD][/bold green] 📝 上传文件: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
