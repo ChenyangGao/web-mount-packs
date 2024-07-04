@@ -218,8 +218,8 @@ def process_info(info: dict, dir: None | str = None) -> str:
     pickcode = ID_TO_PICKCODE[fid] = info["pc"]
     if info.get("u"):
         PICKCODE_OF_IMAGE.add(pickcode)
-    if dir_:
-        PATH_TO_ID[dir_ + "/" + fn] = fid
+    if dir:
+        PATH_TO_ID[dir + "/" + fn] = fid
     elif dir is not None:
         PATH_TO_ID[fn] = fid
     return pickcode
