@@ -2,15 +2,16 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __doc__ = """\t\t🚀 115 直链服务简单且极速版 🍳
 
-链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1m\x1b[32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1m\x1b[32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1m\x1b[32mid\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1m\x1b[32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
+链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1m\x1b[32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1m\x1b[32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1m\x1b[32mid\x1b[0m\x1b[4m\x1b[34m}&sha1={\x1b[1m\x1b[32msha1\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1m\x1b[32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
 
-- \x1b[1m\x1b[32mpickcode\x1b[0m: 文件或目录的 \x1b[1m\x1b[32mpickcode\x1b[0m，优先级高于 \x1b[1m\x1b[32mid\x1b[0m
-- \x1b[1m\x1b[32mid\x1b[0m: 文件或目录的 \x1b[1m\x1b[32mid\x1b[0m，优先级高于 \x1b[1m\x1b[32mpath\x1b[0m
-- \x1b[1m\x1b[32mpath\x1b[0m: 文件或目录的路径，优先级高于 \x1b[1m\x1b[32mpath2\x1b[0m
-- \x1b[1m\x1b[32mpath2\x1b[0m: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
+- \x1b[1m\x1b[32mpickcode\x1b[0m: 文件的 \x1b[1m\x1b[32mpickcode\x1b[0m，优先级高于 \x1b[1m\x1b[32mid\x1b[0m
+- \x1b[1m\x1b[32mid\x1b[0m: 文件的 \x1b[1m\x1b[32mid\x1b[0m，优先级高于 \x1b[1m\x1b[32msha1\x1b[0m
+- \x1b[1m\x1b[32msha1\x1b[0m: 文件的 \x1b[1m\x1b[32msha1\x1b[0m，优先级高于 \x1b[1m\x1b[32mpath\x1b[0m
+- \x1b[1m\x1b[32mpath\x1b[0m: 文件的路径，优先级高于 \x1b[1m\x1b[32mpath2\x1b[0m
+- \x1b[1m\x1b[32mpath2\x1b[0m: 文件的路径，这个直接在接口路径之后，不在查询字符串中
 
 🌍 支持如下环境变量 🛸
 
@@ -211,6 +212,19 @@ async def register_http_client():
         yield
 
 
+def process_info(info: dict, dir: None | str = None) -> str:
+    fid = cast(str, info["fid"])
+    fn = cast(str, info["n"])
+    pickcode = ID_TO_PICKCODE[fid] = info["pc"]
+    if info.get("u"):
+        PICKCODE_OF_IMAGE.add(pickcode)
+    if dir_:
+        PATH_TO_ID[dir_ + "/" + fn] = fid
+    elif dir is not None:
+        PATH_TO_ID[fn] = fid
+    return pickcode
+
+
 async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
     if id in ID_TO_PICKCODE:
         return ID_TO_PICKCODE[id]
@@ -225,16 +239,24 @@ async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
     info = json["data"][0]
     if "fid" not in info:
         raise FileNotFoundError
-    fid = cast(str, info["fid"])
-    fn = cast(str, info["n"])
-    pickcode = ID_TO_PICKCODE[fid] = info["pc"]
-    if info.get("u"):
-        PICKCODE_OF_IMAGE.add(pickcode)
-    if dir_:
-        PATH_TO_ID[dir_ + "/" + fn] = fid
-    else:
-        PATH_TO_ID[fn] = fid
-    return pickcode
+    return process_info(info)
+
+
+async def get_pickcode_by_sha1(client: ClientSession, sha1: str) -> str:
+    if len(sha1) != 40:
+        raise FileNotFoundError
+    resp = await client.get(
+        "https://webapi.115.com/files/search", 
+        params={"search_value": sha1, "limit": 1, "show_dir": 0}, 
+        headers={"Cookie": cookies}, 
+    )
+    json = loads((await resp.read()) or b"")
+    if not json["state"] or not json["count"]:
+        raise FileNotFoundError
+    info = json["data"][0]
+    if "fid" not in info:
+        raise FileNotFoundError
+    return process_info(info)
 
 
 async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
@@ -278,27 +300,10 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
         it = iter(json["data"])
         for info in it:
             if "fid" in info:
-                fid = cast(str, info["fid"])
-                fn = cast(str, info["n"])
-                pickcode = ID_TO_PICKCODE[fid] = cast(str, info["pc"])
-                if info.get("u"):
-                    PICKCODE_OF_IMAGE.add(pickcode)
-                if dir_:
-                    PATH_TO_ID[dir_ + "/" + fn] = fid
-                else:
-                    PATH_TO_ID[fn] = fid
-                if fn == name:
+                pickcode = process_info(info, dir_)
+                if info["n"] == name:
                     for info in it:
-                        if "fid" in info:
-                            fid = cast(str, info["fid"])
-                            fn = cast(str, info["n"])
-                            ID_TO_PICKCODE[fid] = info["pc"]
-                            if info.get("u"):
-                                PICKCODE_OF_IMAGE.add(pickcode)
-                            if dir_:
-                                PATH_TO_ID[dir_ + "/" + fn] = fid
-                            else:
-                                PATH_TO_ID[fn] = fid
+                        process_info(info, dir_)
                     return pickcode
         if json["offset"] + len(json["data"]) == json["count"]:
             break
@@ -323,21 +328,25 @@ async def get_download_url(
     client: ClientSession, 
     pickcode: str = "", 
     id: str = "", 
+    sha1: str = "", 
     path: str = "", 
     path2: str = "", 
 ):
     """获取文件的下载链接
 
     :param pickcode: 文件或目录的 pickcode，优先级高于 id
-    :param id: 文件或目录的 id，优先级高于 path
-    :param path: 文件或目录的路径，优先级高于 path2
-    :param path2: 文件或目录的路径，这个直接在接口路径之后，不在查询字符串中
+    :param id: 文件的 id，优先级高于 sha1
+    :param sha1: 文件的 sha1，优先级高于 path
+    :param path: 文件的路径，优先级高于 path2
+    :param path2: 文件的路径，这个直接在接口路径之后，不在查询字符串中
     """
     try:
         user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
         if not (pickcode := pickcode.strip()):
             if id := id.strip():
                 pickcode = await get_pickcode_by_id(client, id)
+            elif sha1 := sha1.strip():
+                pickcode = await get_pickcode_by_sha1(client, sha1)
             else:
                 pickcode = await get_pickcode_by_path(client, path or path2)
         url = URL_CACHE.get((pickcode, user_agent))
@@ -354,7 +363,7 @@ async def get_download_url(
         data = loads(rsa_decode(json["data"]))
         url = URL_CACHE[(pickcode, user_agent)] = next(info for info in data.values())["url"]["url"]
         return redirect(cast(str, url))
-    except (KeyError, FileNotFoundError):
+    except (FileNotFoundError, KeyError):
         return text("not found", 404) 
 
 
