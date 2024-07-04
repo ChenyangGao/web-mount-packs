@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __doc__ = """\t\t🚀 115 直链服务简单且极速版 🍳
 
 链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1m\x1b[32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1m\x1b[32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1m\x1b[32mid\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1m\x1b[32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
@@ -122,6 +122,7 @@ app = Application()
 PATH_TO_ID: LRUCache[str, str] = LRUCache(65536)
 ID_TO_PICKCODE: LRUCache[str, str] = LRUCache(65536)
 URL_CACHE: TTLCache[tuple[str, str], str] = TTLCache(64, ttl=1)
+PICKCODE_OF_IMAGE: set[str] = set()
 
 to_bytes = int.to_bytes
 from_bytes = int.from_bytes
@@ -214,15 +215,25 @@ async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
     if id in ID_TO_PICKCODE:
         return ID_TO_PICKCODE[id]
     resp = await client.get(
-        "https://webapi.115.com/files/file", 
+        "https://webapi.115.com/files/get_info", 
         params={"file_id": id}, 
         headers={"Cookie": cookies}, 
     )
     json = loads((await resp.read()) or b"")
     if not json["state"]:
         raise FileNotFoundError
-    data = json["data"][0]
-    pickcode = ID_TO_PICKCODE[data["file_id"]] = data["pick_code"]
+    info = json["data"][0]
+    if "fid" not in info:
+        raise FileNotFoundError
+    fid = cast(str, info["fid"])
+    fn = cast(str, info["n"])
+    pickcode = ID_TO_PICKCODE[fid] = info["pc"]
+    if info.get("u"):
+        PICKCODE_OF_IMAGE.add(pickcode)
+    if dir_:
+        PATH_TO_ID[dir_ + "/" + fn] = fid
+    else:
+        PATH_TO_ID[fn] = fid
     return pickcode
 
 
@@ -267,26 +278,40 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
             if "fid" in info:
                 fid = cast(str, info["fid"])
                 fn = cast(str, info["n"])
+                pickcode = ID_TO_PICKCODE[fid] = cast(str, info["pc"])
+                if info.get("u"):
+                    PICKCODE_OF_IMAGE.add(pickcode)
                 if dir_:
                     PATH_TO_ID[dir_ + "/" + fn] = fid
                 else:
                     PATH_TO_ID[fn] = fid
-                pickcode = ID_TO_PICKCODE[fid] = cast(str, info["pc"])
                 if fn == name:
                     for info in it:
                         if "fid" in info:
                             fid = cast(str, info["fid"])
                             fn = cast(str, info["n"])
+                            ID_TO_PICKCODE[fid] = info["pc"]
+                            if info.get("u"):
+                                PICKCODE_OF_IMAGE.add(pickcode)
                             if dir_:
                                 PATH_TO_ID[dir_ + "/" + fn] = fid
                             else:
                                 PATH_TO_ID[fn] = fid
-                            ID_TO_PICKCODE[fid] = info["pc"]
                     return pickcode
         if json["offset"] + len(json["data"]) == json["count"]:
             break
         params["offset"] += 1000
     raise FileNotFoundError
+
+
+async def get_image_url(client: ClientSession, pickcode: str) -> str:
+    resp = await client.get(
+        "https://webapi.115.com/files/image", 
+        params={"pickcode": pickcode}, 
+        headers={"Cookie": cookies}, 
+    )
+    json = loads((await resp.read()) or b"")
+    return json["data"]["origin_url"]
 
 
 @get("/")
@@ -308,7 +333,7 @@ async def get_download_url(
     """
     try:
         user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
-        if not pickcode:
+        if not (pickcode := pickcode.strip()):
             if id:
                 pickcode = await get_pickcode_by_id(client, id)
             else:
@@ -316,6 +341,8 @@ async def get_download_url(
         url = URL_CACHE.get((pickcode, user_agent))
         if url:
             return url
+        if pickcode in PICKCODE_OF_IMAGE:
+            return redirect(await get_image_url(client, pickcode))
         resp = await client.post(
             "https://proapi.115.com/app/chrome/downurl", 
             content=FormContent({"data": rsa_encode(b'{"pickcode":"%s"}' % bytes(pickcode, "ascii")).decode("ascii")}), 
