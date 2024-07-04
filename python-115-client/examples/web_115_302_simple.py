@@ -334,7 +334,7 @@ async def get_download_url(
     try:
         user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
         if not (pickcode := pickcode.strip()):
-            if id:
+            if id := id.strip():
                 pickcode = await get_pickcode_by_id(client, id)
             else:
                 pickcode = await get_pickcode_by_path(client, path or path2)
