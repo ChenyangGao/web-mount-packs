@@ -3043,7 +3043,7 @@ class P115FileSystemBase(Generic[P115PathType]):
     # TODO: 支持异步
     def open(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         mode: str = "r", 
         buffering: None | int = None, 
@@ -3074,6 +3074,47 @@ class P115FileSystemBase(Generic[P115PathType]):
             errors=errors, 
             newline=newline, 
         )
+
+    @overload
+    def ed2k(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        headers: None | Mapping = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def ed2k(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        headers: None | Mapping = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def ed2k(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        headers: None | Mapping = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            url = yield self.get_url(
+                id_or_path, 
+                pid=pid, 
+                headers=headers, 
+                async_=async_, 
+            )
+            return (yield self.client.ed2k(url, headers, async_=async_))
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def read_bytes(

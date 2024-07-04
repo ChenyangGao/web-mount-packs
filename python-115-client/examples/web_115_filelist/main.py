@@ -73,7 +73,7 @@ from asyncio import Lock
 from collections.abc import Mapping, MutableMapping
 from functools import partial, update_wrapper
 from os import stat
-from os.path import expanduser, dirname, join as joinpath, realpath
+from os.path import dirname, expanduser, join as joinpath, realpath
 from sys import exc_info
 from urllib.parse import quote
 

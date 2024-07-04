@@ -27,7 +27,6 @@ from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel
 from inspect import iscoroutinefunction
 from itertools import chain, count, takewhile
-from json import dumps, loads
 from os import fsdecode, fspath, fstat, isatty, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
@@ -44,6 +43,7 @@ from xml.etree.ElementTree import fromstring
 
 from asynctools import as_thread, async_chain, ensure_aiter, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
+from Crypto.Hash.MD4 import MD4Hash
 from filewrap import (
     Buffer, SupportsRead, 
     bio_chunk_iter, bio_chunk_async_iter, 
@@ -61,20 +61,21 @@ from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTranspor
 from httpx_request import request
 from iterutils import through, async_through, run_gen_step, wrap_iter, wrap_aiter
 from multidict import CIMultiDict
+from orjson import dumps, loads
 from qrcode import QRCode # type: ignore
 from startfile import startfile, startfile_async # type: ignore
 from urlopen import urlopen
 from yarl import URL
 
-from .cipher import P115RSACipher, P115ECDHCipher, MD5_SALT
+from .cipher_fast import (
+    rsa_encode, rsa_decode, ecdh_aes_encode, ecdh_aes_decode, ecdh_encode_token, MD5_SALT, 
+)
 from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 
 
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
-RSA_ENCODER: Final = P115RSACipher()
-ECDH_ENCODER: Final = P115ECDHCipher()
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 CRE_SET_COOKIE = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*")
 APP_VERSION: Final = "99.99.99.99"
@@ -87,6 +88,42 @@ def to_base64(s: bytes | str, /) -> str:
     if isinstance(s, str):
         s = bytes(s, "utf-8")
     return str(b64encode(s), "ascii")
+
+
+def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+    block_size = 1024 * 9500
+    if hasattr(file, "getbuffer"):
+        file = file.getbuffer()
+    if isinstance(file, Buffer):
+        chunk_iter = bytes_to_chunk_iter(block_size, chunksize=block_size)
+    else:
+        chunk_iter = bio_chunk_iter(file, chunksize=block_size, can_buffer=True)
+    block_hashes = bytearray()
+    filesize = 0
+    for chunk in chunk_iter:
+        block_hashes += MD4Hash(chunk).digest()
+        filesize += len(chunk)
+    if not filesize % block_size:
+        block_hashes += MD4Hash().digest()
+    return filesize, MD4Hash(block_hashes).hexdigest()
+
+
+async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+    block_size = 1024 * 9500
+    if hasattr(file, "getbuffer"):
+        file = file.getbuffer()
+    if isinstance(file, Buffer):
+        chunk_iter = bytes_to_chunk_async_iter(block_size, chunksize=block_size)
+    else:
+        chunk_iter = bio_chunk_async_iter(file, chunksize=block_size, can_buffer=True)
+    block_hashes = bytearray()
+    filesize = 0
+    async for chunk in chunk_iter:
+        block_hashes += MD4Hash(chunk).digest()
+        filesize += len(chunk)
+    if not filesize % block_size:
+        block_hashes += MD4Hash().digest()
+    return filesize, MD4Hash(block_hashes).hexdigest()
 
 
 @overload
@@ -4354,10 +4391,10 @@ class P115Client:
         def parse(resp, content: bytes) -> dict:
             resp = loads(content)
             if resp["state"]:
-                resp["data"] = loads(RSA_ENCODER.decode(resp["data"]))
+                resp["data"] = loads(rsa_decode(resp["data"]))
             return resp
         request_kwargs["parse"] = parse
-        request_kwargs["data"] = {"data": RSA_ENCODER.encode(dumps(payload)).decode()}
+        request_kwargs["data"] = {"data": rsa_encode(dumps(payload)).decode()}
         return self.request(url=api, method="POST", async_=async_, **request_kwargs)
 
     @overload
@@ -4542,17 +4579,12 @@ class P115Client:
         def parse(resp, content: bytes) -> dict:
             json = loads(content)
             if json["state"]:
-                json["data"] = loads(RSA_ENCODER.decode(json["data"]))
+                json["data"] = loads(rsa_decode(json["data"]))
             json["headers"] = headers
             return json
         request_kwargs["parse"] = parse
-        request_kwargs["data"] = {"data": RSA_ENCODER.encode(dumps(payload)).decode("ascii")}
-        return self.request(
-            api, 
-            "POST", 
-            async_=async_, 
-            **request_kwargs, 
-        )
+        request_kwargs["data"] = {"data": rsa_encode(dumps(payload)).decode("ascii")}
+        return self.request(api, "POST", async_=async_, **request_kwargs)
 
     @overload
     def download_url_web(
@@ -6060,7 +6092,7 @@ class P115Client:
         t = int(time())
         sig = gen_sig()
         token = gen_token()
-        encoded_token = ECDH_ENCODER.encode_token(t).decode("ascii")
+        encoded_token = ecdh_encode_token(t).decode("ascii")
         data = {
             "appid": 0, 
             "appversion": APP_VERSION, 
@@ -6080,9 +6112,9 @@ class P115Client:
             request_kwargs["headers"] = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
         else:
             request_kwargs["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
-        request_kwargs["parse"] = lambda resp, content: loads(ECDH_ENCODER.decode(content, decompress=True))
+        request_kwargs["parse"] = lambda resp, content: loads(ecdh_aes_decode(content, decompress=True))
         request_kwargs["params"] = {"k_ec": encoded_token}
-        request_kwargs["data"] = ECDH_ENCODER.encode(urlencode(sorted(data.items())))
+        request_kwargs["data"] = ecdh_aes_encode(urlencode(sorted(data.items())))
         def gen_step():
             resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
             if resp["status"] == 2 and resp["statuscode"] == 0:
@@ -8449,6 +8481,46 @@ class P115Client:
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
     def open_upload(self): ...
+
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        trantab = dict(zip(b"/|", ("%2F", "%7C")))
+        if async_:
+            async def request():
+                async with self.open(url, headers=headers, async_=True) as file: # type: ignore
+                    length, ed2k = await ed2k_hash_async(file)
+                return f"ed2k://|file|{file.name.translate(trantab)}|{length}|{ed2k}|/"
+            return request()
+        else:
+            with self.open(url, headers=headers) as file:
+                length, ed2k = ed2k_hash(file)
+            return f"ed2k://|file|{file.name.translate(trantab)}|{length}|{ed2k}|/"
 
     @overload
     def read_bytes(
