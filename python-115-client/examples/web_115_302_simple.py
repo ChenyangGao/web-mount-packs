@@ -58,13 +58,13 @@ if not cookies:
             pass
     else:
         seen = set()
-        for dir_ in (".", expanduser("~"), dirname(__file__)):
-            dir_ = realpath(dir_)
-            if dir_ in seen:
+        for cookies_dir in (".", expanduser("~"), dirname(__file__)):
+            cookies_dir = realpath(cookies_dir)
+            if cookies_dir in seen:
                 continue
-            seen.add(dir_)
+            seen.add(cookies_dir)
             try:
-                if cookies := open(joinpath(dir_, "115-cookies.txt")).read():
+                if cookies := open(joinpath(cookies_dir, "115-cookies.txt")).read():
                     break
             except FileNotFoundError:
                 pass
@@ -216,7 +216,7 @@ def process_info(info: dict, dir: None | str = None) -> str:
     fid = cast(str, info["fid"])
     fn = cast(str, info["n"])
     pickcode = ID_TO_PICKCODE[fid] = info["pc"]
-    if info.get("u"):
+    if info.get("class") == "PIC" or info.get("u"):
         PICKCODE_OF_IMAGE.add(pickcode)
     if dir:
         PATH_TO_ID[dir + "/" + fn] = fid
@@ -360,8 +360,15 @@ async def get_download_url(
             headers={"Cookie": cookies, "User-Agent": user_agent}, 
         )
         json = loads((await resp.read()) or b"")
+        if not json["state"]:
+            raise FileNotFoundError
         data = loads(rsa_decode(json["data"]))
-        url = URL_CACHE[(pickcode, user_agent)] = next(info for info in data.values())["url"]["url"]
+        item = next(info for info in data.values())
+        ID_TO_PICKCODE[next(iter(data))] = item["pick_code"]
+        # TODO: 还需要继续增加，目前不确定 115 到底支持哪些图片格式
+        if item["file_name"].lower().endswith((".jpg", ".jpeg", ".png", ".svg", ".bmp", ".tiff", ".webp")):
+            PICKCODE_OF_IMAGE.add(item["pick_code"])
+        url = URL_CACHE[(pickcode, user_agent)] = item["url"]["url"]
         return redirect(cast(str, url))
     except (FileNotFoundError, KeyError):
         return text("not found", 404) 

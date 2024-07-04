@@ -1090,10 +1090,10 @@ class AlistClient:
                     try:
                         from aiofile import async_open
                     except ImportError:
-                        file = yield partial(to_thread, open, filepath, "rb")
+                        file = yield to_thread(open, filepath, "rb")
                     else:
                         async def request():
-                            async with async_open(filepath) as file:
+                            async with async_open(filepath, "rb") as file:
                                 return self.fs_form(
                                     file, 
                                     path, 
@@ -1248,7 +1248,7 @@ class AlistClient:
                     else:
                         async def request():
                             nonlocal filesize
-                            async with async_open(filepath) as file:
+                            async with async_open(filepath, "rb") as file:
                                 if filesize < 0:
                                     filesize = fstat(file.file.fileno()).st_size
                                 return self.fs_put(

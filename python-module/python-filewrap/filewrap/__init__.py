@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = [
     "Buffer", "SupportsRead", "SupportsReadinto", 
     "SupportsWrite", "SupportsSeek", 
@@ -22,7 +22,7 @@ from inspect import isawaitable, iscoroutinefunction, isasyncgen, isgenerator
 from itertools import chain
 from shutil import COPY_BUFSIZE # type: ignore
 from threading import Lock
-from typing import runtime_checkable, Any, ParamSpec, Protocol, TypeVar
+from typing import cast, runtime_checkable, Any, ParamSpec, Protocol, TypeVar
 
 try:
     from collections.abc import Buffer # type: ignore
@@ -658,7 +658,7 @@ async def bytes_ensure_part_async_iter(
 
 
 def progress_bytes_iter(
-    it: Iterable[Buffer], 
+    it: Iterable[Buffer] | Callable[[], Buffer], 
     make_progress: None | Callable[Args, Any] = None, 
     /, 
     *args: Args.args, 
@@ -666,6 +666,8 @@ def progress_bytes_iter(
 ) -> Iterator[Buffer]:
     update_progress: None | Callable = None
     close_progress: None | Callable = None
+    if callable(it):
+        it = iter(it, b"")
     if callable(make_progress):
         progress = make_progress(*args, **kwds)
         if isgenerator(progress):
@@ -689,7 +691,7 @@ def progress_bytes_iter(
 
 
 async def progress_bytes_async_iter(
-    it: Iterable[Buffer] | AsyncIterable[Buffer], 
+    it: Iterable[Buffer] | AsyncIterable[Buffer] | Callable[[], Buffer] | Callable[[], Awaitable[Buffer]], 
     make_progress: None | Callable[Args, Any] = None, 
     /, 
     *args: Args.args, 
@@ -697,6 +699,16 @@ async def progress_bytes_async_iter(
 ) -> AsyncIterator[Buffer]:
     update_progress: None | Callable = None
     close_progress: None | Callable = None
+    if callable(it):
+        async def wrapiter(it) -> Buffer:
+            while True:
+                chunk = it()
+                if isawaitable(chunk):
+                    chunk = await chunk
+                if not chunk:
+                    break
+                yield chunk
+        it = cast(AsyncIterable[Buffer], wrapiter(it))
     if callable(make_progress):
         progress = make_progress(*args, **kwds)
         if isgenerator(progress):

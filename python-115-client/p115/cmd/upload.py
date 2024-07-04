@@ -349,7 +349,9 @@ def main(args):
         task = progress.add_task(update_desc(), total=attr["size"])
         try:
             while not closed:
-                progress.update(task, description=update_desc(), advance=(yield))
+                step = yield
+                progress.update(task, description=update_desc(), advance=step)
+                progress.update(statistics_bar, description=update_stats_desc(), advance=step, total=tasks["size"])
         finally:
             progress.remove_task(task)
 
@@ -383,7 +385,7 @@ def main(args):
                     files=sum(not a["is_directory"] for a in subattrs), 
                     size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
                 )
-                progress.update(statistics_bar, total=tasks["total"], description=update_stats_desc())
+                progress.update(statistics_bar, description=update_stats_desc())
                 pending_to_remove: list[int] = []
                 for subattr in subattrs:
                     subname = subattr["name"]
@@ -399,7 +401,7 @@ def main(args):
                         elif resume and subattr["size"] == subdattr["size"] and subattr["mtime"] <= subdattr["ctime"]:
                             console_print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                             update_success(1, 1, subattr["size"])
-                            progress.update(statistics_bar, advance=1, description=update_stats_desc())
+                            progress.update(statistics_bar, description=update_stats_desc())
                             continue
                         else:
                             subtask = Task(subattr, dst_id, subname)
@@ -424,24 +426,30 @@ def main(args):
                 update_success(1)
             else:
                 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
-                kwargs: dict
-                if src_attr["size"] <= 1 << 30:
-                    # # NOTE: 1 GB 以内使用网页版上传接口，这个接口的优势是上传完成后会自动产生 115 生活事件
-                    kwargs = {"upload_directly": None}
-                else:
-                    kwargs = {"partsize": 1024*1024*100}
+                kwargs: dict = {}
+                if src_attr["size"] <= 1 << 30: # 1 GB
+                    # NOTE: 1 GB 以内使用网页版上传接口，这个接口的优势是上传完成后会自动产生 115 生活事件
+                    kwargs["upload_directly"] = None
+                elif src_attr["size"] < 1 << 34: # 16 GB
+                    # NOTE: 介于 1 GB 和 16 GB 时直接流式上传，超过 16 GB 时，使用分块上传，分块大小 1 GB
+                    kwargs["partsize"] = 1024 ** 3
                 resp = client.upload_file(
                     src_path, 
                     name, 
                     pid=dst_pid, 
                     make_reporthook=partial(add_report, attr=src_attr), 
+                    filesha1="0"*40,
                     **kwargs, 
                 )
+                if resp.get("status") == 2 and resp.get("statuscode") == 0:
+                    prompt = "秒传文件"
+                else:
+                    prompt = "上传文件"
                 console_print(f"""\
-[bold green][GOOD][/bold green] 📝 上传文件: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
+[bold green][GOOD][/bold green] 📝 {prompt}: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
     ├ response = {resp}""")
                 update_success(1, 1, src_attr["size"])
-            progress.update(statistics_bar, advance=1, description=update_stats_desc())
+            progress.update(statistics_bar, description=update_stats_desc())
             success_tasks[src_path] = unfinished_tasks.pop(src_path)
         except BaseException as e:
             task.reasons.append(e)
@@ -471,7 +479,7 @@ def main(args):
                 console_print(f"""\
 [bold red][FAIL][/bold red] 💀 发生错误（将抛弃）: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
 {indent(format_exc().strip(), "    ├ ")}""")
-                progress.update(statistics_bar, advance=1, description=update_stats_desc())
+                progress.update(statistics_bar, description=update_stats_desc())
                 update_failed(1, not src_attr["is_directory"], src_attr.get("size"))
                 failed_tasks[src_path] = unfinished_tasks.pop(src_path)
                 if len(task.reasons) == 1:
@@ -546,7 +554,7 @@ def main(args):
             min_length=32 + 23, 
             interval=0.1, 
         ).__next__
-        statistics_bar = progress.add_task(update_stats_desc(), total=1)
+        statistics_bar = progress.add_task(update_stats_desc())
         closed = False
         try:
             thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
