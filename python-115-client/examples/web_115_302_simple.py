@@ -251,8 +251,10 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
             headers={"Cookie": cookies}, 
         )
         json = loads((await resp.read()) or b"")
-        if json["state"] and json["file_name"] == name:
-            return json["pick_code"]
+        if json["state"]:
+            info = json["data"][0]
+            if info["file_name"] == name:
+                return info["pick_code"]
         PATH_TO_ID.pop(path, None)
     if dir_:
         resp = await client.get(
