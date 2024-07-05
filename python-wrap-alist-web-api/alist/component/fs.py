@@ -47,7 +47,6 @@ from http_request import complete_url, encode_multipart_data, encode_multipart_d
 from httpx_request import request
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from multidict import CIMultiDict
-from urlopen import urlopen
 from yarl import URL
 
 from .client import check_response, AlistClient
@@ -3406,6 +3405,47 @@ class AlistFileSystem:
                         elif onerror:
                             raise
         return run_gen_step_iter(gen_step, async_=async_)
+
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        headers: None | Mapping = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        headers: None | Mapping = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def ed2k(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        headers: None | Mapping = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            attr = yield self.attr(path, password, headers=headers, refresh=True, async_=async_)
+            if attr["is_dir"]:
+                raise IsADirectoryError(errno.EISDIR, attr["path"])
+            return (yield self.client.ed2k(attr["raw_url"], headers, name=attr["name"], async_=async_))
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def enumdir(

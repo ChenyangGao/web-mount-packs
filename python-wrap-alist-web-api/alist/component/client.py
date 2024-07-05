@@ -22,7 +22,12 @@ from typing import overload, Any, Literal, Self
 from urllib.parse import quote
 
 from asynctools import ensure_aiter, to_list
-from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead
+from Crypto.Hash.MD4 import MD4Hash
+from filewrap import (
+    bio_chunk_iter, bio_chunk_async_iter, 
+    bytes_to_chunk_iter, bytes_to_chunk_async_iter, 
+    Buffer, SupportsRead, 
+)
 from httpfile import HTTPFileReader
 from http_request import complete_url, encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_total_length, get_content_length, is_chunked
@@ -35,6 +40,42 @@ from yarl import URL
 
 parse_json = lambda _, content: loads(content)
 httpx_request = partial(request, timeout=(5, 60, 60, 5))
+
+
+def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+    block_size = 1024 * 9500
+    if hasattr(file, "getbuffer"):
+        file = file.getbuffer()
+    if isinstance(file, Buffer):
+        chunk_iter = bytes_to_chunk_iter(block_size, chunksize=block_size)
+    else:
+        chunk_iter = bio_chunk_iter(file, chunksize=block_size, can_buffer=True)
+    block_hashes = bytearray()
+    filesize = 0
+    for chunk in chunk_iter:
+        block_hashes += MD4Hash(chunk).digest()
+        filesize += len(chunk)
+    if not filesize % block_size:
+        block_hashes += MD4Hash().digest()
+    return filesize, MD4Hash(block_hashes).hexdigest()
+
+
+async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+    block_size = 1024 * 9500
+    if hasattr(file, "getbuffer"):
+        file = file.getbuffer()
+    if isinstance(file, Buffer):
+        chunk_iter = bytes_to_chunk_async_iter(block_size, chunksize=block_size)
+    else:
+        chunk_iter = bio_chunk_async_iter(file, chunksize=block_size, can_buffer=True)
+    block_hashes = bytearray()
+    filesize = 0
+    async for chunk in chunk_iter:
+        block_hashes += MD4Hash(chunk).digest()
+        filesize += len(chunk)
+    if not filesize % block_size:
+        block_hashes += MD4Hash().digest()
+    return filesize, MD4Hash(block_hashes).hexdigest()
 
 
 @overload
@@ -5096,6 +5137,49 @@ class AlistClient:
             start=start, 
             seek_threshold=seek_threshold, 
         )
+
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        name: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        name: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        name: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        trantab = dict(zip(b"/|", ("%2F", "%7C")))
+        if async_:
+            async def request():
+                async with self.open(url, headers=headers, async_=True) as file: # type: ignore
+                    length, ed2k = await ed2k_hash_async(file)
+                return f"ed2k://|file|{(name or file.name).translate(trantab)}|{length}|{ed2k}|/"
+            return request()
+        else:
+            with self.open(url, headers=headers) as file:
+                length, ed2k = ed2k_hash(file)
+            return f"ed2k://|file|{(name or file.name).translate(trantab)}|{length}|{ed2k}|/"
 
     @overload
     def read_bytes(

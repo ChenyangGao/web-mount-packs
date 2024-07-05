@@ -8424,6 +8424,7 @@ class P115Client:
         /, 
         url: str | Callable[[], str], 
         headers: None | Mapping = None, 
+        name: str = "", 
         *, 
         async_: Literal[False] = False, 
     ) -> str:
@@ -8434,6 +8435,7 @@ class P115Client:
         /, 
         url: str | Callable[[], str], 
         headers: None | Mapping = None, 
+        name: str = "", 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, str]:
@@ -8443,6 +8445,7 @@ class P115Client:
         /, 
         url: str | Callable[[], str], 
         headers: None | Mapping = None, 
+        name: str = "", 
         *, 
         async_: Literal[False, True] = False, 
     ) -> str | Coroutine[Any, Any, str]:
@@ -8451,12 +8454,12 @@ class P115Client:
             async def request():
                 async with self.open(url, headers=headers, async_=True) as file: # type: ignore
                     length, ed2k = await ed2k_hash_async(file)
-                return f"ed2k://|file|{file.name.translate(trantab)}|{length}|{ed2k}|/"
+                return f"ed2k://|file|{(name or file.name).translate(trantab)}|{length}|{ed2k}|/"
             return request()
         else:
             with self.open(url, headers=headers) as file:
                 length, ed2k = ed2k_hash(file)
-            return f"ed2k://|file|{file.name.translate(trantab)}|{length}|{ed2k}|/"
+            return f"ed2k://|file|{(name or file.name).translate(trantab)}|{length}|{ed2k}|/"
 
     @overload
     def read_bytes(
