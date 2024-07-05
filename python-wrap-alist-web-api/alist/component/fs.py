@@ -1713,6 +1713,34 @@ class AlistFileSystem:
             **self.request_kwargs, 
         ))
 
+    @overload
+    def fs_storage_update(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_storage_update(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_storage_update(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        return check_response(self.client.admin_storage_update( # type: ignore
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+            **self.request_kwargs, 
+        ))
+
     def abspath(
         self, 
         /, 
@@ -2981,24 +3009,26 @@ class AlistFileSystem:
     ) -> bool | Coroutine[Any, Any, bool]:
         def gen_step():
             nonlocal path, password
+            attr: None | AttrDict | AlistPath = None
             if isinstance(path, (AttrDict, AlistPath)):
-                if "hash_info" in path:
-                    return path["hash_info"] is None
+                attr = path
+                path = cast(str, attr["path"])
                 if not password:
-                    password = path.get("password", "")
-                path = cast(str, path["path"])
+                    password = attr.get("password", "")
             else:
                 path = self.abspath(path)
-            if path == "/":
-                return True
             try:
-                return any(path == s["mount_path"] for s in self.list_storages())
+                storages = yield self.list_storages(async_=async_)
+                return any(path == s["mount_path"] for s in storages)
             except PermissionError:
-                attr = yield self.attr(path, password, async_=async_)
-                try:
-                    return attr.get("hash_info") is None
-                except FileNotFoundError:
-                    return False
+                if path == "/":
+                    return True
+                if attr is None or "hash_info" not in attr:
+                    try:
+                        attr = yield self.attr(path, password, async_=async_)
+                    except FileNotFoundError:
+                        return False
+                return attr["hash_info"] is None
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -3525,7 +3555,7 @@ class AlistFileSystem:
         password: str = "", 
         exist_ok: bool = False, 
         *, 
-        async_: Literal[False, True] = False, 
+        async_: Literal[False] = False, 
     ) -> str:
         ...
     @overload
@@ -3536,7 +3566,7 @@ class AlistFileSystem:
         password: str = "", 
         exist_ok: bool = False, 
         *, 
-        async_: Literal[False] = False, 
+        async_: Literal[True], 
     ) -> Coroutine[Any, Any, str]:
         ...
     def makedirs(
@@ -3546,7 +3576,7 @@ class AlistFileSystem:
         password: str = "", 
         exist_ok: bool = False, 
         *, 
-        async_: Literal[True], 
+        async_: Literal[False, True] = False, 
     ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
             nonlocal path, password
@@ -3561,13 +3591,13 @@ class AlistFileSystem:
             try:
                 attr = yield self.attr(path, password, async_=async_)
             except FileNotFoundError:
+                yield self.fs_mkdir(path, async_=async_)
+            else:
                 if attr["is_dir"]:
                     if not exist_ok:
                         raise FileExistsError(errno.EEXIST, path)
                 else:
                     raise NotADirectoryError(errno.ENOTDIR, path)
-            else:
-                yield self.fs_mkdir(path, async_=async_)
             return path
         return run_gen_step(gen_step, async_=async_)
 
@@ -3600,7 +3630,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
-            nonlocal path, async_
+            nonlocal path, password
             if isinstance(path, (AttrDict, AlistPath)):
                 if not password:
                     password = path.get("password", "")
@@ -3691,6 +3721,7 @@ class AlistFileSystem:
                     errno.EPERM, 
                     f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
                 )
+            # TODO: 还要考虑一种情况，就是 src_path 是个 storage
             if src_attr is None:
                 src_attr = yield self.attr(src_path, src_password, async_=async_)
             try:
@@ -4098,46 +4129,89 @@ class AlistFileSystem:
             attr: None | AttrDict | AlistPath = None
             if isinstance(path, (AttrDict, AlistPath)):
                 attr = path
+                path = cast(str, attr["path"])
+                if not attr["is_dir"]:
+                    raise NotADirectoryError(errno.ENOTDIR, path)
                 if not password:
                     password = attr.get("password", "")
-                path = cast(str, attr["path"])
             else:
                 path = self.abspath(path)
             dirlen = self.dirlen
             remove = self.fs_remove
             remove_storage = self.fs_storage_delete
-            # TODO: 需要特别优化一下
             if (yield dirlen(path, password, async_=async_)):
                 raise OSError(errno.ENOTEMPTY, f"directory is not empty: {path!r}")
+            if attr is None or "hash_info" not in attr:
+                attr = yield self.attr(path, password, async_=async_)
             try:
                 storages = yield self.list_storages(async_=async_)
+                storage_path_to_id = {s["mount_path"]: s["id"] for s in storages}
             except PermissionError:
-                if self.attr(path, password, async_=async_)["hash_info"] is None:
+                if attr["hash_info"] is None:
                     raise
-                storages = []
+                storage_path_to_id = {}
+            dir_, name = splitpath(path)
+            if attr["hash_info"] is None:
+                yield remove_storage(storage_path_to_id[path], async_=async_)
             else:
-                for storage in storages:
-                    if storage["mount_path"] == path:
-                        yield remove_storage(storage["id"], async_=async_)
-                        break
-            parent_dir = dirname(path)
-            del_dir = ""
+                yield remove(dir_, [name], async_=async_)
             try:
-                while (yield dirlen(parent_dir, password, async_=async_)) <= 1:
-                    for storage in storages:
-                        if storage["mount_path"] == parent_dir:
-                            remove_storage(storage["id"])
-                            del_dir = ""
+                del_dir = ""
+                name = ""
+                while True:
+                    dir_length = yield dirlen(dir_, password, async_=async_)
+                    if del_dir:
+                        if dir_length > 1:
                             break
+                    elif dir_length:
+                        break
+                    if dir_ in storage_path_to_id:
+                        yield remove_storage(storage_path_to_id[dir_], async_=async_)
+                        del_dir = ""
                     else:
-                        del_dir = parent_dir
-                    parent_dir = dirname(parent_dir)
-                if del_dir:
-                    yield remove(parent_dir, [basename(del_dir)], async_=async_)
-            except OSError as e:
+                        del_dir = dir_
+                    if dir_ == "/":
+                        break
+                    dir_, name = splitpath(dir_)
+                if del_dir == "/":
+                    if "/" in storage_path_to_id:
+                        yield remove_storage(storage_path_to_id["/"], async_=async_)
+                    elif name:
+                        yield remove("/", [name], async_=async_)
+                elif del_dir:
+                    dir_, name = splitpath(del_dir)
+                    yield remove(dir_, [name], async_=async_)
+            except OSError:
                 pass
+            return path
         return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def rename(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        replace: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def rename(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        replace: bool = False, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def rename(
         self, 
         /, 
@@ -4148,11 +4222,11 @@ class AlistFileSystem:
         replace: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str:
+    ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
             nonlocal src_path, dst_path, src_password, dst_password
             src_attr: None | AttrDict | AlistPath = None
-            dst_attr: None | AttrDict | AlistPath = None
+            dst_attr: AttrDict | AlistPath
             if isinstance(src_path, (AttrDict, AlistPath)):
                 if not src_password:
                     src_password = src_path.get("password", "")
@@ -4165,8 +4239,6 @@ class AlistFileSystem:
                 dst_path = cast(str, dst_path["path"])
             else:
                 dst_path = self.abspath(dst_path)
-            src_path = cast(str, src_path)
-            dst_path = cast(str, dst_path)
             if src_path == dst_path:
                 return dst_path
             if src_path == "/" or dst_path == "/":
@@ -4187,21 +4259,24 @@ class AlistFileSystem:
                 )
             src_dir, src_name = splitpath(src_path)
             dst_dir, dst_name = splitpath(dst_path)
-            src_attr = self.attr(src_path, src_password, async_=async_)
+            if src_attr is None or "hash_info" not in src_attr:
+                src_attr = yield self.attr(src_path, src_password, async_=async_)
             try:
-                dst_attr = self.attr(dst_path, dst_password, async_=async_)
+                dst_attr = yield self.attr(dst_path, dst_password, async_=async_)
             except FileNotFoundError:
-                if src_attr.get("hash_info") is None:
-                    for storage in self.list_storages():
+                if src_attr["hash_info"] is None:
+                    storages = yield self.list_storages(async_=async_)
+                    for storage in storages:
                         if src_path == storage["mount_path"]:
                             storage["mount_path"] = dst_path
-                            self.client.admin_storage_update(storage)
-                            break
-                    return dst_path
+                            yield self.fs_storage_update(storage, async_=async_)
+                            return dst_path
+                    raise FileNotFoundError(errno.ENOENT, f"{src_path!r} is not an actual path")
                 elif src_dir == dst_dir:
-                    self.fs_rename(src_path, dst_name, async_=async_)
+                    yield self.fs_rename(src_attr, dst_name, async_=async_)
                     return dst_path
-                if not self.attr(dst_dir, dst_password, async_=async_)["is_dir"]:
+                dstdir_attr = yield self.attr(dst_dir, dst_password, async_=async_)
+                if not dstdir_attr["is_dir"]:
                     raise NotADirectoryError(
                         errno.ENOTDIR, 
                         f"{dst_dir!r} is not a directory: {src_path!r} -> {dst_path!r}", 
@@ -4211,11 +4286,11 @@ class AlistFileSystem:
                     if dst_attr.get("hash_info") is None:
                         raise PermissionError(
                             errno.EPERM, 
-                            f"replace a storage {dst_path!r} is not allowed: {src_path!r} -> {dst_path!r}", 
+                            f"replace a storage (or non-actual path) {dst_path!r} is not allowed: {src_path!r} -> {dst_path!r}", 
                         )
                     elif src_attr["is_dir"]:
                         if dst_attr["is_dir"]:
-                            if self.dirlen(dst_path, dst_password, async_=async_):
+                            if (yield self.dirlen(dst_path, dst_password, async_=async_)):
                                 raise OSError(
                                     errno.ENOTEMPTY, 
                                     f"directory {dst_path!r} is not empty: {src_path!r} -> {dst_path!r}", 
@@ -4230,12 +4305,14 @@ class AlistFileSystem:
                             errno.EISDIR, 
                             f"{dst_path!r} is a directory: {src_path!r} -> {dst_path!r}", 
                         )
-                    self.fs_remove(dst_dir, [dst_name], async_=async_)
+                    yield self.fs_remove(dst_dir, [dst_name], async_=async_)
                 else:
                     raise FileExistsError(
                         errno.EEXIST, 
                         f"{dst_path!r} already exists: {src_path!r} -> {dst_path!r}", 
                     )
+
+            # TODO: 需要优化，后面再搞
             src_storage = self.storage_of(src_dir, src_password, async_=async_)
             dst_storage = self.storage_of(dst_dir, dst_password, async_=async_)
             if src_name == dst_name:
@@ -4265,6 +4342,30 @@ class AlistFileSystem:
             return dst_path
         return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def renames(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def renames(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def renames(
         self, 
         /, 
@@ -4274,29 +4375,48 @@ class AlistFileSystem:
         dst_password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str:
-        if isinstance(src_path, (AttrDict, AlistPath)):
-            if not src_password:
-                src_password = src_path.get("password", "")
-            src_path = cast(str, src_path["path"])
-        else:
-            src_path = self.abspath(src_path)
-        if isinstance(dst_path, (AttrDict, AlistPath)):
-            if not dst_password:
-                dst_password = dst_path.get("password", "")
-            dst_path = cast(str, dst_path["path"])
-        else:
-            dst_path = self.abspath(dst_path)
-        src_path = cast(str, src_path)
-        dst_path = cast(str, dst_path)
-        dst = self.rename(src_path, dst_path, src_password, dst_password, async_=async_)
-        if dirname(src_path) != dirname(dst_path):
-            try:
-                self.removedirs(dirname(src_path), src_password, async_=async_)
-            except OSError:
-                pass
-        return dst
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            nonlocal src_path, dst_path, src_password
+            dst_path = yield self.rename(src_path, dst_path, src_password, dst_password, async_=async_)
+            if isinstance(src_path, (AttrDict, AlistPath)):
+                if not src_password:
+                    src_password = src_path.get("password", "")
+                src_path = cast(str, src_path["path"])
+            else:
+                src_path = self.abspath(src_path)
+            if dirname(src_path) != dirname(dst_path):
+                try:
+                    yield self.removedirs(dirname(src_path), src_password, async_=async_)
+                except OSError:
+                    pass
+            return dst_path
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def replace(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def replace(
+        self, 
+        /, 
+        src_path: PathType, 
+        dst_path: PathType, 
+        src_password: str = "", 
+        dst_password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def replace(
         self, 
         /, 
@@ -4306,9 +4426,33 @@ class AlistFileSystem:
         dst_password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str:
+    ) -> str | Coroutine[Any, Any, str]:
         return self.rename(src_path, dst_path, src_password, dst_password, replace=True, async_=async_)
 
+    @overload
+    def rglob(
+        self, 
+        /, 
+        pattern: str = "", 
+        dirname: PathType = "", 
+        ignore_case: bool = False, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> Iterator[AlistPath]:
+        ...
+    @overload
+    def rglob(
+        self, 
+        /, 
+        pattern: str = "", 
+        dirname: PathType = "", 
+        ignore_case: bool = False, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[AlistPath]:
+        ...
     def rglob(
         self, 
         /, 
@@ -4318,7 +4462,7 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[AlistPath]:
+    ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
         if not pattern:
             return self.iter(dirname, password=password, max_depth=-1, async_=async_)
         if pattern.startswith("/"):
@@ -4327,6 +4471,26 @@ class AlistFileSystem:
             pattern = joinpath("**", pattern)
         return self.glob(pattern, dirname, password=password, ignore_case=ignore_case, async_=async_)
 
+    @overload
+    def rmdir(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def rmdir(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def rmdir(
         self, 
         /, 
@@ -4334,23 +4498,54 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ):
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.get("password", "")
-            path = cast(str, path["path"])
-        else:
-            path = self.abspath(path)
-        if path == "/":
-            raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
-        elif self.is_storage(path, password, async_=async_):
-            raise PermissionError(errno.EPERM, f"remove a storage by `rmdir` is not allowed: {path!r}")
-        elif not self.attr(path, password, async_=async_)["is_dir"]:
-            raise NotADirectoryError(errno.ENOTDIR, path)
-        elif not self.is_empty(path, password, async_=async_):
-            raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
-        self.fs_remove(dirname(path), [basename(path)], async_=async_)
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            nonlocal path, password
+            attr: None | AttrDict | AlistPath = None
+            if isinstance(path, (AttrDict, AlistPath)):
+                attr = path
+                path = cast(str, attr["path"])
+                if not attr["is_dir"]:
+                    raise NotADirectoryError(errno.ENOTDIR, path)
+                if not password:
+                    password = attr.get("password", "")
+            else:
+                path = self.abspath(path)
+            if path == "/":
+                raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
+            if attr is None or "hash_info" not in attr:
+                attr = yield self.attr(path, password, async_=async_)
+            if not attr["is_dir"]:
+                raise NotADirectoryError(errno.ENOTDIR, path)
+            if attr["hash_info"] is None:
+                raise PermissionError(errno.EPERM, f"remove a storage (or non-actual path) by `rmdir` is not allowed: {path!r}")
+            elif not (yield self.dirlen(path, password, async_=async_)):
+                raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
+            dir_, name = splitpath(path)
+            yield self.fs_remove(dir_, [name], async_=async_)
+            return path
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def rmtree(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def rmtree(
+        self, 
+        /, 
+        path: PathType, 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def rmtree(
         self, 
         /, 
@@ -4358,24 +4553,79 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ):
-        self.remove(path, password, recursive=True, async_=async_)
+    ) -> str | Coroutine[Any, Any, str]:
+        return self.remove(path, password, recursive=True, async_=async_)
 
+    @overload
     def scandir(
         self, 
         /, 
         path: PathType = "", 
         password: str = "", 
         refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
     ) -> Iterator[AlistPath]:
-        for item in self.listdir_attr(
+        ...
+    @overload
+    def scandir(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncIterator[AlistPath]:
+        ...
+    def scandir(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        refresh: None | bool = None, 
+        page: int = 1, 
+        per_page: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterator[AlistPath] | AsyncIterator[AlistPath]:
+        it = self.iterdir(
             path, 
             password, 
             refresh=refresh, 
+            page=page, 
+            per_page=per_page, 
             async_=async_, 
-        ):
-            yield AlistPath(self, **item)
+        )
+        if async_:
+            return (Alist(self, **attr) async for attr in it)
+        else:
+            return (Alist(self, **attr) for attr in it)
 
+    @overload
+    def stat(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> stat_result:
+        ...
+    @overload
+    def stat(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, stat_result]:
+        ...
     def stat(
         self, 
         /, 
@@ -4383,22 +4633,43 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> stat_result:
-        attr = self.attr(path, password, async_=async_)
-        is_dir = attr.get("is_dir", False)
-        return stat_result((
-            (S_IFDIR if is_dir else S_IFREG) | 0o777, # mode
-            0, # ino
-            0, # dev
-            1, # nlink
-            0, # uid
-            0, # gid
-            attr.get("size", 0), # size
-            attr["atime"], # atime
-            attr["mtime"], # mtime
-            attr["ctime"], # ctime
-        ))
+    ) -> stat_result | Coroutine[Any, Any, stat_result]:
+        def gen_step():
+            attr = yield self.attr(path, password, async_=async_)
+            return stat_result((
+                (S_IFDIR if attr["is_dir"] else S_IFREG) | 0o777, # mode
+                0, # ino
+                0, # dev
+                1, # nlink
+                0, # uid
+                0, # gid
+                attr.get("size") or 0, # size
+                attr.get("atime") or attr["mtime"], # atime
+                attr["mtime"], # mtime
+                attr["ctime"], # ctime
+            ))
+        return run_gen_step(gen_step, async_=async_)
 
+    @overload
+    def storage_of(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def storage_of(
+        self, 
+        /, 
+        path: PathType = "", 
+        password: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
     def storage_of(
         self, 
         /, 
@@ -4406,41 +4677,43 @@ class AlistFileSystem:
         password: str = "", 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> str:
-        if isinstance(path, (AttrDict, AlistPath)):
-            if not password:
-                password = path.get("password", "")
-            path = cast(str, path["path"])
-        else:
-            path = self.abspath(path)
-        if path == "/":
-            return "/"
-        try:
-            storages = self.list_storages()
-        except PermissionError:
-            while True:
-                try:
-                    attr = self.attr(path, password, async_=async_)
-                except FileNotFoundError:
-                    continue
-                else:
-                    if attr.get("hash_info") is None:
-                        return path
-                finally:
-                    ppath = dirname(path)
-                    if ppath == path:
-                        return "/"
-                    path = ppath
-            return "/"
-        else:
-            storage = "/"
-            for s in storages:
-                mount_path = s["mount_path"]
-                if path == mount_path:
-                    return mount_path
-                elif commonpath((path, mount_path)) == mount_path and len(mount_path) > len(storage):
-                    storage = mount_path
-            return storage
+    ) -> str | Coroutine[Any, Any, str]:
+        def gen_step():
+            if isinstance(path, (AttrDict, AlistPath)):
+                if not password:
+                    password = path.get("password", "")
+                path = cast(str, path["path"])
+            else:
+                path = self.abspath(path)
+            if path == "/":
+                return "/"
+            try:
+                storages = self.list_storages()
+            except PermissionError:
+                while True:
+                    try:
+                        attr = self.attr(path, password, async_=async_)
+                    except FileNotFoundError:
+                        continue
+                    else:
+                        if attr.get("hash_info") is None:
+                            return path
+                    finally:
+                        ppath = dirname(path)
+                        if ppath == path:
+                            return "/"
+                        path = ppath
+                return "/"
+            else:
+                storage = "/"
+                for s in storages:
+                    mount_path = s["mount_path"]
+                    if path == mount_path:
+                        return mount_path
+                    elif commonpath((path, mount_path)) == mount_path and len(mount_path) > len(storage):
+                        storage = mount_path
+                return storage
+        return run_gen_step(gen_step, async_=async_)
 
     def touch(
         self, 

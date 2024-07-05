@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __doc__ = """\t\t🚀 115 直链服务简单且极速版 🍳
 
 链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1m\x1b[32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1m\x1b[32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1m\x1b[32mid\x1b[0m\x1b[4m\x1b[34m}&sha1={\x1b[1m\x1b[32msha1\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1m\x1b[32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
@@ -122,6 +122,7 @@ app = Application()
 
 PATH_TO_ID: LRUCache[str, str] = LRUCache(65536)
 ID_TO_PICKCODE: LRUCache[str, str] = LRUCache(65536)
+SHA1_TO_PICKCODE: LRUCache[str, str] = LRUCache(65536)
 URL_CACHE: TTLCache[tuple[str, str], str] = TTLCache(64, ttl=1)
 PICKCODE_OF_IMAGE: set[str] = set()
 
@@ -215,7 +216,7 @@ async def register_http_client():
 def process_info(info: dict, dir: None | str = None) -> str:
     fid = cast(str, info["fid"])
     fn = cast(str, info["n"])
-    pickcode = ID_TO_PICKCODE[fid] = info["pc"]
+    pickcode = SHA1_TO_PICKCODE[info["sha"]] = ID_TO_PICKCODE[fid] = info["pc"]
     if info.get("class") == "PIC" or info.get("u"):
         PICKCODE_OF_IMAGE.add(pickcode)
     if dir:
@@ -226,8 +227,8 @@ def process_info(info: dict, dir: None | str = None) -> str:
 
 
 async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
-    if id in ID_TO_PICKCODE:
-        return ID_TO_PICKCODE[id]
+    if pickcode := ID_TO_PICKCODE.get(id):
+        return pickcode
     resp = await client.get(
         "https://webapi.115.com/files/get_info", 
         params={"file_id": id}, 
@@ -245,6 +246,8 @@ async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
 async def get_pickcode_by_sha1(client: ClientSession, sha1: str) -> str:
     if len(sha1) != 40:
         raise FileNotFoundError
+    if pickcode := SHA1_TO_PICKCODE.get(sha1):
+        return pickcode
     resp = await client.get(
         "https://webapi.115.com/files/search", 
         params={"search_value": sha1, "limit": 1, "show_dir": 0}, 
@@ -351,7 +354,7 @@ async def get_download_url(
                 pickcode = await get_pickcode_by_path(client, path or path2)
         url = URL_CACHE.get((pickcode, user_agent))
         if url:
-            return url
+            return redirect(url)
         if pickcode in PICKCODE_OF_IMAGE:
             return redirect(await get_image_url(client, pickcode))
         resp = await client.post(
