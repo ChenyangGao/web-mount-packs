@@ -430,15 +430,14 @@ def main(args):
                 if src_attr["size"] <= 1 << 30: # 1 GB
                     # NOTE: 1 GB 以内使用网页版上传接口，这个接口的优势是上传完成后会自动产生 115 生活事件
                     kwargs["upload_directly"] = None
-                elif src_attr["size"] < 1 << 34: # 16 GB
+                elif src_attr["size"] > 1 << 34: # 16 GB
                     # NOTE: 介于 1 GB 和 16 GB 时直接流式上传，超过 16 GB 时，使用分块上传，分块大小 1 GB
-                    kwargs["partsize"] = 1024 ** 3
+                    kwargs["partsize"] = 1 << 30
                 resp = client.upload_file(
                     src_path, 
                     name, 
                     pid=dst_pid, 
                     make_reporthook=partial(add_report, attr=src_attr), 
-                    filesha1="0"*40,
                     **kwargs, 
                 )
                 if resp.get("status") == 2 and resp.get("statuscode") == 0:

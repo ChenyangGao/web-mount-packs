@@ -3842,7 +3842,7 @@ class P115Client:
                 # 4: account_security
             - type: int = <default>
             - tab_type: int = <default>
-            - file_behavior_type: int = <default>
+            - file_behavior_type: int | str = <default>
             - mode: str = <default>
             - check_num: int = <default>
             - total_count: int = <default>
@@ -6031,6 +6031,7 @@ class P115Client:
         data = {
             "appid": 0, 
             "appversion": APP_VERSION, 
+            #"behavior_type": 0, 
             "userid": userid, 
             "filename": filename, 
             "filesize": filesize, 
@@ -6052,13 +6053,13 @@ class P115Client:
         request_kwargs["data"] = ecdh_aes_encode(urlencode(sorted(data.items())).encode("latin-1"))
         def gen_step():
             resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
-            if resp["status"] == 2 and resp["statuscode"] == 0:
-                # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新
-                request_kwargs["parse"] = lambda resp, content, /: None
-                if async_:
-                    create_task(to_thread(self.upload_init, **request_kwargs))
-                else:
-                    start_new_thread(partial(self.upload_init, **request_kwargs), ())
+            # if resp["status"] == 2 and resp["statuscode"] == 0:
+            #     # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新
+            #     request_kwargs["parse"] = lambda resp, content, /: None
+            #     if async_:
+            #         create_task(to_thread(self.upload_init, **request_kwargs))
+            #     else:
+            #         start_new_thread(partial(self.upload_init, **request_kwargs), ())
             return resp
         return run_gen_step(gen_step, async_=async_)
 
@@ -6233,8 +6234,8 @@ class P115Client:
                 callback=multipart_resume_data["callback"], 
                 partsize=multipart_resume_data["partsize"], 
                 filesize=multipart_resume_data.get("filesize", -1), 
-                make_reporthook=make_reporthook, # type: ignore
-                async_=async_, # type: ignore
+                make_reporthook=make_reporthook, 
+                async_=async_, 
                 **request_kwargs, 
             )
         if upload_directly:
@@ -6243,8 +6244,8 @@ class P115Client:
                 filename, 
                 filesize=filesize, 
                 pid=pid, 
-                make_reporthook=make_reporthook, # type: ignore
-                async_=async_, # type: ignore
+                make_reporthook=make_reporthook, 
+                async_=async_, 
                 **request_kwargs, 
             )
         if hasattr(file, "getbuffer"):

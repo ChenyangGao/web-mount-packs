@@ -20,7 +20,7 @@ __doc__ = """\t\t🚀 115 直链服务简单且极速版 🍳
     1. 当前工作目录
     2. 用户根目录
     3. 此脚本所在目录 下
-- \x1b[1m\x1b[32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m\x1b传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m\x1b可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
+- \x1b[1m\x1b[32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
 """
 
 if __name__ == "__main__":
@@ -82,7 +82,7 @@ from posixpath import split as splitpath
 from typing import cast, Final
 
 try:
-    from blacksheep import Application, Request, get, redirect, text
+    from blacksheep import Application, Request, route, redirect, text
     from blacksheep.client.session import ClientSession
     from blacksheep.contents import FormContent
     from cachetools import LRUCache, TTLCache
@@ -93,7 +93,7 @@ except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "blacksheep", "cachetools", "orjson", "pycryptodome"], check=True)
-    from blacksheep import Application, Request, get, redirect
+    from blacksheep import Application, Request, route, redirect, text
     from blacksheep.client.session import ClientSession
     from blacksheep.contents import FormContent
     from cachetools import LRUCache, TTLCache
@@ -321,8 +321,8 @@ async def get_image_url(client: ClientSession, pickcode: str) -> str:
     return json["data"]["origin_url"]
 
 
-@get("/")
-@get("/{path:path}")
+@route("/", methods=["GET", "HEAD"])
+@route("/{path:path}", methods=["GET", "HEAD"])
 async def get_download_url(
     request: Request, 
     client: ClientSession, 
@@ -375,6 +375,11 @@ async def get_download_url(
 
 
 if __name__ == "__main__":
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError:
+        from sys import executable
+        from subprocess import run
+        run([executable, "-m", "pip", "install", "-U", "uvicorn"], check=True)
     uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, proxy_headers=True, forwarded_allow_ips="*")
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.9.7.4.7"
+version = "0.0.9.7.4.7.1"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

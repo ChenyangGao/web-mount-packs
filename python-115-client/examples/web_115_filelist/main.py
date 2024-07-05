@@ -79,7 +79,7 @@ from urllib.parse import quote
 
 from cachetools import LRUCache, TTLCache
 from blacksheep import (
-    get, text, html, file, redirect, 
+    route, text, html, file, redirect, 
     Application, Content, Request, Response, StreamedContent
 )
 from blacksheep.server.openapi.common import ParameterInfo
@@ -272,8 +272,8 @@ def redirect_exception_response(func, /):
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/attr")
-@get("/api/attr/{path:path2}")
+@route("/api/attr", methods=["GET", "HEAD"])
+@route("/api/attr/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def get_attr(
     request: Request, 
@@ -301,8 +301,8 @@ async def get_attr(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/list")
-@get("/api/list/{path:path2}")
+@route("/api/list", methods=["GET", "HEAD"])
+@route("/api/list/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def get_list(
     request: Request, 
@@ -333,8 +333,8 @@ async def get_list(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/ancestors")
-@get("/api/ancestors/{path:path2}")
+@route("/api/ancestors", methods=["GET", "HEAD"])
+@route("/api/ancestors/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def get_ancestors(
     pickcode: str = "", 
@@ -359,8 +359,8 @@ async def get_ancestors(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/desc")
-@get("/api/desc/{path:path2}")
+@route("/api/desc", methods=["GET", "HEAD"])
+@route("/api/desc/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def get_desc(
     pickcode: str = "", 
@@ -385,8 +385,8 @@ async def get_desc(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/url")
-@get("/api/url/{path:path2}")
+@route("/api/url", methods=["GET", "HEAD"])
+@route("/api/url/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def get_url(
     request: Request, 
@@ -424,8 +424,8 @@ async def get_url(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/download")
-@get("/api/download/{path:path2}")
+@route("/api/download", methods=["GET", "HEAD"])
+@route("/api/download/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def file_download(
     request: Request, 
@@ -472,8 +472,8 @@ async def file_download(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/m3u8")
-@get("/api/m3u8/{path:path2}")
+@route("/api/m3u8", methods=["GET", "HEAD"])
+@route("/api/m3u8/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def file_m3u8(
     request: Request, 
@@ -538,8 +538,8 @@ async def file_m3u8(
     404: "文件或目录不存在", 
     500: "服务器错误"
 })
-@get("/api/subtitle")
-@get("/api/subtitle/{path:path2}")
+@route("/api/subtitle", methods=["GET", "HEAD"])
+@route("/api/subtitle/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
 async def file_subtitle(
     request: Request, 
