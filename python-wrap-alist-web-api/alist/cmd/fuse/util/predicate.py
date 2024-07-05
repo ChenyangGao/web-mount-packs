@@ -10,7 +10,7 @@ from runpy import run_path
 from textwrap import dedent
 from typing import Final, Optional
 
-from alist import AlistPath
+from alist.component.fs import AlistPath
 from path_ignore_pattern import read_str, read_file, parse
 
 

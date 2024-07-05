@@ -184,8 +184,7 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> None | Self | Coroutine[Any, Any, None | Self]:
         def gen_step():
-            attr = yield partial(
-                self.fs.copy, 
+            attr = yield self.fs.copy(
                 self, 
                 dst_path, 
                 pid=pid, 
@@ -225,8 +224,7 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield partial(
-                self.fs.makedirs, 
+            return type(self)((yield self.fs.makedirs(
                 self, 
                 exist_ok=exist_ok, 
                 async_=async_, 
@@ -528,8 +526,7 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield partial(
-                self.fs.write_bytes, 
+            return type(self)((yield self.fs.write_bytes(
                 self, 
                 data, 
                 async_=async_, 
@@ -571,8 +568,7 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield partial(
-                self.fs.write_text, 
+            return type(self)((yield self.fs.write_text(
                 self, 
                 text, 
                 encoding=encoding, 
@@ -4231,7 +4227,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def write_bytes(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         data: Buffer | SupportsRead[Buffer] = b"", 
         pid: None | int = None, 
@@ -4242,7 +4238,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def write_bytes(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         data: Buffer | SupportsRead[Buffer] = b"", 
         pid: None | int = None, 
@@ -4252,7 +4248,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ...
     def write_bytes(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         data: Buffer | SupportsRead[Buffer] = b"", 
         pid: None | int = None, 
@@ -4265,7 +4261,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def write_text(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         text: str = "", 
         pid: None | int = None, 
@@ -4279,7 +4275,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def write_text(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         text: str = "", 
         pid: None | int = None, 
@@ -4292,7 +4288,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ...
     def write_text(
         self, 
-        id_or_path: IDOrPathType = "", 
+        id_or_path: IDOrPathType, 
         /, 
         text: str = "", 
         pid: None | int = None, 
@@ -4314,7 +4310,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             tio.write(text)
             tio.flush()
             bio.seek(0)
-        return self.write_bytes(id_or_path, data=bio, pid=pid, async_=async_)
+        return self.write_bytes(id_or_path, bio, pid=pid, async_=async_)
 
     cp = copy
     mv = move
