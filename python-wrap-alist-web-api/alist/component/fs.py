@@ -448,8 +448,19 @@ class AlistPath(Mapping, PathLike[str]):
             async_=async_, 
         )
 
-    def get_url(self, /, ensure_ascii: bool = True) -> str:
-        return self.fs.get_url(self, ensure_ascii=ensure_ascii)
+    def get_url(
+        self, 
+        /, 
+        token: bool | str = "", 
+        expire_timestamp: int = 0, 
+        ensure_ascii: bool = True, 
+    ) -> str:
+        return self.fs.get_url(
+            self, 
+            token=token, 
+            expire_timestamp=expire_timestamp, 
+            ensure_ascii=ensure_ascii, 
+        )
 
     @overload
     def glob(

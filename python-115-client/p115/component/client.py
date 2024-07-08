@@ -391,10 +391,6 @@ class P115Client:
     ):
         """帮助函数：可执行同步和异步的网络请求
         """
-        if (headers := request_kwargs.get("headers")):
-            request_kwargs["headers"] = {**self.headers, **headers, "Cookie": self.cookies}
-        else:
-            request_kwargs["headers"] = {**self.headers, "Cookie": self.cookies}
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -405,6 +401,11 @@ class P115Client:
                 **request_kwargs, 
             )
         else:
+            cookies = "; ".join(f"{c.name}={c.value}" for c in self.cookiejar)
+            if (headers := request_kwargs.get("headers")):
+                request_kwargs["headers"] = {**self.headers, **headers, "Cookie": cookies}
+            else:
+                request_kwargs["headers"] = {**self.headers, "Cookie": cookies}
             return request(
                 url=url, 
                 method=method, 

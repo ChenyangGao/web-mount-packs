@@ -238,10 +238,6 @@ class AlistClient:
             if not url.startswith("/"):
                 url = "/" + url
             url = self.origin + url
-        if (headers := request_kwargs.get("headers")):
-            request_kwargs["headers"] = {**self.headers, **headers}
-        else:
-            request_kwargs["headers"] = self.headers
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -252,6 +248,10 @@ class AlistClient:
                 **request_kwargs, 
             )
         else:
+            if (headers := request_kwargs.get("headers")):
+                request_kwargs["headers"] = {**self.headers, **headers}
+            else:
+                request_kwargs["headers"] = self.headers
             return request(
                 url=url, 
                 method=method, 
