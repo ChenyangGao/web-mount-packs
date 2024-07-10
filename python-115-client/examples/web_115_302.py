@@ -39,6 +39,10 @@ parser = ArgumentParser(
 
     GET ?id={id}
 
+也可以通过 sha1 查询（必是文件）
+
+    GET ?sha1={sha1}
+
 2. 查询文件或文件夹的信息，返回 json
 
     GET ?method=attr
@@ -60,7 +64,8 @@ parser = ArgumentParser(
  参数    | 类型    | 必填 | 说明
 -------  | ------- | ---- | ----------
 pickcode | string  | 否   | 文件或文件夹的 pickcode，优先级高于 id
-id       | integer | 否   | 文件或文件夹的 id，优先级高于 path
+id       | integer | 否   | 文件或文件夹的 id，优先级高于 sha1
+sha1     | string  | 否   | 文件或文件夹的 id，优先级高于 path
 path     | string  | 否   | 文件或文件夹的路径，优先级高于 url 中的路径部分
 method   | string  | 否   | 0. '':     缺省值，直接下载
          |         |      | 2. 'url':  这个文件的下载链接和请求头，JSON 格式
@@ -250,9 +255,10 @@ if device not in AVAILABLE_APPS:
 fs = client.get_fs(client, path_to_id=LRUCache(65536), request=do_request)
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
-# NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续 2 次请求下载链接，而后台请求一次链接大约需要 170-200 ms，因此弄个 0.3 秒的缓存
-url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(64, ttl=0.3)
-
+# NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续几次请求下载链接，因此弄了个缓存
+url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(128, ttl=0.3)
+# NOTE: 有些播放器，例如 infuse，会一次并发多个请求，我认为要对数据范围相同的请求，但一定时间内只放行一个
+range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 
 KEYS = (
     "id", "parent_id", "name", "path", "relpath", "sha1", "pickcode", "is_directory", 
@@ -304,6 +310,10 @@ def get_url(pickcode: str):
     use_web_api = request.args.get("web") not in (None, "false")
     request_headers = request.headers
     user_agent = request_headers.get("User-Agent") or ""
+    range_request_key = (request.remote_addr or "", user_agent, pickcode, str(request.range))
+    if range_request_key in range_request_cooldown:
+       return "Too Many Requests", 429
+    range_request_cooldown[range_request_key] = None
     try:
         url = url_cache[(pickcode, user_agent)]
     except KeyError:
@@ -446,6 +456,7 @@ def query(path: str):
     origin = f"{scheme}://{netloc}"
     pickcode = request.args.get("pickcode")
     fid = request.args.get("id")
+    sha1 = request.args.get("sha1") or ""
     path = fs.abspath(unquote(request.args.get("path") or path).lstrip("/"))
 
     def update_attr(attr):
@@ -477,6 +488,14 @@ def query(path: str):
                     fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
                 if fid is not None:
                     attr = relogin_wrap(fs.attr, int(fid))
+                elif sha1 := sha1.strip():
+                    if len(sha1) != 40:
+                        return "Bad sha1", 400
+                    try:
+                        attr = next(client.fs.search(0, search_value=sha1, limit=1, show_dir=0))
+                        attr.path
+                    except StopIteration:
+                        return f"no such file: sha1={sha1!r}", 404
                 else:
                     attr = relogin_wrap(fs.attr, path)
                 if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
@@ -520,6 +539,11 @@ def query(path: str):
         if pickcode := id_to_pickcode.get(file_id):
             return get_url(pickcode)
         attr = relogin_wrap(fs.attr, file_id)
+    elif sha1 := sha1.strip():
+        try:
+            attr = next(client.fs.search(0, search_value=sha1, limit=1, show_dir=0))
+        except StopIteration:
+            return f"no such file: sha1={sha1!r}", 404
     else:
         abspath = fs.abspath(path)
         if path_persistence_commitment and (fid := fs.path_to_id.get(abspath)):

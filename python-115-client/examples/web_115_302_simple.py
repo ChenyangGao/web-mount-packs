@@ -24,6 +24,7 @@ __doc__ = """\
 - \x1b[1;32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
 - \x1b[1;32murl_ttl\x1b[0m: 直链存活时间（\x1b[1;31m单位：秒\x1b[0m），默认值 \x1b[1;36m1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限时
 - \x1b[1;32murl_reuse_factor\x1b[0m: 直链最大复用次数，默认值 \x1b[1;36m-1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m 或 \x1b[1;36m= 1\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限次数
+- \x1b[1;32murl_range_request_cooldown\x1b[0m: range 请求冷却时间，默认值 \x1b[1;36m0\x1b[0m，某个 ip 对某个资源执行一次 range 请求后必须过一定的冷却时间后才能对相同范围再次请求。特别的，若 \x1b[1;36m<= 0\x1b[0m，则不需要冷却
 
         \x1b[5m🔨\x1b[0m 如何运行 \x1b[5m🪛\x1b[0m
 
@@ -68,6 +69,7 @@ cookies_path = environ.get("cookies_path", "")
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
 url_ttl = float(environ.get("url_ttl", "1"))
 url_reuse_factor = int(environ.get("url_reuse_factor", "-1"))
+url_range_request_cooldown = int(environ.get("url_range_request_cooldown", "0"))
 
 if not cookies:
     if cookies_path:
@@ -144,12 +146,15 @@ ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 SHA1_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 PATH_TO_ID: MutableMapping[str, str] = LRUCache(65536)
 PICKCODE_OF_IMAGE: set[str] = set()
-URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]]
+URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]] = None
 if url_reuse_factor not in (0, 1):
     if url_ttl > 0:
         URL_CACHE = TTLCache(1024, ttl=url_ttl)
     elif url_ttl < 0:
         URL_CACHE = LRUCache(1024)
+RANGE_REQUEST_COOLDOWN: None | MutableMapping[tuple[str, str, str, bytes], None] = None
+if url_range_request_cooldown > 0:
+    RANGE_REQUEST_COOLDOWN = TTLCache(8196, ttl=url_range_request_cooldown)
 
 to_bytes = int.to_bytes
 from_bytes = int.from_bytes
@@ -377,6 +382,11 @@ async def get_download_url(
                 pickcode = await get_pickcode_by_sha1(client, sha1)
             else:
                 pickcode = await get_pickcode_by_path(client, path or path2)
+        if RANGE_REQUEST_COOLDOWN is not None:
+            key = (request.client_ip or "", user_agent, pickcode, request.get_first_header(b"Range") or b"")
+            if key in RANGE_REQUEST_COOLDOWN:
+                return text("Too Many Requests", 429)
+            RANGE_REQUEST_COOLDOWN[key] = None
         if URL_CACHE is not None and (t := URL_CACHE.get((pickcode, user_agent))):
             url, times = t
             if url_reuse_factor < 0 or times < url_reuse_factor:
