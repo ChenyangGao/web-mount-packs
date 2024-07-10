@@ -255,6 +255,8 @@ if device not in AVAILABLE_APPS:
 fs = client.get_fs(client, path_to_id=LRUCache(65536), request=do_request)
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
+# NOTE: sha1 到 pickcode 到映射
+sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续几次请求下载链接，因此弄了个缓存
 url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(128, ttl=0.3)
 # NOTE: 有些播放器，例如 infuse，会一次并发多个请求，我认为要对数据范围相同的请求，但一定时间内只放行一个
@@ -263,7 +265,7 @@ range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCac
 KEYS = (
     "id", "parent_id", "name", "path", "relpath", "sha1", "pickcode", "is_directory", 
     "size", "format_size", "ctime", "mtime", "atime", "thumb", "star", "labels", 
-    "score", "hidden", "described", "violated", "url", "short_url", 
+    "score", "hidden", "described", "violated", "url", "short_url", "ancestors", 
 )
 application = Flask(__name__)
 Compress(application)
@@ -492,15 +494,21 @@ def query(path: str):
                     if len(sha1) != 40:
                         return "Bad sha1", 400
                     try:
-                        attr = next(client.fs.search(0, search_value=sha1, limit=1, show_dir=0))
+                        attr = next(client.fs.search(root, search_value=sha1, limit=1, show_dir=0))
                         attr.path
                     except StopIteration:
                         return f"no such file: sha1={sha1!r}", 404
+                elif path_persistence_commitment and (fid := fs.path_to_id.get(path)):
+                    attr = relogin_wrap(fs.attr, fid)
                 else:
                     attr = relogin_wrap(fs.attr, path)
                 if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
                     raise PermissionError(errno.EACCES, "out of root range")
             update_attr(attr)
+            if not attr["is_directory"]:
+                pickcode = cast(str, attr["pickcode"])
+                id_to_pickcode[attr["id"]] = pickcode
+                sha1_to_pickcode[attr["sha1"]] = pickcode
             json_str = dumps({k: attr.get(k) for k in KEYS})
             return Response(json_str, content_type='application/json; charset=utf-8')
         case "list":
@@ -510,10 +518,17 @@ def query(path: str):
                 fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
             if fid is not None:
                 children = relogin_wrap(fs.listdir_attr, int(fid))
+            elif path_persistence_commitment and (fid := fs.path_to_id.get(path)):
+                children = relogin_wrap(fs.listdir_attr, fid)
             else:
                 children = relogin_wrap(fs.listdir_attr, path)
             if children and root != 0 and not any(info["id"] == root for info in children[0]["ancestors"][:-1]):
                 raise PermissionError(errno.EACCES, "out of root range")
+            for attr in children:
+                if not attr["is_directory"]:
+                    pickcode = cast(str, attr["pickcode"])
+                    id_to_pickcode[attr["id"]] = pickcode
+                    sha1_to_pickcode[attr["sha1"]] = pickcode
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
@@ -527,6 +542,8 @@ def query(path: str):
                     fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
                 if fid is not None:
                     return relogin_wrap(fs.desc, int(fid))
+                elif path_persistence_commitment and (fid := fs.path_to_id.get(path)):
+                    return relogin_wrap(fs.desc, fid)
                 else:
                     return relogin_wrap(fs.desc, path)
 
@@ -540,26 +557,33 @@ def query(path: str):
             return get_url(pickcode)
         attr = relogin_wrap(fs.attr, file_id)
     elif sha1 := sha1.strip():
+        if pickcode := sha1_to_pickcode.get(sha1):
+            return get_url(pickcode)
         try:
-            attr = next(client.fs.search(0, search_value=sha1, limit=1, show_dir=0))
+            attr = next(client.fs.search(root, search_value=sha1, limit=1, show_dir=0))
         except StopIteration:
             return f"no such file: sha1={sha1!r}", 404
+    elif path_persistence_commitment and (fid := fs.path_to_id.get(path)):
+        if pickcode := id_to_pickcode.get(fid):
+            return get_url(pickcode)
+        else:
+            attr = relogin_wrap(fs.attr, fid)
     else:
-        abspath = fs.abspath(path)
-        if path_persistence_commitment and (fid := fs.path_to_id.get(abspath)):
-            if pickcode := id_to_pickcode.get(fid):
-                return get_url(pickcode)
-        attr = relogin_wrap(fs.attr, abspath)
+        attr = relogin_wrap(fs.attr, path)
     if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
         raise PermissionError(errno.EACCES, "out of root range")
     if not attr["is_directory"]:
         pickcode = cast(str, attr["pickcode"])
-        if id_to_pickcode is not None:
-            id_to_pickcode[attr["id"]] = pickcode
+        id_to_pickcode[attr["id"]] = pickcode
+        sha1_to_pickcode[attr["sha1"]] = pickcode
         return get_url(pickcode)
     children = relogin_wrap(fs.listdir_attr, attr["id"])
     for subattr in children:
         update_attr(subattr)
+        if not subattr["is_directory"]:
+            pickcode = cast(str, subattr["pickcode"])
+            id_to_pickcode[subattr["id"]] = pickcode
+            sha1_to_pickcode[subattr["sha1"]] = pickcode
     fid = attr["id"]
     if fid == root:
         header = f'<strong><a href="/?id={root}&method=list&password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>'
