@@ -144,7 +144,7 @@ ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 SHA1_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 PATH_TO_ID: MutableMapping[str, str] = LRUCache(65536)
 PICKCODE_OF_IMAGE: set[str] = set()
-URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]]
+URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]] = None
 if url_reuse_factor not in (0, 1):
     if url_ttl > 0:
         URL_CACHE = TTLCache(1024, ttl=url_ttl)
