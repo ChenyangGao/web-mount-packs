@@ -2,25 +2,42 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
-__doc__ = """\t\t🚀 115 直链服务简单且极速版 🍳
+__version__ = (0, 0, 5)
+__doc__ = """\
+        \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
 
-链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1m\x1b[32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1m\x1b[32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1m\x1b[32mid\x1b[0m\x1b[4m\x1b[34m}&sha1={\x1b[1m\x1b[32msha1\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1m\x1b[32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
+链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1;32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1;32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1;32mid\x1b[0m\x1b[4m\x1b[34m}&sha1={\x1b[1;32msha1\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1;32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
 
-- \x1b[1m\x1b[32mpickcode\x1b[0m: 文件的 \x1b[1m\x1b[32mpickcode\x1b[0m，优先级高于 \x1b[1m\x1b[32mid\x1b[0m
-- \x1b[1m\x1b[32mid\x1b[0m: 文件的 \x1b[1m\x1b[32mid\x1b[0m，优先级高于 \x1b[1m\x1b[32msha1\x1b[0m
-- \x1b[1m\x1b[32msha1\x1b[0m: 文件的 \x1b[1m\x1b[32msha1\x1b[0m，优先级高于 \x1b[1m\x1b[32mpath\x1b[0m
-- \x1b[1m\x1b[32mpath\x1b[0m: 文件的路径，优先级高于 \x1b[1m\x1b[32mpath2\x1b[0m
-- \x1b[1m\x1b[32mpath2\x1b[0m: 文件的路径，这个直接在接口路径之后，不在查询字符串中
+- \x1b[1;32mpickcode\x1b[0m: 文件的 \x1b[1;32mpickcode\x1b[0m，优先级高于 \x1b[1;32mid\x1b[0m
+- \x1b[1;32mid\x1b[0m: 文件的 \x1b[1;32mid\x1b[0m，优先级高于 \x1b[1;32msha1\x1b[0m
+- \x1b[1;32msha1\x1b[0m: 文件的 \x1b[1;32msha1\x1b[0m，优先级高于 \x1b[1;32mpath\x1b[0m
+- \x1b[1;32mpath\x1b[0m: 文件的路径，优先级高于 \x1b[1;32mpath2\x1b[0m
+- \x1b[1;32mpath2\x1b[0m: 文件的路径，这个直接在接口路径之后，不在查询字符串中
 
-🌍 支持如下环境变量 🛸
+        \x1b[5m🌍\x1b[0m 环境变量 \x1b[5m🛸\x1b[0m
 
-- \x1b[1m\x1b[32mcookies\x1b[0m: 115 登录 cookies，优先级高于 \x1b[1m\x1b[32mcookies_path\x1b[0m
-- \x1b[1m\x1b[32mcookies_path\x1b[0m: 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 \x1b[4m\x1b[34m115-cookies.txt\x1b[0m 文件中获取，此文件可以在如下路径之一
+- \x1b[1;32mcookies\x1b[0m: 115 登录 cookies，优先级高于 \x1b[1;32mcookies_path\x1b[0m
+- \x1b[1;32mcookies_path\x1b[0m: 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 \x1b[4m\x1b[34m115-cookies.txt\x1b[0m 文件中获取，此文件可以在如下路径之一
     1. 当前工作目录
     2. 用户根目录
     3. 此脚本所在目录 下
-- \x1b[1m\x1b[32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
+- \x1b[1;32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
+- \x1b[1;32murl_ttl\x1b[0m: 直链存活时间（\x1b[1;31m单位：秒\x1b[0m），默认值 \x1b[1;36m1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限时
+- \x1b[1;32murl_reuse_factor\x1b[0m: 直链最大复用次数，默认值 \x1b[1;36m-1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m 或 \x1b[1;36m= 1\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限次数
+
+        \x1b[5m🔨\x1b[0m 如何运行 \x1b[5m🪛\x1b[0m
+
+在脚本所在目录下，创建一个 \x1b[4m\x1b[34m115-cookies.txt\x1b[0m，并把 115 的 cookies 保存其中，格式为
+
+    UID=...; CID=...; SEID=...
+
+然后进入脚本所在目录，运行（默认端口：\x1b[1;36m80\x1b[0m，可用命令行参数 \x1b[1m-p\x1b[0m/\x1b[1m--port\x1b[0m 指定其它）
+
+    python web_115_302_simple.py
+
+或者（默认端口：\x1b[1;36m8000\x1b[0m，可用命令行参数 \x1b[1m--port\x1b[0m 指定其它）
+
+    uvicorn web_115_302_simple:app
 """
 
 if __name__ == "__main__":
@@ -49,6 +66,8 @@ from os.path import dirname, expanduser, join as joinpath, realpath
 cookies = environ.get("cookies", "")
 cookies_path = environ.get("cookies_path", "")
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
+url_ttl = float(environ.get("url_ttl", "1"))
+url_reuse_factor = int(environ.get("url_reuse_factor", "-1"))
 
 if not cookies:
     if cookies_path:
@@ -72,7 +91,7 @@ if not cookies:
     raise SystemExit("未能获得 cookies")
 
 
-from collections.abc import Iterator
+from collections.abc import Iterator, MutableMapping
 try:
     from collections.abc import Buffer # type: ignore
 except ImportError:
@@ -120,11 +139,17 @@ RSA_encrypt: Final = PKCS1_v1_5.new(RSA.construct((
 
 app = Application()
 
-PATH_TO_ID: LRUCache[str, str] = LRUCache(65536)
-ID_TO_PICKCODE: LRUCache[str, str] = LRUCache(65536)
-SHA1_TO_PICKCODE: LRUCache[str, str] = LRUCache(65536)
-URL_CACHE: TTLCache[tuple[str, str], str] = TTLCache(64, ttl=1)
+# NOTE: 缓存
+ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
+SHA1_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
+PATH_TO_ID: MutableMapping[str, str] = LRUCache(65536)
 PICKCODE_OF_IMAGE: set[str] = set()
+URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]]
+if url_reuse_factor not in (0, 1):
+    if url_ttl > 0:
+        URL_CACHE = TTLCache(1024, ttl=url_ttl)
+    elif url_ttl < 0:
+        URL_CACHE = LRUCache(1024)
 
 to_bytes = int.to_bytes
 from_bytes = int.from_bytes
@@ -352,9 +377,11 @@ async def get_download_url(
                 pickcode = await get_pickcode_by_sha1(client, sha1)
             else:
                 pickcode = await get_pickcode_by_path(client, path or path2)
-        url = URL_CACHE.get((pickcode, user_agent))
-        if url:
-            return redirect(url)
+        if URL_CACHE is not None and (t := URL_CACHE.get((pickcode, user_agent))):
+            url, times = t
+            if url_reuse_factor < 0 or times < url_reuse_factor:
+                URL_CACHE[(pickcode, user_agent)] = (url, times + 1)
+                return redirect(url)
         if pickcode in PICKCODE_OF_IMAGE:
             return redirect(await get_image_url(client, pickcode))
         resp = await client.post(
@@ -369,9 +396,11 @@ async def get_download_url(
         item = next(info for info in data.values())
         ID_TO_PICKCODE[next(iter(data))] = item["pick_code"]
         # TODO: 还需要继续增加，目前不确定 115 到底支持哪些图片格式
-        if item["file_name"].lower().endswith((".jpg", ".jpeg", ".png", ".svg", ".bmp", ".tiff", ".webp")):
+        if item["file_name"].lower().endswith((".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp")):
             PICKCODE_OF_IMAGE.add(item["pick_code"])
-        url = URL_CACHE[(pickcode, user_agent)] = item["url"]["url"]
+        url = item["url"]["url"]
+        if URL_CACHE is not None:
+            URL_CACHE[(pickcode, user_agent)] = (url, 1)
         return redirect(cast(str, url))
     except (FileNotFoundError, KeyError):
         return text("not found", 404) 
