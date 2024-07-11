@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 7)
+__version__ = (0, 1, 7, 1)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -77,7 +77,7 @@ method   | string  | 否   | 0. '':     缺省值，直接下载
 
 7. 支持 webdav
 
-在浏览器或 webdav 挂载软件 中输入（可以有个端口号） http://localhost/:dav
+在浏览器或 webdav 挂载软件 中输入（可以有个端口号） http://localhost/<dav
 目前没有用户名和密码就可以浏览，支持 302
 """)
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
@@ -391,8 +391,10 @@ class FolderResource(DavPathBase, DAVCollection):
     def children(self, /) -> dict[str, P115Path]:
         return {attr["name"]: attr for attr in relogin_wrap(self.attr.listdir_path)}
 
-    def get_content_length(self, /) -> int:
-        return 0
+    def get_property_value(self, name):
+        if name == "{DAV:}getcontentlength":
+            return 0
+        return super().get_property_value(name)
 
     def get_member_list(self, /) -> list[FileResource | FolderResource]:
         path_start = len(root_dir) - 1
@@ -429,8 +431,13 @@ class P115FileSystemProvider(DAVProvider):
         path: str, 
         environ: dict, 
     ) -> FolderResource | FileResource:
+        id_or_path: int | str = self.fs.abspath(path.lstrip("/"))
+        if id_or_path == "/":
+            id_or_path = 0
+        elif path_persistence_commitment and (fid := fs.path_to_id.get(id_or_path)):
+            id_or_path = fid
         try:
-            attr = relogin_wrap(self.fs.as_path, path.lstrip("/"))
+            attr = relogin_wrap(self.fs.as_path, id_or_path)
         except FileNotFoundError:
             raise DAVError(404, path)
         if attr.is_dir():
@@ -681,7 +688,7 @@ def query(path: str):
                 id_to_pickcode[attr["id"]] = pickcode
                 sha1_to_pickcode[attr["sha1"]] = pickcode
             json_str = dumps({k: attr.get(k) for k in KEYS})
-            return Response(json_str, content_type='flask_app/json; charset=utf-8')
+            return Response(json_str, content_type="application/json; charset=utf-8")
         case "list":
             if not root_dir:
                 raise NotADirectoryError(errno.ENOTDIR, "root is not directory")
@@ -704,7 +711,7 @@ def query(path: str):
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
             ])
-            return Response(json_str, content_type='flask_app/json; charset=utf-8')
+            return Response(json_str, content_type="application/json; charset=utf-8")
         case "desc":
             if not root_dir:
                 return relogin_wrap(fs.desc, root)
@@ -972,12 +979,12 @@ def query(path: str):
 
 
 WSGIDAV_CONFIG = {
-    "mount_path": "/:dav", 
+    "mount_path": "/<dav", 
     "provider_mapping": {"/": P115FileSystemProvider(fs)}, 
     "simple_dc": {"user_mapping": {"*": True}}, 
 }
 wsgidav_app = WsgiDAVApp(WSGIDAV_CONFIG)
-application = DispatcherMiddleware(flask_app, {"/:dav": wsgidav_app})
+application = DispatcherMiddleware(flask_app, {"/<dav": wsgidav_app})
 
 root_dir: str = ""
 if root == 0:
