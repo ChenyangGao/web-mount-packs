@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 6)
+__version__ = (0, 1, 7)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -72,6 +74,11 @@ method   | string  | 否   | 0. '':     缺省值，直接下载
          |         |      | 2. 'attr': 这个文件或文件夹的信息，JSON 格式
          |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息，JSON 格式
          |         |      | 4. 'desc': 这个文件或文件夹的备注，text/html
+
+7. 支持 webdav
+
+在浏览器或 webdav 挂载软件 中输入（可以有个端口号） http://localhost/:dav
+目前没有用户名和密码就可以浏览，支持 302
 """)
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
@@ -89,7 +96,7 @@ parser.add_argument("-P", "--password", default="", help="密码，如果提供�
 if __name__ == "__main__":
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
     parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值：80")
-    parser.add_argument("-d", "--debug", action="store_true", help="启用 flask 的 debug 模式")
+    parser.add_argument("-d", "--debug", action="store_true", help="启用 debug 模式，当文件变动时自动重启 + 输出详细的错误信息")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
     args = parser.parse_args()
@@ -111,22 +118,38 @@ try:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from p115 import P115Client, P115Url, AVAILABLE_APPS
+    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AVAILABLE_APPS
     from posixpatht import escape as escape_name
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.serving import run_simple
+    import wsgidav.wsgidav_app
+    from wsgidav.wsgidav_app import WsgiDAVApp
+    from wsgidav.dav_error import DAVError
+    from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "cachetools", "flask", "Flask-Compress", "httpx", "posixpatht", "python-115"], check=True)
+    run([executable, "-m", "pip", "install", "-U", 
+        "cachetools", "flask", "Flask-Compress", "httpx", "posixpatht", 
+        "python-115", "werkzeug", "wsgidav"], check=True)
+    import posixpatht
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
     from p115 import P115Client, P115Url, AVAILABLE_APPS
     from posixpatht import escape as escape_name
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.serving import run_simple
+    import wsgidav.wsgidav_app # type: ignore
+    from wsgidav.wsgidav_app import WsgiDAVApp # type: ignore
+    from wsgidav.dav_error import DAVError # type: ignore
+    from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
 
 import errno
 
 from collections.abc import Callable, MutableMapping
-from functools import partial, update_wrapper
+from functools import cached_property, partial, update_wrapper
+from hashlib import md5
 from html import escape
 from io import BytesIO
 from os import stat
@@ -135,7 +158,7 @@ from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
 from typing import cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 
 if getdefaulttimeout() is None:
@@ -252,13 +275,13 @@ if device not in AVAILABLE_APPS:
     else:
         warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
         device = "qandroid"
-fs = client.get_fs(client, path_to_id=LRUCache(65536), request=do_request)
+fs = client.get_fs(client, attr_cache=LRUCache(65536), path_to_id=LRUCache(65536), request=do_request)
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续几次请求下载链接，因此弄了个缓存
-url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(128, ttl=0.3)
+url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
 # NOTE: 有些播放器，例如 infuse，会一次并发多个请求，我认为要对数据范围相同的请求，但一定时间内只放行一个
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 
@@ -267,8 +290,156 @@ KEYS = (
     "size", "format_size", "ctime", "mtime", "atime", "thumb", "star", "labels", 
     "score", "hidden", "described", "violated", "url", "short_url", "ancestors", 
 )
-application = Flask(__name__)
-Compress(application)
+flask_app = Flask(__name__)
+Compress(flask_app)
+
+
+class DavPathBase:
+
+    def __getattr__(self, attr, /):
+        try:
+            return self.attr[attr]
+        except KeyError as e:
+            raise AttributeError(attr) from e
+
+    @cached_property
+    def ctime(self, /) -> float:
+        return self.attr["ptime"].timestamp()
+
+    @cached_property
+    def mtime(self, /) -> float:
+        return self.attr["etime"].timestamp()
+
+    @cached_property
+    def creationdate(self, /) -> float:
+        return self.ctime
+
+    def get_creation_date(self, /) -> float:
+        return self.ctime
+
+    def get_display_name(self, /) -> str:
+        return self.name
+
+    def get_last_modified(self, /) -> float:
+        return self.mtime
+
+    def is_link(self, /) -> bool:
+        return False
+
+    def support_modified(self, /) -> bool:
+        return True
+
+
+class FileResource(DavPathBase, DAVNonCollection):
+
+    def __init__(
+        self, 
+        /, 
+        path: str, 
+        environ: dict, 
+        attr: P115Path, 
+    ):
+        super().__init__(path, environ)
+        self.attr = attr
+
+    @property
+    def url(self, /) -> str:
+        pickcode = self.attr["pickcode"]
+        user_agent = self.environ.get("HTTP_USER_AGENT", "")
+        return relogin_wrap(
+            fs.get_url_from_pickcode, 
+            self.attr["pickcode"], 
+            headers={"User-Agent": user_agent}, 
+        )
+
+    def get_etag(self):
+        return "%s-%s-%s" % (
+            md5(bytes(self.path, "utf-8")).hexdigest(), 
+            self.mtime, 
+            self.size, 
+        )
+
+    def support_etag(self, /) -> bool:
+        return True
+
+    def support_ranges(self, /) -> bool:
+        return True
+
+    def get_content(self, /):
+        raise DAVError(302, add_headers=[("Location", str(self.url))])
+
+    def get_content_length(self, /) -> int:
+        return self.size
+
+    def support_content_length(self, /) -> bool:
+        return True
+
+
+class FolderResource(DavPathBase, DAVCollection):
+
+    def __init__(
+        self, 
+        /, 
+        path: str, 
+        environ: dict, 
+        attr: P115Path, 
+    ):
+        super().__init__(path, environ)
+        self.attr = attr
+
+    @cached_property
+    def children(self, /) -> dict[str, P115Path]:
+        return {attr["name"]: attr for attr in relogin_wrap(self.attr.listdir_path)}
+
+    def get_content_length(self, /) -> int:
+        return 0
+
+    def get_member_list(self, /) -> list[FileResource | FolderResource]:
+        path_start = len(root_dir) - 1
+        environ = self.environ
+        return [
+                FolderResource(attr.path[path_start:], environ, attr) 
+            if attr.is_dir() else 
+                FileResource(attr.path[path_start:], environ, attr)
+            for attr in self.children.values()
+        ]
+
+    def get_member_names(self, /) -> list[str]:
+        return list(self.children)
+
+    def get_member(self, name: str) -> FileResource | FolderResource:
+        if not (attr := self.children.get(name)):
+            raise DAVError(404, self.path + "/" + name)
+        relpath = attr["path"][len(root_dir)-1:]
+        if attr.is_dir():
+            return FolderResource(relpath, self.environ, attr)
+        else:
+            return FileResource(relpath, self.environ, attr)
+
+
+class P115FileSystemProvider(DAVProvider):
+
+    def __init__(self, /, fs: P115FileSystem):
+        super().__init__()
+        self.fs = fs
+
+    def get_resource_inst(
+        self, 
+        /, 
+        path: str, 
+        environ: dict, 
+    ) -> FolderResource | FileResource:
+        try:
+            attr = relogin_wrap(self.fs.as_path, path.lstrip("/"))
+        except FileNotFoundError:
+            raise DAVError(404, path)
+        if attr.is_dir():
+            return FolderResource(path, environ, attr)
+        else:
+            return FileResource(path, environ, attr)
+
+    def is_readonly(self, /) -> bool:
+        return True
 
 
 def format_bytes(
@@ -370,7 +541,7 @@ def get_m3u8(pickcode: str):
     if not data:
         raise FileNotFoundError(f"this file does not have .m3u8, pickcode: {pickcode!r}")
     if definition == "0":
-        return Response(data, mimetype="application/x-mpegurl")
+        return Response(data, mimetype="flask_app/x-mpegurl")
     return redirect(data.split()[-1].decode("ascii"))
 
 
@@ -389,12 +560,12 @@ def relogin(exc=None):
                     cookies_path_mtime = mtime
                     need_update = False
             except FileNotFoundError:
-                application.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺\x1b[0m")
+                flask_app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺\x1b[0m")
         if need_update:
             if exc is None:
-                application.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码\x1b[0m")
+                flask_app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码\x1b[0m")
             else:
-                application.logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                flask_app.logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
                     prompt = "\x1b[1m\x1b[33m[SCAN] 🤖 重新扫码：\x1b[0m", 
                     exc    = f"    ├ \x1b[31m{type(exc).__qualname__}\x1b[0m: {exc}")
                 )
@@ -418,7 +589,7 @@ def relogin_wrap(func, /, *args, **kwds):
     return relogin_wrap(func, *args, **kwds)
 
 
-@application.get("/")
+@flask_app.get("/")
 @redirect_exception_response
 def index():
     match request.args.get("pic"):
@@ -448,7 +619,7 @@ def index():
             return query("/")
 
 
-@application.get("/<path:path>")
+@flask_app.get("/<path:path>")
 @redirect_exception_response
 def query(path: str):
     if password and request.args.get("password") != password:
@@ -483,7 +654,7 @@ def query(path: str):
 
     match request.args.get("method"):
         case "attr":
-            if root_dir is None:
+            if not root_dir:
                 attr = relogin_wrap(fs.attr, root)
             else:
                 if pickcode:
@@ -510,9 +681,9 @@ def query(path: str):
                 id_to_pickcode[attr["id"]] = pickcode
                 sha1_to_pickcode[attr["sha1"]] = pickcode
             json_str = dumps({k: attr.get(k) for k in KEYS})
-            return Response(json_str, content_type='application/json; charset=utf-8')
+            return Response(json_str, content_type='flask_app/json; charset=utf-8')
         case "list":
-            if root_dir is None:
+            if not root_dir:
                 raise NotADirectoryError(errno.ENOTDIR, "root is not directory")
             if pickcode:
                 fid = relogin_wrap(fs.get_id_from_pickcode, pickcode)
@@ -533,9 +704,9 @@ def query(path: str):
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
             ])
-            return Response(json_str, content_type='application/json; charset=utf-8')
+            return Response(json_str, content_type='flask_app/json; charset=utf-8')
         case "desc":
-            if root_dir is None:
+            if not root_dir:
                 return relogin_wrap(fs.desc, root)
             else:
                 if pickcode:
@@ -547,7 +718,7 @@ def query(path: str):
                 else:
                     return relogin_wrap(fs.desc, path)
 
-    if root_dir is None:
+    if not root_dir:
         return get_url(root_pickcode)
     if pickcode:
         return get_url(pickcode)
@@ -800,7 +971,15 @@ def query(path: str):
     )
 
 
-root_dir: None | str
+WSGIDAV_CONFIG = {
+    "mount_path": "/:dav", 
+    "provider_mapping": {"/": P115FileSystemProvider(fs)}, 
+    "simple_dc": {"user_mapping": {"*": True}}, 
+}
+wsgidav_app = WsgiDAVApp(WSGIDAV_CONFIG)
+application = DispatcherMiddleware(flask_app, {"/:dav": wsgidav_app})
+
+root_dir: str = ""
 if root == 0:
     root_dir = "/"
 elif not root.strip("./"):
@@ -814,7 +993,6 @@ else:
     except NotADirectoryError:
         root_attr = relogin_wrap(fs.attr, root)
         root = root_attr["id"]
-        root_dir = None
         root_pickcode = root_attr["pickcode"]
     else:
         root = fs.id
@@ -825,5 +1003,7 @@ else:
 
 
 if __name__ == "__main__":
-    application.run(host=args.host, port=args.port, threaded=True, debug=args.debug)
+    run_simple(args.host, args.port, application, use_reloader=args.debug, use_debugger=args.debug, threaded=True)
+
+# TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future
 

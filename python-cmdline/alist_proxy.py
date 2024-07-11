@@ -309,7 +309,7 @@ def redirect(path: str):
         }
         content_type = response.headers.get("content-type") or ""
         if content_type.startswith(("text/", "application/json", "application/xml")):
-            excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+            excluded_headers = ["content-encoding", "content-length", "date", "transfer-encoding"]
             headers          = [(k, v) for k, v in response.headers.items() if k.lower() not in excluded_headers]
             response.decode_content = True
             content = response.read()
@@ -319,7 +319,9 @@ def redirect(path: str):
                 result["response"]["text"] = content.decode(get_charset(content_type))
             return Response(content, response.status, headers)
         else:
-            return Response(response, response.status, list(response.headers.items()))
+            excluded_headers = ["date"]
+            headers          = [(k, v) for k, v in response.headers.items() if k.lower() not in excluded_headers]
+            return Response(response, response.status, headers)
     except BaseException as e:
         result["exception"] = {
             "reason": f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
