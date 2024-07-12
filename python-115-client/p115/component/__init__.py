@@ -16,6 +16,10 @@ from . import client
 __all__.extend(client.__all__)
 from .client import *
 
+from . import fs_base
+__all__.extend(fs_base.__all__)
+from .fs_base import *
+
 from . import fs
 __all__.extend(fs.__all__)
 from .fs import *

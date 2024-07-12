@@ -30,7 +30,8 @@ from .client import check_response, P115Client, P115Url
 from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
 
 
-CRE_SHARE_LINK_search = re_compile(r"(?:/s/|share\.115\.com/)(?P<share_code>[a-z0-9]+)(\?password=(?P<receive_code>\w+))?").search
+CRE_SHARE_LINK_search1 = re_compile(r"(?:/s/|share\.115\.com/)(?P<share_code>[a-z0-9]+)\?password=(?P<receive_code>[a-z0-9]{4})").search
+CRE_SHARE_LINK_search2 = re_compile(r"(?P<share_code>[a-z0-9]+)-(?P<receive_code>[a-z0-9]{4})").search
 
 
 def normalize_info(
@@ -96,7 +97,16 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         request: None | Callable = None, 
         async_request: None | Callable = None, 
     ):
-        m = CRE_SHARE_LINK_search(share_link)
+        """115 分享链接的文件系统封装
+
+        支持以下几种格式的链接（括号内的字符表示可有可无）：
+        - http(s)://115.com/s/{share_code}?password={receive_code}(#)
+        - http(s)://share.115.com/{share_code}?password={receive_code}(#)
+        - (/){share_code}-{receive_code}(/)
+        """
+        m = CRE_SHARE_LINK_search1(share_link)
+        if m is None:
+            m = CRE_SHARE_LINK_search2(share_link)
         if m is None:
             raise ValueError("not a valid 115 share link")
         super().__init__(client, request, async_request)

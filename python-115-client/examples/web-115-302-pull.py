@@ -15,7 +15,7 @@ parser.add_argument("-u", "--base-url", default="http://localhost", help="挂载
 parser.add_argument("-P", "--password", default="", help="挂载的网址的密码，默认值：''，即没密码")
 parser.add_argument("-p", "--src-path", default="/", help="对方 115 网盘中的文件或文件夹的 id 或路径，默认值: '/'")
 parser.add_argument("-t", "--dst-path", default="/", help="保存到我的 115 网盘中的文件夹的 id 或路径，默认值: '/'")
-parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
     1. 当前工作目录

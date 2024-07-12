@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __doc__ = "\t\t🌍🚢 alist 网络代理抓包 🕷️🕸️"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -181,7 +181,7 @@ parser.add_argument("-q", "--queue-collect", action="store_true",
 
 if __name__ == "__main__":
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
-    parser.add_argument("-p", "--port", default=8000, type=int, help="端口号，默认值：8000")
+    parser.add_argument("-p", "--port", default=5245, type=int, help="端口号，默认值：5245")
     parser.add_argument("-d", "--debug", action="store_true", help="启用 flask 的 debug 模式")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
@@ -211,13 +211,13 @@ from traceback import format_exc
 
 try:
     from flask import request, Flask, Response
-    from urllib3 import request as urllib3_request
+    from urllib3.poolmanager import PoolManager
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "flask", "urllib3"], check=True)
     from flask import request, Flask, Response
-    from urllib3 import request as urllib3_request
+    from urllib3.poolmanager import PoolManager
 
 
 CRE_charset_search = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
@@ -234,6 +234,9 @@ METHODS = args.methods or DEFAULT_METHODS
 
 app = Flask(__name__)
 app.logger.level = 20
+
+pool = PoolManager(num_pools=128, headers={"User-Agent": ""})
+urllib3_request = pool.request
 
 code = dedent(args.collect).strip()
 if code:

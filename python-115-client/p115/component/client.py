@@ -4572,14 +4572,14 @@ class P115Client:
         if isinstance(payload, str):
             payload = {"pickcode": payload}
         request_headers = request_kwargs.get("headers")
-        default_ua = self.headers.get("User-Agent") or ""
-        if request_headers:
-            if isinstance(request_headers, Mapping):
-                request_headers = ItemsView(request_headers)
+        headers = request_kwargs.get("headers")
+        if headers:
+            if isinstance(headers, Mapping):
+                headers = ItemsView(headers)
             headers = request_kwargs["headers"] = {
-                "User-Agent": next((v for k, v in request_headers if k.lower() == "user-agent" and v), default_ua)}
+                "User-Agent": next((v for k, v in headers if k.lower() == "user-agent" and v), "")}
         else:
-            headers = request_kwargs["headers"] = {"User-Agent": default_ua}
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
         def parse(resp, content: bytes) -> dict:
             json = loads(content)
             if json["state"]:
@@ -4623,15 +4623,14 @@ class P115Client:
         api = "https://webapi.115.com/files/download"
         if isinstance(payload, str):
             payload = {"pickcode": payload}
-        request_headers = request_kwargs.get("headers")
-        default_ua = self.headers.get("User-Agent") or ""
-        if request_headers:
-            if isinstance(request_headers, Mapping):
-                request_headers = ItemsView(request_headers)
+        headers = request_kwargs.get("headers")
+        if headers:
+            if isinstance(headers, Mapping):
+                headers = ItemsView(headers)
             headers = request_kwargs["headers"] = {
-                "User-Agent": next((v for k, v in request_headers if k.lower() == "user-agent" and v), default_ua)}
+                "User-Agent": next((v for k, v in headers if k.lower() == "user-agent" and v), "")}
         else:
-            headers = request_kwargs["headers"] = {"User-Agent": default_ua}
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
         def parse(resp, content: bytes) -> dict:
             json = loads(content)
             if "Set-Cookie" in resp.headers:
@@ -7118,14 +7117,14 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/extract_down_file"
         request_headers = request_kwargs.get("headers")
-        default_ua = self.headers.get("User-Agent") or ""
-        if request_headers:
-            if isinstance(request_headers, Mapping):
-                request_headers = ItemsView(request_headers)
+        headers = request_kwargs.get("headers")
+        if headers:
+            if isinstance(headers, Mapping):
+                headers = ItemsView(headers)
             headers = request_kwargs["headers"] = {
-                "User-Agent": next((v for k, v in request_headers if k.lower() == "user-agent" and v), default_ua)}
+                "User-Agent": next((v for k, v in headers if k.lower() == "user-agent" and v), "")}
         else:
-            headers = request_kwargs["headers"] = {"User-Agent": default_ua}
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
         def parse(resp, content: bytes):
             json = loads(content)
             if "Set-Cookie" in resp.headers:

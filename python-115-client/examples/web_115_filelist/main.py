@@ -21,7 +21,7 @@ if __name__ == "__main__":
         formatter_class=RawTextHelpFormatter, 
         description=__doc__, 
     )
-    parser.add_argument("-c", "--cookies", default="", help="115 登录 cookies，优先级高于 -c/--cookies-path")
+    parser.add_argument("-c", "--cookies", default="", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
     parser.add_argument("-cp", "--cookies-path", default="", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
     1. 当前工作目录

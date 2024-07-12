@@ -1,0 +1,19 @@
+version: "3.3"
+services:
+  webdav-115-share-link:
+    build: .
+    image: chenyanggao/webdav-115-share-link
+    container_name: webdav-115-share-link
+    ports:
+      - "8000:8000"
+    networks:
+      - local
+    volumes:
+      - "~/webdav-115-share-link:/etc/webdav-115-share-link"
+    restart: always
+    stdin_open: true
+    tty: true
+
+networks:
+  local:
+    driver: bridge

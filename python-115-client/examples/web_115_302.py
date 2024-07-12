@@ -80,7 +80,7 @@ method   | string  | 否   | 0. '':     缺省值，直接下载
 在浏览器或 webdav 挂载软件 中输入（可以有个端口号） http://localhost/<dav
 目前没有用户名和密码就可以浏览，支持 302
 """)
-parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -c/--cookies-path")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
     1. 当前工作目录
@@ -122,7 +122,6 @@ try:
     from posixpatht import escape as escape_name
     from werkzeug.middleware.dispatcher import DispatcherMiddleware
     from werkzeug.serving import run_simple
-    import wsgidav.wsgidav_app
     from wsgidav.wsgidav_app import WsgiDAVApp
     from wsgidav.dav_error import DAVError
     from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider
@@ -140,7 +139,6 @@ except ImportError:
     from posixpatht import escape as escape_name
     from werkzeug.middleware.dispatcher import DispatcherMiddleware
     from werkzeug.serving import run_simple
-    import wsgidav.wsgidav_app # type: ignore
     from wsgidav.wsgidav_app import WsgiDAVApp # type: ignore
     from wsgidav.dav_error import DAVError # type: ignore
     from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
@@ -280,8 +278,8 @@ fs = client.get_fs(client, attr_cache=LRUCache(65536), path_to_id=LRUCache(65536
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
-# NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续几次请求下载链接，因此弄了个缓存
-url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
+# NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续几次请求下载链接，因此弄了个缓存（可以改成 None，则不会缓存）
+url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
 # NOTE: 有些播放器，例如 infuse，会一次并发多个请求，我认为要对数据范围相同的请求，但一定时间内只放行一个
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 
@@ -303,16 +301,24 @@ class DavPathBase:
             raise AttributeError(attr) from e
 
     @cached_property
+    def creationdate(self, /) -> float:
+        return self.ctime
+
+    @cached_property
     def ctime(self, /) -> float:
-        return self.attr["ptime"].timestamp()
+        if (ctime := self.attr.get("ctime")) is None:
+            ctime = self.attr["ptime"].timestamp()
+        return ctime
 
     @cached_property
     def mtime(self, /) -> float:
-        return self.attr["etime"].timestamp()
+        if (mtime := self.attr.get("mtime")) is None:
+            mtime = self.attr["etime"].timestamp()
+        return mtime
 
     @cached_property
-    def creationdate(self, /) -> float:
-        return self.ctime
+    def name(self, /) -> str:
+        return self.attr["name"]
 
     def get_creation_date(self, /) -> float:
         return self.ctime
@@ -342,36 +348,38 @@ class FileResource(DavPathBase, DAVNonCollection):
         super().__init__(path, environ)
         self.attr = attr
 
+    @cached_property
+    def size(self, /) -> int:
+        return self.attr["size"]
+
     @property
     def url(self, /) -> str:
-        pickcode = self.attr["pickcode"]
-        user_agent = self.environ.get("HTTP_USER_AGENT", "")
-        return relogin_wrap(
-            fs.get_url_from_pickcode, 
-            self.attr["pickcode"], 
-            headers={"User-Agent": user_agent}, 
+        url = relogin_wrap(
+            self.attr.get_url, 
+            headers={"User-Agent": self.environ.get("HTTP_USER_AGENT", "")}, 
         )
+        return str(url)
 
-    def get_etag(self):
+    def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
             md5(bytes(self.path, "utf-8")).hexdigest(), 
             self.mtime, 
             self.size, 
         )
 
-    def support_etag(self, /) -> bool:
-        return True
-
-    def support_ranges(self, /) -> bool:
-        return True
-
     def get_content(self, /):
-        raise DAVError(302, add_headers=[("Location", str(self.url))])
+        raise DAVError(302, add_headers=[("Location", self.url)])
 
     def get_content_length(self, /) -> int:
         return self.size
 
     def support_content_length(self, /) -> bool:
+        return True
+
+    def support_etag(self, /) -> bool:
+        return True
+
+    def support_ranges(self, /) -> bool:
         return True
 
 
@@ -391,10 +399,14 @@ class FolderResource(DavPathBase, DAVCollection):
     def children(self, /) -> dict[str, P115Path]:
         return {attr["name"]: attr for attr in relogin_wrap(self.attr.listdir_path)}
 
-    def get_property_value(self, name):
-        if name == "{DAV:}getcontentlength":
-            return 0
-        return super().get_property_value(name)
+    def get_member(self, name: str) -> FileResource | FolderResource:
+        if not (attr := self.children.get(name)):
+            raise DAVError(404, self.path + "/" + name)
+        relpath = attr["path"][len(root_dir)-1:]
+        if attr.is_dir():
+            return FolderResource(relpath, self.environ, attr)
+        else:
+            return FileResource(relpath, self.environ, attr)
 
     def get_member_list(self, /) -> list[FileResource | FolderResource]:
         path_start = len(root_dir) - 1
@@ -409,14 +421,10 @@ class FolderResource(DavPathBase, DAVCollection):
     def get_member_names(self, /) -> list[str]:
         return list(self.children)
 
-    def get_member(self, name: str) -> FileResource | FolderResource:
-        if not (attr := self.children.get(name)):
-            raise DAVError(404, self.path + "/" + name)
-        relpath = attr["path"][len(root_dir)-1:]
-        if attr.is_dir():
-            return FolderResource(relpath, self.environ, attr)
-        else:
-            return FileResource(relpath, self.environ, attr)
+    def get_property_value(self, /, name: str):
+        if name == "{DAV:}getcontentlength":
+            return 0
+        return super().get_property_value(name)
 
 
 class P115FileSystemProvider(DAVProvider):
@@ -494,10 +502,18 @@ def get_url(pickcode: str):
     if range_request_key in range_request_cooldown:
        return "Too Many Requests", 429
     range_request_cooldown[range_request_key] = None
-    try:
-        url = url_cache[(pickcode, user_agent)]
-    except KeyError:
-        url = url_cache[(pickcode, user_agent)] = relogin_wrap(
+    if url_cache is not None:
+        try:
+            url = url_cache[(pickcode, user_agent)]
+        except KeyError:
+            url = url_cache[(pickcode, user_agent)] = relogin_wrap(
+                fs.get_url_from_pickcode, 
+                pickcode, 
+                headers={"User-Agent": user_agent, "Server": ""}, 
+                use_web_api=use_web_api, 
+            )
+    else:
+        url = relogin_wrap(
             fs.get_url_from_pickcode, 
             pickcode, 
             headers={"User-Agent": user_agent}, 
@@ -979,6 +995,8 @@ def query(path: str):
 
 
 WSGIDAV_CONFIG = {
+    "host": args.host, 
+    "port": args.port, 
     "mount_path": "/<dav", 
     "provider_mapping": {"/": P115FileSystemProvider(fs)}, 
     "simple_dc": {"user_mapping": {"*": True}}, 
