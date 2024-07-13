@@ -2039,17 +2039,17 @@ class P115Client:
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
             - aid: int | str = 1
-            - asc: 0 | 1 = <default> # 是否升序排列
+            - asc: 0 | 1 = <default> # 是否升序排列（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
             - o: str = <default>
-                # 用某字段排序：
+                # 用某字段排序（😓 但这个字段没作用，需要用 fs_files_order 才能设置）：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
                 # - 文件种类："file_type"
@@ -2120,17 +2120,17 @@ class P115Client:
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
             - aid: int | str = 1
-            - asc: 0 | 1 = <default> # 是否升序排列
+            - asc: 0 | 1 = <default> # 是否升序排列（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
             - o: str = <default>
-                # 用某字段排序：
+                # 用某字段排序（😓 但这个字段没作用，需要用 fs_files_order 才能设置）：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
                 # - 文件种类："file_type"

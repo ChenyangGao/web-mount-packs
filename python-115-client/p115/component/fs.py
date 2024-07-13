@@ -1281,17 +1281,34 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             if id == 0:
-                last_update = datetime.now()
+                resp = yield self.fs_files({"cid": 0, "limit": 1}, async_=async_)
+                if resp["count"] == 0:
+                    open_time = datetime.now()
+                    etime = utime = datetime.fromtimestamp(0)
+                else:
+                    if not (resp["count"] == 1 or (resp["order"] == "user_utime" and resp["is_asc"] == 0 and resp["fc_mix"] == 1)):
+                        yield self.client.fs_files_order({"user_order": "user_utime", "user_asc": 0, "fc_mix": 1, "file_id": 0})
+                        resp = yield self.fs_files({"cid": 0, "limit": 1}, async_=async_)
+                    open_time = datetime.now()
+                    if resp["count"] == 0:
+                        etime = utime = open_time
+                    else:
+                        info = resp["data"][0]
+                        etime = datetime.fromtimestamp(int(info["te"]))
+                        utime = datetime.fromtimestamp(int(info["tu"]))
                 return {
                     "id": 0, 
                     "parent_id": 0, 
                     "name": "", 
                     "path": "/", 
                     "is_directory": True, 
-                    "etime": last_update, 
-                    "utime": last_update, 
+                    "etime": etime, 
+                    "utime": utime, 
                     "ptime": datetime.fromtimestamp(0), 
-                    "open_time": last_update, 
+                    "open_time": open_time, 
+                    "ctime": 0, 
+                    "mtime": etime.timestamp(), 
+                    "atime": open_time.timestamp(), 
                     "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}], 
@@ -1305,7 +1322,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             if attrs and "attr" in attrs and get_version is None:
                 return attrs["attr"]
             try:
-                info = yield partial(self.fs_info, id, async_=async_)
+                info = yield self.fs_info(id, async_=async_)
             except FileNotFoundError as e:
                 raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
             data = info["data"][0]
