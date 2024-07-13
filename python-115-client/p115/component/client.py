@@ -6053,13 +6053,13 @@ class P115Client:
         request_kwargs["data"] = ecdh_aes_encode(urlencode(sorted(data.items())).encode("latin-1"))
         def gen_step():
             resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
-            # if resp["status"] == 2 and resp["statuscode"] == 0:
-            #     # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新
-            #     request_kwargs["parse"] = lambda resp, content, /: None
-            #     if async_:
-            #         create_task(to_thread(self.upload_init, **request_kwargs))
-            #     else:
-            #         start_new_thread(partial(self.upload_init, **request_kwargs), ())
+            if resp["status"] == 2 and resp["statuscode"] == 0:
+                # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新，目前猜测推送 upload_file 的事件信息，需要用 websocket，待破解
+                request_kwargs["parse"] = lambda resp, content, /: None
+                if async_:
+                    create_task(to_thread(self.upload_init, **request_kwargs))
+                else:
+                    start_new_thread(partial(self.upload_init, **request_kwargs), ())
             return resp
         return run_gen_step(gen_step, async_=async_)
 

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __doc__ = "\t\t🌍🚢 alist 网络代理抓包 🕷️🕸️"
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -278,10 +278,14 @@ def get_charset(content_type: str, default="utf-8") -> str:
 @app.route("/", defaults={"path": ""}, methods=METHODS)  
 @app.route("/<path:path>", methods=METHODS)
 def redirect(path: str):
+    original_base_url = request.host_url.rstrip("/")
+    request_headers = {k.lower(): v for k, v in request.headers.items() if k.lower() != "host"}
+    if (destination := request_headers.get("destination") or "").startswith(original_base_url):
+        request_headers["destination"] = BASE_URL + destination[len(original_base_url):]
     payload = dict(
         method  = request.method, 
-        url     = BASE_URL + request.url[len(request.host_url.rstrip("/")):], 
-        headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}, 
+        url     = BASE_URL + request.url[len(original_base_url):], 
+        headers = request_headers, 
     )
     result: dict = {
         "request": {
@@ -290,7 +294,7 @@ def redirect(path: str):
         }
     }
     try:
-        content_type = request.headers.get("content-type") or ""
+        content_type = request_headers.get("content-type") or ""
         if content_type.startswith("application/json"):
             data = payload["body"] = request.get_data()
             result["request"]["payload"]["json"] = loads(data.decode(get_charset(content_type)))
