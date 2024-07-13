@@ -5,7 +5,7 @@ services:
     image: chenyanggao/webdav-115-share-link
     container_name: webdav-115-share-link
     ports:
-      - "8000:8000"
+      - "8000:80"
     networks:
       - local
     volumes:

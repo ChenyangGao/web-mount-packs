@@ -219,7 +219,7 @@ class P115ShareFilesystemProvider(DAVProvider):
         self.fs = fs
 
     @classmethod
-    def from_config(cls, cookie_or_client, config_text: bytes | str, /):
+    def from_config(cls, cookies_or_client, config_text: bytes | str, /):
         def make_fs(client: P115Client, config):
             if isinstance(config, str):
                 try:
@@ -231,25 +231,25 @@ class P115ShareFilesystemProvider(DAVProvider):
                     name.replace("/", "｜"): make_fs(client, conf)
                     for name, conf in config.items()
                 }
-        if isinstance(cookie_or_client, P115Client):
-            client = cookie_or_client
+        if isinstance(cookies_or_client, P115Client):
+            client = cookies_or_client
         else:
-            client = P115Client(cookie_or_client)
+            client = P115Client(cookies_or_client)
         config = yaml_load(config_text, Loader=yaml_Loader)
         return cls(make_fs(client, config))
 
     @classmethod
-    def from_config_file(cls, cookie_path, config_path, wsgidav_config_path=None, /, watch: bool = False):
-        cookie_text = open(cookie_path, "r", encoding="latin-1").read()
+    def from_config_file(cls, cookies_path, config_path, wsgidav_config_path=None, /, watch: bool = False):
+        cookies_text = open(cookies_path, "r", encoding="latin-1").read()
         config_text = open(config_path, "rb", buffering=0).read()
 
         if not watch:
-            return cls.from_config(cookie_text, config_text)
+            return cls.from_config(cookies_text, config_text)
 
         from .watch import WatchMultiFileEventHandler
 
         link_to_inst: WeakValueDictionary[str, P115ShareFileSystem] = WeakValueDictionary()
-        client = P115Client(cookie_text)
+        client = P115Client(cookies_text)
         config = yaml_load(config_text, Loader=yaml_Loader)
 
         def make_fs(config):
@@ -268,16 +268,16 @@ class P115ShareFilesystemProvider(DAVProvider):
                     for name, conf in config.items() if conf
                 }
 
-        def handle_update_cookie():
+        def handle_update_cookies():
             nonlocal client
             try:
-                cookie_text = open(cookie_path, "rb", buffering=0).read().decode("latin-1")
+                cookies_text = open(cookies_path, "rb", buffering=0).read().decode("latin-1")
                 # if currently unreadable or empty file
-                if not cookie_text:
+                if not cookies_text:
                     return
-                if client.cookie == cookie_text.strip():
+                if client.cookies == cookies_text.strip():
                     return
-                client_new = P115Client(cookie_text, try_login=False)
+                client_new = P115Client(cookies_text, try_login=False)
             except Exception as e:
                 return
             client = client_new
@@ -317,7 +317,7 @@ class P115ShareFilesystemProvider(DAVProvider):
 
         instance = cls(make_fs(config))
         handles = {
-            cookie_path: handle_update_cookie, 
+            cookies_path: handle_update_cookies, 
             config_path: handle_update_config, 
         }
         if wsgidav_config_path is not None:

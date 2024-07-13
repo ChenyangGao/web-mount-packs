@@ -72,7 +72,7 @@ Verbose Output:
         request body and GET response bodies not shown
 """)
     parser.add_argument("-w", "--watch-config", action="store_true", help="""如果指定此参数，则会监测配置文件的变化
-    针对 -cp/--cookies-path: 默认是 115-cookies.txt，更新cookie
+    针对 -cp/--cookies-path: 默认是 115-cookies.txt，更新 cookies
     针对 -l/--links-file:    默认是 links.yml，更新分享链接
     针对 -c/--config:        默认是 wsgidav.yaml，更新配置文件，会重启服务器（慎用）
 
