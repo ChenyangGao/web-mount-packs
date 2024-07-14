@@ -204,7 +204,7 @@ parser.add_argument(
 parser.add_argument("-p1", "--show-predicate", help="断言，当断言的结果为 True 时，文件或目录会被显示")
 parser.add_argument(
     "-t1", "--show-predicate-type", default="ignore", 
-    choices=("ignore", "ignore-file", "expr", "re", "lambda", "stmt", "code", "path"), 
+    choices=("ignore", "ignore-file", "expr", "lambda", "stmt", "module", "file", "re"), 
     help="""断言类型，默认值为 'ignore'
     - ignore       （默认值）gitignore 配置文本（有多个时用空格隔开），在文件路径上执行模式匹配，匹配成功则断言为 False
                    NOTE: https://git-scm.com/docs/gitignore#_pattern_format
@@ -220,7 +220,7 @@ parser.add_argument(
 parser.add_argument("-p2", "--strm-predicate", help="strm 断言（优先级高于 -p1/--show-predicate），当断言的结果为 True 时，文件会被显示为带有 .strm 后缀的文本文件，打开后是链接")
 parser.add_argument(
     "-t2", "--strm-predicate-type", default="filter", 
-    choices=("filter", "filter-file", "expr", "re", "lambda", "stmt", "code", "path"), 
+    choices=("filter", "filter-file", "expr", "lambda", "stmt", "module", "file", "re"), 
     help="""断言类型，默认值为 'filter'
     - filter       （默认值）gitignore 配置文本（有多个时用空格隔开），在文件路径上执行模式匹配，匹配成功则断言为 True
                    请参考：https://git-scm.com/docs/gitignore#_pattern_format
@@ -236,8 +236,8 @@ parser.add_argument(
 parser.add_argument("-cs", "--custom-strm", help="自定义 strm 的内容")
 parser.add_argument(
     "-ct", "--custom-strm-type", default="base-url", 
-    choices=("filter", "filter-file", "expr", "re", "lambda", "stmt", "code", "path"), 
-    help="""自定义 strm 的操作类型，默认值 'base-url'，以返回值作为 strm 中的链接，如果报错，则不生成 strm 文件
+    choices=("base-url", "expr", "fstring", "lambda", "stmt", "module", "file", "resub"), 
+    help="""自定义 strm 的操作类型，默认值 'base-url'，以返回值作为 strm 中的链接，如果报错，则生成空的 strm 文件
     - base-url  提供一个 base-url，用来拼接（相对）路径
     - expr      表达式，可从命名空间访问到一个名为 path 的 alist.AlistPath 对象
     - fstring   视为 fstring，可从命名空间访问到一个名为 path 的 alist.AlistPath 对象
