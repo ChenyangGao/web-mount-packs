@@ -178,6 +178,8 @@ class P115Recyclebin:
         /, 
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
+        """用名称或 id 查询文件是否存在
+        """
         def gen_step():
             ids = str(id)
             if async_:

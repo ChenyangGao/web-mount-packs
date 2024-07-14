@@ -1281,21 +1281,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             if id == 0:
-                resp = yield self.fs_files({"cid": 0, "limit": 1}, async_=async_)
+                resp = yield self.fs_files({"cid": 0, "limit": 1, "asc": 0, "fc_mix": 1, "o": "user_utime"}, async_=async_)
+                open_time = datetime.now()
                 if resp["count"] == 0:
-                    open_time = datetime.now()
                     etime = utime = datetime.fromtimestamp(0)
                 else:
-                    if not (resp["count"] == 1 or (resp["order"] == "user_utime" and resp["is_asc"] == 0 and resp["fc_mix"] == 1)):
-                        yield self.client.fs_files_order({"user_order": "user_utime", "user_asc": 0, "fc_mix": 1, "file_id": 0})
-                        resp = yield self.fs_files({"cid": 0, "limit": 1}, async_=async_)
-                    open_time = datetime.now()
-                    if resp["count"] == 0:
-                        etime = utime = open_time
-                    else:
-                        info = resp["data"][0]
-                        etime = datetime.fromtimestamp(int(info["te"]))
-                        utime = datetime.fromtimestamp(int(info["tu"]))
+                    info = resp["data"][0]
+                    etime = datetime.fromtimestamp(int(info["te"]))
+                    utime = datetime.fromtimestamp(int(info["tu"]))
                 return {
                     "id": 0, 
                     "parent_id": 0, 
@@ -1872,20 +1865,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             if stop is not None:
                                 if total < page_size:
                                     payload["limit"] = total
-                            set_order_payload = {}
-                            if "o" in payload:
-                                set_order_payload["user_order"] = payload["o"]
-                            if "asc" in payload:
-                                set_order_payload["user_asc"] = payload["asc"]
-                            if set_order_payload:
-                                set_order_payload["file_id"] = id
-                                if "fc_mix" in payload:
-                                    set_order_payload["fc_mix"] = payload["fc_mix"]
-                                await self.client.fs_files_order(
-                                    set_order_payload, 
-                                    request=self.async_request, 
-                                    async_=True, 
-                                )
                         resp = await get_files(payload, async_=True)
                         ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
                         ancestors.extend(
@@ -2038,19 +2017,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         if stop is not None:
                             if total < page_size:
                                 payload["limit"] = total
-                        set_order_payload = {}
-                        if "o" in payload:
-                            set_order_payload["user_order"] = payload["o"]
-                        if "asc" in payload:
-                            set_order_payload["user_asc"] = payload["asc"]
-                        if set_order_payload:
-                            set_order_payload["file_id"] = id
-                            if "fc_mix" in payload:
-                                set_order_payload["fc_mix"] = payload["fc_mix"]
-                            self.client.fs_files_order(
-                                set_order_payload, 
-                                request=self.request, 
-                            )
                     resp = get_files(payload)
                     ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
                     ancestors.extend(
@@ -2485,14 +2451,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 return ""
             if desc is None:
                 return check_response((yield partial(
-                    self.client.fs_desc_get, 
+                    self.client.fs_desc, 
                     fid, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
                 )))["desc"]
             else:
-                return check_response((yield partial(
-                    self.client.fs_desc, 
+                return check_response((yield self.client.fs_desc_set(
                     fid, 
                     desc, 
                     request=self.async_request if async_ else self.request, 
@@ -2981,6 +2946,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        labels: None | int | str | Iterable[int | str] = None, 
         *, 
         async_: Literal[False] = False, 
     ) -> list[dict]:
@@ -2991,6 +2957,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        labels: None | int | str | Iterable[int | str] = None, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, list[dict]]:
@@ -3000,13 +2967,52 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id_or_path: IDOrPathType = "", 
         /, 
         pid: None | int = None, 
+        labels: None | int | str | Iterable[int | str] = None, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
-        "获取路径的标签"
+        """文件或目录的标签（请提前创建好相关的标签）
+        :param labels: 分成几种情况
+            - 如果为 None，返回标签列表
+            - 如果为 int (标签 id) 或 str（标签名称），增加此标签
+            - 如果为 tuple，替换为所罗列的标签
+            - 如果为 Iterable，增加所罗列的标签
+        """
         def gen_step():
-            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
-            return attr["labels"]
+            attr = yield self.attr(id_or_path, pid=pid, async_=async_)
+            if attr["id"] == 0:
+                return []
+            attr_labels = attr["labels"]
+            if labels is None:
+                pass
+            elif isinstance(labels, (int, str)):
+                label = yield self.client.label.get(labels, async_=async_)
+                if label is not None and label["id"] not in (l["id"] for l in attr_labels):
+                    check_response((yield self.client.fs_label_set(
+                        attr["id"], 
+                        ",".join((*(l["id"] for l in attr_labels), label["id"])), 
+                        request=self.async_request if async_ else self.request, 
+                        async_=async_, 
+                    )))
+                    attr_labels.append(label)
+            else:
+                label_map = {l["id"]: l for l in self.client.label.list()}
+                label_namemap = {l["name"]: l for l in label_map.values()}
+                if isinstance(labels, tuple):
+                    my_labels = {}
+                else:
+                    my_labels = {l["id"]: l for l in attr_labels}
+                for key in labels:
+                    my_label = (label_map if isinstance(key, int) else label_namemap)[str(key)]
+                    my_labels.setdefault(my_label["id"], my_label)
+                check_response((yield self.client.fs_label_set(
+                    attr["id"], 
+                    ",".join(my_labels), 
+                    request=self.async_request if async_ else self.request, 
+                    async_=async_, 
+                )))
+                attr_labels[:] = my_labels.values()
+            return attr_labels
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -3708,7 +3714,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         *, 
         async_: Literal[False, True] = False, 
     ) -> int | Coroutine[Any, Any, int]:
-        """路径的分数
+        """文件或目录的分数
         :param star: 如果为 None，返回分数；否则，设置分数
         """
         def gen_step():
@@ -3719,7 +3725,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 fid = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
                 if fid == 0:
                     return 0
-                yield self.client.fs_score(
+                yield self.client.fs_score_set(
                     fid, 
                     score, 
                     request=self.async_request if async_ else self.request, 
@@ -3879,7 +3885,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         *, 
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
-        """路径的星标
+        """文件或目录的星标
         :param star: 如果为 None，返回星标是否已设置；如果为 True，设置星标；如果为 False，取消星标
         """
         def gen_step():
@@ -3890,8 +3896,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 fid = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
                 if fid == 0:
                     return False
-                check_response((yield partial(
-                    self.client.fs_star, 
+                check_response((yield self.client.fs_star_set(
                     fid, 
                     star, 
                     request=self.async_request if async_ else self.request, 
@@ -3928,7 +3933,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         *, 
         async_: Literal[False, True] = False, 
     ) -> stat_result | Coroutine[Any, Any, stat_result]:
-        "检查路径的属性，就像 `os.stat`"
+        "检查文件或目录的属性，就像 `os.stat`"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
             is_dir = attr["is_directory"]

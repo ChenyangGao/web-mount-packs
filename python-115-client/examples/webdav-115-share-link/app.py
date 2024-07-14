@@ -91,10 +91,11 @@ def _init_config():
     verbose       = args.verbose
     watch_config  = args.watch_config
 
-    from os import environ, path as os_path
+    from os import environ
+    from os.path import exists
     from pkgutil import get_data
 
-    environ["PIP_INDEX_URL"] = "http://mirrors.aliyun.com/pypi/simple/"
+    environ.setdefault("PIP_INDEX_URL", "https://mirrors.aliyun.com/pypi/simple/")
 
     try:
         import wsgidav # type: ignore
@@ -116,7 +117,7 @@ def _init_config():
     if client.cookies != cookies:
         open(cookies_path, "w", encoding="latin-1").write(client.cookies)
 
-    if not os_path.exists(links_file):
+    if not exists(links_file):
         links_config_text = get_data("src", "links.yml")
         open(links_file, "wb", buffering=0).write(links_config_text) # type: ignore
 

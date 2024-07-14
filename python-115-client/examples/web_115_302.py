@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 7, 1)
+__version__ = (0, 1, 8)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -267,7 +267,7 @@ match use_request:
 
 device = client.login_device(request=do_request)["icon"]
 if device not in AVAILABLE_APPS:
-    # 115 浏览器版
+    # 115 浏览器版，实际就是 web
     if device == "desktop":
         device = "web"
     else:
@@ -278,9 +278,11 @@ fs = client.get_fs(client, attr_cache=LRUCache(65536), path_to_id=LRUCache(65536
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
-# NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续几次请求下载链接，因此弄了个缓存（可以改成 None，则不会缓存）
+# NOTE: 标记一些 pickcode 对应的是图片
+pickcode_of_image: set[str] = set()
+# NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
-# NOTE: 有些播放器，例如 infuse，会一次并发多个请求，我认为要对数据范围相同的请求，但一定时间内只放行一个
+# NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 
 KEYS = (
@@ -399,6 +401,13 @@ class FolderResource(DavPathBase, DAVCollection):
     def children(self, /) -> dict[str, P115Path]:
         return {attr["name"]: attr for attr in relogin_wrap(self.attr.listdir_path)}
 
+    def get_etag(self, /) -> str:
+        return "%s-%s-%s" % (
+            md5(bytes(self.path, "utf-8")).hexdigest(), 
+            self.mtime, 
+            0, 
+        )
+
     def get_member(self, name: str) -> FileResource | FolderResource:
         if not (attr := self.children.get(name)):
             raise DAVError(404, self.path + "/" + name)
@@ -424,7 +433,12 @@ class FolderResource(DavPathBase, DAVCollection):
     def get_property_value(self, /, name: str):
         if name == "{DAV:}getcontentlength":
             return 0
+        elif name == "{DAV:}iscollection":
+            return True
         return super().get_property_value(name)
+
+    def support_etag(self):
+        return True
 
 
 class P115FileSystemProvider(DAVProvider):
@@ -1028,7 +1042,20 @@ else:
 
 
 if __name__ == "__main__":
-    run_simple(args.host, args.port, application, use_reloader=args.debug, use_debugger=args.debug, threaded=True)
+    debug = args.debug
+    run_simple(
+        hostname=args.host, 
+        port=args.port, 
+        application=application, 
+        use_reloader=debug, 
+        use_debugger=debug, 
+        use_evalex=debug, 
+        threaded=True, 
+        #extra_files=
+    )
 
 # TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future
+# TODO: 可能是 wsgidav 的问题，propfind 响应太慢了，即使给文件夹做了缓存，需要看看怎么优化
+# TODO: 增加对图片走 cdn 的支持，增加参数以标记这是图片
+# TODO: 监控配置文件然后重启：115-cookies.txt（if any），wsgidav_config.yml
 

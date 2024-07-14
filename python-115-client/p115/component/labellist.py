@@ -268,6 +268,8 @@ class P115LabelList:
         /, 
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
+        """用名称或 id 查询标签是否存在
+        """
         def gen_step():
             if isinstance(id_or_name, int):
                 resp = yield partial(

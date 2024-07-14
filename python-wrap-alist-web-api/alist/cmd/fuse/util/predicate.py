@@ -8,7 +8,7 @@ from collections.abc import Callable
 from re import compile as re_compile
 from runpy import run_path
 from textwrap import dedent
-from typing import Final, Optional
+from typing import Final
 
 from alist.component.fs import AlistPath
 from path_ignore_pattern import read_str, read_file, parse
@@ -16,7 +16,7 @@ from path_ignore_pattern import read_str, read_file, parse
 
 ConditionSourceType = AlistPath
 PredicateType = Callable[[ConditionSourceType], bool]
-PredicateMakerType = Callable[[str, dict], Optional[PredicateType]]
+PredicateMakerType = Callable[[str, dict], None | PredicateType]
 
 TYPE_TO_PREIDCATE_MAKERS: Final[dict[str, PredicateMakerType]] = {}
 
@@ -33,10 +33,10 @@ def register_maker(
 
 def make_predicate(
     code: str, 
-    ns: Optional[dict] = None, 
+    ns: None | dict = None, 
     /, 
     type: str = "expr", 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     if not code:
         return None
     if ns is None:
@@ -49,7 +49,7 @@ def make_predicate_ignore(
     expr: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     ignore = parse(read_str(expr))
     if not ignore:
         return None
@@ -61,7 +61,7 @@ def make_predicate_ignore_file(
     path: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     ignore = parse(read_file(open(path, encoding="utf-8")))
     if not ignore:
         return None
@@ -73,7 +73,7 @@ def make_predicate_filter(
     expr: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     ignore = parse(read_str(expr))
     if not ignore:
         return None
@@ -85,7 +85,7 @@ def make_predicate_filter_file(
     path: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     ignore = parse(read_file(open(path, encoding="utf-8")))
     if not ignore:
         return None
@@ -97,7 +97,7 @@ def make_predicate_expr(
     expr: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     expr = expr.strip()
     if not expr:
         return None
@@ -110,7 +110,7 @@ def make_predicate_re(
     expr: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     search = re_compile(expr).search
     return lambda path: search(path["name"]) is not None
 
@@ -121,7 +121,7 @@ def make_predicate_lambda(
     ns: dict, 
     /, *, 
     _cre_check=re_compile(r"lambda\b").match, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     expr = expr.strip()
     if not expr:
         return None
@@ -135,7 +135,7 @@ def make_predicate_stmt(
     stmt: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     stmt = dedent(stmt).strip()
     if not stmt:
         return None
@@ -149,12 +149,12 @@ def make_predicate_stmt(
     return predicate
 
 
-@register_maker("code")
+@register_maker("module")
 def make_predicate_code(
     code: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     code = dedent(code).strip()
     if not code:
         return None
@@ -166,12 +166,12 @@ def make_predicate_code(
     return None
 
 
-@register_maker("path")
+@register_maker("file")
 def make_predicate_path(
     path: str, 
     ns: dict, 
     /, 
-) -> Optional[PredicateType]:
+) -> None | PredicateType:
     ns = run_path(path, ns)
     if callable(check := ns.get("check")):
         return check

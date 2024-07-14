@@ -1008,15 +1008,19 @@ class AlistPath(Mapping, PathLike[str]):
             async_=async_, 
         )
 
-    def relative_to(self, other: PathType, /) -> str:
-        if isinstance(other, (AttrDict, AlistPath)):
+    def relative_to(self, other: None | PathType = None, /) -> str:
+        if other is None:
+            other = self.fs.path
+        elif isinstance(other, (AttrDict, AlistPath)):
             other = cast(str, other["path"])
         else:
             other = fspath(other)
             if not other.startswith("/"):
                 other = self.fs.abspath(other)
         path = self["path"]
-        if path == other:
+        if other == "/":
+            return path[1:]
+        elif path == other:
             return ""
         elif path.startswith(other + "/"):
             return path[len(other)+1:]

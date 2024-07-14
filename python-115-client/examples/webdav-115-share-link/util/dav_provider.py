@@ -118,6 +118,13 @@ class FolderResource(DavPathBase, DAVCollection):
     def children(self, /) -> dict[str, P115SharePath]:
         return {attr["name"]: attr for attr in self.attr.listdir_path()}
 
+    def get_etag(self, /) -> str:
+        return "%s-%s-%s" % (
+            md5(bytes(self.path, "utf-8")).hexdigest(), 
+            self.time, 
+            0, 
+        )
+
     def get_member(self, name: str) -> FileResource | FolderResource:
         if not (attr := self.children.get(name)):
             raise DAVError(404, self.path + "/" + name)
@@ -146,6 +153,9 @@ class FolderResource(DavPathBase, DAVCollection):
         elif name == "{DAV:}iscollection":
             return True
         return super().get_property_value(name)
+
+    def support_etag(self):
+        return True
 
 
 class RootResource(DavPathBase, DAVCollection):

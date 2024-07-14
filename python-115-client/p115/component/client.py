@@ -2009,8 +2009,9 @@ class P115Client:
     @overload
     def fs_files(
         self, 
-        payload: int | dict, 
+        payload: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2018,8 +2019,9 @@ class P115Client:
     @overload
     def fs_files(
         self, 
-        payload: int | dict, 
+        payload: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2028,6 +2030,7 @@ class P115Client:
         self, 
         payload: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2039,17 +2042,17 @@ class P115Client:
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
             - aid: int | str = 1
-            - asc: 0 | 1 = <default> # 是否升序排列（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
+            - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
             - o: str = <default>
-                # 用某字段排序（😓 但这个字段没作用，需要用 fs_files_order 才能设置）：
+                # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
                 # - 文件种类："file_type"
@@ -2085,13 +2088,16 @@ class P115Client:
                 "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
                 "record_open_time": 1, "show_dir": 1, **payload, 
             }
+        if payload.keys() & frozenset(("asc", "fc_mix", "o")):
+            payload["custom_order"] = 1
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_files2(
         self, 
-        payload: int | dict, 
+        payload: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2099,8 +2105,9 @@ class P115Client:
     @overload
     def fs_files2(
         self, 
-        payload: int | dict, 
+        payload: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2109,6 +2116,7 @@ class P115Client:
         self, 
         payload: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2120,17 +2128,17 @@ class P115Client:
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
             - aid: int | str = 1
-            - asc: 0 | 1 = <default> # 是否升序排列（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
+            - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶（😓 但这个字段没作用，需要用 fs_files_order 才能设置）
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - natsort: 0 | 1 = <default>
             - o: str = <default>
-                # 用某字段排序（😓 但这个字段没作用，需要用 fs_files_order 才能设置）：
+                # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
                 # - 文件种类："file_type"
@@ -2166,6 +2174,8 @@ class P115Client:
                 "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
                 "record_open_time": 1, "show_dir": 1, **payload, 
             }
+        if payload.keys() & frozenset(("asc", "fc_mix", "o")):
+            payload["custom_order"] = 1
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2236,6 +2246,60 @@ class P115Client:
         api = "https://webapi.115.com/files/image"
         if isinstance(payload, str):
             payload = {"pickcode": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_imglist(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_imglist(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_files_imglist(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取文件夹的中的图片列表和基本信息
+        GET https://proapi.115.com/android/files/imglist
+        payload:
+            - cid: int | str = 0 # 文件夹 id
+            - limit: int = 32    # 一页大小，意思就是 page_size
+            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+
+            - aid: int | str = 1
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - cur: 0 | 1 = <default> # 只罗列当前文件夹
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+        """
+        api = "https://proapi.115.com/android/files/imglist"
+        if isinstance(payload, int):
+            payload = {"limit": 32, "offset": 0, "aid": 1, "cid": payload}
+        else:
+            payload = {"limit": 32, "offset": 0, "aid": 1, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2671,7 +2735,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_edit(
+    def fs_files_set(
         self, 
         payload: list | dict, 
         /, 
@@ -2680,7 +2744,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_edit(
+    def fs_files_set(
         self, 
         payload: list | dict, 
         /, 
@@ -2688,7 +2752,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_edit(
+    def fs_files_set(
         self, 
         payload: list | dict, 
         /, 
@@ -2724,7 +2788,7 @@ class P115Client:
         )
 
     @overload
-    def fs_files_batch_edit(
+    def fs_files_batch_set(
         self, 
         payload: list | dict, 
         /, 
@@ -2733,7 +2797,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_batch_edit(
+    def fs_files_batch_set(
         self, 
         payload: list | dict, 
         /, 
@@ -2741,7 +2805,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_batch_edit(
+    def fs_files_batch_set(
         self, 
         payload: list | dict, 
         /, 
@@ -3361,7 +3425,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_cover(
+    def fs_cover_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3371,7 +3435,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_cover(
+    def fs_cover_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3380,7 +3444,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_cover(
+    def fs_cover_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3401,10 +3465,10 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("fid_cover", fid_cover))
-        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
+        return self.fs_files_set(payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_desc_get(
+    def fs_desc(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3413,7 +3477,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_desc_get(
+    def fs_desc(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3421,7 +3485,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_desc_get(
+    def fs_desc(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3444,7 +3508,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_desc(
+    def fs_desc_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3454,7 +3518,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_desc(
+    def fs_desc_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3463,7 +3527,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_desc(
+    def fs_desc_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3483,10 +3547,10 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("file_desc", file_desc))
-        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
+        return self.fs_files_set(payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_label(
+    def fs_label_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3496,7 +3560,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_label(
+    def fs_label_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3505,7 +3569,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_label(
+    def fs_label_set(
         self, 
         fids: int | str | Iterable[int | str], 
         /, 
@@ -3525,7 +3589,7 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("file_label", file_label))
-        return self.fs_files_edit(payload, async_=async_, **request_kwargs)
+        return self.fs_files_set(payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_label_batch(
@@ -3569,7 +3633,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_score(
+    def fs_score_set(
         self, 
         file_id: int | str, 
         /, 
@@ -3579,7 +3643,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_score(
+    def fs_score_set(
         self, 
         file_id: int | str, 
         /, 
@@ -3588,7 +3652,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_score(
+    def fs_score_set(
         self, 
         file_id: int | str, 
         /, 
@@ -3607,7 +3671,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_star(
+    def fs_star_set(
         self, 
         file_id: int | str, 
         /, 
@@ -3617,7 +3681,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_star(
+    def fs_star_set(
         self, 
         file_id: int | str, 
         /, 
@@ -3626,7 +3690,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_star(
+    def fs_star_set(
         self, 
         file_id: int | str, 
         /, 

@@ -141,17 +141,22 @@ RSA_encrypt: Final = PKCS1_v1_5.new(RSA.construct((
 
 app = Application()
 
-# NOTE: 缓存
+# NOTE: id 到 pickcode 的映射
 ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
+# NOTE: sha1 到 pickcode 到映射
 SHA1_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
+# NOTE: 路径到 id 到映射
 PATH_TO_ID: MutableMapping[str, str] = LRUCache(65536)
+# NOTE: 标记一些 pickcode 对应的是图片
 PICKCODE_OF_IMAGE: set[str] = set()
+# NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]] = None
 if url_reuse_factor not in (0, 1):
     if url_ttl > 0:
         URL_CACHE = TTLCache(1024, ttl=url_ttl)
     elif url_ttl < 0:
         URL_CACHE = LRUCache(1024)
+# NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 RANGE_REQUEST_COOLDOWN: None | MutableMapping[tuple[str, str, str, bytes], None] = None
 if url_range_request_cooldown > 0:
     RANGE_REQUEST_COOLDOWN = TTLCache(8196, ttl=url_range_request_cooldown)

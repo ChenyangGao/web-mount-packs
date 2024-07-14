@@ -8,7 +8,7 @@ try:
     # pip install cachetools
     from cachetools import TTLCache
     # pip install fusepy
-    from fuse import FUSE, FuseOSError, Operations, fuse_get_context
+    from fuse import FUSE, Operations, fuse_get_context
     # pip install psutil
     from psutil import Process
 except ImportError:
@@ -17,31 +17,31 @@ except ImportError:
     run([executable, "-m", "pip", "install", "-U", "cachetools", "fusepy", "psutil"], check=True)
 
     from cachetools import TTLCache
-    from fuse import FUSE, FuseOSError, Operations, fuse_get_context # type: ignore
+    from fuse import FUSE, Operations, fuse_get_context # type: ignore
     from psutil import Process # type: ignore
 
+import errno
 import logging
 
 from collections.abc import Callable, MutableMapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
-from errno import ENOENT, EIO
 from itertools import count
 from posixpath import join as joinpath, split as splitpath
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
 from sys import maxsize
-from threading import Event, Lock, Thread
+from threading import Lock, Thread
 from time import sleep, time
-from typing import cast, BinaryIO, Final, Optional
+from typing import cast, Any, BinaryIO, Concatenate, Final, ParamSpec
 from unicodedata import normalize
 
 from alist import AlistFileSystem, AlistPath
 
-try:
-    from .util.log import logger
-except ImportError:
-    from util.log import logger # type: ignore
+from .log import logger
+
+
+Args = ParamSpec("Args")
 
 
 def _get_process():
@@ -56,60 +56,41 @@ if not hasattr(ThreadPoolExecutor, "__del__"):
     setattr(ThreadPoolExecutor, "__del__", lambda self, /: self.shutdown(cancel_futures=True))
 
 
-def update_readdir_later(
+def readdir_future_wrapper(
     self, 
-    executor: Optional[ThreadPoolExecutor] = None, 
-    refresh_min_interval: int | float = 10, 
+    submit: Callable[Concatenate[Callable[Args, Any], Args], Future], 
+    cooldown: int | float = 30, 
 ):
     readdir = type(self).readdir
-    refresh_freq: MutableMapping = TTLCache(maxsize, ttl=refresh_min_interval)
-    event_pool: dict[str, Event] = {}
+    cooldown_pool: None | MutableMapping = None
+    if cooldown > 0:
+        cooldown_pool = TTLCache(maxsize, ttl=cooldown)
+    task_pool: dict[str, Future] = {}
+    pop_task = task_pool.pop
     lock = Lock()
-    def run_update(path, fh, /, do_refresh=True):
-        with lock:
-            try:
-                evt = event_pool[path]
-                wait_event = True
-            except KeyError:
-                evt = event_pool[path] = Event()
-                wait_event = False
-        if wait_event:
-            if do_refresh:
-                return
-            evt.wait()
-            return [".", "..", *self.cache[normalize("NFC", path)]]
-        else:
-            try:
-                return readdir(self, path, fh)
-            finally:
-                event_pool.pop(path, None)
-                evt.set()
     def wrapper(path, fh=0):
-        while True:
-            try:
-                cache = self.cache[normalize("NFC", path)]
-            except KeyError:
-                if executor is None:
-                    return run_update(path, fh)
-                else:
-                    future = executor.submit(run_update, path, fh)
-                    return future.result()
-            else:
+        path = normalize("NFC", path)
+        refresh = cooldown_pool is None or path not in cooldown_pool
+        try:
+            result = [".", "..", *self.cache[path]]
+        except KeyError:
+            result = None
+            refresh = True
+        if refresh:
+            with lock:
                 try:
-                    if path not in refresh_freq:
-                        refresh_freq[path] = None
-                        if executor is None:
-                            Thread(target=run_update, args=(path, fh)).start()
-                        else:
-                            executor.submit(run_update, path, fh)
-                    return [".", "..", *cache]
-                except BaseException as e:
-                    self._log(
-                        logging.ERROR, 
-                        "can't start new thread for path: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
-                        path, type(e).__qualname__, e, 
-                    )
-                    raise FuseOSError(EIO) from e
+                    future = task_pool[path]
+                except KeyError:
+                    def done_callback(future: Future):
+                        if cooldown_pool is not None and future.exception() is None:
+                            cooldown_pool[path] = None
+                        pop_task(path, None)
+                    future = task_pool[path] = submit(readdir, self, path, fh)
+                    future.add_done_callback(done_callback)
+        if result is None:
+            return future.result()
+        else:
+            return result
     return update_wrapper(wrapper, readdir)
 
 
@@ -122,19 +103,26 @@ class AlistFuseOperations(Operations):
         origin: str = "http://localhost:5244", 
         username: str = "", 
         password: str = "", 
-        cache: Optional[MutableMapping] = None, 
-        predicate: Optional[Callable[[AlistPath], bool]] = None, 
-        strm_predicate: Optional[Callable[[AlistPath], bool]] = None, 
-        max_readdir_workers: int = -1, 
-        direct_open_names: Optional[Callable[[str], bool]] = None, 
-        direct_open_exes: Optional[Callable[[str], bool]] = None, 
+        token: str = "", 
+        base_dir: str = "/", 
+        cache: None | MutableMapping = None, 
+        max_readdir_workers: int = 5, 
+        max_readdir_cooldown: float = 30, 
+        predicate: None | Callable[[AlistPath], bool] = None, 
+        strm_predicate: None | Callable[[AlistPath], bool] = None, 
+        strm_make: None | Callable[[AlistPath], str] = None, 
+        direct_open_names: None | Callable[[str], bool] = None, 
+        direct_open_exes: None | Callable[[str], bool] = None, 
     ):
         self.__finalizer__: list[Callable] = []
         self._log = partial(logger.log, extra={"instance": repr(self)})
 
         self.fs = AlistFileSystem.login(origin, username, password)
+        self.fs.chdir(base_dir)
+        self.token = token
         self.predicate = predicate
         self.strm_predicate = strm_predicate
+        self.strm_make = strm_make
         register = self.register_finalize = self.__finalizer__.append
         self.direct_open_names = direct_open_names
         self.direct_open_exes = direct_open_exes
@@ -160,16 +148,22 @@ class AlistFuseOperations(Operations):
                     pass
         register(close_all)
         # multi threaded directory reading control
-        executor: Optional[ThreadPoolExecutor]
-        if max_readdir_workers < 0:
-            executor = None
-        elif max_readdir_workers == 0:
+        executor: None | ThreadPoolExecutor = None
+        if max_readdir_workers == 0:
             executor = ThreadPoolExecutor(None)
+            submit = executor.submit
+        elif max_readdir_workers < 0:
+            from concurrenttools import run_as_thread as submit
         else:
             executor = ThreadPoolExecutor(max_readdir_workers)
-        self.__dict__["readdir"] = update_readdir_later(self, executor=executor)
+            submit = executor.submit
+        self.__dict__["readdir"] = readdir_future_wrapper(
+            self, 
+            submit=submit, 
+            cooldown=max_readdir_cooldown, 
+        )
         if executor is not None:
-            register(partial(executor.shutdown, cancel_futures=True))
+            register(partial(executor.shutdown, wait=False, cancel_futures=True))
         self.normpath_map: dict[str, str] = {}
 
     def __del__(self, /):
@@ -199,7 +193,7 @@ class AlistFuseOperations(Operations):
                     "file not found: \x1b[4;34m%s\x1b[0m, since readdir failed: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
                     path, dir_, type(e).__qualname__, e, 
                 )
-                raise FuseOSError(EIO) from e
+                raise OSError(errno.EIO, path) from e
         try:
             return dird[name]
         except KeyError as e:
@@ -208,11 +202,12 @@ class AlistFuseOperations(Operations):
                 "file not found: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
                 path, type(e).__qualname__, e, 
             )
-            raise FuseOSError(ENOENT) from e
+            raise FileNotFoundError(errno.ENOENT, path) from e
 
     def open(self, /, path: str, flags: int = 0) -> int:
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
         pid = fuse_get_context()[-1]
+        path = self.normpath_map.get(normalize("NFC", path), path)
         if pid > 0:
             process = Process(pid)
             exe = process.exe()
@@ -223,7 +218,7 @@ class AlistFuseOperations(Operations):
                 process.kill()
                 def push():
                     sleep(.01)
-                    run([exe, self.fs.get_url(path)])
+                    run([exe, self.fs.get_url(path.lstrip("/"), token=self.token)])
                 Thread(target=push).start()
                 return 0
         return self._next_fh()
@@ -234,8 +229,8 @@ class AlistFuseOperations(Operations):
         if attr.get("_data") is not None:
             return None, attr["_data"]
         if attr["st_size"] <= 2048:
-            return None, self.fs.as_path(path).read_bytes()
-        file = cast(BinaryIO, self.fs.as_path(path).open("rb"))
+            return None, self.fs.as_path(path.lstrip("/")).read_bytes()
+        file = cast(BinaryIO, self.fs.as_path(path.lstrip("/")).open("rb"))
         if start == 0:
             # cache 2048 in bytes (2 KB)
             preread = file.read(2048)
@@ -267,38 +262,53 @@ class AlistFuseOperations(Operations):
                 "can't read file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
                 path, type(e).__qualname__, e, 
             )
-            raise FuseOSError(EIO) from e
+            raise OSError(errno.EIO, path) from e
 
     def readdir(self, /, path: str, fh: int = 0) -> list[str]:
         self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
         predicate = self.predicate
         strm_predicate = self.strm_predicate
+        strm_make = self.strm_make
         cache = {}
         path = normalize("NFC", path)
         realpath = self.normpath_map.get(path, path)
         try:
-            for pathobj in self.fs.listdir_path(realpath):
+            ls = self.fs.listdir_path(realpath.lstrip("/"))
+            for pathobj in ls:
                 name    = pathobj.name
                 subpath = pathobj.path
                 isdir   = pathobj.is_dir()
                 data = None
-                if predicate and not predicate(pathobj):
-                    continue
                 if isdir:
                     size = 0
-                elif strm_predicate and strm_predicate(pathobj):
-                    data = pathobj.url.encode("latin-1")
-                    size = len(data)
+                if not isdir and strm_predicate and strm_predicate(pathobj):
+                    if strm_make:
+                        try:
+                            url = strm_make(pathobj) or ""
+                        except Exception:
+                            url = ""
+                        if not url:
+                            self._log(
+                                logging.WARNING, 
+                                "can't make strm for file: \x1b[4;34m%s\x1b[0m", 
+                                pathobj.relative_to(), 
+                            )
+                        data = url.encode("utf-8")
+                    else:
+                        data = pathobj.get_url(token=self.token, ensure_ascii=True).encode("utf-8")
+                    size = len(cast(bytes, data))
                     name += ".strm"
+                elif predicate and not predicate(pathobj):
+                    continue
                 else:
-                    size = int(pathobj.get("size", 0))
+                    size = int(pathobj.get("size") or 0)
                 normname = normalize("NFC", name)
                 cache[normname] = dict(
                     st_mode=(S_IFDIR if isdir else S_IFREG) | 0o555, 
                     st_size=size, 
                     st_ctime=pathobj["ctime"], 
                     st_mtime=pathobj["mtime"], 
-                    st_atime=pathobj["atime"], 
+                    st_atime=pathobj.get("atime") or pathobj["mtime"], 
                     _data=data, 
                 )
                 normsubpath = joinpath(path, normname)
@@ -312,7 +322,7 @@ class AlistFuseOperations(Operations):
                 "can't readdir: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
                 path, type(e).__qualname__, e, 
             )
-            raise FuseOSError(EIO) from e
+            raise OSError(errno.EIO, path) from e
 
     def release(self, /, path: str, fh: int = 0):
         self._log(logging.DEBUG, "release(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
@@ -330,7 +340,7 @@ class AlistFuseOperations(Operations):
                 "can't release file: \x1b[4;34m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
                 path, type(e).__qualname__, e, 
             )
-            raise FuseOSError(EIO) from e
+            raise OSError(errno.EIO, path) from e
 
     def run(self, /, *args, **kwds):
         return FUSE(self, *args, **kwds)

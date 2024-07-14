@@ -311,6 +311,8 @@ class P115Sharing:
         /, 
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
+        """用 id 或分享码查询分享是否存在
+        """
         def gen_step():
             if isinstance(code_or_id, str):
                 return (yield partial(

@@ -580,6 +580,8 @@ class P115Offline:
         hash: str, 
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
+        """用 infohash 查询任务是否存在
+        """
         if async_:
             return async_any(item["info_hash"] == hash async for item in self.iter(async_=True))
         else:

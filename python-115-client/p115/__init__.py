@@ -14,9 +14,6 @@ AVAILABLE_APPS = (
     "windows", "mac", "linux", "wechatmini", "alipaymini", 
 )
 
-if False:
-    from .component import *
-
 def __getattr__(attr):
     from importlib import import_module
 

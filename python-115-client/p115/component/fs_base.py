@@ -1033,15 +1033,19 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             async_=async_, 
         )
 
-    def relative_to(self, other: str | Self, /) -> str:
-        if type(self) is type(other):
+    def relative_to(self, other: None | str | Self = None, /) -> str:
+        if other is None:
+            other = self.fs.path
+        elif type(self) is type(other):
             other = cast(Self, other)
             other = other.path
         elif not cast(str, other).startswith("/"):
             other = self.fs.abspath(other)
         other = cast(str, other)
         path = self.path
-        if path == other:
+        if other == "/":
+            return path[1:]
+        elif path == other:
             return ""
         elif path.startswith(other+"/"):
             return path[len(other)+1:]
