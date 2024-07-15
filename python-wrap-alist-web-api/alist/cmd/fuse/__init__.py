@@ -52,7 +52,7 @@ epilog = """---------- 使用帮助 ----------
             path.suffix.lower() in (".nfo", ".ass", ".ssa", ".srt", ".idx", ".sub", ".txt", ".vtt", ".smi")
         )'
 
-4. 把缓存保存到本地的 dbm 文件（不用担心性能问题，因为这种情况下会有 2 级缓存）
+4. 把缓存保存到本地的 dbm 文件（不用担心性能问题，因为这种情况下会有 2 级 LFU 缓存）
 
 .. code: console
 
@@ -88,6 +88,8 @@ epilog = """---------- 使用帮助 ----------
     - json: https://docs.python.org/3/library/json.html
     - orjson: https://pypi.org/project/orjson/
     - ujson: https://pypi.org/project/ujson/
+    - msgpack: https://pypi.org/project/msgpack/
+    - avro: https://pypi.org/project/avro/
 
 .. 推荐阅读:
 

@@ -17,7 +17,10 @@ __doc__ = """\
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
+    from pathlib import Path
+    from sys import path
 
+    path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
     from argparse import RawTextHelpFormatter
@@ -30,9 +33,6 @@ from http.client import HTTPResponse
 from json import dumps, load, loads
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
-
-from alist import __version__, AlistClient
-from alist.tool import alist_update_115_cookies
 
 
 AppEnum = Enum("AppEnum", {
@@ -240,8 +240,12 @@ def login_with_autoscan(
 
 def main(args):
     if args.version:
+        from alist import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
+
+    from alist import AlistClient
+    from alist.tool import alist_update_115_cookies
 
     client = AlistClient(args.origin, args.username, args.password)
     resp = client.admin_storage_list()

@@ -12,7 +12,10 @@ KEYS = (
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
+    from pathlib import Path
+    from sys import path
 
+    path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
     from argparse import RawTextHelpFormatter
@@ -22,14 +25,15 @@ else:
 
 
 def main(args):
-    from alist import AlistFileSystem, __version__
-
     if args.version:
+        from alist import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
     from sys import stdout
     from typing import Callable
+
+    from alist import AlistFileSystem
 
     fs = AlistFileSystem.login(args.origin, args.username, args.password)
     keys = args.keys or KEYS
