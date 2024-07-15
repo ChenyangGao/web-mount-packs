@@ -219,7 +219,6 @@ def download(
                 resp.close()
                 resp = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **urlopen_kwargs)
                 if not is_range_request(resp):
-                    breakpoint()
                     raise OSError(errno.EIO, f"range request failed: {url!r}")
                 if reporthook:
                     reporthook(filesize)

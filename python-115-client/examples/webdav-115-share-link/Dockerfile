@@ -1,4 +1,4 @@
-# Dockerfile for https://github.com/ChenyangGao/web-mount-packs/tree/main/webdav-115-share-link
+# Dockerfile for https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client/examples/webdav-115-share-link
 # Build:
 #   docker build --rm -t chenyanggao/webdav-115-share-link .
 # Run (for the first time to scan qrcode):

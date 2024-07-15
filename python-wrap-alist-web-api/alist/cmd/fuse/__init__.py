@@ -95,6 +95,24 @@ def main(args):
         from uuid import uuid4
         mount_point = str(uuid4())
 
+    options = {
+        "mountpoint": mount_point, 
+        "auto_cache": True, 
+        "foreground": True, 
+        "max_readahead": 65536, 
+        "ro": True, 
+    }
+    if args.fuse_options:
+        for option in args.fuse_options:
+            if "=" in option:
+                name, value = option.split("=", 1)
+                if value:
+                    options[name] = value
+                else:
+                    options.pop(name, None)
+            else:
+                options[option] = True
+
     import logging
 
     log_level = args.log_level
@@ -155,6 +173,7 @@ def main(args):
         👋 Welcome to use alist fuse 👏
 
     mounted at: {abspath(mount_point)!r}
+    fuse options: {options!r}
     """)
 
     if not exists(mount_point):
@@ -177,14 +196,7 @@ def main(args):
         strm_make=strm_make, 
         direct_open_names=direct_open_names, 
         direct_open_exes=direct_open_exes, 
-    ).run(
-        mountpoint=mount_point, 
-        ro=True, 
-        allow_other=args.allow_other, 
-        foreground=not args.background, 
-        nothreads=args.nothreads, 
-        debug=args.debug, 
-    )
+    ).run(**options)
 
 
 parser.add_argument("mount_point", nargs="?", help="挂载路径")
@@ -192,7 +204,7 @@ parser.add_argument("-o", "--origin", default="http://localhost:5244", help="ali
 parser.add_argument("-u", "--username", default="", help="用户名，默认为空")
 parser.add_argument("-p", "--password", default="", help="密码，默认为空")
 parser.add_argument("-t", "--token", default="", help="token，用于给链接做签名，默认为空")
-parser.add_argument("-bd", "--base-dir", default="/", help="挂载的目录，默认为 '/'")
+parser.add_argument("-b", "--base-dir", default="/", help="挂载的目录，默认为 '/'")
 parser.add_argument(
     "-mr", "--max-readdir-workers", default=5, type=int, 
     help="读取目录的文件列表的最大的并发线程数，默认值是 5，等于 0 则自动确定，小于 0 则不限制", 
@@ -213,9 +225,9 @@ parser.add_argument(
     - expr         表达式，会注入一个名为 path 的 alist.AlistPath 对象
     - lambda       lambda 函数，接受一个 alist.AlistPath 对象作为参数
     - stmt         语句，当且仅当不抛出异常，则视为 True，会注入一个名为 path 的 alist.AlistPath 对象
-    - module       代码，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
-    - file         代码的路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
-    - re           正则表达式，如果文件的名字匹配此模式，则断言为 True
+    - module       模块，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
+    - file         文件路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
+    - re           正则表达式，模式匹配，如果文件的名字匹配此模式，则断言为 True
 """)
 parser.add_argument("-p2", "--strm-predicate", help="strm 断言（优先级高于 -p1/--show-predicate），当断言的结果为 True 时，文件会被显示为带有 .strm 后缀的文本文件，打开后是链接")
 parser.add_argument(
@@ -229,9 +241,9 @@ parser.add_argument(
     - expr         表达式，会注入一个名为 path 的 alist.AlistPath 对象
     - lambda       lambda 函数，接受一个 alist.AlistPath 对象作为参数
     - stmt         语句，当且仅当不抛出异常，则视为 True，会注入一个名为 path 的 alist.AlistPath 对象
-    - module       代码，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
-    - file         代码的路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
-    - re           正则表达式，如果文件的名字匹配此模式，则断言为 True
+    - module       模块，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
+    - file         文件路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 alist.AlistPath 对象作为参数
+    - re           正则表达式，模式匹配，如果文件的名字匹配此模式，则断言为 True
 """)
 parser.add_argument("-cs", "--custom-strm", help="自定义 strm 的内容")
 parser.add_argument(
@@ -243,9 +255,9 @@ parser.add_argument(
     - fstring   视为 fstring，可从命名空间访问到一个名为 path 的 alist.AlistPath 对象
     - lambda    lambda 函数，接受一个 alist.AlistPath 对象作为参数
     - stmt      语句，可从命名空间访问到一个名为 path 的 alist.AlistPath 对象，最后要产生一个名为 url 的变量到本地命名空间
-    - module    作为一个模块被夹在，运行后需要在它的全局命名空间中生成一个 run 或 convert 函数，接受一个 alist.AlistPath 对象作为参数
+    - module    模块，运行后需要在它的全局命名空间中生成一个 run 或 convert 函数，接受一个 alist.AlistPath 对象作为参数
     - file      文件路径，会被作为模块加载执行，运行后需要在它的全局命名空间中生成一个 run 或 convert 函数，接受一个 alist.AlistPath 对象作为参数
-    - resub     正则表达式，语法同 sed，格式为 /pattern/replacement/flag，用来对生成的链接进行搜索替换
+    - resub     正则表达式，模式替换，语法同 sed，格式为 /pattern/replacement/flag，用来对生成的链接进行搜索替换
 上面的各个类型，都会注入几个全局变量
     - re      正则表达式模块
     - token   Alist 的 token，经命令行传入
@@ -288,11 +300,15 @@ Reference:
     - https://docs.python.org/3/library/collections.abc.html#collections.abc.MutableMapping
     - https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes
 """)
-parser.add_argument("-d", "--debug", action="store_true", help="调试模式，输出更多信息")
-parser.add_argument("-l", "--log-level", default="NOTSET", help=f"指定日志级别，可以是数字或名称，不传此参数则不输出日志，默认值: 'NOTSET'")
-parser.add_argument("-b", "--background", action="store_true", help="后台运行")
-parser.add_argument("-s", "--nothreads", action="store_true", help="不用多线程")
-parser.add_argument("--allow-other", action="store_true", help="允许 other 用户（也即不是 user 和 group）")
+parser.add_argument("-fo", "--fuse-option", dest="fuse_options", metavar="option", nargs="*", help="""fuse 挂载选项，支持如下几种格式：
+    - name         设置 name 选项
+    - name=        取消 name 选项
+    - name=value   设置 name 选项，值为 value
+参考资料：
+    - https://man7.org/linux/man-pages/man8/mount.fuse3.8.html
+    - https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki
+""")
+parser.add_argument("-l", "--log-level", default="ERROR", help=f"指定日志级别，可以是数字或名称，不传此参数则不输出日志，默认值: 'ERROR'")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 
