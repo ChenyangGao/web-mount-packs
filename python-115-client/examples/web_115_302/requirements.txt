@@ -1,0 +1,11 @@
+cachetools
+flask
+Flask-Compress
+httpx
+posixpatht
+python-115
+werkzeug
+wsgidav
+urllib3
+urllib3_request
+watchdog

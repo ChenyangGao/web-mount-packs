@@ -127,7 +127,7 @@ docker build --rm -t chenyanggao/webdav-115-share-link
 
 ```console
 docker run --rm -it \
-    -p 8000:8000 \
+    -p 8000:80 \
     -v ~/webdav-115-share-link:/etc/webdav-115-share-link \
     --name="webdav-115-share-link" \
     chenyanggao/webdav-115-share-link
@@ -137,7 +137,7 @@ docker run --rm -it \
 
 ```console
 docker run -d \
-    -p 8000:8000 \
+    -p 8000:80 \
     -v ~/webdav-115-share-link:/etc/webdav-115-share-link \
     --restart=always \
     --name="webdav-115-share-link" \
@@ -148,7 +148,7 @@ docker run -d \
 
 ```console
 docker run -d -t \
-    -p 8000:8000 \
+    -p 8000:80 \
     -v ~/webdav-115-share-link:/etc/webdav-115-share-link \
     --restart=always \
     --name="webdav-115-share-link" \

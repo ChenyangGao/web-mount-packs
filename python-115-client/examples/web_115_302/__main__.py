@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 8)
+__version__ = (0, 1, 9)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -16,6 +16,8 @@ __doc__ = """\
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 from warnings import warn
+
+from p115 import AVAILABLE_APPS
 
 parser = ArgumentParser(
     formatter_class=RawTextHelpFormatter, 
@@ -80,6 +82,7 @@ method   | string  | 否   | 0. '':     缺省值，直接下载
 在浏览器或 webdav 挂载软件 中输入（可以有个端口号） http://localhost/<dav
 目前没有用户名和密码就可以浏览，支持 302
 """)
+parser.add_argument("-a", "--login-app", choices=("", *AVAILABLE_APPS), help="指定默认的登录 app，如果未指定，则默认为所传入 cookies 对应的 app，获取不到 app 则默认为 'qandroid'")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
@@ -151,7 +154,7 @@ from hashlib import md5
 from html import escape
 from io import BytesIO
 from os import stat
-from os.path import expanduser, dirname, join as joinpath, realpath
+from os.path import exists, expanduser, dirname, join as joinpath, realpath
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
@@ -211,8 +214,8 @@ if not cookies:
             except FileNotFoundError:
                 pass
 
-client = P115Client(cookies, app="qandroid")
-if cookies_path and cookies != client.cookies:
+client = P115Client(cookies or None, app=args.login_app or "qandroid")
+if cookies_path and (not exists(cookies_path) or cookies != client.cookies):
     open(cookies_path, "w").write(client.cookies)
 
 from urllib.error import HTTPError
@@ -265,14 +268,17 @@ match use_request:
         def get_status_code(e):
             return e.status
 
-device = client.login_device(request=do_request)["icon"]
-if device not in AVAILABLE_APPS:
-    # 115 浏览器版，实际就是 web
-    if device == "desktop":
-        device = "web"
-    else:
-        warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
-        device = "qandroid"
+if args.login_app:
+    device = args.login_app
+else:
+    device = client.login_device(request=do_request)["icon"]
+    if device not in AVAILABLE_APPS:
+        # 115 浏览器版，实际就是 web
+        if device == "desktop":
+            device = "web"
+        else:
+            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+            device = "qandroid"
 fs = client.get_fs(client, attr_cache=LRUCache(65536), path_to_id=LRUCache(65536), request=do_request)
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
@@ -1043,7 +1049,7 @@ else:
 
 if __name__ == "__main__":
     debug = args.debug
-    run_simple(
+    kwargs = dict(
         hostname=args.host, 
         port=args.port, 
         application=application, 
@@ -1051,8 +1057,10 @@ if __name__ == "__main__":
         use_debugger=debug, 
         use_evalex=debug, 
         threaded=True, 
-        #extra_files=
     )
+    if cookies_path:
+        kwargs["extra_files"] = (cookies_path,)
+    run_simple(**kwargs)
 
 # TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future
 # TODO: 可能是 wsgidav 的问题，propfind 响应太慢了，即使给文件夹做了缓存，需要看看怎么优化
