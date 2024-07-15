@@ -67,8 +67,8 @@ def main(args):
     from warnings import warn
 
     from concurrenttools import thread_batch
-    from p115 import check_response, P115Client
-    from posixpatht import split, escape
+    from p115 import check_response, P115Client, MultipartUploadAbort
+    from posixpatht import escape, split, normpath as pnormpath
     from rich.progress import (
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     )
@@ -425,7 +425,6 @@ def main(args):
     ├ reason = [red]{type(e).__module__}.{type(e).__qualname__}[/red]: {e}""")
                 update_success(1)
             else:
-                # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
                 kwargs: dict = {}
                 if src_attr["size"] <= 1 << 30: # 1 GB
                     # NOTE: 1 GB 以内使用网页版上传接口，这个接口的优势是上传完成后会自动产生 115 生活事件
@@ -433,13 +432,25 @@ def main(args):
                 elif src_attr["size"] > 1 << 34: # 16 GB
                     # NOTE: 介于 1 GB 和 16 GB 时直接流式上传，超过 16 GB 时，使用分块上传，分块大小 1 GB
                     kwargs["partsize"] = 1 << 30
-                resp = client.upload_file(
-                    src_path, 
-                    name, 
-                    pid=dst_pid, 
-                    make_reporthook=partial(add_report, attr=src_attr), 
-                    **kwargs, 
-                )
+                ticket: dict
+                for i in range(5):
+                    if i:
+                        console_print(f"""\
+[bold yellow][RETRY][/bold yellow] 📝 重试上传: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
+    ├ ticket = {ticket}""")
+                    try:
+                        resp = client.upload_file(
+                            src_path, 
+                            name, 
+                            pid=dst_pid, 
+                            make_reporthook=partial(add_report, attr=src_attr), 
+                            **kwargs, 
+                        )
+                    except MultipartUploadAbort as e:
+                        exc = e
+                        ticket = kwargs["multipart_resume_data"] = e.ticket
+                else:
+                    raise exc
                 if resp.get("status") == 2 and resp.get("statuscode") == 0:
                     prompt = "秒传文件"
                 else:
@@ -500,7 +511,7 @@ def main(args):
     ) as progress:
         console_print = progress.console.print
         if isinstance(dst_path, str):
-            if dst_path == "0":
+            if dst_path == "0" or not pnormpath(dst_path).strip("/"):
                 dst_id = 0
             elif not dst_path.startswith("0") and dst_path.isascii() and dst_path.isdecimal():
                 dst_id = int(dst_path)
@@ -509,9 +520,9 @@ def main(args):
                 dst_path = dst_attr["path"]
                 dst_id = dst_attr["id"]
             else:
-                dst_dir, name = split(dst_path)
+                dst_dir, dst_name = split(dst_path)
                 dst_attr = relogin_wrap(fs.makedirs, dst_dir, exist_ok=True)
-                dst_path = dst_attr["path"] + "/" + escape(name)
+                dst_path = dst_attr["path"] + "/" + escape(dst_name)
                 dst_id = dst_attr["id"]
         else:
             dst_id = dst_path
@@ -599,3 +610,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args)
 
+# TODO: statistics 行要有更详细的信息，如果一行不够，就再加一行
+# TODO: 上传文件时，如果正在计算哈希，最好也要有个进度条，并且注明是计算哈希
+# TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
