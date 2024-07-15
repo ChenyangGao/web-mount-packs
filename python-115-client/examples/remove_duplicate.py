@@ -23,7 +23,7 @@ def parse_args():
     2. 用户根目录
     3. 此脚本所在目录""")
     parser.add_argument('-l', '--lib', type=str, help='指定的库文件夹')
-    parser.add_argument('-a', '--all', type=bool, help='全局搜索重复文件')
+    parser.add_argument('-A', '--all', type=bool, help='全局搜索重复文件')
 
     args = parser.parse_args()
 
