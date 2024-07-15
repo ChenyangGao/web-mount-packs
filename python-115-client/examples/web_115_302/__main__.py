@@ -1060,6 +1060,7 @@ if __name__ == "__main__":
     )
     if cookies_path:
         kwargs["extra_files"] = (cookies_path,)
+        kwargs["use_reloader"] = True
     run_simple(**kwargs)
 
 # TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future

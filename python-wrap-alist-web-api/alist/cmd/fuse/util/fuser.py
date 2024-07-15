@@ -6,7 +6,7 @@ __all__ = ["AlistFuseOperations"]
 
 try:
     # pip install cachetools
-    from cachetools import TTLCache
+    from cachetools import Cache, LFUCache, TTLCache
     # pip install fusepy
     from fuse import FUSE, Operations, fuse_get_context
     # pip install psutil
@@ -15,10 +15,9 @@ except ImportError:
     from subprocess import run
     from sys import executable
     run([executable, "-m", "pip", "install", "-U", "cachetools", "fusepy", "psutil"], check=True)
-
-    from cachetools import TTLCache
+    from cachetools import Cache, LFUCache, TTLCache
     from fuse import FUSE, Operations, fuse_get_context # type: ignore
-    from psutil import Process # type: ignore
+    from psutil import Process
 
 import errno
 import logging
@@ -72,7 +71,7 @@ def readdir_future_wrapper(
         path = normalize("NFC", path)
         refresh = cooldown_pool is None or path not in cooldown_pool
         try:
-            result = [".", "..", *self.cache[path]]
+            result = [".", "..", *self._get_cache(path)]
         except KeyError:
             result = None
             refresh = True
@@ -94,7 +93,9 @@ def readdir_future_wrapper(
     return update_wrapper(wrapper, readdir)
 
 
-# Learn: https://www.stavros.io/posts/python-fuse-filesystem/
+# Learning: 
+#   - https://www.stavros.io/posts/python-fuse-filesystem/
+#   - https://thepythoncorner.com/posts/2017-02-27-writing-a-fuse-filesystem-in-python/
 class AlistFuseOperations(Operations):
 
     def __init__(
@@ -127,13 +128,16 @@ class AlistFuseOperations(Operations):
         self.direct_open_names = direct_open_names
         self.direct_open_exes = direct_open_exes
 
-        # id generator for file handler
+        # NOTE: id generator for file handler
         self._next_fh: Callable[[], int] = count(1).__next__
-        # cache `readdir` pulled file attribute map
-        if cache is None:
-            cache = {}
-        self.cache = cache
-        # cache all opened files (except in zipfile)
+        # NOTE: cache `readdir` pulled file attribute map
+        if cache is None or isinstance(cache, (dict, Cache)):
+            if cache is None:
+                cache = {}
+            self.temp_cache: None | MutableMapping = None
+        else:
+            self.temp_cache = LFUCache(128)
+        self.cache: MutableMapping = cache
         self._fh_to_file: dict[int, tuple[BinaryIO, bytes]] = {}
         def close_all():
             popitem = self._fh_to_file.popitem
@@ -147,7 +151,7 @@ class AlistFuseOperations(Operations):
                 except:
                     pass
         register(close_all)
-        # multi threaded directory reading control
+        # NOTE: multi threaded directory reading control
         executor: None | ThreadPoolExecutor = None
         if max_readdir_workers == 0:
             executor = ThreadPoolExecutor(None)
@@ -182,11 +186,11 @@ class AlistFuseOperations(Operations):
             return _rootattr
         dir_, name = splitpath(normalize("NFC", path))
         try:
-            dird = self.cache[dir_]
+            dird = self._get_cache(dir_)
         except KeyError:
             try:
                 self.readdir(dir_)
-                dird = self.cache[dir_]
+                dird = self._get_cache(dir_)
             except BaseException as e:
                 self._log(
                     logging.WARNING, 
@@ -218,7 +222,7 @@ class AlistFuseOperations(Operations):
                 process.kill()
                 def push():
                     sleep(.01)
-                    run([exe, self.fs.get_url(path.lstrip("/"), token=self.token)])
+                    run([exe, self.fs.get_url(path.lstrip("/"), token=self.token, ensure_ascii=False)])
                 Thread(target=push).start()
                 return 0
         return self._next_fh()
@@ -263,6 +267,21 @@ class AlistFuseOperations(Operations):
                 path, type(e).__qualname__, e, 
             )
             raise OSError(errno.EIO, path) from e
+
+    def _get_cache(self, path: str, /):
+        if temp_cache := self.temp_cache:
+            try:
+                return temp_cache[path]
+            except KeyError:
+                value = temp_cache[path] = self.cache[path]
+                return value
+        return self.cache[path]
+
+    def _set_cache(self, path: str, cache, /):
+        if (temp_cache := self.temp_cache) is not None:
+            temp_cache[path] = self.cache[path] = cache
+        else:
+            self.cache[path] = cache
 
     def readdir(self, /, path: str, fh: int = 0) -> list[str]:
         self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
@@ -314,7 +333,7 @@ class AlistFuseOperations(Operations):
                 normsubpath = joinpath(path, normname)
                 if normsubpath != normalize("NFD", normsubpath):
                     self.normpath_map[normsubpath] = joinpath(realpath, name)
-            self.cache[path] = cache
+            self._set_cache(path, cache)
             return [".", "..", *cache]
         except BaseException as e:
             self._log(

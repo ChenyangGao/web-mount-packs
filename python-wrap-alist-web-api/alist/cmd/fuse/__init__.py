@@ -52,17 +52,61 @@ epilog = """---------- 使用帮助 ----------
             path.suffix.lower() in (".nfo", ".ass", ".ssa", ".srt", ".idx", ".sub", ".txt", ".vtt", ".smi")
         )'
 
-4. 把缓存保存到本地的 dbm 文件
+4. 把缓存保存到本地的 dbm 文件（不用担心性能问题，因为这种情况下会有 2 级缓存）
 
 .. code: console
 
-    python-alist fuse '
+    python-alist fuse -c '
     import shelve
-    cache = shelve.open("cache")'
+    cache = shelve.open("alist-cache")'
+
+.. 本地持久化缓存模块（推荐选用 dbm-like (类 dbm 的) 风格的模块）:
+
+    - dbm: https://docs.python.org/3/library/dbm.html
+    - shelve: https://docs.python.org/3/library/shelve.html
+    - sqlite3: https://docs.python.org/3/library/sqlite3.html
+    - rocksdict: https://pypi.org/project/rocksdict/
+    - speedict: https://pypi.org/project/speedict/
+    - unqlite: https://github.com/coleifer/unqlite-python
+    - vedis: https://github.com/coleifer/vedis-python
+    - lmdb: https://pypi.org/project/lmdb/
+    - lmdbm: https://pypi.org/project/lmdbm/
+    - semidbm: https://pypi.org/project/semidbm/
+    - pysos: https://pypi.org/project/pysos/
+    - wiredtiger: https://pypi.org/project/wiredtiger/
+    - sqlitedict: https://pypi.org/project/sqlitedict/
+    - tinydb: https://pypi.org/project/tinydb/
+    - diskcache: https://pypi.org/project/diskcache/
+    - h5py: https://github.com/h5py/h5py
+    - leveldb: https://github.com/jtolio/leveldb-py
+    - pickledb: https://github.com/patx/pickledb
+
+.. 序列化模块:
+
+    - pickle: https://docs.python.org/3/library/pickle.html
+    - marshal: https://docs.python.org/3/library/marshal.html
+    - json: https://docs.python.org/3/library/json.html
+    - orjson: https://pypi.org/project/orjson/
+    - ujson: https://pypi.org/project/ujson/
+
+.. 推荐阅读:
+
+    - https://stackoverflow.com/questions/47233562/key-value-store-in-python-for-possibly-100-gb-of-data-without-client-server
+    - https://charlesleifer.com/blog/completely-un-scientific-benchmarks-of-some-embedded-databases-with-python/
+    - https://docs.python.org/3/library/persistence.html
+    - https://stackoverflow.com/questions/4026359/memory-efficient-string-to-string-map-in-python-or-c
 
 5. 自定义生成的 strm，例如把 base-url 设置为 http://my.302.server
 
+.. code: console
+
     python-alist fuse --strm-predicate '*' --custom-strm 'http://my.302.server'
+
+6. 用 vlc 播放时直接打开播放器，而不是由 fuse 转发
+
+.. code: console
+
+    python-alist fuse --direct-open-names vlc
 """
 
 if __name__ == "__main__":
@@ -102,8 +146,8 @@ def main(args):
         "max_readahead": 65536, 
         "ro": True, 
     }
-    if args.fuse_options:
-        for option in args.fuse_options:
+    if fuse_options := args.fuse_options:
+        for option in fuse_options:
             if "=" in option:
                 name, value = option.split("=", 1)
                 if value:
@@ -155,17 +199,11 @@ def main(args):
         exec(code, ns)
         cache = ns.get("cache")
 
-    direct_open_names = args.direct_open_names
-    if direct_open_names:
-        names = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(direct_open_names) if n}
-        if names:
-            direct_open_names = names.__contains__
+    if direct_open_names := args.direct_open_names:
+        direct_open_names = set(direct_open_names).__contains__
 
-    direct_open_exes = args.direct_open_exes
-    if direct_open_exes:
-        exes = {n.replace(r"\ ", " ") for n in CRE_PAT_IN_STR.findall(direct_open_exes) if n}
-        if names:
-            direct_open_exes = exes.__contains__
+    if direct_open_exes := args.direct_open_exes:
+        direct_open_exes = set(direct_open_names).__contains__
 
     from os.path import exists, abspath
 
@@ -173,7 +211,7 @@ def main(args):
         👋 Welcome to use alist fuse 👏
 
     mounted at: {abspath(mount_point)!r}
-    fuse options: {options!r}
+    FUSE options: {options!r}
     """)
 
     if not exists(mount_point):
@@ -263,12 +301,12 @@ parser.add_argument(
     - token   Alist 的 token，经命令行传入
 """)
 parser.add_argument(
-    "-dn", "--direct-open-names", 
-    help="为这些名字（忽略大小写）的程序直接打开链接，有多个时用空格分隔（如果文件名中包含空格，请用 \\ 转义）", 
+    "-dn", "--direct-open-names", nargs="+", metavar="name", 
+    help="为这些名字（忽略大小写）的程序直接打开链接", 
 )
 parser.add_argument(
-    "-de", "--direct-open-exes", 
-    help="为这些路径的程序直接打开链接，有多个时用空格分隔（如果文件名中包含空格，请用 \\ 转义）", 
+    "-de", "--direct-open-exes", nargs="+", metavar="exec", 
+    help="为这些路径的程序直接打开链接", 
 )
 parser.add_argument("-c", "--make-cache", help="""\
 请提供一段代码，这段代码执行后，会产生一个名称为 cache 的值，将会被作为目录列表的缓存，如果代码执行成功却没有名为 cache 的值，则 cache 为 {}
@@ -300,7 +338,9 @@ Reference:
     - https://docs.python.org/3/library/collections.abc.html#collections.abc.MutableMapping
     - https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes
 """)
-parser.add_argument("-fo", "--fuse-option", dest="fuse_options", metavar="option", nargs="*", help="""fuse 挂载选项，支持如下几种格式：
+parser.add_argument(
+    "-fo", "--fuse-option", dest="fuse_options", metavar="option", nargs="+", 
+    help="""fuse 挂载选项，支持如下几种格式：
     - name         设置 name 选项
     - name=        取消 name 选项
     - name=value   设置 name 选项，值为 value
