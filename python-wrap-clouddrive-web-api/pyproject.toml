@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clouddrive"
-version = "0.0.12.2"
+version = "0.0.12.2.1"
 description = "Python wrapper for CloudDrive."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -35,9 +35,12 @@ grpclib = "*"
 http_response = "*"
 path_ignore_pattern = "*"
 protobuf = "*"
+python-argtools = "*"
 python-dateutil = "*"
-python-filewrap = ">=0.1"
-python-httpfile = "*"
+python-download = ">=0.0.3"
+python-filewrap = ">=0.1.1"
+python-httpfile = ">=0.0.1.3"
+python-http_request = ">=0.0.6"
 python-urlopen = "*"
 yarl = "*"
 

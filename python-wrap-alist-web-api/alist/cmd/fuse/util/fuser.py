@@ -132,11 +132,13 @@ class AlistFuseOperations(Operations):
         self._log = partial(logger.log, extra={"instance": repr(self)})
 
         fs = self.fs = AlistFileSystem.login(origin, username, password)
-        if refresh and not (fs.client.auth_me()["data"]["permission"] & (1 << 3)):
-            raise PermissionError(
-                errno.EPERM, 
-                "current user can't do `refresh`, because the 'Make dir or upload' (创建目录或上传) permission is disabled", 
-            )
+        if refresh:
+            me = fs.client.auth_me()["data"]
+            if me["id"] > 1 and not (me["permission"] & (1 << 3)):
+                raise PermissionError(
+                    errno.EPERM, 
+                    "current user can't do `refresh`, because the 'Make dir or upload' (创建目录或上传) permission is disabled", 
+                )
         fs.chdir(base_dir)
         self.token = token
         self.refresh = refresh

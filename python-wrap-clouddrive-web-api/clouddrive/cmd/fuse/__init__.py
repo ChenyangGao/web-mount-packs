@@ -131,7 +131,7 @@ epilog = """---------- 使用帮助 ----------
 .. code: console
 
     clouddrive fuse \\
-        --base-dir '/115'
+        --base-dir '/115' \\
         --strm-predicate-type expr \\
         --strm-predicate 'path.media_type.startswith("video/")' \\
         --strm-make-type fstring \\

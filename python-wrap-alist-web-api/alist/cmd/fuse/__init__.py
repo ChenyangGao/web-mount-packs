@@ -131,7 +131,7 @@ epilog = """---------- 使用帮助 ----------
 .. code: console
 
     python-alist fuse \\
-        --base-dir '/115'
+        --base-dir '/115' \\
         --strm-predicate-type expr \\
         --strm-predicate 'path.media_type.startswith("video/")' \\
         --strm-make-type fstring \\
@@ -183,7 +183,6 @@ def main(args):
         "foreground": True, 
         "max_readahead": 65536, 
         "ro": True, 
-        "nothreads": True, 
     }
     if fuse_options := args.fuse_options:
         for option in fuse_options:

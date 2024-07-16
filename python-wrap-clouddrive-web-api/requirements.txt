@@ -1,6 +1,0 @@
-grpcio
-grpcio-tools
-protobuf
-requests
-python-dateutil
-yarl
