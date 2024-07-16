@@ -11,7 +11,7 @@ from textwrap import dedent
 from typing import Final
 
 from alist.component.fs import AlistPath
-from path_ignore_pattern import read_str, read_file, parse
+from path_ignore_pattern import read_str, read_file, parse, ExtendedType
 
 
 ConditionSourceType = AlistPath
@@ -49,11 +49,21 @@ def make_predicate_ignore(
     expr: str, 
     ns: dict, 
     /, 
+    _type: None | int | str | ExtendedType = None, 
 ) -> None | PredicateType:
-    ignore = parse(read_str(expr))
+    ignore = parse(read_str(expr), extended_type=_type)
     if not ignore:
         return None
     return lambda p, /: not ignore(p.path + "/"[:p.is_dir()])
+
+
+@register_maker("ignore-with-mime")
+def make_predicate_ignore_with_mime(
+    expr: str, 
+    ns: dict, 
+    /, 
+) -> None | PredicateType:
+    return make_predicate_ignore(expr, ns, _type=ExtendedType.mime) # type: ignore
 
 
 @register_maker("ignore-file")
@@ -62,10 +72,18 @@ def make_predicate_ignore_file(
     ns: dict, 
     /, 
 ) -> None | PredicateType:
-    ignore = parse(read_file(open(path, encoding="utf-8")))
-    if not ignore:
-        return None
-    return lambda p, /: not ignore(p.path + "/"[:p.is_dir()])
+    expr = open(path, encoding="utf-8").read()
+    return make_predicate_ignore(expr, ns)
+
+
+@register_maker("ignore-file-with-mime")
+def make_predicate_ignore_file_with_mime(
+    path: str, 
+    ns: dict, 
+    /, 
+) -> None | PredicateType:
+    expr = open(path, encoding="utf-8").read()
+    return make_predicate_ignore_with_mime(expr, ns)
 
 
 @register_maker("filter")
@@ -73,11 +91,21 @@ def make_predicate_filter(
     expr: str, 
     ns: dict, 
     /, 
+    _type: None | int | str | ExtendedType = None, 
 ) -> None | PredicateType:
-    ignore = parse(read_str(expr))
+    ignore = parse(read_str(expr), extended_type=_type)
     if not ignore:
         return None
     return lambda p, /: ignore(p.path + "/"[:p.is_dir()])
+
+
+@register_maker("filter-with-mime")
+def make_predicate_filter_with_mime(
+    expr: str, 
+    ns: dict, 
+    /, 
+) -> None | PredicateType:
+    return make_predicate_filter(expr, ns, _type=ExtendedType.mime) # type: ignore
 
 
 @register_maker("filter-file")
@@ -86,10 +114,18 @@ def make_predicate_filter_file(
     ns: dict, 
     /, 
 ) -> None | PredicateType:
-    ignore = parse(read_file(open(path, encoding="utf-8")))
-    if not ignore:
-        return None
-    return lambda p, /: ignore(p.path + "/"[:p.is_dir()])
+    expr = open(path, encoding="utf-8").read()
+    return make_predicate_filter(expr, ns)
+
+
+@register_maker("filter-file-with-mime")
+def make_predicate_filter_file_with_mime(
+    path: str, 
+    ns: dict, 
+    /, 
+) -> None | PredicateType:
+    expr = open(path, encoding="utf-8").read()
+    return make_predicate_filter_with_mime(expr, ns)
 
 
 @register_maker("expr")

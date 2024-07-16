@@ -55,7 +55,7 @@ def main(args):
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from os import fspath, makedirs, scandir, stat
+    from os import fspath, makedirs, remove, scandir, stat
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
     from pathlib import Path
     from sys import exc_info
@@ -83,6 +83,7 @@ def main(args):
     max_workers = args.max_workers
     max_retries = args.max_retries
     resume = args.resume
+    remove_done = args.remove_done
     no_root = args.no_root
     if max_workers <= 0:
         max_workers = 1
@@ -455,6 +456,11 @@ def main(args):
                     prompt = "秒传文件"
                 else:
                     prompt = "上传文件"
+                if remove_done:
+                    try:
+                        remove(src_path)
+                    except:
+                        pass
                 console_print(f"""\
 [bold green][GOOD][/bold green] 📝 {prompt}: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
     ├ response = {resp}""")
@@ -602,6 +608,7 @@ parser.add_argument("-l", "--lock-dir-methods", action="store_true",
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-n", "--no-root", action="store_true", help="上传目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
+parser.add_argument("-rm", "--remove-done", action="store_true", help="上传成功后，删除本地文件")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 
@@ -611,5 +618,5 @@ if __name__ == "__main__":
     main(args)
 
 # TODO: statistics 行要有更详细的信息，如果一行不够，就再加一行
-# TODO: 上传文件时，如果正在计算哈希，最好也要有个进度条，并且注明是计算哈希
+# TODO: 上传文件时，如果正在计算哈希，最好也要有个进度条 （用黄色），并且注明是计算哈希
 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度

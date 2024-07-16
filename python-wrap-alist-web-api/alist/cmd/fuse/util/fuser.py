@@ -6,7 +6,7 @@ __all__ = ["AlistFuseOperations"]
 
 try:
     # pip install cachetools
-    from cachetools import Cache, LFUCache, TTLCache
+    from cachetools import Cache, LRUCache, TTLCache
     # pip install fusepy
     from fuse import FUSE, Operations, fuse_get_context
     # pip install psutil
@@ -15,7 +15,7 @@ except ImportError:
     from subprocess import run
     from sys import executable
     run([executable, "-m", "pip", "install", "-U", "cachetools", "fusepy", "psutil"], check=True)
-    from cachetools import Cache, LFUCache, TTLCache
+    from cachetools import Cache, LRUCache, TTLCache
     from fuse import FUSE, Operations, fuse_get_context # type: ignore
     from psutil import Process
 
@@ -25,17 +25,24 @@ import logging
 from collections.abc import Callable, MutableMapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
+from http.client import InvalidURL
 from itertools import count
+from os import PathLike
 from posixpath import join as joinpath, split as splitpath
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
 from sys import maxsize
-from threading import Lock, Thread
+from _thread import start_new_thread, allocate_lock
 from time import sleep, time
-from typing import cast, Any, BinaryIO, Concatenate, Final, ParamSpec
+from typing import cast, Any, Concatenate, Final, IO, ParamSpec
 from unicodedata import normalize
+from urllib.parse import quote
 
 from alist import AlistFileSystem, AlistPath
+from filewrap import Buffer
+from httpfile import HTTPFileReader
+from http_request import SupportsGeturl
+from yarl import URL
 
 from .log import logger
 
@@ -66,7 +73,7 @@ def readdir_future_wrapper(
         cooldown_pool = TTLCache(maxsize, ttl=cooldown)
     task_pool: dict[str, Future] = {}
     pop_task = task_pool.pop
-    lock = Lock()
+    lock = allocate_lock()
     def wrapper(path, fh=0):
         path = normalize("NFC", path)
         refresh = cooldown_pool is None or path not in cooldown_pool
@@ -88,8 +95,12 @@ def readdir_future_wrapper(
                     future.add_done_callback(done_callback)
         if result is None:
             return future.result()
-        else:
-            return result
+        elif refresh:
+            try:
+                return future.result(1)
+            except TimeoutError:
+                pass
+        return result
     return update_wrapper(wrapper, readdir)
 
 
@@ -106,24 +117,33 @@ class AlistFuseOperations(Operations):
         password: str = "", 
         token: str = "", 
         base_dir: str = "/", 
+        refresh: bool = False, 
         cache: None | MutableMapping = None, 
         max_readdir_workers: int = 5, 
         max_readdir_cooldown: float = 30, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         strm_predicate: None | Callable[[AlistPath], bool] = None, 
         strm_make: None | Callable[[AlistPath], str] = None, 
+        open_file: None | Callable[[AlistPath], str | Callable] = None, 
         direct_open_names: None | Callable[[str], bool] = None, 
         direct_open_exes: None | Callable[[str], bool] = None, 
     ):
         self.__finalizer__: list[Callable] = []
         self._log = partial(logger.log, extra={"instance": repr(self)})
 
-        self.fs = AlistFileSystem.login(origin, username, password)
-        self.fs.chdir(base_dir)
+        fs = self.fs = AlistFileSystem.login(origin, username, password)
+        if refresh and not (fs.client.auth_me()["data"]["permission"] & (1 << 3)):
+            raise PermissionError(
+                errno.EPERM, 
+                "current user can't do `refresh`, because the 'Make dir or upload' (创建目录或上传) permission is disabled", 
+            )
+        fs.chdir(base_dir)
         self.token = token
+        self.refresh = refresh
         self.predicate = predicate
         self.strm_predicate = strm_predicate
         self.strm_make = strm_make
+        self.open_file = open_file
         register = self.register_finalize = self.__finalizer__.append
         self.direct_open_names = direct_open_names
         self.direct_open_exes = direct_open_exes
@@ -133,12 +153,15 @@ class AlistFuseOperations(Operations):
         # NOTE: cache `readdir` pulled file attribute map
         if cache is None or isinstance(cache, (dict, Cache)):
             if cache is None:
-                cache = {}
+                if max_readdir_cooldown <= 0:
+                    cache = LRUCache(128)
+                else:
+                    cache = LRUCache(65536)
             self.temp_cache: None | MutableMapping = None
         else:
-            self.temp_cache = LFUCache(128)
+            self.temp_cache = LRUCache(128)
         self.cache: MutableMapping = cache
-        self._fh_to_file: dict[int, tuple[BinaryIO, bytes]] = {}
+        self._fh_to_file: dict[int, tuple[IO[Buffer], bytes]] = {}
         def close_all():
             popitem = self._fh_to_file.popitem
             while True:
@@ -222,19 +245,40 @@ class AlistFuseOperations(Operations):
                 process.kill()
                 def push():
                     sleep(.01)
-                    run([exe, self.fs.get_url(path.lstrip("/"), token=self.token, ensure_ascii=False)])
-                Thread(target=push).start()
+                    run([exe, self.fs.get_url(path.lstrip("/"), token=self.token)])
+                start_new_thread(push, ())
                 return 0
         return self._next_fh()
 
     def _open(self, path: str, /, start: int = 0):
         attr = self.getattr(path)
-        path = self.normpath_map.get(normalize("NFC", path), path)
+        path = attr["_path"]["path"]
         if attr.get("_data") is not None:
             return None, attr["_data"]
+        file: None | IO[Buffer]
+        if self.open_file is None:
+            file = cast(IO[bytes], attr["_path"].open("rb"))
+        else:
+            rawfile = self.open_file(attr["_path"])
+            if isinstance(rawfile, Buffer):
+                return None, rawfile
+            elif isinstance(rawfile, str) and rawfile.startswith(("http://", "https://")) or isinstance(rawfile, (SupportsGeturl, URL)):
+                if isinstance(rawfile, str):
+                    url = rawfile
+                elif isinstance(rawfile, SupportsGeturl):
+                    url = rawfile.geturl()
+                else:
+                    url = str(rawfile)
+                try:
+                    file = HTTPFileReader(url)
+                except (InvalidURL, UnicodeEncodeError):
+                    file = HTTPFileReader(quote(url, safe=":/?&=#"))
+            elif isinstance(rawfile, (str, PathLike)):
+                file = open(rawfile, "rb")
+            else:
+                file = cast(IO[Buffer], rawfile)
         if attr["st_size"] <= 2048:
-            return None, self.fs.as_path(path.lstrip("/")).read_bytes()
-        file = cast(BinaryIO, self.fs.as_path(path.lstrip("/")).open("rb"))
+            return None, file.read()
         if start == 0:
             # cache 2048 in bytes (2 KB)
             preread = file.read(2048)
@@ -292,7 +336,7 @@ class AlistFuseOperations(Operations):
         path = normalize("NFC", path)
         realpath = self.normpath_map.get(path, path)
         try:
-            ls = self.fs.listdir_path(realpath.lstrip("/"))
+            ls = self.fs.listdir_path(realpath.lstrip("/"), refresh=self.refresh)
             for pathobj in ls:
                 name    = pathobj.name
                 subpath = pathobj.path
@@ -314,7 +358,7 @@ class AlistFuseOperations(Operations):
                             )
                         data = url.encode("utf-8")
                     else:
-                        data = pathobj.get_url(token=self.token, ensure_ascii=True).encode("utf-8")
+                        data = pathobj.get_url(token=self.token, ensure_ascii=False).encode("utf-8")
                     size = len(cast(bytes, data))
                     name += ".strm"
                 elif predicate and not predicate(pathobj):
@@ -328,6 +372,7 @@ class AlistFuseOperations(Operations):
                     st_ctime=pathobj["ctime"], 
                     st_mtime=pathobj["mtime"], 
                     st_atime=pathobj.get("atime") or pathobj["mtime"], 
+                    _path=pathobj, 
                     _data=data, 
                 )
                 normsubpath = joinpath(path, normname)

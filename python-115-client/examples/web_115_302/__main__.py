@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 9)
+__version__ = (0, 2)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
 🚫 注意事项：请求头需要携带 User-Agent。
 如果使用 web 的下载接口，则有如下限制：
     - 大于等于 115 MB 时不能下载
-    - 不能直接请求直链，需要携带特定的 Cookie 和 User-Agent
+    - 不能直接请求直链，因为需要携带特定的 Cookie 和 User-Agent，所以文件由服务器代理转发，不走 302
 """
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -65,17 +65,26 @@ parser = ArgumentParser(
 
 6. 支持的查询参数
 
- 参数    | 类型    | 必填 | 说明
--------  | ------- | ---- | ----------
-pickcode | string  | 否   | 文件或文件夹的 pickcode，优先级高于 id
-id       | integer | 否   | 文件或文件夹的 id，优先级高于 sha1
-sha1     | string  | 否   | 文件或文件夹的 id，优先级高于 path
-path     | string  | 否   | 文件或文件夹的路径，优先级高于 url 中的路径部分
-method   | string  | 否   | 0. '':     缺省值，直接下载
-         |         |      | 2. 'url':  这个文件的下载链接和请求头，JSON 格式
-         |         |      | 2. 'attr': 这个文件或文件夹的信息，JSON 格式
-         |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息，JSON 格式
-         |         |      | 4. 'desc': 这个文件或文件夹的备注，text/html
+ 参数      | 类型    | 必填 | 说明
+---------  | ------- | ---- | ----------
+pickcode   | string  | 否   | 文件或文件夹的 pickcode，优先级高于 id
+id         | integer | 否   | 文件或文件夹的 id，优先级高于 sha1
+sha1       | string  | 否   | 文件或文件夹的 id，优先级高于 path
+path       | string  | 否   | 文件或文件夹的路径，优先级高于 url 中的路径部分
+method     | string  | 否   | 0. '':     缺省值，直接下载
+           |         |      | 2. 'url':  这个文件的下载链接和请求头，JSON 格式
+           |         |      | 2. 'attr': 这个文件或文件夹的信息，JSON 格式
+           |         |      | 3. 'list': 这个文件夹内所有文件和文件夹的信息，JSON 格式
+           |         |      | 4. 'desc': 这个文件或文件夹的备注，text/html
+
+当文件被下载时，可以有其它查询参数
+
+ 参数      | 类型    | 必填 | 说明
+---------  | ------- | ---- | ----------
+web        | string  | 否   | 使用 web 接口获取下载链接（文件由服务器代理转发，不走 302）
+m3u8       | string  | 否   | 文件作为 m3u8 打开，需要用到 web 的 cookies（如不提供则自动扫码）
+definition | integer | 否   | m3u8 的分辨率，默认值 0，即所有分辨率，其它的选项：3 - HD（标清），4 - UD（高清）
+image      | string  | 否   | 文件作为图片打开
 
 7. 支持 webdav
 
@@ -288,6 +297,8 @@ sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
 pickcode_of_image: set[str] = set()
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
+# NOTE: 缓存图片的 CDN 直链 1 小时
+image_url_cache: MutableMapping[str, str] = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 
@@ -512,10 +523,61 @@ def redirect_exception_response(func, /):
     return update_wrapper(wrapper, func)
 
 
+def get_m3u8(pickcode: str):
+    global web_cookies
+    user_agent = request.headers.get("User-Agent") or ""
+    definition = request.args.get("definition") or "0"
+
+    url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
+
+    with web_login_lock:
+        if not web_cookies:
+            if device == "web":
+                web_cookies = client.cookies
+            else:
+                web_cookies = client.login_another_app("web").cookies
+    while True:
+        try:
+            data = urlopen(url, parse=False, headers={"User-Agent": user_agent, "Cookie": web_cookies})
+            break
+        except HTTPError as e:
+            if e.status not in (403, 405):
+                raise
+            with web_login_lock:
+                web_cookies = client.login_another_app("web", replace=device=="web").cookies
+    if not data:
+        raise FileNotFoundError(errno.ENOENT, f"this file does not have .m3u8, pickcode: {pickcode!r}")
+    if definition == "0":
+        return Response(data, mimetype="flask_app/x-mpegurl")
+    return redirect(data.split()[-1].decode("ascii"))
+
+
+def get_image_url(pickcode: str):
+    if image_url_cache and (url := image_url_cache.get(pickcode)):
+        return redirect(url)
+    resp = relogin_wrap(
+        client.fs_files_image, 
+        pickcode, 
+        headers={"User-Agent": ""}, 
+        request=do_request, 
+    )
+    if not resp["state"]:
+        raise FileNotFoundError(errno.ENOENT, pickcode)
+    url = resp["data"]["origin_url"]
+    url = cast(str, urlopen(url, "HEAD", headers={"User-Agent": ""}, redirect=False).headers["Location"])
+    if image_url_cache is not None:
+        image_url_cache[pickcode] = url
+    return redirect(url)
+
+
 def get_url(pickcode: str):
-    if request.args.get("m3u8") not in (None, "false"):
+    if request.args.get("m3u8") not in (None, "0", "false"):
         return get_m3u8(pickcode)
-    use_web_api = request.args.get("web") not in (None, "false")
+    elif (as_image := request.args.get("image")) not in ("0", "false") and (
+        as_image is not None or pickcode in pickcode_of_image
+    ):
+        return get_image_url(pickcode)
+    use_web_api = request.args.get("web") not in (None, "0", "false")
     request_headers = request.headers
     user_agent = request_headers.get("User-Agent") or ""
     range_request_key = (request.remote_addr or "", user_agent, pickcode, str(request.range))
@@ -529,7 +591,7 @@ def get_url(pickcode: str):
             url = url_cache[(pickcode, user_agent)] = relogin_wrap(
                 fs.get_url_from_pickcode, 
                 pickcode, 
-                headers={"User-Agent": user_agent, "Server": ""}, 
+                headers={"User-Agent": user_agent}, 
                 use_web_api=use_web_api, 
             )
     else:
@@ -556,36 +618,9 @@ def get_url(pickcode: str):
             headers=resp_headers, 
             status=resp.status, 
         )
+    if url["file_name"].lower().endswith((".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp")):
+        pickcode_of_image.add(pickcode)
     return redirect(url)
-
-
-def get_m3u8(pickcode: str):
-    global web_cookies
-    user_agent = request.headers.get("User-Agent") or ""
-    definition = request.args.get("definition") or "0"
-
-    url = f"http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
-
-    with web_login_lock:
-        if not web_cookies:
-            if device == "web":
-                web_cookies = client.cookies
-            else:
-                web_cookies = client.login_another_app("web").cookies
-    while True:
-        try:
-            data = urlopen(url, parse=False, headers={"User-Agent": user_agent, "Cookie": web_cookies})
-            break
-        except HTTPError as e:
-            if e.status not in (403, 405):
-                raise
-            with web_login_lock:
-                web_cookies = client.login_another_app("web", replace=device=="web").cookies
-    if not data:
-        raise FileNotFoundError(f"this file does not have .m3u8, pickcode: {pickcode!r}")
-    if definition == "0":
-        return Response(data, mimetype="flask_app/x-mpegurl")
-    return redirect(data.split()[-1].decode("ascii"))
 
 
 def relogin(exc=None):
@@ -682,14 +717,20 @@ def query(path: str):
             attr["url"] = f"{path_url}?id={attr['id']}"
             attr["short_url"] = f"{origin}?id={attr['id']}"
         else:
-            short_url = f"{origin}?pickcode={attr['pickcode']}"
-            url = f"{path_url}?pickcode={attr['pickcode']}"
+            pickcode = cast(str, attr["pickcode"])
+            short_url = f"{origin}?pickcode={pickcode}"
+            url = f"{path_url}?pickcode={pickcode}"
             if attr["violated"] and attr["size"] < 1024 * 1024 * 115:
                 short_url += "&web=true"
                 url += "&web=true"
             attr["url"] = url
             attr["short_url"] = short_url
             attr["format_size"] = format_bytes(attr["size"])
+            sha1_to_pickcode[attr["sha1"]] = id_to_pickcode[attr["id"]] = pickcode
+            if attr.get("class") == "PIC" or attr.get("thumb"):
+                pickcode_of_image.add(pickcode)
+                attr["url"] += "&image=true"
+                attr["short_url"] += "&image=true"
         if password:
             attr["url"] += "&password=" + password
             attr["short_url"] += "&password=" + password
@@ -708,7 +749,7 @@ def query(path: str):
                     if len(sha1) != 40:
                         return "Bad sha1", 400
                     try:
-                        attr = next(client.fs.search(root, search_value=sha1, limit=1, show_dir=0))
+                        attr = next(relogin_wrap(fs.search, root, search_value=sha1, limit=1, show_dir=0))
                         attr.path
                     except StopIteration:
                         return f"no such file: sha1={sha1!r}", 404
@@ -719,10 +760,6 @@ def query(path: str):
                 if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
                     raise PermissionError(errno.EACCES, "out of root range")
             update_attr(attr)
-            if not attr["is_directory"]:
-                pickcode = cast(str, attr["pickcode"])
-                id_to_pickcode[attr["id"]] = pickcode
-                sha1_to_pickcode[attr["sha1"]] = pickcode
             json_str = dumps({k: attr.get(k) for k in KEYS})
             return Response(json_str, content_type="application/json; charset=utf-8")
         case "list":
@@ -738,11 +775,6 @@ def query(path: str):
                 children = relogin_wrap(fs.listdir_attr, path)
             if children and root != 0 and not any(info["id"] == root for info in children[0]["ancestors"][:-1]):
                 raise PermissionError(errno.EACCES, "out of root range")
-            for attr in children:
-                if not attr["is_directory"]:
-                    pickcode = cast(str, attr["pickcode"])
-                    id_to_pickcode[attr["id"]] = pickcode
-                    sha1_to_pickcode[attr["sha1"]] = pickcode
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
@@ -774,7 +806,7 @@ def query(path: str):
         if pickcode := sha1_to_pickcode.get(sha1):
             return get_url(pickcode)
         try:
-            attr = next(client.fs.search(root, search_value=sha1, limit=1, show_dir=0))
+            attr = next(relogin_wrap(fs.search, root, search_value=sha1, limit=1, show_dir=0))
         except StopIteration:
             return f"no such file: sha1={sha1!r}", 404
     elif path_persistence_commitment and (fid := fs.path_to_id.get(path)):
@@ -787,17 +819,11 @@ def query(path: str):
     if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
         raise PermissionError(errno.EACCES, "out of root range")
     if not attr["is_directory"]:
-        pickcode = cast(str, attr["pickcode"])
-        id_to_pickcode[attr["id"]] = pickcode
-        sha1_to_pickcode[attr["sha1"]] = pickcode
-        return get_url(pickcode)
+        update_attr(attr)
+        return get_url(attr["pickcode"])
     children = relogin_wrap(fs.listdir_attr, attr["id"])
     for subattr in children:
         update_attr(subattr)
-        if not subattr["is_directory"]:
-            pickcode = cast(str, subattr["pickcode"])
-            id_to_pickcode[subattr["id"]] = pickcode
-            sha1_to_pickcode[subattr["sha1"]] = pickcode
     fid = attr["id"]
     if fid == root:
         header = f'<strong><a href="/?id={root}&method=list&password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>'
@@ -1014,6 +1040,7 @@ def query(path: str):
     )
 
 
+# NOTE: https://wsgidav.readthedocs.io/en/latest/user_guide_configure.html
 WSGIDAV_CONFIG = {
     "host": args.host, 
     "port": args.port, 
@@ -1058,13 +1085,9 @@ if __name__ == "__main__":
         use_evalex=debug, 
         threaded=True, 
     )
-    if cookies_path:
-        kwargs["extra_files"] = (cookies_path,)
-        kwargs["use_reloader"] = True
     run_simple(**kwargs)
 
-# TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future
-# TODO: 可能是 wsgidav 的问题，propfind 响应太慢了，即使给文件夹做了缓存，需要看看怎么优化
-# TODO: 增加对图片走 cdn 的支持，增加参数以标记这是图片
-# TODO: 监控配置文件然后重启：115-cookies.txt（if any），wsgidav_config.yml
+# TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future，对 web 和 webdav 都如此
+# TODO: 可能是 wsgidav 的问题，propfind 响应太慢了，即使给文件夹做了缓存，需要看看怎么优化，可能需要对 propfind 的结果做缓存
+# TODO: 完整的 wsgidav 配置文件支持
 

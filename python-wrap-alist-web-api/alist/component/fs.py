@@ -1024,7 +1024,7 @@ class AlistPath(Mapping, PathLike[str]):
             return ""
         elif path.startswith(other + "/"):
             return path[len(other)+1:]
-        raise ValueError(f"{path!r} is not in the subpath of {other!r}")
+        raise ValueError(f"{path!r} is not a subpath of {other!r}")
 
     @cached_property
     def relatives(self, /) -> tuple[str]:

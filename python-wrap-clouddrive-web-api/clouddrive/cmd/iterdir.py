@@ -12,7 +12,10 @@ KEYS = (
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
+    from pathlib import Path
+    from sys import path
 
+    path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
     from argparse import RawTextHelpFormatter
@@ -22,14 +25,15 @@ else:
 
 
 def main(args):
-    from clouddrive import CloudDriveFileSystem, __version__
-
     if args.version:
+        from clouddrive import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
     from sys import stdout
     from typing import Callable
+
+    from clouddrive import CloudDriveFileSystem
 
     fs = CloudDriveFileSystem.login(args.origin, args.username, args.password)
     keys = args.keys or KEYS

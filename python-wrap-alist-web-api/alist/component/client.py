@@ -5105,9 +5105,9 @@ class AlistClient:
         if self.base_path != "/":
             path = self.base_path + path
         if ensure_ascii:
-            url = self.origin + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
-        else:
             url = self.origin + "/d" + quote(path, safe="@[]:/!$&'()*+,;=")
+        else:
+            url = self.origin + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
         if token:
             url += "?sign=" + self.calc_sign(path, token, f":{expire_timestamp}")
         return url

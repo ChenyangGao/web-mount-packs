@@ -23,7 +23,7 @@ from urllib.parse import urljoin
 from zipfile import is_zipfile
 
 from argtools import argcount
-from alist import AlistPath
+from clouddrive import CloudDrivePath
 
 
 PARSERS: Final[dict[str, Callable]] = {}
@@ -233,7 +233,7 @@ register: Final = bind_function_registry(PARSERS)
 
 @register("base-url")
 def parse_base_url(base_url: str, /, globals: dict) -> Callable:
-    def out(path: AlistPath):
+    def out(path: CloudDrivePath):
         return urljoin(base_url, path.relative_to())
     return out
 
@@ -243,7 +243,7 @@ def parse_expression(expr: str | PathLike, /, globals: dict) -> Callable:
     if isinstance(expr, PathLike):
         return parse_expression(open(expr, encoding="utf-8").read(), globals)
     code = compile(expr.strip(), "-", "eval")
-    def out(path: AlistPath):
+    def out(path: CloudDrivePath):
         return eval(code, globals, {"path": path})
     return out
 
@@ -272,7 +272,7 @@ def parse_statement(script: str | PathLike, /, globals: dict) -> Callable:
     if isinstance(script, PathLike):
         return parse_statement(open(script, encoding="utf-8").read(), globals)
     code = compile(dedent(script).strip().removesuffix(">>> "), "-", "exec")
-    def out(path: AlistPath):
+    def out(path: CloudDrivePath):
         ns: dict = {"path": path}
         eval(code, globals, ns)
         try:
@@ -357,8 +357,8 @@ def parse_resub_expr(expr: str | PathLike, /, globals: dict) -> Callable:
             else:
                 return m.expand(repl)
         return do_repl
-    def out(path: AlistPath):
-        return sub(new_repl(), path.get_url(token=globals.get("token"), ensure_ascii=True), count=count)
+    def out(path: CloudDrivePath):
+        return sub(new_repl(), path.get_url(), count=count)
     return out
 
 

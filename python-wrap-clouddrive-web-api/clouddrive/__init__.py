@@ -544,17 +544,21 @@ class CloudDrivePath(Mapping, PathLike[str]):
     ) -> str:
         return self.fs.read_text(self, encoding=encoding, errors=errors, newline=newline)
 
-    def relative_to(self, other: str | CloudDrivePath, /) -> str:
-        if isinstance(other, CloudDrivePath):
+    def relative_to(self, other: None | str | CloudDrivePath = None, /) -> str:
+        if other is None:
+            other = self.fs.path
+        elif isinstance(other, CloudDrivePath):
             other = other.path
         elif not other.startswith("/"):
             other = self.fs.abspath(other)
         path = self.path
-        if path == other:
+        if other == "/":
+            return path[1:]
+        elif path == other:
             return ""
-        elif path.startswith(other+"/"):
+        elif path.startswith(other + "/"):
             return path[len(other)+1:]
-        raise ValueError(f"{path!r} is not in the subpath of {other!r}")
+        raise ValueError(f"{path!r} is not a subpath of {other!r}")
 
     @cached_property
     def relatives(self, /) -> tuple[str]:

@@ -3,6 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 5)
+__requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome"]
 __doc__ = """\
         \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
 
@@ -64,7 +65,8 @@ print(__doc__)
 
 from os.path import dirname, expanduser, join as joinpath, realpath
 
-cookies = environ.get("cookies", "")
+cookies = environ.get("cookies", "").strip()
+device = ""
 cookies_path = environ.get("cookies_path", "")
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
 url_ttl = float(environ.get("url_ttl", "1"))
@@ -85,7 +87,8 @@ if not cookies:
                 continue
             seen.add(cookies_dir)
             try:
-                if cookies := open(joinpath(cookies_dir, "115-cookies.txt")).read():
+                if cookies := open(joinpath(cookies_dir, "115-cookies.txt")).read().strip():
+                    cookies_path = joinpath(cookies_dir, "115-cookies.txt")
                     break
             except FileNotFoundError:
                 pass
@@ -93,19 +96,26 @@ if not cookies:
     raise SystemExit("未能获得 cookies")
 
 
-from collections.abc import Iterator, MutableMapping
+from asyncio import Lock
+from collections.abc import Iterable, Iterator, MutableMapping
 try:
     from collections.abc import Buffer # type: ignore
 except ImportError:
     Buffer = bytes | bytearray | memoryview
 from base64 import b64decode, b64encode
+from enum import Enum
 from posixpath import split as splitpath
 from typing import cast, Final
+from urllib.parse import urlencode
 
 try:
-    from blacksheep import Application, Request, route, redirect, text
+    import blacksheep
+    from blacksheep import Application, route, redirect, text
     from blacksheep.client.session import ClientSession
+    from blacksheep.common.types import normalize_headers
     from blacksheep.contents import FormContent
+    from blacksheep.exceptions import HTTPException
+    from blacksheep.messages import Request, Response
     from cachetools import LRUCache, TTLCache
     from Crypto.PublicKey import RSA
     from Crypto.Cipher import PKCS1_v1_5
@@ -113,10 +123,14 @@ try:
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "blacksheep", "cachetools", "orjson", "pycryptodome"], check=True)
-    from blacksheep import Application, Request, route, redirect, text
+    run([executable, "-m", "pip", "install", "-U", *__requirements__], check=True)
+    import blacksheep
+    from blacksheep import Application, route, redirect, text
     from blacksheep.client.session import ClientSession
+    from blacksheep.common.types import normalize_headers
     from blacksheep.contents import FormContent
+    from blacksheep.exceptions import HTTPException
+    from blacksheep.messages import Request, Response
     from cachetools import LRUCache, TTLCache
     from Crypto.PublicKey import RSA
     from Crypto.Cipher import PKCS1_v1_5
@@ -140,6 +154,8 @@ RSA_encrypt: Final = PKCS1_v1_5.new(RSA.construct((
 ))).encrypt
 
 app = Application()
+logger = getattr(app, "logger")
+cookies_lock = Lock()
 
 # NOTE: id 到 pickcode 的映射
 ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
@@ -156,10 +172,13 @@ if url_reuse_factor not in (0, 1):
         URL_CACHE = TTLCache(1024, ttl=url_ttl)
     elif url_ttl < 0:
         URL_CACHE = LRUCache(1024)
+# NOTE: 缓存图片的 CDN 直链 1 小时
+IMAGE_URL_CACHE: MutableMapping[str, bytes] = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 RANGE_REQUEST_COOLDOWN: None | MutableMapping[tuple[str, str, str, bytes], None] = None
 if url_range_request_cooldown > 0:
     RANGE_REQUEST_COOLDOWN = TTLCache(8196, ttl=url_range_request_cooldown)
+
 
 to_bytes = int.to_bytes
 from_bytes = int.from_bytes
@@ -241,11 +260,125 @@ def rsa_decode(cipher_data: Buffer, /) -> bytearray:
     return xor(tmp, b"\x8d\xa5\xa5\x8d")
 
 
-@app.lifespan
-async def register_http_client():
-    async with ClientSession() as client:
-        app.services.register(ClientSession, instance=client)
-        yield
+AppEnum = Enum("AppEnum", {
+    "web": 1, 
+    "ios": 6, 
+    "115ios": 8, 
+    "android": 9, 
+    "115android": 11, 
+    "115ipad": 14, 
+    "tv": 15, 
+    "qandroid": 16, 
+    "windows": 19, 
+    "mac": 20, 
+    "linux": 21, 
+    "wechatmini": 22, 
+    "alipaymini": 23, 
+})
+
+
+def get_enum_name(val, cls):
+    if isinstance(val, cls):
+        return val.name
+    try:
+        if isinstance(val, str):
+            return cls[val].name
+    except KeyError:
+        pass
+    return cls(val).name
+
+
+async def do_request(
+    client: ClientSession, 
+    url: str | bytes | blacksheep.url.URL, 
+    method: str = "GET", 
+    content: None | blacksheep.contents.Content = None, 
+    headers: None | dict[str, str] = None, 
+    params: None | dict[str, str] = None, 
+) -> Response:
+    current_cookies = cookies
+    if headers is None:
+        headers = {"Cookie": cookies}
+    else:
+        headers["Cookie"] = cookies
+    request = Request(method.upper(), client.get_url(url, params), normalize_headers(headers))
+    response = await client.send(request.with_content(content) if content else request)
+    if response.status == 405:
+        async with cookies_lock:
+            if current_cookies == cookies:
+                await relogin(client)
+        headers["Cookies"] = cookies
+        return await do_request(client, url, method, content, headers, params)
+    if response.status >= 400:
+        raise HTTPException(response.status, response.reason)
+    return response
+
+
+async def request_json(
+    client: ClientSession, 
+    url: str | bytes | blacksheep.url.URL, 
+    method: str = "GET", 
+    content: None | blacksheep.contents.Content = None, 
+    headers: None | dict[str, str] = None, 
+    params: None | dict[str, str] = None, 
+) -> dict:
+    resp = await do_request(client, url, method, content=content, headers=headers, params=params)
+    json = loads((await resp.read()) or b"")
+    if not json.get("state", True):
+        raise OSError(json)
+    return json
+
+
+async def login_device(client: ClientSession) -> str:
+    url = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices"
+    resp = await request_json(client, url)
+    return next((d["icon"] for d in resp["data"]["list"] if d["is_current"]), "qandroid")
+
+
+async def login_qrcode_token(client: ClientSession) -> dict:
+    """获取二维码
+    """
+    url = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
+    return await request_json(client, url)
+
+
+async def login_qrcode_scan(client: ClientSession, uid: str) -> dict:
+    """扫描二维码
+    """
+    url = f"https://qrcodeapi.115.com/api/2.0/prompt.php"
+    return await request_json(client, url, params={"uid": uid})
+
+
+async def login_qrcode_scan_confirm(client: ClientSession, uid: str) -> dict:
+    """确认扫描二维码
+    """
+    url = f"https://hnqrcodeapi.115.com/api/2.0/slogin.php"
+    return await request_json(client, url, params={"key": uid, "uid": uid, "client": "0"})
+
+
+async def login_qrcode_result(client: ClientSession, uid: str, app: str = "web") -> dict:
+    """把扫码结果绑定到设备
+    """
+    app = get_enum_name(app, AppEnum)
+    url = "https://passportapi.115.com/app/1.0/%s/1.0/login/qrcode/" % app
+    return await request_json(client, url, "POST", content=FormContent({"account": uid}))
+
+
+async def relogin(client: ClientSession) -> dict:
+    """自动扫二维码重新登录
+    """
+    global cookies, device
+    logger.warning("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码 🦿\x1b[0m")
+    if not device:
+        device = await login_device(client)
+    uid = (await login_qrcode_token(client))["data"]["uid"]
+    await login_qrcode_scan(client, uid)
+    await login_qrcode_scan_confirm(client, uid)
+    resp = await login_qrcode_result(client, uid, device)
+    cookies = "; ".join("%s=%s" % e for e in resp["data"]["cookie"].items())
+    if cookies_path:
+        open(cookies_path, "w").write(cookies)
+    return resp
 
 
 def process_info(info: dict, dir: None | str = None) -> str:
@@ -261,80 +394,77 @@ def process_info(info: dict, dir: None | str = None) -> str:
     return pickcode
 
 
+@app.lifespan
+async def register_http_client():
+    async with ClientSession(follow_redirects=False) as client:
+        app.services.register(ClientSession, instance=client)
+        yield
+
+
 async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
     if pickcode := ID_TO_PICKCODE.get(id):
         return pickcode
-    resp = await client.get(
+    json = await request_json(
+        client, 
         "https://webapi.115.com/files/get_info", 
         params={"file_id": id}, 
-        headers={"Cookie": cookies}, 
     )
-    json = loads((await resp.read()) or b"")
-    if not json["state"]:
-        raise FileNotFoundError
     info = json["data"][0]
     if "fid" not in info:
-        raise FileNotFoundError
+        raise FileNotFoundError(id)
     return process_info(info)
 
 
 async def get_pickcode_by_sha1(client: ClientSession, sha1: str) -> str:
     if len(sha1) != 40:
-        raise FileNotFoundError
+        raise FileNotFoundError(sha1)
     if pickcode := SHA1_TO_PICKCODE.get(sha1):
         return pickcode
-    resp = await client.get(
+    json = await request_json(
+        client, 
         "https://webapi.115.com/files/search", 
-        params={"search_value": sha1, "limit": 1, "show_dir": 0}, 
-        headers={"Cookie": cookies}, 
+        params={"search_value": sha1, "limit": "1", "show_dir": "0"}, 
     )
-    json = loads((await resp.read()) or b"")
-    if not json["state"] or not json["count"]:
-        raise FileNotFoundError
-    info = json["data"][0]
-    if "fid" not in info:
-        raise FileNotFoundError
-    return process_info(info)
+    if not json["count"]:
+        raise FileNotFoundError(sha1)
+    return process_info(json["data"][0])
 
 
 async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
     path = path.strip("/")
     dir_, name = splitpath(path)
     if not name:
-        raise FileNotFoundError
+        raise FileNotFoundError(path)
     if fid := PATH_TO_ID.get(path):
         if path_persistence_commitment and (pickcode := ID_TO_PICKCODE.get(fid)):
             return pickcode
-        resp = await client.get(
+        json = await request_json(
+            client, 
             "https://webapi.115.com/files/file", 
             params={"file_id": fid}, 
-            headers={"Cookie": cookies}, 
         )
-        json = loads((await resp.read()) or b"")
         if json["state"]:
             info = json["data"][0]
             if info["file_name"] == name:
                 return info["pick_code"]
         PATH_TO_ID.pop(path, None)
     if dir_:
-        resp = await client.get(
+        json = await request_json(
+            client, 
             "https://webapi.115.com/files/getid", 
             params={"path": dir_}, 
-            headers={"Cookie": cookies}, 
         )
-        json = loads((await resp.read()) or b"")
         if not (pid := json["id"]):
-            raise FileNotFoundError
+            raise FileNotFoundError(path)
     else:
         pid = 0
     params = {"count_folders": 0, "record_open_time": 0, "show_dir": 1, "cid": pid, "limit": 1000, "offset": 0}
     while True:
-        resp = await client.get(
+        json = await request_json(
+            client, 
             "https://webapi.115.com/files", 
             params=params, 
-            headers={"Cookie": cookies}, 
         )
-        json = loads((await resp.read()) or b"")
         it = iter(json["data"])
         for info in it:
             if "fid" in info:
@@ -346,17 +476,23 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
         if json["offset"] + len(json["data"]) == json["count"]:
             break
         params["offset"] += 1000
-    raise FileNotFoundError
+    raise FileNotFoundError(path)
 
 
-async def get_image_url(client: ClientSession, pickcode: str) -> str:
-    resp = await client.get(
+async def get_image_url(client: ClientSession, pickcode: str) -> bytes:
+    if IMAGE_URL_CACHE and (url := IMAGE_URL_CACHE.get(pickcode)):
+        return url
+    json = await request_json(
+        client, 
         "https://webapi.115.com/files/image", 
         params={"pickcode": pickcode}, 
-        headers={"Cookie": cookies}, 
     )
-    json = loads((await resp.read()) or b"")
-    return json["data"]["origin_url"]
+    origin_url = json["data"]["origin_url"]
+    resp = await do_request(client, origin_url, "HEAD")
+    url = cast(bytes, resp.get_first_header(b"Location"))
+    if IMAGE_URL_CACHE is not None:
+        IMAGE_URL_CACHE[pickcode] = url
+    return url
 
 
 @route("/", methods=["GET", "HEAD"])
@@ -399,14 +535,13 @@ async def get_download_url(
                 return redirect(url)
         if pickcode in PICKCODE_OF_IMAGE:
             return redirect(await get_image_url(client, pickcode))
-        resp = await client.post(
+        json = await request_json(
+            client, 
             "https://proapi.115.com/app/chrome/downurl", 
+            method="POST", 
             content=FormContent({"data": rsa_encode(b'{"pickcode":"%s"}' % bytes(pickcode, "ascii")).decode("ascii")}), 
-            headers={"Cookie": cookies, "User-Agent": user_agent}, 
+            headers={"User-Agent": user_agent}, 
         )
-        json = loads((await resp.read()) or b"")
-        if not json["state"]:
-            raise FileNotFoundError
         data = loads(rsa_decode(json["data"]))
         item = next(info for info in data.values())
         ID_TO_PICKCODE[next(iter(data))] = item["pick_code"]

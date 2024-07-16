@@ -97,6 +97,8 @@ def normalize_info(
         info2["violated"] = bool(info["c"])
     if "u" in info:
         info2["thumb"] = info["u"]
+    if "class" in info:
+        info2["class"] = info["class"]
     if "play_long" in info:
         info2["play_long"] = info["play_long"]
     info2["ico"] = info.get("ico", "folder" if is_directory else "")
@@ -961,7 +963,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             resp = yield partial(
                 self.client.fs_info, 
                 {"file_id": id}, 
-                request=self.async_request, 
+                request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
             if resp["state"]:
@@ -1097,7 +1099,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 file, 
                 filename=name, 
                 pid=pid, 
-                request=self.async_request, 
+                request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
             data = resp["data"]

@@ -1049,7 +1049,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             return ""
         elif path.startswith(other+"/"):
             return path[len(other)+1:]
-        raise ValueError(f"{path!r} is not in the subpath of {other!r}")
+        raise ValueError(f"{path!r} is not a subpath of {other!r}")
 
     @cached_property
     def relatives(self, /) -> tuple[str]:
@@ -1609,7 +1609,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         *, 
         async_: Literal[False, True] = False, 
     ) -> str | Coroutine[Any, Any, str]:
-        return self.get_path(path, pid=self.id, async_=async_)
+        return self.get_path(path, async_=async_)
 
     @overload
     def as_path(

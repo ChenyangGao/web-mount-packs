@@ -2179,6 +2179,92 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
+    def fs_files3(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files3(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_files3(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取文件夹的中的文件列表和基本信息
+        GET https://aps.115.com/natsort/files.php
+        payload:
+            - cid: int | str = 0 # 文件夹 id
+            - limit: int = 32    # 一页大小，意思就是 page_size
+            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+
+            - aid: int | str = 1
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - code: int | str = <default>
+            - count_folders: 0 | 1 = 1
+            - custom_order: int | str = <default>
+            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - format: str = "json"
+            - is_q: 0 | 1 = <default>
+            - is_share: 0 | 1 = <default>
+            - natsort: 0 | 1 = <default>
+            - o: str = <default>
+                # 用某字段排序：
+                # - 文件名："file_name"
+                # - 文件大小："file_size"
+                # - 文件种类："file_type"
+                # - 修改时间："user_utime"
+                # - 创建时间："user_ptime"
+                # - 上次打开时间："user_otime"
+            - record_open_time: 0 | 1 = 1
+            - scid: int | str = <default>
+            - show_dir: 0 | 1 = 1
+            - snap: 0 | 1 = <default>
+            - source: str = <default>
+            - star: 0 | 1 = <default> # 是否星标文件
+            - suffix: str = <default> # 后缀名
+            - type: int = <default>
+                # 文件类型：
+                # - 所有: 0
+                # - 文档: 1
+                # - 图片: 2
+                # - 音频: 3
+                # - 视频: 4
+                # - 压缩包: 5
+                # - 应用: 6
+                # - 书籍: 7
+        """
+        api = "https://aps.115.com/natsort/files.php"
+        if isinstance(payload, int):
+            payload = {
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": payload, 
+            }
+        else:
+            payload = {
+                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, **payload, 
+            }
+        if payload.keys() & frozenset(("asc", "fc_mix", "o")):
+            payload["custom_order"] = 1
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
     def fs_files_getid(
         self, 
         payload: str | dict, 

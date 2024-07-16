@@ -9,6 +9,7 @@ parser = ArgumentParser(
     description="clouddrive 命令行工具集", 
     formatter_class=RawTextHelpFormatter, 
 )
-parser.set_defaults(sub="")
-subparsers = parser.add_subparsers(required=True)
+parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
+parser.set_defaults(func=None)
+subparsers = parser.add_subparsers()
 
