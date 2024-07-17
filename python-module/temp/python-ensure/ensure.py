@@ -18,8 +18,21 @@ from sys import byteorder
 from typing import AsyncContextManager, ContextManager
 from types import FunctionType
 
-from .type import is_buffer
 from undefined import undefined
+
+
+try:
+    from collections.abc import Buffer
+
+    def is_buffer(obj, /) -> bool:
+        return isinstance(obj, Buffer)
+except ImportError:
+    def is_buffer(obj, /) -> bool:
+        try:
+            memoryview(obj)
+            return True
+        except TypeError:
+            return False
 
 
 async def ensure_awaitable(o, /):
@@ -29,43 +42,47 @@ async def ensure_awaitable(o, /):
 
 
 @contextmanager
-def _cm(yield_=None, /):
-    yield yield_
-
-
-def ensure_cm(
-    o, /, default=undefined
-) -> ContextManager:
-    if isinstance(o, ContextManager):
-        return o
-    elif default is undefined:
-        default = o
-    return _cm(o)
+def _cm(ret=None, /):
+    yield ret
 
 
 @asynccontextmanager
-async def _acm(yield_=None, /):
-    yield yield_
+async def _acm(ret=None, /):
+    yield ret
+
+
+def ensure_cm(
+    obj, 
+    /, 
+    default=undefined, 
+) -> ContextManager:
+    if isinstance(obj, ContextManager):
+        return obj
+    elif default is undefined:
+        default = obj
+    return _cm(obj)
 
 
 def ensure_acm(
-    o, /, default=undefined
+    obj, 
+    /, 
+    default=undefined, 
 ) -> AsyncContextManager:
-    if isinstance(o, AsyncContextManager):
-        return o
+    if isinstance(obj, AsyncContextManager):
+        return obj
     elif default is undefined:
-        default = o
-    return _acm(o)
+        default = obj
+    return _acm(obj)
 
 
 def ensure_enum(cls, val):
     if isinstance(val, cls):
         return val
-    try:
-        if isinstance(val, str):
+    elif isinstance(val, str):
+        try:
             return cls[val]
-    except KeyError:
-        pass
+        except KeyError:
+            pass
     return cls(val)
 
 
@@ -92,4 +109,7 @@ def ensure_functype(f, /):
         return update_wrapper(
             lambda *args, **kwds: f(*args, **kwds), f)
     raise TypeError
+
+
+# def ensure_buffer
 

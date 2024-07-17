@@ -565,6 +565,44 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
+    def login_log(
+        self, 
+        payload: dict = {}, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def login_log(
+        self, 
+        payload: dict = {}, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def login_log(
+        self, 
+        payload: dict = {}, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取登录信息
+        GET https://passportapi.115.com/app/1.0/web/1.0/login_log/log
+        payload:
+            - start: int = 0
+            - limit: int = 100
+        """
+        api = "https://passportapi.115.com/app/1.0/web/1.0/login_log/log"
+        payload = {"start": 0, "limit": 100, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
     def login_online(
         self, 
         /, 
@@ -3444,26 +3482,23 @@ class P115Client:
         return ExportDirStatus(self, resp["data"]["export_id"])
 
     @overload
-    def fs_shortcut_get(
+    def fs_shortcut(
         self, 
-        payload: int | str | dict, 
         /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_shortcut_get(
+    def fs_shortcut(
         self, 
-        payload: int | str | dict, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_shortcut_get(
+    def fs_shortcut(
         self, 
-        payload: int | str | dict, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -3472,6 +3507,37 @@ class P115Client:
         GET https://webapi.115.com/category/shortcut
         """
         api = "https://webapi.115.com/category/shortcut"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_shortcut2(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_shortcut2(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_shortcut2(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """罗列所有的快捷入口
+        GET https://proapi.115.com/pc/category/shortcut
+        """
+        api = f"https://proapi.115.com/pc/category/shortcut"
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
@@ -3499,13 +3565,49 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """把一个目录设置或取消为快捷入口
+        """把一个目录设置或取消为快捷入口（快捷入口需要是目录）
         POST https://webapi.115.com/category/shortcut
         payload:
             file_id: int | str # 有多个时，用逗号 "," 隔开
             op: "add" | "delete" = "add"
         """
         api = "https://webapi.115.com/category/shortcut"
+        if isinstance(payload, (int, str)):
+            payload = {"file_id": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_shortcut_set2(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_shortcut_set2(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_shortcut_set2(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """把一个目录设置或取消为快捷入口（快捷入口需要是目录）
+        POST https://proapi.115.com/pc/category/shortcut
+        payload:
+            file_id: int | str # 有多个时，用逗号 "," 隔开
+            op: "add" | "delete" = "add"
+        """
+        api = "https://proapi.115.com/pc/category/shortcut"
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -8131,6 +8233,64 @@ class P115Client:
             payload["sign"] = self.captcha_sign()["sign"]
         api = "https://webapi.115.com/user/captcha"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    ########## Message API ##########
+
+    @overload
+    def msg_get_websocket_host(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def msg_get_websocket_host(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def msg_get_websocket_host(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取 websocket 链接
+        GET https://msg.115.com/?ct=im&ac=get_websocket_host
+        """
+        api = "https://msg.115.com/?ct=im&ac=get_websocket_host"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def msg_contacts_notice(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def msg_contacts_notice(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def msg_contacts_notice(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取提示消息
+        GET https://msg.115.com/?ct=contacts&ac=notice&client=web
+        """
+        api = "https://msg.115.com/?ct=contacts&ac=notice&client=web"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
     ########## Activities API ##########
 

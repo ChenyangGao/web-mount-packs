@@ -981,6 +981,42 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         return run_gen_step(gen_step, async_=async_)
 
     @overload
+    def fs_file(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_file(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_file(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        def gen_step():
+            resp = yield partial(
+                self.client.fs_file, 
+                id, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            if resp["state"]:
+                return resp
+            if resp.get("error") == "文件不存在":
+                raise FileNotFoundError(errno.ENOENT, resp)
+            raise OSError(errno.EIO, resp)
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
     def fs_files(
         self, 
         payload: None | int | dict = None, 
@@ -2621,6 +2657,89 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             )
             return resp.__dict__
         return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def get_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def get_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def get_path(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        if isinstance(id_or_path, int) and (attr_cache := self.attr_cache) is None:
+            def gen_step():
+                patht = yield self.get_patht(id_or_path, async_=async_)
+                return joins(patht)
+            return run_gen_step(gen_step, async_=async_)
+        return super().get_path(id_or_path, pid=pid, async_=async_)
+
+    @overload
+    def get_patht(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> list[str]:
+        ...
+    @overload
+    def get_patht(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, list[str]]:
+        ...
+    def get_patht(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> list[str] | Coroutine[Any, Any, list[str]]:
+        if isinstance(id_or_path, int) and (attr_cache := self.attr_cache) is None:
+            def gen_step():
+                id = id_or_path
+                ls = [""]
+                if id:
+                    resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
+                    if int(resp["path"][-1]["cid"]) == id:
+                        ls.extend(p["name"] for p in resp["path"][1:])
+                    else:
+                        resp = yield self.fs_info(id, async_=async_)
+                        info = resp["data"][0]
+                        pid, name = int(info["cid"]), info["n"]
+                        if pid:
+                            resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
+                            ls.extend(p["name"] for p in resp["path"][1:])
+                        ls.append(name)
+                return ls
+            return run_gen_step(gen_step, async_=async_)
+        return super().get_patht(id_or_path, pid=pid, async_=async_)
 
     @overload
     def get_pickcode(

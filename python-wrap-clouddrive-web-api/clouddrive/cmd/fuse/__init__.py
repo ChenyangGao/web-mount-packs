@@ -262,8 +262,9 @@ def main(args):
 
     if not exists(mount_point):
         import atexit
+        from os import makedirs, removedirs
+        makedirs(mount_point)
         def remove_mount_point():
-            from os import removedirs
             try:
                 removedirs(mount_point)
             except:
