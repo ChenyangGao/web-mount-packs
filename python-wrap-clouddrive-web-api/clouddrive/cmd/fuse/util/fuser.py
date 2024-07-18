@@ -28,7 +28,7 @@ from functools import partial, update_wrapper
 from http.client import InvalidURL
 from itertools import count
 from os import PathLike
-from posixpath import join as joinpath, split as splitpath
+from posixpath import join as joinpath, split as splitpath, splitext
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
 from sys import maxsize
@@ -228,19 +228,26 @@ class CloudDriveFuseOperations(Operations):
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
         pid = fuse_get_context()[-1]
         path = self.normpath_map.get(normalize("NFC", path), path)
-        if pid > 0:
-            process = Process(pid)
-            exe = process.exe()
-            if (
-                self.direct_open_names is not None and self.direct_open_names(process.name().lower()) or
-                self.direct_open_exes is not None and self.direct_open_exes(exe)
-            ):
-                process.kill()
-                def push():
-                    sleep(.01)
-                    run([exe, self.fs.get_url(path.lstrip("/"))])
-                start_new_thread(push, ())
-                return 0
+        if pid > 0 and (self.direct_open_names or self.direct_open_exes):
+            try:
+                process = Process(pid)
+                exe = process.exe()
+                if (
+                    self.direct_open_names and self.direct_open_names(process.name().lower()) or
+                    self.direct_open_exes and self.direct_open_exes(exe)
+                ):
+                    process.kill()
+                    def push():
+                        sleep(.01)
+                        run([exe, self.fs.get_url(path.lstrip("/"))])
+                    start_new_thread(push, ())
+                    return 0
+            except Exception as e:
+                self._log(
+                    logging.ERROR, 
+                    "can't reopen process \x1b[3;4m%s\x1b[0m\n  |_ \x1b[1;4;31m%s\x1b[0m: %s", 
+                    PROCESS_STR, type(e).__qualname__, e, 
+                )
         return self._next_fh()
 
     def _open(self, path: str, /, start: int = 0):
@@ -289,7 +296,9 @@ class CloudDriveFuseOperations(Operations):
             except KeyError:
                 file, preread = self._fh_to_file[fh] = self._open(path, offset)
             cache_size = len(preread)
-            if offset < cache_size:
+            if file is None:
+                return preread[offset:offset+size]
+            elif offset < cache_size:
                 if offset + size <= cache_size:
                     return preread[offset:offset+size]
                 elif file is not None:
@@ -353,7 +362,7 @@ class CloudDriveFuseOperations(Operations):
                     else:
                         data = pathobj.get_url(ensure_ascii=False).encode("utf-8")
                     size = len(cast(bytes, data))
-                    name += ".strm"
+                    name = splitext(name)[0] + ".strm"
                 elif predicate and not predicate(pathobj):
                     continue
                 else:

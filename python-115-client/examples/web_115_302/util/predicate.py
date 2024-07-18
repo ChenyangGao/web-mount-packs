@@ -8,13 +8,13 @@ from collections.abc import Callable
 from re import compile as re_compile
 from runpy import run_path
 from textwrap import dedent
-from typing import Final
+from typing import Final, TypeAlias
 
-from alist import AlistPath
+from p115 import P115Path
 from path_ignore_pattern import read_str, read_file, parse, ExtendedType
 
 
-ConditionSourceType = AlistPath
+ConditionSourceType: TypeAlias = P115Path
 PredicateType = Callable[[ConditionSourceType], bool]
 PredicateMakerType = Callable[[str, dict], None | PredicateType]
 

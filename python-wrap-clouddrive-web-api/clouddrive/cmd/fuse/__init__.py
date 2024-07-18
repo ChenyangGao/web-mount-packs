@@ -179,9 +179,10 @@ def main(args):
 
     options = {
         "mountpoint": mount_point, 
-        "auto_cache": True, 
+        "allow_other": True, 
         "foreground": True, 
-        "max_readahead": 65536, 
+        "max_readahead": 0, 
+        "noauto_cache": True, 
         "ro": True, 
     }
     if fuse_options := args.fuse_options:
@@ -231,10 +232,6 @@ def main(args):
             {"re": re}, 
             code_type=open_file_type, 
         )
-
-    from re import compile as re_compile
-
-    CRE_PAT_IN_STR = re_compile(r"[^\\ ]*(?:\\(?s:.)[^\\ ]*)*")
 
     cache = None
     make_cache = args.make_cache

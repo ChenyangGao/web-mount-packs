@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2)
+__version__ = (0, 2, 1)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -104,6 +104,39 @@ parser.add_argument("-pc", "--path-persistence-commitment", action="store_true",
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-r", "--root", default=0, help="选择一个根 路径 或 id，默认值 0")
 parser.add_argument("-P", "--password", default="", help="密码，如果提供了密码，那么每次访问必须携带请求参数 ?password={password}")
+parser.add_argument("-o", "--origin", help="origin 或者说 base_url，用来拼接路径，获取完整链接，默认行为是自行确定")
+parser.add_argument("-p1", "--predicate", help="断言，当断言的结果为 True 时，文件或目录会被显示")
+parser.add_argument(
+    "-t1", "--predicate-type", default="ignore", 
+    choices=("ignore", "ignore-file", "expr", "lambda", "stmt", "module", "file", "re"), 
+    help="""断言类型，默认值为 'ignore'
+    - ignore       （默认值）gitignore 配置文本（有多个时用空格隔开），在文件路径上执行模式匹配，匹配成功则断言为 False
+                   NOTE: https://git-scm.com/docs/gitignore#_pattern_format
+    - ignore-file  接受一个文件路径，包含 gitignore 的配置文本（一行一个），在文件路径上执行模式匹配，匹配成功则断言为 False
+                   NOTE: https://git-scm.com/docs/gitignore#_pattern_format
+    - expr         表达式，会注入一个名为 path 的 p115.P115Path 对象
+    - lambda       lambda 函数，接受一个 p115.P115Path 对象作为参数
+    - stmt         语句，当且仅当不抛出异常，则视为 True，会注入一个名为 path 的 p115.P115Path 对象
+    - module       模块，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 p115.P115Path 对象作为参数
+    - file         文件路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 p115.P115Path 对象作为参数
+    - re           正则表达式，模式匹配，如果文件的名字匹配此模式，则断言为 True
+""")
+parser.add_argument("-p2", "--strm-predicate", help="strm 断言（优先级高于 -p1/--predicate），当断言的结果为 True 时，文件会被显示为带有 .strm 后缀的文本文件，打开后是链接")
+parser.add_argument(
+    "-t2", "--strm-predicate-type", default="filter", 
+    choices=("filter", "filter-file", "expr", "lambda", "stmt", "module", "file", "re"), 
+    help="""断言类型，默认值为 'filter'
+    - filter       （默认值）gitignore 配置文本（有多个时用空格隔开），在文件路径上执行模式匹配，匹配成功则断言为 True
+                   请参考：https://git-scm.com/docs/gitignore#_pattern_format
+    - filter-file  接受一个文件路径，包含 gitignore 的配置文本（一行一个），在文件路径上执行模式匹配，匹配成功则断言为 True
+                   请参考：https://git-scm.com/docs/gitignore#_pattern_format
+    - expr         表达式，会注入一个名为 path 的 p115.P115Path 对象
+    - lambda       lambda 函数，接受一个 p115.P115Path 对象作为参数
+    - stmt         语句，当且仅当不抛出异常，则视为 True，会注入一个名为 path 的 p115.P115Path 对象
+    - module       模块，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 p115.P115Path 对象作为参数
+    - file         文件路径，运行后需要在它的全局命名空间中生成一个 check 或 predicate 函数用于断言，接受一个 p115.P115Path 对象作为参数
+    - re           正则表达式，模式匹配，如果文件的名字匹配此模式，则断言为 True
+""")
 
 if __name__ == "__main__":
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
@@ -164,11 +197,14 @@ from html import escape
 from io import BytesIO
 from os import stat
 from os.path import exists, expanduser, dirname, join as joinpath, realpath
+from posixpath import basename, splitext
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
 from typing import cast
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
+
+from util.predicate import make_predicate # type: ignore
 
 
 if getdefaulttimeout() is None:
@@ -183,6 +219,15 @@ path_persistence_commitment = args.path_persistence_commitment
 use_request = args.use_request
 root = args.root
 password = args.password
+origin = args.origin
+
+import re
+
+if predicate := args.predicate or None:
+    predicate = make_predicate(predicate, {"re": re}, type=args.predicate_type)
+
+if strm_predicate := args.strm_predicate or None:
+    strm_predicate = make_predicate(strm_predicate, {"re": re}, type=args.strm_predicate_type)
 
 login_lock = Lock()
 web_login_lock = Lock()
@@ -301,6 +346,8 @@ url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=
 image_url_cache: MutableMapping[str, str] = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
+# NOTE: webdav 的文件对象缓存
+webdav_file_cache: MutableMapping[str, DAVNonCollection] = LRUCache(65536)
 
 KEYS = (
     "id", "parent_id", "name", "path", "relpath", "sha1", "pickcode", "is_directory", 
@@ -320,6 +367,10 @@ class DavPathBase:
             raise AttributeError(attr) from e
 
     @cached_property
+    def name(self, /) -> str:
+        return basename(self.path)
+
+    @cached_property
     def creationdate(self, /) -> float:
         return self.ctime
 
@@ -334,10 +385,6 @@ class DavPathBase:
         if (mtime := self.attr.get("mtime")) is None:
             mtime = self.attr["etime"].timestamp()
         return mtime
-
-    @cached_property
-    def name(self, /) -> str:
-        return self.attr["name"]
 
     def get_creation_date(self, /) -> float:
         return self.ctime
@@ -366,18 +413,39 @@ class FileResource(DavPathBase, DAVNonCollection):
     ):
         super().__init__(path, environ)
         self.attr = attr
+        webdav_file_cache[path] = self
+
+    @cached_property
+    def origin(self, /) -> str:
+        if origin:
+            return origin
+        return f"{self.environ['wsgi.url_scheme']}://{self.environ['HTTP_HOST']}"
 
     @cached_property
     def size(self, /) -> int:
+        if self.path.endswith(".strm"):
+            return len(self.strm_data)
         return self.attr["size"]
+
+    @cached_property
+    def strm_data(self, /) -> bytes:
+        attr = self.attr
+        url = joinpath(self.origin, f"{attr['name'].translate({0x23: '%23', 0x2F: '%2F', 0x3F: '%3F'})}?pickcode={attr['pickcode']}&password={password}")
+        if attr.get("class") == "PIC" or attr.get("thumb"):
+            url += "&image=true"
+        return bytes(url, "utf-8")
 
     @property
     def url(self, /) -> str:
-        url = relogin_wrap(
-            self.attr.get_url, 
-            headers={"User-Agent": self.environ.get("HTTP_USER_AGENT", "")}, 
-        )
-        return str(url)
+        attr = self.attr
+        if attr.get("class") == "PIC" or attr.get("thumb"):
+            return get_image_url(attr["pickcode"])
+        else:
+            url = relogin_wrap(
+                attr.get_url, 
+                headers={"User-Agent": self.environ.get("HTTP_USER_AGENT", "")}, 
+            )
+            return str(url)
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
@@ -387,6 +455,8 @@ class FileResource(DavPathBase, DAVNonCollection):
         )
 
     def get_content(self, /):
+        if self.path.endswith(".strm"):
+            return BytesIO(self.strm_data)
         raise DAVError(302, add_headers=[("Location", self.url)])
 
     def get_content_length(self, /) -> int:
@@ -416,7 +486,15 @@ class FolderResource(DavPathBase, DAVCollection):
 
     @cached_property
     def children(self, /) -> dict[str, P115Path]:
-        return {attr["name"]: attr for attr in relogin_wrap(self.attr.listdir_path)}
+        children = {}
+        for attr in relogin_wrap(self.attr.listdir_path):
+            name = attr["name"]
+            if not attr.is_dir() and strm_predicate and strm_predicate(attr):
+                name = splitext(name)[0] + ".strm"
+            elif predicate and not predicate(attr):
+                continue
+            children[name] = attr
+        return children
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
@@ -432,17 +510,9 @@ class FolderResource(DavPathBase, DAVCollection):
         if attr.is_dir():
             return FolderResource(relpath, self.environ, attr)
         else:
+            if name.endswith(".strm"):
+                relpath = splitext(relpath)[0] + ".strm"
             return FileResource(relpath, self.environ, attr)
-
-    def get_member_list(self, /) -> list[FileResource | FolderResource]:
-        path_start = len(root_dir) - 1
-        environ = self.environ
-        return [
-                FolderResource(attr.path[path_start:], environ, attr) 
-            if attr.is_dir() else 
-                FileResource(attr.path[path_start:], environ, attr)
-            for attr in self.children.values()
-        ]
 
     def get_member_names(self, /) -> list[str]:
         return list(self.children)
@@ -470,6 +540,8 @@ class P115FileSystemProvider(DAVProvider):
         path: str, 
         environ: dict, 
     ) -> FolderResource | FileResource:
+        if path in webdav_file_cache:
+            return webdav_file_cache[path]
         id_or_path: int | str = self.fs.abspath(path.lstrip("/"))
         if id_or_path == "/":
             id_or_path = 0
@@ -482,6 +554,10 @@ class P115FileSystemProvider(DAVProvider):
         if attr.is_dir():
             return FolderResource(path, environ, attr)
         else:
+            if not attr.is_dir() and strm_predicate and strm_predicate(attr):
+                path = splitext(path)[0] + ".strm"
+            elif predicate and not predicate(attr):
+                raise DAVError(404, path)
             return FileResource(path, environ, attr)
 
     def is_readonly(self, /) -> bool:
@@ -506,20 +582,32 @@ def format_bytes(
     return f"%.{precision}f {u}B" % (n / b)
 
 
+class HTTPStatus(Exception):
+    __slots__ = ("status", "message")
+
+    def __init__(self, status: int, message: str = ""):
+        self.status = status
+        self.message = message
+
+
 def redirect_exception_response(func, /):
     def wrapper(*args, **kwds):
         try:
             return func(*args, **kwds)
-        except StatusError as exc:
-            return str(exc), get_status_code(exc)
-        except PermissionError as exc:
-            return str(exc), 403 # Forbidden
-        except FileNotFoundError as exc:
-            return str(exc), 404 # Not Found
-        except OSError as exc:
-            return str(exc), 500 # Internal Server Error
-        except Exception as exc:
-            return str(exc), 503 # Service Unavailable
+        except BaseException as exc:
+            flask_app.logger.exception("can't make response")
+            if isinstance(exc, HTTPStatus):
+                return exc.message, exc.status
+            elif isinstance(exc, StatusError):
+                return str(exc), get_status_code(exc)
+            elif isinstance(exc, PermissionError):
+                return str(exc), 403 # Forbidden
+            elif isinstance(exc, FileNotFoundError):
+                return str(exc), 404 # Not Found
+            elif isinstance(exc, OSError):
+                return str(exc), 500 # Internal Server Error
+            else:
+                return str(exc), 503 # Service Unavailable
     return update_wrapper(wrapper, func)
 
 
@@ -552,9 +640,9 @@ def get_m3u8(pickcode: str):
     return redirect(data.split()[-1].decode("ascii"))
 
 
-def get_image_url(pickcode: str):
+def get_image_url(pickcode: str) -> str:
     if image_url_cache and (url := image_url_cache.get(pickcode)):
-        return redirect(url)
+        return url
     resp = relogin_wrap(
         client.fs_files_image, 
         pickcode, 
@@ -567,7 +655,7 @@ def get_image_url(pickcode: str):
     url = cast(str, urlopen(url, "HEAD", headers={"User-Agent": ""}, redirect=False).headers["Location"])
     if image_url_cache is not None:
         image_url_cache[pickcode] = url
-    return redirect(url)
+    return url
 
 
 def get_url(pickcode: str):
@@ -576,13 +664,13 @@ def get_url(pickcode: str):
     elif (as_image := request.args.get("image")) not in ("0", "false") and (
         as_image is not None or pickcode in pickcode_of_image
     ):
-        return get_image_url(pickcode)
+        return redirect(get_image_url(pickcode))
     use_web_api = request.args.get("web") not in (None, "0", "false")
     request_headers = request.headers
     user_agent = request_headers.get("User-Agent") or ""
     range_request_key = (request.remote_addr or "", user_agent, pickcode, str(request.range))
     if range_request_key in range_request_cooldown:
-       return "Too Many Requests", 429
+        return "Too Many Requests", 429
     range_request_cooldown[range_request_key] = None
     if url_cache is not None:
         try:

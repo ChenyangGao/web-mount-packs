@@ -2,6 +2,7 @@ cachetools
 flask
 Flask-Compress
 httpx
+path_ignore_pattern
 posixpatht
 python-115
 werkzeug

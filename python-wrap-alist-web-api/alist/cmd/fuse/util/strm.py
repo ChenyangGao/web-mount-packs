@@ -22,7 +22,6 @@ from types import ModuleType
 from urllib.parse import urljoin
 from zipfile import is_zipfile
 
-from argtools import argcount
 from alist import AlistPath
 
 
