@@ -27,7 +27,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from http.client import InvalidURL
 from itertools import count
-from os import PathLike
+from json import dumps
+from os import fsencode, PathLike
 from posixpath import join as joinpath, split as splitpath, splitext
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
@@ -115,7 +116,6 @@ class AlistFuseOperations(Operations):
         origin: str = "http://localhost:5244", 
         username: str = "", 
         password: str = "", 
-        token: str = "", 
         base_dir: str = "/", 
         refresh: bool = False, 
         cache: None | MutableMapping = None, 
@@ -140,7 +140,6 @@ class AlistFuseOperations(Operations):
                     "current user can't do `refresh`, because the 'Make dir or upload' (创建目录或上传) permission is disabled", 
                 )
         fs.chdir(base_dir)
-        self.token = token
         self.refresh = refresh
         self.predicate = predicate
         self.strm_predicate = strm_predicate
@@ -232,6 +231,28 @@ class AlistFuseOperations(Operations):
                 path, type(e).__qualname__, e, 
             )
             raise FileNotFoundError(errno.ENOENT, path) from e
+
+    def getxattr(self, /, path: str, name: str, position: int = 0):
+        if path == "/":
+            return b""
+        attr = self.getattr(path)
+        pathobj = attr["_path"]
+        match name:
+            case "attr":
+                return fsencode(dumps(pathobj.client.attr(pathobj)))
+            case "sign" | "thumb" | "type" | "hashinfo":
+                return fsencode(str(pathobj[name]))
+            case "url":
+                if pathobj.is_dir():
+                    raise IsADirectoryError(errno.EISDIR, pathobj)
+                return fsencode(pathobj.get_url())
+            case _:
+                raise OSError(errno.ENOATTR, name)
+
+    def listxattr(self, /, path: str):
+        if path == "/":
+            return ()
+        return ("attr", "sign", "thumb", "type", "hashinfo", "url")
 
     def open(self, /, path: str, flags: int = 0) -> int:
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
@@ -369,7 +390,7 @@ class AlistFuseOperations(Operations):
                             )
                         data = url.encode("utf-8")
                     else:
-                        data = pathobj.get_url(token=self.token, ensure_ascii=False).encode("utf-8")
+                        data = pathobj.get_url(ensure_ascii=False).encode("utf-8")
                     size = len(cast(bytes, data))
                     name = splitext(name)[0] + ".strm"
                 elif predicate and not predicate(pathobj):

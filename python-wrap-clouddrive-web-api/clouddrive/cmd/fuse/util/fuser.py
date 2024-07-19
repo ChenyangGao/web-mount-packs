@@ -27,7 +27,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from http.client import InvalidURL
 from itertools import count
-from os import PathLike
+from json import dumps
+from os import fsencode, PathLike
 from posixpath import join as joinpath, split as splitpath, splitext
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
@@ -223,6 +224,30 @@ class CloudDriveFuseOperations(Operations):
                 path, type(e).__qualname__, e, 
             )
             raise FileNotFoundError(errno.ENOENT, path) from e
+
+    def getxattr(self, /, path: str, name: str, position: int = 0):
+        if path == "/":
+            return b""
+        attr = self.getattr(path)
+        pathobj = attr["_path"]
+        match name:
+            case "attr":
+                return fsencode(dumps(pathobj.client.attr(pathobj)))
+            case "id":
+                return fsencode(pathobj["id"])
+            case "fileHashes":
+                return fsencode(dumps(pathobj.get("fileHashes")))
+            case "url":
+                if pathobj.is_dir():
+                    raise IsADirectoryError(errno.EISDIR, pathobj)
+                return fsencode(pathobj.get_url())
+            case _:
+                raise OSError(errno.ENOATTR, name)
+
+    def listxattr(self, /, path: str):
+        if path == "/":
+            return ()
+        return ("attr", "id", "fileHashes", "url")
 
     def open(self, /, path: str, flags: int = 0) -> int:
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)

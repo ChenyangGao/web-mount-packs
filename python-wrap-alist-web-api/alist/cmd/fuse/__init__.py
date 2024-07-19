@@ -219,7 +219,7 @@ def main(args):
             strm_make = Path(strm_make)
         strm_make = make_strm_converter(
             strm_make, 
-            {"re": re, "token": args.token}, 
+            {"re": re}, 
             code_type=strm_make_type, 
         )
 
@@ -229,7 +229,7 @@ def main(args):
             open_file = Path(open_file)
         open_file = make_strm_converter(
             open_file, 
-            {"re": re, "token": args.token}, 
+            {"re": re}, 
             code_type=open_file_type, 
         )
 
@@ -273,7 +273,6 @@ def main(args):
         origin=args.origin, 
         username=args.username, 
         password=args.password, 
-        token=args.token, 
         base_dir=args.base_dir, 
         refresh=args.refresh, 
         cache=cache, 
@@ -292,7 +291,6 @@ parser.add_argument("mount_point", nargs="?", help="挂载路径")
 parser.add_argument("-o", "--origin", default="http://localhost:5244", help="alist 服务器地址，默认 http://localhost:5244")
 parser.add_argument("-u", "--username", default="", help="用户名，默认为空")
 parser.add_argument("-p", "--password", default="", help="密码，默认为空")
-parser.add_argument("-t", "--token", default="", help="token，用于给链接做签名，默认为空")
 parser.add_argument("-b", "--base-dir", default="/", help="挂载的目录，默认为 '/'")
 parser.add_argument("-r", "--refresh", action="store_true", help="罗列目录时强制刷新（只有启用 '创建目录或上传' 权限的用户才可刷新）")
 parser.add_argument(
@@ -350,7 +348,6 @@ parser.add_argument(
     - resub     正则表达式，模式替换，语法同 sed，格式为 /pattern/replacement/flag，用来对生成的链接进行搜索替换
 上面的各个类型，都会注入几个全局变量
     - re      正则表达式模块
-    - token   alist 的 token，经命令行传入
 """)
 parser.add_argument("-of", "--open-file", help="自定义打开文件，返回 Buffer (例如 bytes、bytearray、memoryview)、路径、url 或一个文件对象（读二进制，即 'rb' 模式）")
 parser.add_argument(
@@ -367,7 +364,6 @@ parser.add_argument(
     - resub     正则表达式，模式替换，语法同 sed，格式为 /pattern/replacement/flag，用来对生成的链接进行搜索替换
 上面的各个类型，都会注入几个全局变量
     - re      正则表达式模块
-    - token   alist 的 token，经命令行传入
 """)
 parser.add_argument(
     "-dn", "--direct-open-names", nargs="+", metavar="name", 

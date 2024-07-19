@@ -451,14 +451,11 @@ class AlistPath(Mapping, PathLike[str]):
     def get_url(
         self, 
         /, 
-        token: bool | str = "", 
-        expire_timestamp: int = 0, 
         ensure_ascii: bool = True, 
     ) -> str:
         return self.fs.get_url(
             self, 
-            token=token, 
-            expire_timestamp=expire_timestamp, 
+            sign=self["sign"], 
             ensure_ascii=ensure_ascii, 
         )
 
@@ -3667,6 +3664,7 @@ class AlistFileSystem:
         self, 
         /, 
         path: PathType = "", 
+        sign: str = "", 
         token: bool | str = "", 
         expire_timestamp: int = 0, 
         ensure_ascii: bool = True, 
@@ -3675,6 +3673,8 @@ class AlistFileSystem:
             path = cast(str, path["path"])
         else:
             path = self.abspath(path)
+        if sign:
+            return self.client.get_url(path, sign=sign, ensure_ascii=ensure_ascii)
         if token:
             return self.client.get_url(
                 path, 
