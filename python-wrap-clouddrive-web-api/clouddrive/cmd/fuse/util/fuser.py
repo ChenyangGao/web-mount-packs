@@ -3,6 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["CloudDriveFuseOperations"]
+__requirements__ = ["cachetools", "fusepy", "psutil", "urllib3_request"]
 
 try:
     # pip install cachetools
@@ -11,13 +12,18 @@ try:
     from fuse import FUSE, Operations, fuse_get_context
     # pip install psutil
     from psutil import Process
+    # pip install urllib3_request
+    from urllib3 import PoolManager
+    from urllib3_request import request
 except ImportError:
     from subprocess import run
     from sys import executable
-    run([executable, "-m", "pip", "install", "-U", "cachetools", "fusepy", "psutil"], check=True)
+    run([executable, "-m", "pip", "install", "-U", *__requirements__], check=True)
     from cachetools import Cache, LRUCache, TTLCache
     from fuse import FUSE, Operations, fuse_get_context # type: ignore
     from psutil import Process
+    from urllib3 import PoolManager
+    from urllib3_request import request
 
 import errno
 import logging
@@ -37,7 +43,6 @@ from _thread import start_new_thread, allocate_lock
 from time import sleep, time
 from typing import cast, Any, Concatenate, Final, IO, ParamSpec
 from unicodedata import normalize
-from urllib.parse import quote
 
 from clouddrive import CloudDriveFileSystem, CloudDrivePath
 from filewrap import Buffer
@@ -49,6 +54,8 @@ from .log import logger
 
 
 Args = ParamSpec("Args")
+
+urllib3_request = partial(request, pool=PoolManager(64))
 
 
 def _get_process():
@@ -228,21 +235,22 @@ class CloudDriveFuseOperations(Operations):
     def getxattr(self, /, path: str, name: str, position: int = 0):
         if path == "/":
             return b""
-        attr = self.getattr(path)
-        pathobj = attr["_path"]
+        fuse_attr = self.getattr(path)
+        attr      = fuse_attr["_attr"]
+        pathobj   = fuse_attr["_path"]
         match name:
             case "attr":
-                return fsencode(dumps(pathobj.client.attr(pathobj)))
+                return fsencode(dumps(attr, ensure_ascii=False))
             case "id":
-                return fsencode(pathobj["id"])
+                return fsencode(attr["id"])
             case "fileHashes":
-                return fsencode(dumps(pathobj.get("fileHashes")))
+                return fsencode(dumps(attr.get("fileHashes"), ensure_ascii=False))
             case "url":
                 if pathobj.is_dir():
-                    raise IsADirectoryError(errno.EISDIR, pathobj)
+                    raise IsADirectoryError(errno.EISDIR, path)
                 return fsencode(pathobj.get_url())
             case _:
-                raise OSError(errno.ENOATTR, name)
+                raise OSError(93, name)
 
     def listxattr(self, /, path: str):
         if path == "/":
@@ -294,10 +302,7 @@ class CloudDriveFuseOperations(Operations):
                     url = rawfile.geturl()
                 else:
                     url = str(rawfile)
-                try:
-                    file = HTTPFileReader(url)
-                except (InvalidURL, UnicodeEncodeError):
-                    file = HTTPFileReader(quote(url, safe=":/?&=#"))
+                file = HTTPFileReader(url, urlopen=urllib3_request)
             elif isinstance(rawfile, (str, PathLike)):
                 file = open(rawfile, "rb")
             else:
@@ -330,6 +335,9 @@ class CloudDriveFuseOperations(Operations):
                     file.seek(cache_size)
                     return preread[offset:] + file.read(offset+size-cache_size)
             file.seek(offset)
+            attr = self.getattr(path)["_path"]
+            if offset + size >= attr["size"]:
+                return file.read()
             return file.read(size)
         except BaseException as e:
             self._log(
@@ -362,9 +370,11 @@ class CloudDriveFuseOperations(Operations):
         cache = {}
         path = normalize("NFC", path)
         realpath = self.normpath_map.get(path, path)
+        as_path = self.fs.as_path
         try:
-            ls = self.fs.listdir_path(realpath.lstrip("/"), refresh=self.refresh)
-            for pathobj in ls:
+            ls = self.fs.listdir_attr(realpath.lstrip("/"), refresh=self.refresh)
+            for attr in ls:
+                pathobj = as_path(attr)
                 name    = pathobj.name
                 subpath = pathobj.path
                 isdir   = pathobj.is_dir()
@@ -399,6 +409,7 @@ class CloudDriveFuseOperations(Operations):
                     st_ctime=pathobj["ctime"], 
                     st_mtime=pathobj["mtime"], 
                     st_atime=pathobj.get("atime") or pathobj["mtime"], 
+                    _attr=attr, 
                     _path=pathobj, 
                     _data=data, 
                 )

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 1)
+__version__ = (0, 2, 2)
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -101,7 +101,8 @@ parser.add_argument("-cp", "--cookies-path", help="""\
 parser.add_argument("-wc", "--web-cookies", default="", help="提供一个 web 的 cookies，因为目前使用的获取 .m3u8 的接口，需要 web 的 cookies 才能正确获取数据，如不提供，则将自动扫码获取")
 parser.add_argument("-l", "--lock-dir-methods", action="store_true", help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-pc", "--path-persistence-commitment", action="store_true", help="路径持久性承诺，只要你能保证文件不会被移动（可新增删除，但对应的路径不可被其他文件复用），打开此选项，用路径请求直链时，可节约一半时间")
-parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
+parser.add_argument("-ci", "--cdn-image", action="store_true", help="图片走 cdn 接口而不是走下载接口")
+parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="urllib3", help="选择一个网络请求模块，默认值：urllib3")
 parser.add_argument("-r", "--root", default=0, help="选择一个根 路径 或 id，默认值 0")
 parser.add_argument("-P", "--password", default="", help="密码，如果提供了密码，那么每次访问必须携带请求参数 ?password={password}")
 parser.add_argument("-o", "--origin", help="origin 或者说 base_url，用来拼接路径，获取完整链接，默认行为是自行确定")
@@ -216,6 +217,7 @@ web_cookies = args.web_cookies
 cookies_path_mtime = 0
 lock_dir_methods = args.lock_dir_methods
 path_persistence_commitment = args.path_persistence_commitment
+cdn_image = args.cdn_image
 use_request = args.use_request
 root = args.root
 password = args.password
@@ -339,11 +341,13 @@ id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: 标记一些 pickcode 对应的是图片
-pickcode_of_image: set[str] = set()
+pickcode_of_image: None | set[str] = set() if cdn_image else None
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
 # NOTE: 缓存图片的 CDN 直链 1 小时
-image_url_cache: MutableMapping[str, str] = TTLCache(65536, ttl=3600)
+image_url_cache: None | MutableMapping[str, str] = None
+if cdn_image:
+    image_url_cache = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 # NOTE: webdav 的文件对象缓存
@@ -661,8 +665,10 @@ def get_image_url(pickcode: str) -> str:
 def get_url(pickcode: str):
     if request.args.get("m3u8") not in (None, "0", "false"):
         return get_m3u8(pickcode)
-    elif (as_image := request.args.get("image")) not in ("0", "false") and (
-        as_image is not None or pickcode in pickcode_of_image
+    elif (
+        cdn_image and 
+        (as_image := request.args.get("image")) not in ("0", "false") and 
+        (as_image is not None or pickcode_of_image and pickcode in pickcode_of_image)
     ):
         return redirect(get_image_url(pickcode))
     use_web_api = request.args.get("web") not in (None, "0", "false")
@@ -706,8 +712,11 @@ def get_url(pickcode: str):
             headers=resp_headers, 
             status=resp.status, 
         )
-    if url["file_name"].lower().endswith((".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp")):
-        pickcode_of_image.add(pickcode)
+    if cdn_image and url["file_name"].lower().endswith(
+        (".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", 
+         ".raw", ".svg", ".tif", ".tiff", ".webp")
+    ):
+        pickcode_of_image.add(pickcode) # type: ignore
     return redirect(url)
 
 
@@ -816,7 +825,8 @@ def query(path: str):
             attr["format_size"] = format_bytes(attr["size"])
             sha1_to_pickcode[attr["sha1"]] = id_to_pickcode[attr["id"]] = pickcode
             if attr.get("class") == "PIC" or attr.get("thumb"):
-                pickcode_of_image.add(pickcode)
+                if cdn_image:
+                    pickcode_of_image.add(pickcode) # type: ignore
                 attr["url"] += "&image=true"
                 attr["short_url"] += "&image=true"
         if password:
@@ -1178,4 +1188,5 @@ if __name__ == "__main__":
 # TODO: 如果某个目录正在获取中，返回 concurrent.futures.Future，另一个线程如果也需要获取此目录，则直接获取此 future，对 web 和 webdav 都如此
 # TODO: 可能是 wsgidav 的问题，propfind 响应太慢了，即使给文件夹做了缓存，需要看看怎么优化，可能需要对 propfind 的结果做缓存
 # TODO: 完整的 wsgidav 配置文件支持
+# TODO: 更完整信息的支持，类似 xattr
 

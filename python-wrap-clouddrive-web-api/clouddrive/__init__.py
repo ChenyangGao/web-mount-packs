@@ -53,6 +53,10 @@ from http_response import get_content_length
 from urlopen import urlopen
 
 
+AttrDict = dict
+PathType = str | PathLike[str] | AttrDict
+
+
 def check_response(func, /):
     def raise_for_code(fargs, e):
         if not hasattr(e, "code"):
@@ -922,14 +926,12 @@ class CloudDriveFileSystem:
     def as_path(
         self, 
         /, 
-        path: str | PathLike[str] = "", 
+        path: PathType = "", 
         _check: bool = True, 
     ) -> CloudDrivePath:
-        if not isinstance(path, CloudDrivePath):
-            if _check:
-                path = self.abspath(path)
-            path = CloudDrivePath(self, path)
-        return path
+        if isinstance(path, (AttrDict, CloudDrivePath)):
+            return CloudDrivePath(**{**path, "fs": self})
+        return CloudDrivePath(fs=self, path=self.abspath(path))
 
     def attr(
         self, 

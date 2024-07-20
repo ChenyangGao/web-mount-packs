@@ -2649,7 +2649,7 @@ class AlistFileSystem:
         if isinstance(path, AlistPath):
             if not password or password == path.get("password"):
                 return path
-            return AlistPath(**{**path, "password": password})
+            return AlistPath(**{**path, "password": password, "fs": self})
         elif isinstance(path, AttrDict):
             if not password or password == path.get("password"):
                 return AlistPath(**{**path, "fs": self})
