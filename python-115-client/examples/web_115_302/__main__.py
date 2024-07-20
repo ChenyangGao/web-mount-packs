@@ -438,18 +438,16 @@ class FileResource(DavPathBase, DAVNonCollection):
     @property
     def url(self, /) -> str:
         attr = self.attr
+        user_agent = self.environ.get("HTTP_USER_AGENT", "")
         if (url := self.__dict__.get("url", "")):
             pass
         elif cdn_image and attr.get("class") == "PIC" or attr.get("thumb"):
-            url = get_image_url(attr["pickcode"])
+            url = get_image_url(attr["pickcode"], user_agent)
             self.__dict__["url"] = url
             self.__dict__["size"] = url["size"]
             url = url["data"]["source_url"]
         else:
-            url = relogin_wrap(
-                attr.get_url, 
-                headers={"User-Agent": self.environ.get("HTTP_USER_AGENT", "")}, 
-            )
+            url = relogin_wrap(attr.get_url, headers={"User-Agent": user_agent})
         return str(url)
 
     def get_etag(self, /) -> str:
