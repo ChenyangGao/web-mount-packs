@@ -5,6 +5,7 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 2, 2)
+__requirements__ = ["cachetools", "flask", "Flask-Compress", "python-115", "urllib3_request", "werkzeug", "wsgidav"]
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -166,6 +167,8 @@ try:
     from flask_compress import Compress
     from p115 import P115Client, P115FileSystem, P115Path, P115Url, AVAILABLE_APPS
     from posixpatht import escape as escape_name
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
     from werkzeug.middleware.dispatcher import DispatcherMiddleware
     from werkzeug.serving import run_simple
     from wsgidav.wsgidav_app import WsgiDAVApp
@@ -174,15 +177,15 @@ try:
 except ImportError:
     from sys import executable
     from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", 
-        "cachetools", "flask", "Flask-Compress", "httpx", "posixpatht", 
-        "python-115", "werkzeug", "wsgidav"], check=True)
+    run([executable, "-m", "pip", "install", "-U", *__requirements__], check=True)
     import posixpatht
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from p115 import P115Client, P115Url, AVAILABLE_APPS
+    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AVAILABLE_APPS
     from posixpatht import escape as escape_name
+    from urllib3.poolmanager import PoolManager
+    from urllib3_request import request as urllib3_request
     from werkzeug.middleware.dispatcher import DispatcherMiddleware
     from werkzeug.serving import run_simple
     from wsgidav.wsgidav_app import WsgiDAVApp # type: ignore
@@ -203,6 +206,7 @@ from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
 from typing import cast
+from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urljoin, urlsplit
 
 from util.predicate import make_predicate # type: ignore
@@ -274,18 +278,7 @@ client = P115Client(cookies or None, app=args.login_app or "qandroid")
 if cookies_path and (not exists(cookies_path) or cookies != client.cookies):
     open(cookies_path, "w").write(client.cookies)
 
-from urllib.error import HTTPError
-try:
-    from urllib3.poolmanager import PoolManager
-    from urllib3_request import request as urllib3_request
-except ImportError:
-    from sys import executable
-    from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
-    from urllib3.poolmanager import PoolManager
-    from urllib3_request import request as urllib3_request
 urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
-
 do_request: None | Callable = None
 match use_request:
     case "httpx":
@@ -345,7 +338,7 @@ pickcode_of_image: None | set[str] = set() if cdn_image else None
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
 # NOTE: 缓存图片的 CDN 直链 1 小时
-image_url_cache: None | MutableMapping[str, str] = None
+image_url_cache: None | MutableMapping[str, P115Url] = None
 if cdn_image:
     image_url_cache = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
@@ -417,6 +410,9 @@ class FileResource(DavPathBase, DAVNonCollection):
     ):
         super().__init__(path, environ)
         self.attr = attr
+        if cdn_image and image_url_cache and (url := image_url_cache.get(attr["pickcode"])):
+            self.__dict__["url"] = url
+            self.__dict__["size"] = url["size"]
         webdav_file_cache[path] = self
 
     @cached_property
@@ -442,14 +438,19 @@ class FileResource(DavPathBase, DAVNonCollection):
     @property
     def url(self, /) -> str:
         attr = self.attr
-        if attr.get("class") == "PIC" or attr.get("thumb"):
-            return get_image_url(attr["pickcode"])
+        if (url := self.__dict__.get("url", "")):
+            pass
+        elif cdn_image and attr.get("class") == "PIC" or attr.get("thumb"):
+            url = get_image_url(attr["pickcode"])
+            self.__dict__["url"] = url
+            self.__dict__["size"] = url["size"]
+            url = url["data"]["source_url"]
         else:
             url = relogin_wrap(
                 attr.get_url, 
                 headers={"User-Agent": self.environ.get("HTTP_USER_AGENT", "")}, 
             )
-            return str(url)
+        return str(url)
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
@@ -644,19 +645,22 @@ def get_m3u8(pickcode: str):
     return redirect(data.split()[-1].decode("ascii"))
 
 
-def get_image_url(pickcode: str) -> str:
+def get_image_url(pickcode: str, user_agent: str = "") -> str:
     if image_url_cache and (url := image_url_cache.get(pickcode)):
         return url
     resp = relogin_wrap(
         client.fs_files_image, 
         pickcode, 
-        headers={"User-Agent": ""}, 
+        headers={"User-Agent": user_agent}, 
         request=do_request, 
     )
     if not resp["state"]:
         raise FileNotFoundError(errno.ENOENT, pickcode)
-    url = resp["data"]["origin_url"]
-    url = cast(str, urlopen(url, "HEAD", headers={"User-Agent": ""}, redirect=False).headers["Location"])
+    data = resp["data"]
+    url = data["origin_url"]
+    with urlopen(url, "HEAD", headers={"User-Agent": user_agent}) as resp:
+        url = cast(str, resp.url)
+    url = P115Url(url, data=data, size=int(resp.headers["Content-Length"]))
     if image_url_cache is not None:
         image_url_cache[pickcode] = url
     return url

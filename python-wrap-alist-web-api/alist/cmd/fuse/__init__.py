@@ -276,6 +276,7 @@ def main(args):
         base_dir=args.base_dir, 
         refresh=args.refresh, 
         cache=cache, 
+        pickle_cache=args.pickle_cache, 
         max_readdir_workers=args.max_readdir_workers, 
         max_readdir_cooldown=args.max_readdir_cooldown, 
         predicate=predicate, 
@@ -404,6 +405,7 @@ Reference:
     - https://docs.python.org/3/library/collections.abc.html#collections.abc.MutableMapping
     - https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes
 """)
+parser.add_argument("-pc", "--pickle-cache", action="store_true", help="数据进出缓存时，需要使用 pickle 模块进行序列化和反序列化")
 parser.add_argument(
     "-fo", "--fuse-option", dest="fuse_options", metavar="option", nargs="+", 
     help="""fuse 挂载选项，支持如下几种格式：

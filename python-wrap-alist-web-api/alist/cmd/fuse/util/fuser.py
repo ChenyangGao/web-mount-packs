@@ -33,8 +33,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from http.client import InvalidURL
 from itertools import count
-from json import dumps
+from json import dumps as json_dumps
 from os import fsencode, PathLike
+from pickle import dumps as pickle_dumps, loads as pickle_loads
 from posixpath import join as joinpath, split as splitpath, splitext
 from stat import S_IFDIR, S_IFREG
 from subprocess import run
@@ -126,6 +127,7 @@ class AlistFuseOperations(Operations):
         base_dir: str = "/", 
         refresh: bool = False, 
         cache: None | MutableMapping = None, 
+        pickle_cache: bool = False, 
         max_readdir_workers: int = 5, 
         max_readdir_cooldown: float = 30, 
         predicate: None | Callable[[AlistPath], bool] = None, 
@@ -148,6 +150,7 @@ class AlistFuseOperations(Operations):
                 )
         fs.chdir(base_dir)
         self.refresh = refresh
+        self.pickle_cache = pickle_cache
         self.predicate = predicate
         self.strm_predicate = strm_predicate
         self.strm_make = strm_make
@@ -247,7 +250,7 @@ class AlistFuseOperations(Operations):
         pathobj   = fuse_attr["_path"]
         match name:
             case "attr":
-                return fsencode(dumps(attr, ensure_ascii=False))
+                return fsencode(json_dumps(attr, ensure_ascii=False))
             case "sign" | "thumb" | "type" | "hashinfo":
                 return fsencode(str(attr[name]))
             case "url":
@@ -353,19 +356,28 @@ class AlistFuseOperations(Operations):
             raise OSError(errno.EIO, path) from e
 
     def _get_cache(self, path: str, /):
-        if temp_cache := self.temp_cache:
+        cache = self.cache
+        if (temp_cache := self.temp_cache) is not None:
             try:
                 return temp_cache[path]
             except KeyError:
-                value = temp_cache[path] = self.cache[path]
+                value = cache[path]
+                if self.pickle_cache:
+                    value = pickle_loads(value)
+                temp_cache[path] = value
                 return value
-        return self.cache[path]
-
-    def _set_cache(self, path: str, cache, /):
-        if (temp_cache := self.temp_cache) is not None:
-            temp_cache[path] = self.cache[path] = cache
         else:
-            self.cache[path] = cache
+            return self.cache[path]
+
+    def _set_cache(self, path: str, value, /):
+        cache = self.cache
+        if (temp_cache := self.temp_cache) is not None:
+            temp_cache[path] = value
+            if self.pickle_cache:
+                value = pickle_dumps(value)
+            cache[path] = value
+        else:
+            cache[path] = value
 
     def readdir(self, /, path: str, fh: int = 0) -> list[str]:
         self._log(logging.DEBUG, "readdir(path=\x1b[4;34m%r\x1b[0m, fh=%r) by \x1b[3;4m%s\x1b[0m", path, fh, PROCESS_STR)
