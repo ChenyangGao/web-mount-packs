@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome"]
 __doc__ = """\
         \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
@@ -23,6 +23,7 @@ __doc__ = """\
     2. 用户根目录
     3. 此脚本所在目录 下
 - \x1b[1;32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
+- \x1b[1;32mcdn_image\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）图片走 cdn，设置此参数会创建一个图片直链的缓存
 - \x1b[1;32murl_ttl\x1b[0m: 直链存活时间（\x1b[1;31m单位：秒\x1b[0m），默认值 \x1b[1;36m1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限时
 - \x1b[1;32murl_reuse_factor\x1b[0m: 直链最大复用次数，默认值 \x1b[1;36m-1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m 或 \x1b[1;36m= 1\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限次数
 - \x1b[1;32murl_range_request_cooldown\x1b[0m: range 请求冷却时间，默认值 \x1b[1;36m0\x1b[0m，某个 ip 对某个资源执行一次 range 请求后必须过一定的冷却时间后才能对相同范围再次请求。特别的，若 \x1b[1;36m<= 0\x1b[0m，则不需要冷却
@@ -69,6 +70,7 @@ cookies = environ.get("cookies", "").strip()
 device = ""
 cookies_path = environ.get("cookies_path", "")
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
+cdn_image = environ.get("cdn_image") is not None
 url_ttl = float(environ.get("url_ttl", "1"))
 url_reuse_factor = int(environ.get("url_reuse_factor", "-1"))
 url_range_request_cooldown = int(environ.get("url_range_request_cooldown", "0"))
@@ -163,8 +165,6 @@ ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 SHA1_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: 路径到 id 到映射
 PATH_TO_ID: MutableMapping[str, str] = LRUCache(65536)
-# NOTE: 标记一些 pickcode 对应的是图片
-PICKCODE_OF_IMAGE: set[str] = set()
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]] = None
 if url_reuse_factor not in (0, 1):
@@ -385,8 +385,8 @@ def process_info(info: dict, dir: None | str = None) -> str:
     fid = cast(str, info["fid"])
     fn = cast(str, info["n"])
     pickcode = SHA1_TO_PICKCODE[info["sha"]] = ID_TO_PICKCODE[fid] = info["pc"]
-    if info.get("class") == "PIC" or info.get("u"):
-        PICKCODE_OF_IMAGE.add(pickcode)
+    if cdn_image and ((thumb := info.get("u", "")) or info.get("class") == "PIC"):
+        IMAGE_URL_CACHE[pickcode] = thumb.replace("_100?", "_0?")
     if dir:
         PATH_TO_ID[dir + "/" + fn] = fid
     elif dir is not None:
@@ -496,7 +496,7 @@ async def get_image_url(client: ClientSession, pickcode: str) -> bytes:
 
 
 @route("/", methods=["GET", "HEAD"])
-@route("/{path:path}", methods=["GET", "HEAD"])
+@route("/{path:path2}", methods=["GET", "HEAD"])
 async def get_download_url(
     request: Request, 
     client: ClientSession, 
@@ -505,6 +505,7 @@ async def get_download_url(
     sha1: str = "", 
     path: str = "", 
     path2: str = "", 
+    image: bool = False, 
 ):
     """获取文件的下载链接
 
@@ -513,6 +514,7 @@ async def get_download_url(
     :param sha1: 文件的 sha1，优先级高于 path
     :param path: 文件的路径，优先级高于 path2
     :param path2: 文件的路径，这个直接在接口路径之后，不在查询字符串中
+    :param image: 视为图片（当提供 pickcode 且设置了环境变量 cdn_image）
     """
     try:
         user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
@@ -533,7 +535,7 @@ async def get_download_url(
             if url_reuse_factor < 0 or times < url_reuse_factor:
                 URL_CACHE[(pickcode, user_agent)] = (url, times + 1)
                 return redirect(url)
-        if pickcode in PICKCODE_OF_IMAGE:
+        if cdn_image and (image or pickcode in IMAGE_URL_CACHE):
             return redirect(await get_image_url(client, pickcode))
         json = await request_json(
             client, 
@@ -545,9 +547,9 @@ async def get_download_url(
         data = loads(rsa_decode(json["data"]))
         item = next(info for info in data.values())
         ID_TO_PICKCODE[next(iter(data))] = item["pick_code"]
-        # TODO: 还需要继续增加，目前不确定 115 到底支持哪些图片格式
-        if item["file_name"].lower().endswith((".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp")):
-            PICKCODE_OF_IMAGE.add(item["pick_code"])
+        # NOTE: 还需要继续增加，目前不确定 115 到底支持哪些图片格式
+        if cdn_image and item["file_name"].lower().endswith((".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp")):
+            IMAGE_URL_CACHE[item["pick_code"]] = "" # type: ignore
         url = item["url"]["url"]
         if URL_CACHE is not None:
             URL_CACHE[(pickcode, user_agent)] = (url, 1)

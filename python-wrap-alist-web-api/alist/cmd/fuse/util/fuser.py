@@ -343,9 +343,6 @@ class AlistFuseOperations(Operations):
                     file.seek(cache_size)
                     return preread[offset:] + file.read(offset+size-cache_size)
             file.seek(offset)
-            attr = self.getattr(path)["_path"]
-            if offset + size >= attr["size"]:
-                return file.read()
             return file.read(size)
         except BaseException as e:
             self._log(

@@ -296,3 +296,13 @@ for method_def in method_defs:
     file.write(indent(method_def, " "*4))
     file.write("\n\n")
 
+
+# TODO:
+# 0. 这个模块的代码需要进行美化，不要这么平铺直叙，最好总结几个通用的函数
+# 1. 这个 client 模块单独独立出来
+# 2. 支持 @overload 签名
+# 3. 支持 snake case 格式的 api，接受 None 或 dict，返回 None、dict、list[dict]、Iterator[dict]、Iterator[list[dict]] (内部调用驼峰式的相应接口)，要做 check_response
+# 4. snake case 格式的 api，参数需要做转换，用一个专门的字典来收集相关的嵌套类型（需要被迭代转换）
+# 5. snake case 格式的 api 的签名，参数和返回值，用层级嵌套的 dict 来表示，通过第 4 条的原理，迭代生成
+# 6. CloudDrive_pb2 变为 clouddrive.pb2
+

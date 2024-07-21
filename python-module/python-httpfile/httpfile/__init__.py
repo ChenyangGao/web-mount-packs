@@ -2,8 +2,8 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["HTTPFileReader", "RequestsFileReader"]
+__version__ = (0, 0, 2)
+__all__ = ["HTTPFileReader", "AsyncHTTPFileReader"]
 
 import errno
 
@@ -19,7 +19,6 @@ from typing import Any, BinaryIO, IO, Optional, Protocol, Self, TypeVar
 from types import MappingProxyType
 from warnings import warn
 
-from filewrap import bio_skip_iter
 from http_response import get_filename, get_length, get_range, get_total_length, is_chunked, is_range_request
 from property import funcproperty
 from urlopen import urlopen
@@ -175,8 +174,9 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         self.__dict__["start"] += delta
 
     def close(self, /):
-        self.response.close()
-        self.__dict__["closed"] = True
+        if not self.closed:
+            self.response.close()
+            self.__dict__["closed"] = True
 
     @funcproperty
     def closed(self, /):
@@ -225,7 +225,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
     def readinto(self, buffer, /) -> int:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        if not self.chunked and self.tell() >= self.length:
+        if not buffer or not self.chunked and self.tell() >= self.length:
             return 0
         if self.file.closed:
             self.reconnect()
@@ -302,9 +302,16 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             old_pos = self.tell()
             if old_pos == pos:
                 return pos
-            if pos > old_pos and pos - old_pos <= self.seek_threshold:
-                for _ in bio_skip_iter(self, pos - old_pos):
-                    pass
+            if pos > old_pos and (size := pos - old_pos) <= self.seek_threshold:
+                if size <= COPY_BUFSIZE:
+                    self.read(size)
+                else:
+                    buf = bytearray(COPY_BUFSIZE)
+                    readinto = self.readinto
+                    while size > COPY_BUFSIZE:
+                        readinto(buf)
+                        size -= COPY_BUFSIZE
+                    self.read(size)
             else:
                 self.reconnect(pos)
             return pos
@@ -378,6 +385,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         else:
             return buffer
 
+
 try:
     from requests import Session
 
@@ -416,6 +424,7 @@ try:
             if start >= self.length:
                 return start
             return start + self.file.tell()
+
     __all__.append("RequestsFileReader")
 except ImportError:
     pass
@@ -437,6 +446,7 @@ except ImportError:
     pass
 
 
+# TODO: 实现 AsyncHTTPFileReader
 # TODO: 支持异步文件，使用 aiohttp，参考 aiofiles 的接口实现
 # TODO: 设计实现一个 HTTPFileWriter，用于实现上传，关闭后视为上传完成
 

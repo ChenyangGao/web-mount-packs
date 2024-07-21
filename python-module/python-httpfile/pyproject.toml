@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "python-httpfile"
-version = "0.0.1.3"
-description = "Python httpfile classes."
+version = "0.0.2"
+description = "Python httpfile."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
@@ -28,7 +28,6 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.10"
 http_response = "*"
-python-filewrap = "*"
 python-property = "*"
 python-urlopen = "*"
 

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 2)
+__version__ = (0, 2, 3)
 __requirements__ = ["cachetools", "flask", "Flask-Compress", "python-115", "urllib3_request", "werkzeug", "wsgidav"]
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
@@ -196,7 +196,7 @@ import errno
 
 from collections.abc import Callable, MutableMapping
 from functools import cached_property, partial, update_wrapper
-from hashlib import md5
+from hashlib import sha1
 from html import escape
 from io import BytesIO
 from os import stat
@@ -333,14 +333,10 @@ fs = client.get_fs(client, attr_cache=LRUCache(65536), path_to_id=LRUCache(65536
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
-# NOTE: 标记一些 pickcode 对应的是图片
-pickcode_of_image: None | set[str] = set() if cdn_image else None
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
 # NOTE: 缓存图片的 CDN 直链 1 小时
-image_url_cache: None | MutableMapping[str, P115Url] = None
-if cdn_image:
-    image_url_cache = TTLCache(65536, ttl=3600)
+image_url_cache: MutableMapping[str, None | P115Url] = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 # NOTE: webdav 的文件对象缓存
@@ -430,29 +426,33 @@ class FileResource(DavPathBase, DAVNonCollection):
     @cached_property
     def strm_data(self, /) -> bytes:
         attr = self.attr
-        url = joinpath(self.origin, f"{attr['name'].translate({0x23: '%23', 0x2F: '%2F', 0x3F: '%3F'})}?pickcode={attr['pickcode']}&password={password}")
+        name = attr["name"].translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
+        url = joinpath(
+            self.origin, 
+            f"{name}?pickcode={attr['pickcode']}&password={password}", 
+        )
         if attr.get("class") == "PIC" or attr.get("thumb"):
             url += "&image=true"
         return bytes(url, "utf-8")
 
     @property
     def url(self, /) -> str:
+        if (url := self.__dict__.get("url", "")):
+            return str(url)
         attr = self.attr
         user_agent = self.environ.get("HTTP_USER_AGENT", "")
-        if (url := self.__dict__.get("url", "")):
-            pass
-        elif cdn_image and attr.get("class") == "PIC" or attr.get("thumb"):
+        if cdn_image and attr.get("class") == "PIC" or attr.get("thumb"):
             url = get_image_url(attr["pickcode"], user_agent)
             self.__dict__["url"] = url
             self.__dict__["size"] = url["size"]
-            url = url["data"]["source_url"]
+            return url["data"]["source_url"]
         else:
             url = relogin_wrap(attr.get_url, headers={"User-Agent": user_agent})
         return str(url)
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
-            md5(bytes(self.path, "utf-8")).hexdigest(), 
+            self.attr["sha1"], 
             self.mtime, 
             self.size, 
         )
@@ -489,7 +489,7 @@ class FolderResource(DavPathBase, DAVCollection):
 
     @cached_property
     def children(self, /) -> dict[str, P115Path]:
-        children = {}
+        children: dict[str, P115Path] = {}
         for attr in relogin_wrap(self.attr.listdir_path):
             name = attr["name"]
             if not attr.is_dir() and strm_predicate and strm_predicate(attr):
@@ -501,12 +501,12 @@ class FolderResource(DavPathBase, DAVCollection):
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
-            md5(bytes(self.path, "utf-8")).hexdigest(), 
+            sha1(bytes(self.path, "utf-8")).hexdigest(), 
             self.mtime, 
             0, 
         )
 
-    def get_member(self, name: str) -> FileResource | FolderResource:
+    def get_member(self, /, name: str) -> FileResource | FolderResource:
         if not (attr := self.children.get(name)):
             raise DAVError(404, self.path + "/" + name)
         relpath = attr["path"][len(root_dir)-1:]
@@ -516,6 +516,9 @@ class FolderResource(DavPathBase, DAVCollection):
             if name.endswith(".strm"):
                 relpath = splitext(relpath)[0] + ".strm"
             return FileResource(relpath, self.environ, attr)
+
+    def get_member_list(self, /) -> list[FileResource | FolderResource]:
+        return list(map(self.get_member, self.get_member_names()))
 
     def get_member_names(self, /) -> list[str]:
         return list(self.children)
@@ -598,7 +601,6 @@ def redirect_exception_response(func, /):
         try:
             return func(*args, **kwds)
         except BaseException as exc:
-            flask_app.logger.exception("can't make response")
             if isinstance(exc, HTTPStatus):
                 return exc.message, exc.status
             elif isinstance(exc, StatusError):
@@ -608,8 +610,10 @@ def redirect_exception_response(func, /):
             elif isinstance(exc, FileNotFoundError):
                 return str(exc), 404 # Not Found
             elif isinstance(exc, OSError):
+                flask_app.logger.exception("500: internal server error")
                 return str(exc), 500 # Internal Server Error
             else:
+                flask_app.logger.exception("can't make response")
                 return str(exc), 503 # Service Unavailable
     return update_wrapper(wrapper, func)
 
@@ -670,7 +674,7 @@ def get_url(pickcode: str):
     elif (
         cdn_image and 
         (as_image := request.args.get("image")) not in ("0", "false") and 
-        (as_image is not None or pickcode_of_image and pickcode in pickcode_of_image)
+        (as_image is not None or image_url_cache and pickcode in image_url_cache)
     ):
         return redirect(get_image_url(pickcode))
     use_web_api = request.args.get("web") not in (None, "0", "false")
@@ -718,7 +722,7 @@ def get_url(pickcode: str):
         (".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", 
          ".raw", ".svg", ".tif", ".tiff", ".webp")
     ):
-        pickcode_of_image.add(pickcode) # type: ignore
+        image_url_cache[pickcode] = None
     return redirect(url)
 
 
@@ -828,7 +832,7 @@ def query(path: str):
             sha1_to_pickcode[attr["sha1"]] = id_to_pickcode[attr["id"]] = pickcode
             if attr.get("class") == "PIC" or attr.get("thumb"):
                 if cdn_image:
-                    pickcode_of_image.add(pickcode) # type: ignore
+                    image_url_cache[pickcode] = None
                 attr["url"] += "&image=true"
                 attr["short_url"] += "&image=true"
         if password:

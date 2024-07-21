@@ -1,4 +1,4 @@
-# Python httpfile classes.
+# Python httpfile.
 
 ## Installation
 
