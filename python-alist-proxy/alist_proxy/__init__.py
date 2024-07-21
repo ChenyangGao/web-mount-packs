@@ -347,3 +347,4 @@ if __name__ == "__main__":
         app.logger.level = 10
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 
+# TODO: pip install alist_proxy[async]

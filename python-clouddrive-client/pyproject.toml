@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-alist"
-version = "0.0.13.5.2.3"
-description = "Python wrapper for alist."
+name = "clouddrive"
+version = "0.0.12.2.9"
+description = "Python wrapper for CloudDrive."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-alist-web-api"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-wrap-alist-web-api"
-keywords = ["alist"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-clouddrive-client"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-clouddrive-client"
+keywords = ["nas", "clouddrive"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,31 +26,31 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 glob_pattern = "*"
+grpcio = "*"
+grpcio-tools = "*"
+grpclib = "*"
+"grpclib[protobuf]" = "*"
 http_response = "*"
-httpx = "*"
-httpx_request = ">=0.0.8.2"
-multidict = "*"
 path_ignore_pattern = "*"
-pycryptodome = "*"
+protobuf = "*"
 python-argtools = "*"
-python-asynctools = ">=0.0.4"
 python-dateutil = "*"
 python-download = ">=0.0.3"
 python-filewrap = ">=0.1.1"
 python-httpfile = ">=0.0.2"
 python-http_request = ">=0.0.6"
-python-iterutils = ">=0.0.7"
-python-undefined = "*"
+python-urlopen = "*"
 yarl = "*"
 
 [tool.poetry.scripts]
-python-alist = "alist.__main__:main"
+python-clouddrive = "clouddrive.__main__:main"
+clouddrive = "clouddrive.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "alist"
+include = "clouddrive"
