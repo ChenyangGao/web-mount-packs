@@ -67,10 +67,11 @@ def main(args):
     from warnings import warn
 
     from concurrenttools import thread_batch
+    from hashtools import file_digest
     from p115 import check_response, P115Client, MultipartUploadAbort
     from posixpatht import escape, split, normpath as pnormpath
     from rich.progress import (
-        Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
+        Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn, DownloadColumn
     )
     from texttools import cycle_text, rotate_text
 
@@ -345,6 +346,21 @@ def main(args):
             except KeyError:
                 reasons[exctype] = 1
 
+    def hash_report(attr):
+        update_desc = rotate_text(attr["name"], 22, interval=0.1).__next__
+        task = progress.add_task("[bold blink red on yellow]DIGESTING[/bold blink red on yellow] " + update_desc(), total=attr["size"])
+        def hash_progress(step):
+            progress.update(task, description="[bold blink red on yellow]DIGESTING[/bold blink red on yellow] " + update_desc(), advance=step)
+            progress.update(statistics_bar, description=get_stat_str())
+        try:
+            return file_digest(
+                open(attr["path"], "rb"), 
+                "sha1", 
+                callback=hash_progress, 
+            )
+        finally:
+            progress.remove_task(task)
+
     def add_report(_, attr):
         update_desc = rotate_text(attr["name"], 32, interval=0.1).__next__
         task = progress.add_task(update_desc(), total=attr["size"])
@@ -352,7 +368,7 @@ def main(args):
             while not closed:
                 step = yield
                 progress.update(task, description=update_desc(), advance=step)
-                progress.update(statistics_bar, description=update_stats_desc(), advance=step, total=tasks["size"])
+                progress.update(statistics_bar, description=get_stat_str(), advance=step, total=tasks["size"])
         finally:
             progress.remove_task(task)
 
@@ -386,7 +402,7 @@ def main(args):
                     files=sum(not a["is_directory"] for a in subattrs), 
                     size=sum(a["size"] for a in subattrs if not a["is_directory"]), 
                 )
-                progress.update(statistics_bar, description=update_stats_desc())
+                progress.update(statistics_bar, description=get_stat_str(), total=tasks["size"])
                 pending_to_remove: list[int] = []
                 for subattr in subattrs:
                     subname = subattr["name"]
@@ -402,7 +418,7 @@ def main(args):
                         elif resume and subattr["size"] == subdattr["size"] and subattr["mtime"] <= subdattr["ctime"]:
                             console_print(f"[bold yellow][SKIP][/bold yellow] 📝 跳过文件: [blue underline]{subpath!r}[/blue underline] ➜ [blue underline]{subdpath!r}[/blue underline]")
                             update_success(1, 1, subattr["size"])
-                            progress.update(statistics_bar, description=update_stats_desc())
+                            progress.update(statistics_bar, description=get_stat_str())
                             continue
                         else:
                             subtask = Task(subattr, dst_id, subname)
@@ -433,6 +449,11 @@ def main(args):
                 elif src_attr["size"] > 1 << 34: # 16 GB
                     # NOTE: 介于 1 GB 和 16 GB 时直接流式上传，超过 16 GB 时，使用分块上传，分块大小 1 GB
                     kwargs["partsize"] = 1 << 30
+
+                filesize, filehash = hash_report(src_attr)
+                console_print(f"[bold green][HASH][/bold green] 🧠 计算哈希: sha1([blue underline]{src_path!r}[/blue underline]) = {filehash.hexdigest()!r}")
+                kwargs["filesize"] = filesize
+                kwargs["filesha1"] = filehash.hexdigest()
                 ticket: dict
                 for i in range(5):
                     if i:
@@ -447,6 +468,7 @@ def main(args):
                             make_reporthook=partial(add_report, attr=src_attr), 
                             **kwargs, 
                         )
+                        break
                     except MultipartUploadAbort as e:
                         exc = e
                         ticket = kwargs["multipart_resume_data"] = e.ticket
@@ -465,7 +487,7 @@ def main(args):
 [bold green][GOOD][/bold green] 📝 {prompt}: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
     ├ response = {resp}""")
                 update_success(1, 1, src_attr["size"])
-            progress.update(statistics_bar, description=update_stats_desc())
+            progress.update(statistics_bar, description=get_stat_str())
             success_tasks[src_path] = unfinished_tasks.pop(src_path)
         except BaseException as e:
             task.reasons.append(e)
@@ -495,7 +517,7 @@ def main(args):
                 console_print(f"""\
 [bold red][FAIL][/bold red] 💀 发生错误（将抛弃）: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
 {indent(format_exc().strip(), "    ├ ")}""")
-                progress.update(statistics_bar, description=update_stats_desc())
+                progress.update(statistics_bar, description=get_stat_str())
                 update_failed(1, not src_attr["is_directory"], src_attr.get("size"))
                 failed_tasks[src_path] = unfinished_tasks.pop(src_path)
                 if len(task.reasons) == 1:
@@ -512,8 +534,9 @@ def main(args):
         *Progress.get_default_columns(), 
         TimeElapsedColumn(), 
         MofNCompleteColumn(), 
-        TransferSpeedColumn(), 
+        DownloadColumn(), 
         FileSizeColumn(), 
+        TransferSpeedColumn(), 
     ) as progress:
         console_print = progress.console.print
         if isinstance(dst_path, str):
@@ -564,13 +587,8 @@ def main(args):
         stats["src_path"] = src_attr["path"]
         stats["dst_path"] = dst_path
         update_tasks(1, not src_attr["is_directory"], src_attr.get("size"))
-        update_stats_desc = cycle_text(
-            ("...", "..", ".", ".."), 
-            prefix="📊 [cyan bold]statistics[/cyan bold] ", 
-            min_length=32 + 23, 
-            interval=0.1, 
-        ).__next__
-        statistics_bar = progress.add_task(update_stats_desc())
+        get_stat_str = lambda: f"📊 [cyan bold]statistics[/cyan bold] 🧮 {tasks['total']} = 💯 {success['total']} + ⛔ {failed['total']} + ⏳ {unfinished['total']}"
+        statistics_bar = progress.add_task(get_stat_str(), total=tasks["size"])
         closed = False
         try:
             thread_batch(work, unfinished_tasks.values(), max_workers=max_workers)
@@ -618,5 +636,4 @@ if __name__ == "__main__":
     main(args)
 
 # TODO: statistics 行要有更详细的信息，如果一行不够，就再加一行
-# TODO: 上传文件时，如果正在计算哈希，最好也要有个进度条 （用黄色），并且注明是计算哈希
 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度

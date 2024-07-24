@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __version_str__ = ".".join(map(str, __version__))
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
@@ -88,7 +88,7 @@ from blacksheep.server.openapi.v3 import OpenAPIHandler
 from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
 from openapidocs.v3 import Info # type: ignore
 from httpx import HTTPStatusError
-from p115 import P115Client, P115Url, AVAILABLE_APPS
+from p115 import P115Client, P115Url, AVAILABLE_APPS, AuthenticationError
 
 
 cookies_path_mtime = 0
@@ -119,18 +119,27 @@ if not cookies:
             except FileNotFoundError:
                 pass
 
+def save_cookies():
+    if cookies_path:
+        try:
+            open(cookies_path, "w").write(client.cookies)
+        except Exception:
+            logger.exception("can't save cookies to file: %r", cookies_path)
+
 client = P115Client(cookies, app="qandroid")
 if cookies_path and cookies != client.cookies:
-    open(cookies_path, "w").write(client.cookies)
+    save_cookies()
 
-device = client.login_device()["icon"]
-if device not in AVAILABLE_APPS:
-    # 115 浏览器版
-    if device == "desktop":
-        device = "web"
-    else:
-        warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
-        device = "qandroid"
+device = "qandroid"
+if client.cookies:
+    device = client.login_device()["icon"]
+    if device not in AVAILABLE_APPS:
+        # 115 浏览器版
+        if device == "desktop":
+            device = "web"
+        else:
+            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
+            device = "qandroid"
 fs = client.get_fs(client, path_to_id=LRUCache(65536))
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
@@ -146,6 +155,15 @@ docs = OpenAPIHandler(info=Info(
 ))
 docs.ui_providers.append(ReDocUIProvider())
 docs.bind_app(app)
+common_status_docs = docs(responses={
+    200: "请求成功", 
+    401: "未登录或登录失效", 
+    403: "禁止访问或权限不足", 
+    404: "文件或目录不存在", 
+    406: "不能完成请求", 
+    500: "服务器错误", 
+    503: "服务暂不可用", 
+})
 
 
 @app.on_middlewares_configuration
@@ -202,7 +220,7 @@ async def relogin(exc=None):
                 async_=True, 
             )
             if cookies_path:
-                open(cookies_path, "w").write(client.cookies)
+                save_cookies()
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
 
 
@@ -258,6 +276,10 @@ def redirect_exception_response(func, /):
                 f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
                 e.response.status_code, 
             )
+        except AuthenticationError as e:
+            return text(str(e), 401)
+        except PermissionError as e:
+            return text(str(e), 403)
         except FileNotFoundError as e:
             return text(str(e), 404)
         except OSError as e:
@@ -267,11 +289,99 @@ def redirect_exception_response(func, /):
     return update_wrapper(wrapper, func)
 
 
-@docs(responses={
-    200: "返回对应文件或目录的信息", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
+@route("/api/login/status", methods=["GET"])
+@redirect_exception_response
+async def login_status(request: Request):
+    """查询是否登录状态
+
+    <br />
+    <br />如果是登录状态，返回 true，否则为 false
+    """
+    return await client.login_status(async_=True)
+
+
+@common_status_docs
+@route("/api/login/qrcode/token", methods=["GET"])
+@redirect_exception_response
+async def login_qrcode_token(request: Request):
+    """获取扫码令牌
+    """
+    resp = await client.login_qrcode_token(async_=True)
+    if resp["state"]:
+        data = resp["data"]
+        data["qrcode_image"] = "https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=" + data["uid"]
+        return data
+    raise OSError(resp)
+
+
+@common_status_docs
+@route("/api/login/qrcode/status", methods=["GET"])
+@redirect_exception_response
+async def login_qrcode_status(request: Request, uid: str, time: int, sign: str):
+    """查询扫码状态
+
+    <br />
+    <br />返回的状态码：
+    <br />&nbsp;&nbsp;0：waiting
+    <br />&nbsp;&nbsp;1：scanned
+    <br />&nbsp;&nbsp;2：signed in
+    <br />&nbsp;&nbsp;-1：expired
+    <br />&nbsp;&nbsp;-2：canceled
+    <br />&nbsp;&nbsp;其它：abort
+
+    :param uid: 扫码的 uid （由 /api/login/qrcode/token 获取）
+    :param time: 扫码令牌的请求时间 （由 /api/login/qrcode/token 获取）
+    :param sign: 扫码的 uid （由 /api/login/qrcode/token 获取）
+    """
+    payload = {"uid": uid, "time": time, "sign": sign}
+    while True:
+        try:
+            resp = await client.login_qrcode_status(payload, async_=True)
+        except Exception:
+            continue
+        else: 
+            if resp["state"]:
+                data = resp["data"]
+                match data.get("status"):
+                    case 0:
+                        data["message"] = "waiting"
+                    case 1:
+                        data["message"] = "scanned"
+                    case 2:
+                        data["message"] = "signed in"
+                    case -1:
+                        data["message"] = "expired"
+                    case -2:
+                        data["message"] = "canceled"
+                    case _:
+                        data["message"] = "abort"
+                return data
+            raise OSError(resp)
+
+
+@common_status_docs
+@route("/api/login/qrcode/result", methods=["GET"])
+@redirect_exception_response
+async def login_qrcode_result(request: Request, uid: str, app: str = "qandroid"):
+    """绑定扫码结果
+
+    :param uid: 扫码的 uid （由 /api/login/qrcode/token 获取）
+    :param app: 绑定到设备，默认值 "qandroid"
+    """
+    global device
+    resp = await client.login_qrcode_result({"account": uid, "app": app})
+    if resp["state"]:
+        data = resp["data"]
+        client.cookies = data["cookie"]
+        if cookies_path:
+            save_cookies()
+        device = app
+        return data
+    raise OSError(resp)
+
+
+@common_status_docs
 @route("/api/attr", methods=["GET", "HEAD"])
 @route("/api/attr/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -296,11 +406,7 @@ async def get_attr(
     return normalize_attr(attr, origin)
 
 
-@docs(responses={
-    200: "罗列对应目录", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/list", methods=["GET", "HEAD"])
 @route("/api/list/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -328,11 +434,7 @@ async def get_list(
     ]
 
 
-@docs(responses={
-    200: "返回对应文件或目录的祖先节点列表（包含自己）", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/ancestors", methods=["GET", "HEAD"])
 @route("/api/ancestors/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -354,11 +456,7 @@ async def get_ancestors(
     return await call_wrap(fs.get_ancestors, (path or path2) if id < 0 else id)
 
 
-@docs(responses={
-    200: "返回对应文件或目录的备注", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/desc", methods=["GET", "HEAD"])
 @route("/api/desc/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -380,11 +478,7 @@ async def get_desc(
     return html(await call_wrap(fs.desc, (path or path2) if id < 0 else id))
 
 
-@docs(responses={
-    200: "返回对应文件的下载链接", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/url", methods=["GET", "HEAD"])
 @route("/api/url/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -419,11 +513,7 @@ async def get_url(
     return {"url": url, "headers": url["headers"]}
 
 
-@docs(responses={
-    200: "下载对应文件", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/download", methods=["GET", "HEAD"])
 @route("/api/download/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -467,11 +557,7 @@ async def file_download(
     return redirect(url)
 
 
-@docs(responses={
-    200: "返回对应文件的 m3u8 文件", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/m3u8", methods=["GET", "HEAD"])
 @route("/api/m3u8/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -533,11 +619,7 @@ async def file_m3u8(
     return redirect(url)
 
 
-@docs(responses={
-    200: "返回对应视频文件的字幕信息", 
-    404: "文件或目录不存在", 
-    500: "服务器错误"
-})
+@common_status_docs
 @route("/api/subtitle", methods=["GET", "HEAD"])
 @route("/api/subtitle/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -566,5 +648,12 @@ async def file_subtitle(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, proxy_headers=True, forwarded_allow_ips="*")
+    uvicorn.run(
+        app, 
+        host=args.host, 
+        port=args.port, 
+        reload=args.reload, 
+        proxy_headers=True, 
+        forwarded_allow_ips="*", 
+    )
 

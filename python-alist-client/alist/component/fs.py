@@ -453,11 +453,7 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         ensure_ascii: bool = True, 
     ) -> str:
-        return self.fs.get_url(
-            self, 
-            sign=self["sign"], 
-            ensure_ascii=ensure_ascii, 
-        )
+        return self.fs.get_url(self, ensure_ascii=ensure_ascii)
 
     @overload
     def glob(
@@ -2907,7 +2903,7 @@ class AlistFileSystem:
                     if src_storage != dst_storage:
                         # NOTE: 跨 storage 复制为不同名字的文件，则转化为上传任务
                         resp = yield self.fs_put(
-                            URL(self.get_url(src_path)), 
+                            URL(self.get_url(src_attr)), 
                             dst_path, 
                             as_task=True, 
                             filesize=src_attr["size"], 
@@ -3665,25 +3661,23 @@ class AlistFileSystem:
         /, 
         path: PathType = "", 
         sign: str = "", 
-        token: bool | str = "", 
+        token: Literal[True] | str = "", 
         expire_timestamp: int = 0, 
         ensure_ascii: bool = True, 
     ) -> str:
         if isinstance(path, (AttrDict, AlistPath)):
+            if not sign:
+                sign = path.get("sign", "")
             path = cast(str, path["path"])
         else:
             path = self.abspath(path)
-        if sign:
-            return self.client.get_url(path, sign=sign, ensure_ascii=ensure_ascii)
-        if token:
-            return self.client.get_url(
-                path, 
-                self.token if token is True else token, 
-                expire_timestamp=expire_timestamp, 
-                ensure_ascii=ensure_ascii, 
-            )
-        else:
-            return self.client.get_url(path, ensure_ascii=ensure_ascii)
+        return self.client.get_url(
+            path, 
+            sign=sign, 
+            token=self.token if token is True else token, 
+            expire_timestamp=expire_timestamp, 
+            ensure_ascii=ensure_ascii, 
+        )
 
     @overload
     def glob(

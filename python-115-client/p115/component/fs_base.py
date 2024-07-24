@@ -3938,8 +3938,9 @@ class P115FileSystemBase(Generic[P115PathType]):
                 )
             )
 
-    list = listdir_path
     dict = dictdir_path
+    list = listdir_path
+    readdir = listdir
 
     cd = chdir
     pwd = getcwd

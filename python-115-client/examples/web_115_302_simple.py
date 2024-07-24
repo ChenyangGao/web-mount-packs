@@ -567,3 +567,5 @@ if __name__ == "__main__":
         run([executable, "-m", "pip", "install", "-U", "uvicorn"], check=True)
     uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, proxy_headers=True, forwarded_allow_ips="*")
 
+# TODO: 报错信息也返回给客户端
+# TODO: 添加一个 debug 模式，执行 reload，而且输出报错的完整调用栈

@@ -18,7 +18,13 @@ __doc__ = """\
 from argparse import ArgumentParser, RawTextHelpFormatter
 from warnings import warn
 
-from p115 import AVAILABLE_APPS
+try:
+    from p115 import AVAILABLE_APPS
+except ImportError:
+    from sys import executable
+    from subprocess import run
+    run([executable, "-m", "pip", "install", "-U", *__requirements__], check=True)
+    from p115 import AVAILABLE_APPS
 
 parser = ArgumentParser(
     formatter_class=RawTextHelpFormatter, 
@@ -165,7 +171,7 @@ try:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AVAILABLE_APPS
+    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AuthenticationError
     from posixpatht import escape as escape_name
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
@@ -182,7 +188,7 @@ except ImportError:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AVAILABLE_APPS
+    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AuthenticationError
     from posixpatht import escape as escape_name
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
@@ -605,6 +611,8 @@ def redirect_exception_response(func, /):
                 return exc.message, exc.status
             elif isinstance(exc, StatusError):
                 return str(exc), get_status_code(exc)
+            elif isinstance(exc, AuthenticationError):
+                return str(exc), 401 # Unauthorized
             elif isinstance(exc, PermissionError):
                 return str(exc), 403 # Forbidden
             elif isinstance(exc, FileNotFoundError):

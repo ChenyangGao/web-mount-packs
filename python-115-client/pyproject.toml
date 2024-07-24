@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.9.7.4.9.5"
+version = "0.0.9.7.5"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -43,8 +43,8 @@ python-asynctools = ">=0.0.4"
 python-concurrenttools = ">=0.0.3"
 python-cookietools = ">=0.0.2"
 python-download = ">=0.0.3"
-python-filewrap = ">=0.1.2"
-python-hashtools = "*"
+python-filewrap = ">=0.1.4"
+python-hashtools = ">=0.0.2"
 python-httpfile = ">=0.0.2"
 python-http_request = ">=0.0.6"
 python-iterutils = ">=0.0.7"
