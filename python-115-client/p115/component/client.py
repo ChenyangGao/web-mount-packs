@@ -4160,6 +4160,7 @@ class P115Client:
                 # - "delete_file":       删除文件或文件夹
                 # - "upload_file":       上传文件
                 # - "upload_image_file": 上传图片
+                # - "receive_files":     接收文件
                 # - "rename_file":       文件改名（未实现）
                 # - "copy_file":         复制文件（未实现）
             - limit: int = 32

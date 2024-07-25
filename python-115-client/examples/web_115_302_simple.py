@@ -24,6 +24,7 @@ __doc__ = """\
     3. 此脚本所在目录 下
 - \x1b[1;32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
 - \x1b[1;32mcdn_image\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）图片走 cdn，设置此参数会创建一个图片直链的缓存
+- \x1b[1;32mcdn_image_warmup_ids\x1b[0m: 为图片的 cdn 缓存进行预热，接受文件夹 id，如果有多个用逗号(\x1b[1;36m,\x1b[0m)隔开
 - \x1b[1;32murl_ttl\x1b[0m: 直链存活时间（\x1b[1;31m单位：秒\x1b[0m），默认值 \x1b[1;36m1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限时
 - \x1b[1;32murl_reuse_factor\x1b[0m: 直链最大复用次数，默认值 \x1b[1;36m-1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m 或 \x1b[1;36m= 1\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限次数
 - \x1b[1;32murl_range_request_cooldown\x1b[0m: range 请求冷却时间，默认值 \x1b[1;36m0\x1b[0m，某个 ip 对某个资源执行一次 range 请求后必须过一定的冷却时间后才能对相同范围再次请求。特别的，若 \x1b[1;36m<= 0\x1b[0m，则不需要冷却
@@ -71,6 +72,7 @@ device = ""
 cookies_path = environ.get("cookies_path", "")
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
 cdn_image = environ.get("cdn_image") is not None
+cdn_image_warmup_ids = environ.get("cdn_image_warmup_ids", "")
 url_ttl = float(environ.get("url_ttl", "1"))
 url_reuse_factor = int(environ.get("url_reuse_factor", "-1"))
 url_range_request_cooldown = int(environ.get("url_range_request_cooldown", "0"))
@@ -98,7 +100,10 @@ if not cookies:
     raise SystemExit("未能获得 cookies")
 
 
-from asyncio import Lock
+import errno
+import logging
+
+from asyncio import create_task, sleep, Lock
 from collections.abc import Iterable, Iterator, MutableMapping
 try:
     from collections.abc import Buffer # type: ignore
@@ -106,7 +111,9 @@ except ImportError:
     Buffer = bytes | bytearray | memoryview
 from base64 import b64decode, b64encode
 from enum import Enum
+from functools import update_wrapper
 from posixpath import split as splitpath
+from time import time
 from typing import cast, Final
 from urllib.parse import urlencode
 
@@ -157,6 +164,9 @@ RSA_encrypt: Final = PKCS1_v1_5.new(RSA.construct((
 
 app = Application()
 logger = getattr(app, "logger")
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) \x1b[5;31m➜\x1b[0m %(message)s"))
+logger.addHandler(handler)
 cookies_lock = Lock()
 
 # NOTE: id 到 pickcode 的映射
@@ -173,7 +183,7 @@ if url_reuse_factor not in (0, 1):
     elif url_ttl < 0:
         URL_CACHE = LRUCache(1024)
 # NOTE: 缓存图片的 CDN 直链 1 小时
-IMAGE_URL_CACHE: MutableMapping[str, bytes] = TTLCache(65536, ttl=3600)
+IMAGE_URL_CACHE: MutableMapping[str, bytes] = TTLCache(float("inf"), ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 RANGE_REQUEST_COOLDOWN: None | MutableMapping[tuple[str, str, str, bytes], None] = None
 if url_range_request_cooldown > 0:
@@ -288,6 +298,101 @@ def get_enum_name(val, cls):
     return cls(val).name
 
 
+class AuthenticationError(OSError):
+    pass
+
+
+def check_response(resp: dict, /) -> dict:
+    """检测 115 的某个接口的响应，如果成功则直接返回，否则根据具体情况抛出一个异常
+    """
+    if resp.get("state", True):
+        return resp
+    if "errno" in resp:
+        match resp["errno"]:
+            # {"state": false, "errno": 99, "error": "请重新登录", "request": "/app/uploadinfo", "data": []}
+            case 99:
+                raise AuthenticationError(resp)
+            # {"state": false, "errno": 911, "errcode": 911, "error_msg": "请验证账号"}
+            case 911:
+                raise AuthenticationError(resp)
+            # {"state": false, "errno": 20004, "error": "该目录名称已存在。", "errtype": "war"}
+            case 20004:
+                raise FileExistsError(errno.EEXIST, resp)
+            # {"state": false, "errno": 20009, "error": "父目录不存在。", "errtype": "war"}
+            case 20009:
+                raise FileNotFoundError(errno.ENOENT, resp)
+            # {"state": false, "errno": 91002, "error": "不能将文件复制到自身或其子目录下。", "errtype": "war"}
+            case 91002:
+                raise OSError(errno.ENOTSUP, resp)
+            # {"state": false, "errno": 91004, "error": "操作的文件(夹)数量超过5万个", "errtype": "war"}
+            case 91004:
+                raise OSError(errno.ENOTSUP, resp)
+            # {"state": false, "errno": 91005, "error": "空间不足，复制失败。", "errtype": "war"}
+            case 91005:
+                raise OSError(errno.ENOSPC, resp)
+            # {"state": false, "errno": 90008, "error": "文件（夹）不存在或已经删除。", "errtype": "war"}
+            case 90008:
+                raise FileNotFoundError(errno.ENOENT, resp)
+            # {"state": false,  "errno": 231011, "error": "文件已删除，请勿重复操作","errtype": "war"}
+            case 231011:
+                raise FileNotFoundError(errno.ENOENT, resp)
+            # {"state": false, "errno": 990009, "error": "删除[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
+            # {"state": false, "errno": 990009, "error": "还原[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
+            # {"state": false, "errno": 990009, "error": "复制[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
+            # {"state": false, "errno": 990009, "error": "移动[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
+            case 990009:
+                raise OSError(errno.EBUSY, resp)
+            # {"state": false, "errno": 990023, "error": "操作的文件(夹)数量超过5万个", "errtype": ""}
+            case 990023:
+                raise OSError(errno.ENOTSUP, resp)
+            # {"state": 0, "errno": 40100000, "code": 40100000, "data": {}, "message": "参数错误！", "error": "参数错误！"}
+            case 40100000:
+                raise OSError(errno.EINVAL, resp)
+            # {"state": 0, "errno": 40101032, "code": 40101032, "data": {}, "message": "请重新登录", "error": "请重新登录"}
+            case 40101032:
+                raise AuthenticationError(resp)
+    elif "errNo" in resp:
+        match resp["errNo"]:
+            case 990001:
+                raise AuthenticationError(resp)
+    elif "code" in resp:
+        match resp["code"]:
+            # {'state': False, 'code': 20018, 'message': '文件不存在或已删除。'}
+            # {'state': False, 'code': 800001, 'message': '目录不存在。'}
+            case 20018 | 800001:
+                raise FileNotFoundError(errno.ENOENT, resp)
+            # {'state': False, 'code': 990002, 'message': '参数错误。'}
+            case 990002:
+                raise OSError(errno.EINVAL, resp)
+            case _:
+                raise OSError(errno.EIO, resp)
+    raise OSError(errno.EIO, resp)
+
+
+def redirect_exception_response(func, /):
+    async def wrapper(*args, **kwds):
+        try:
+            return await func(*args, **kwds)
+        except HTTPException as e:
+            return text(
+                f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
+                e.status, 
+            )
+        except AuthenticationError as e:
+            return text(str(e), 401)
+        except PermissionError as e:
+            return text(str(e), 403)
+        except FileNotFoundError as e:
+            return text(str(e), 404)
+        except (IsADirectoryError, NotADirectoryError) as e:
+            return text(str(e), 406)
+        except OSError as e:
+            return text(str(e), 500)
+        except Exception as e:
+            return text(str(e), 503)
+    return update_wrapper(wrapper, func)
+
+
 async def do_request(
     client: ClientSession, 
     url: str | bytes | blacksheep.url.URL, 
@@ -324,9 +429,7 @@ async def request_json(
 ) -> dict:
     resp = await do_request(client, url, method, content=content, headers=headers, params=params)
     json = loads((await resp.read()) or b"")
-    if not json.get("state", True):
-        raise OSError(json)
-    return json
+    return check_response(json)
 
 
 async def login_device(client: ClientSession) -> str:
@@ -368,9 +471,9 @@ async def relogin(client: ClientSession) -> dict:
     """自动扫二维码重新登录
     """
     global cookies, device
-    logger.warning("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码 🦿\x1b[0m")
     if not device:
         device = await login_device(client)
+    logger.warning(f"\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码: {device!r} 🦿\x1b[0m")
     uid = (await login_qrcode_token(client))["data"]["uid"]
     await login_qrcode_scan(client, uid)
     await login_qrcode_scan_confirm(client, uid)
@@ -479,6 +582,45 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
     raise FileNotFoundError(path)
 
 
+async def warmup_cdn_image(client: ClientSession, id: int = 0):
+    api = "https://proapi.115.com/android/files/imglist"
+    payload: dict = {"cid": id, "limit": 1000, "offset": 0, "o": "user_ptime", "asc": 1}
+    while True:
+        resp = await request_json(client, api, params=payload)
+        for item in resp["data"]:
+            IMAGE_URL_CACHE[item["pick_code"]] = item["thumb_url"].replace("_200s?", "_0?")
+            ID_TO_PICKCODE[item["file_id"]] = item["pick_code"]
+        if resp["offset"] + resp["page_size"] >= resp["count"]:
+            break
+        payload["offset"] += 1000
+
+
+async def periodically_warmup_cdn_image(client: ClientSession, ids: str):
+    id_list = [int(id) for id in ids.split(",") if id]
+    if not id_list:
+        return
+    while True:
+        start = time()
+        for id in id_list:
+            logger.info(f"background task start: warmup cdn images in {id}")
+            try:
+                await warmup_cdn_image(client, id)
+            except Exception:
+                logger.exception("error occurred while warmup-ing cdn images")
+            else:
+                logger.info(f"background task stop: warmup cdn images in {id}")
+        if (interval := start + 3600 - time()) > 0:
+            await sleep(interval)
+
+
+async def configure_background_tasks(app: Application):
+    client = app.services.resolve(ClientSession)
+    create_task(periodically_warmup_cdn_image(client, cdn_image_warmup_ids))
+
+if cdn_image and cdn_image_warmup_ids:
+    app.on_start += configure_background_tasks
+
+
 async def get_image_url(client: ClientSession, pickcode: str) -> bytes:
     if IMAGE_URL_CACHE and (url := IMAGE_URL_CACHE.get(pickcode)):
         return url
@@ -497,6 +639,7 @@ async def get_image_url(client: ClientSession, pickcode: str) -> bytes:
 
 @route("/", methods=["GET", "HEAD"])
 @route("/{path:path2}", methods=["GET", "HEAD"])
+@redirect_exception_response
 async def get_download_url(
     request: Request, 
     client: ClientSession, 

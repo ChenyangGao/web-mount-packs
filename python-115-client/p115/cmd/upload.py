@@ -71,7 +71,8 @@ def main(args):
     from p115 import check_response, P115Client, MultipartUploadAbort
     from posixpatht import escape, split, normpath as pnormpath
     from rich.progress import (
-        Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn, DownloadColumn
+        Progress, DownloadColumn, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, 
+        TimeElapsedColumn, TransferSpeedColumn, 
     )
     from texttools import cycle_text, rotate_text
 
