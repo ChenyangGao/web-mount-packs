@@ -282,6 +282,8 @@ def redirect_exception_response(func, /):
             return text(str(e), 403)
         except FileNotFoundError as e:
             return text(str(e), 404)
+        except (IsADirectoryError, NotADirectoryError) as e:
+            return text(str(e), 406)
         except OSError as e:
             return text(str(e), 500)
         except Exception as e:

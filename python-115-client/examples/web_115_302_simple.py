@@ -584,7 +584,7 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
 
 async def warmup_cdn_image(client: ClientSession, id: int = 0):
     api = "https://proapi.115.com/android/files/imglist"
-    payload: dict = {"cid": id, "limit": 1000, "offset": 0, "o": "user_ptime", "asc": 1}
+    payload: dict = {"cid": id, "limit": 1000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
     while True:
         resp = await request_json(client, api, params=payload)
         for item in resp["data"]:

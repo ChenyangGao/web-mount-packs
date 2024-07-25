@@ -749,12 +749,13 @@ def relogin(exc=None):
                     cookies_path_mtime = mtime
                     need_update = False
             except FileNotFoundError:
-                flask_app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺\x1b[0m")
+                flask_app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 文件空缺: %r\x1b[0m", cookies_path)
         if need_update:
             if exc is None:
-                flask_app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码\x1b[0m")
+                flask_app.logger.error("\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码: %s\x1b[0m", device)
             else:
-                flask_app.logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
+                flask_app.logger.error("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备: {device}\n{exc}""".format(
+                    device = device, 
                     prompt = "\x1b[1m\x1b[33m[SCAN] 🤖 重新扫码：\x1b[0m", 
                     exc    = f"    ├ \x1b[31m{type(exc).__qualname__}\x1b[0m: {exc}")
                 )
