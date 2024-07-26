@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome"]
 __doc__ = """\
         \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
@@ -115,7 +115,7 @@ from functools import update_wrapper
 from posixpath import split as splitpath
 from time import time
 from typing import cast, Final
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 try:
     import blacksheep
@@ -489,7 +489,7 @@ def process_info(info: dict, dir: None | str = None) -> str:
     fn = cast(str, info["n"])
     pickcode = SHA1_TO_PICKCODE[info["sha"]] = ID_TO_PICKCODE[fid] = info["pc"]
     if cdn_image and ((thumb := info.get("u", "")) or info.get("class") == "PIC"):
-        IMAGE_URL_CACHE[pickcode] = thumb.replace("_100?", "_0?")
+        IMAGE_URL_CACHE[pickcode] = bytes(reduce_image_url_layers(thumb), "utf-8")
     if dir:
         PATH_TO_ID[dir + "/" + fn] = fid
     elif dir is not None:
@@ -595,6 +595,14 @@ async def get_pickcode_by_path(
     raise FileNotFoundError(path)
 
 
+def reduce_image_url_layers(url: str) -> str:
+    if not url.startswith(("http://thumb.115.com/", "https://thumb.115.com/")):
+        return url
+    urlp = urlsplit(url)
+    sha1 = urlp.path.rsplit("/")[-1].split("_")[0]
+    return f"https://imgjump.115.com/?sha1={sha1}&{urlp.query}&size=0"
+
+
 async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | dict[str, str] = None) -> int:
     api = "https://proapi.115.com/android/files/imglist"
     payload: dict = {"cid": id, "limit": 1000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
@@ -604,7 +612,7 @@ async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | d
         for item in resp["data"]:
             file_id = item["file_id"]
             pickcode = item["pick_code"]
-            IMAGE_URL_CACHE[pickcode] = item["thumb_url"].replace("_200s?", "_0?")
+            IMAGE_URL_CACHE[pickcode] = bytes(reduce_image_url_layers(item["thumb_url"]), "utf-8")
             ID_TO_PICKCODE[file_id] = pickcode
             SHA1_TO_PICKCODE[item["sha1"]] = pickcode
             if cache is not None:
@@ -743,7 +751,12 @@ if __name__ == "__main__":
         from sys import executable
         from subprocess import run
         run([executable, "-m", "pip", "install", "-U", "uvicorn"], check=True)
-    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, proxy_headers=True, forwarded_allow_ips="*")
+    uvicorn.run(
+        app=app, 
+        host=args.host, 
+        port=args.port, 
+        reload=args.reload, 
+        proxy_headers=True, 
+        forwarded_allow_ips="*", 
+    )
 
-# TODO: 报错信息也返回给客户端
-# TODO: 添加一个 debug 模式，执行 reload，而且输出报错的完整调用栈
