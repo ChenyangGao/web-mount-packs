@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 7, 1)
 __requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome"]
 __doc__ = """\
         \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
@@ -510,7 +510,7 @@ async def get_dir_patht_by_id(client: ClientSession, id: str) -> list[tuple[str,
         "https://webapi.115.com/files", 
         params={"count_folders": "0", "record_open_time": "0", "show_dir": "1", "cid": id, "limit": "1", "offset": "0"}, 
     )
-    return [("0", "/"), *((info["cid"], info["name"]) for info in json["path"][1:])]
+    return [(info["cid"], info["name"]) for info in json["path"][1:]]
 
 
 async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
@@ -616,15 +616,20 @@ async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | d
             ID_TO_PICKCODE[file_id] = pickcode
             SHA1_TO_PICKCODE[item["sha1"]] = pickcode
             if cache is not None:
-                parent_id = item["parent_id"]
-                if parent_id == "0":
-                    dirname = "/"
-                elif not (dirname := cache.get(parent_id, "")):
+                parent_id = str(item["parent_id"])
+                dirname = ""
+                if parent_id != "0" and not (dirname := cache.get(parent_id, "")):
                     patht = await get_dir_patht_by_id(client, parent_id)
-                    dirname = "/"
-                    for pid, name in patht[1:]:
-                        cache[pid] = dirname = joinpath(dirname, name)
-                PATH_TO_ID[joinpath(dirname, item["file_name"])] = file_id
+                    for pid, name in patht:
+                        if dirname:
+                            dirname += "/" + name
+                        else:
+                            dirname = name
+                        cache[pid] = dirname
+                path = item["file_name"]
+                if dirname:
+                    path = dirname + "/" + path
+                PATH_TO_ID[path] = file_id
         count += len(resp["data"])
         if resp["offset"] + resp["page_size"] >= resp["count"]:
             break
