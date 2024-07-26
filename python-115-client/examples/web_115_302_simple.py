@@ -174,7 +174,7 @@ ID_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 SHA1_TO_PICKCODE: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: 路径到 id 到映射
-PATH_TO_ID: MutableMapping[str, str] = LRUCache(65536)
+PATH_TO_ID: MutableMapping[str, str] = LRUCache(1048576 if path_persistence_commitment else 65536)
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
 URL_CACHE: None | MutableMapping[tuple[str, str], tuple[str, int]] = None
 if url_reuse_factor not in (0, 1):
@@ -504,6 +504,15 @@ async def register_http_client():
         yield
 
 
+async def get_dir_patht_by_id(client: ClientSession, id: str) -> list[tuple[str, str]]:
+    json = await request_json(
+        client, 
+        "https://webapi.115.com/files", 
+        params={"count_folders": "0", "record_open_time": "0", "show_dir": "1", "cid": id, "limit": "1", "offset": "0"}, 
+    )
+    return [("0", "/"), *((info["cid"], info["name"]) for info in json["path"][1:])]
+
+
 async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
     if pickcode := ID_TO_PICKCODE.get(id):
         return pickcode
@@ -533,13 +542,17 @@ async def get_pickcode_by_sha1(client: ClientSession, sha1: str) -> str:
     return process_info(json["data"][0])
 
 
-async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
+async def get_pickcode_by_path(
+    client: ClientSession, 
+    path: str, 
+    disable_pc: bool = False, 
+) -> str:
     path = path.strip("/")
     dir_, name = splitpath(path)
     if not name:
         raise FileNotFoundError(path)
     if fid := PATH_TO_ID.get(path):
-        if path_persistence_commitment and (pickcode := ID_TO_PICKCODE.get(fid)):
+        if not disable_pc and path_persistence_commitment and (pickcode := ID_TO_PICKCODE.get(fid)):
             return pickcode
         json = await request_json(
             client, 
@@ -582,33 +595,53 @@ async def get_pickcode_by_path(client: ClientSession, path: str) -> str:
     raise FileNotFoundError(path)
 
 
-async def warmup_cdn_image(client: ClientSession, id: int = 0):
+async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | dict[str, str] = None) -> int:
     api = "https://proapi.115.com/android/files/imglist"
     payload: dict = {"cid": id, "limit": 1000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
+    count = 0
     while True:
         resp = await request_json(client, api, params=payload)
         for item in resp["data"]:
-            IMAGE_URL_CACHE[item["pick_code"]] = item["thumb_url"].replace("_200s?", "_0?")
-            ID_TO_PICKCODE[item["file_id"]] = item["pick_code"]
+            file_id = item["file_id"]
+            pickcode = item["pick_code"]
+            IMAGE_URL_CACHE[pickcode] = item["thumb_url"].replace("_200s?", "_0?")
+            ID_TO_PICKCODE[file_id] = pickcode
+            SHA1_TO_PICKCODE[item["sha1"]] = pickcode
+            if cache is not None:
+                parent_id = item["parent_id"]
+                if parent_id == "0":
+                    dirname = "/"
+                elif not (dirname := cache.get(parent_id, "")):
+                    patht = await get_dir_patht_by_id(client, parent_id)
+                    dirname = "/"
+                    for pid, name in patht[1:]:
+                        cache[pid] = dirname = joinpath(dirname, name)
+                PATH_TO_ID[joinpath(dirname, item["file_name"])] = file_id
+        count += len(resp["data"])
         if resp["offset"] + resp["page_size"] >= resp["count"]:
             break
         payload["offset"] += 1000
+    return count
 
 
 async def periodically_warmup_cdn_image(client: ClientSession, ids: str):
     id_list = [int(id) for id in ids.split(",") if id]
     if not id_list:
         return
+    cache: dict[str, str] = {}
     while True:
         start = time()
-        for id in id_list:
-            logger.info(f"background task start: warmup cdn images in {id}")
+        for id in map(str, id_list):
+            if id in cache:
+                logger.warning("skipped cdn images warmup-ing in %s", id)
+                continue
+            logger.info("background task start: warmup-ing cdn images in %s", id)
             try:
-                await warmup_cdn_image(client, id)
+                count = await warmup_cdn_image(client, id, cache=cache)
             except Exception:
-                logger.exception("error occurred while warmup-ing cdn images")
+                logger.exception("error occurred while warmup-ing cdn images in %s", id)
             else:
-                logger.info(f"background task stop: warmup cdn images in {id}")
+                logger.info("background task stop: warmup-ed cdn images in %s, count=%s", id, count)
         if (interval := start + 3600 - time()) > 0:
             await sleep(interval)
 
@@ -649,6 +682,7 @@ async def get_download_url(
     path: str = "", 
     path2: str = "", 
     image: bool = False, 
+    disable_pc: bool = False, 
 ):
     """获取文件的下载链接
 
@@ -658,6 +692,7 @@ async def get_download_url(
     :param path: 文件的路径，优先级高于 path2
     :param path2: 文件的路径，这个直接在接口路径之后，不在查询字符串中
     :param image: 视为图片（当提供 pickcode 且设置了环境变量 cdn_image）
+    :param disable_pc: 视 path_persistence_commitment 为 False
     """
     try:
         user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")

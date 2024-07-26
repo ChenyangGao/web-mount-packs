@@ -55,7 +55,7 @@ def main(args):
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from os import fspath, makedirs, remove, scandir, stat
+    from os import fspath, makedirs, remove, removedirs, scandir, stat
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
     from pathlib import Path
     from sys import exc_info
@@ -428,6 +428,11 @@ def main(args):
                         subtask = Task(subattr, dst_id, subname)
                     unfinished_tasks[subpath] = subtask
                     submit(subtask)
+                if not subattrs and remove_done:
+                    try:
+                        removedirs(src_path)
+                    except OSError:
+                        pass
                 if pending_to_remove:
                     for i in range(0, len(pending_to_remove), 1_000):
                         part_ids = pending_to_remove[i:i+1_000]
@@ -479,15 +484,19 @@ def main(args):
                     prompt = "秒传文件"
                 else:
                     prompt = "上传文件"
-                if remove_done:
-                    try:
-                        remove(src_path)
-                    except:
-                        pass
                 console_print(f"""\
 [bold green][GOOD][/bold green] 📝 {prompt}: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}
     ├ response = {resp}""")
                 update_success(1, 1, src_attr["size"])
+                if remove_done:
+                    try:
+                        remove(src_path)
+                    except OSError:
+                        pass
+                    try:
+                        removedirs(dirname(src_path))
+                    except OSError:
+                        pass
             progress.update(statistics_bar, description=get_stat_str())
             success_tasks[src_path] = unfinished_tasks.pop(src_path)
         except BaseException as e:
@@ -539,7 +548,7 @@ def main(args):
         FileSizeColumn(), 
         TransferSpeedColumn(), 
     ) as progress:
-        console_print = progress.console.print
+        console_print = lambda msg: progress.console.print(f"[bold][[cyan]{datetime.now()}[/cyan]][/bold]", msg)
         if isinstance(dst_path, str):
             if dst_path == "0" or not pnormpath(dst_path).strip("/"):
                 dst_id = 0
@@ -638,3 +647,4 @@ if __name__ == "__main__":
 
 # TODO: statistics 行要有更详细的信息，如果一行不够，就再加一行
 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
+# TODO: 任务可能要执行很久，允许中途删除文件，则自动跳过此任务

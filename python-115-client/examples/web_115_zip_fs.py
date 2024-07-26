@@ -87,14 +87,14 @@ else:
 try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
-    from p115 import P115Client, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS, AuthenticationError
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", "flask", "Flask-Compress", "httpx", "python-115"], check=True)
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
-    from p115 import P115Client, AVAILABLE_APPS
+    from p115 import P115Client, AVAILABLE_APPS, AuthenticationError
 
 import errno
 
@@ -265,10 +265,14 @@ def redirect_exception_response(func, /):
             return func(*args, **kwds)
         except StatusError as exc:
             return str(exc), get_status_code(exc)
+        except AuthenticationError as exc:
+            return str(exc), 401 # Unauthorized
         except PermissionError as exc:
             return str(exc), 403 # Forbidden
         except FileNotFoundError as exc:
             return str(exc), 404 # Not Found
+        except (IsADirectoryError, NotADirectoryError) as exc:
+            return str(exc), 406 # Not Acceptable
         except OSError as exc:
             return str(exc), 500 # Internal Server Error
         except Exception as exc:

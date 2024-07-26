@@ -617,6 +617,8 @@ def redirect_exception_response(func, /):
                 return str(exc), 403 # Forbidden
             elif isinstance(exc, FileNotFoundError):
                 return str(exc), 404 # Not Found
+            elif isinstance(exc, (IsADirectoryError, NotADirectoryError)):
+                return str(exc), 406 # Not Acceptable
             elif isinstance(exc, OSError):
                 flask_app.logger.exception("500: internal server error")
                 return str(exc), 500 # Internal Server Error
