@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7, 1)
+__version__ = (0, 0, 8)
 __requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome"]
 __doc__ = """\
         \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
@@ -25,6 +25,7 @@ __doc__ = """\
 - \x1b[1;32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
 - \x1b[1;32mcdn_image\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）图片走 cdn，设置此参数会创建一个图片直链的缓存
 - \x1b[1;32mcdn_image_warmup_ids\x1b[0m: 为图片的 cdn 缓存进行预热，接受文件夹 id，如果有多个用逗号(\x1b[1;36m,\x1b[0m)隔开
+- \x1b[1;32mcdn_image_warmup_no_path_cache\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）为图片的 cdn 缓存进行预热时，不建立路径到 id 的映射，以加快预热速度，但使用路径获取图片时速度慢很多
 - \x1b[1;32murl_ttl\x1b[0m: 直链存活时间（\x1b[1;31m单位：秒\x1b[0m），默认值 \x1b[1;36m1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限时
 - \x1b[1;32murl_reuse_factor\x1b[0m: 直链最大复用次数，默认值 \x1b[1;36m-1\x1b[0m。特别的，若 \x1b[1;36m= 0\x1b[0m 或 \x1b[1;36m= 1\x1b[0m，则不缓存；若 \x1b[1;36m< 0\x1b[0m，则不限次数
 - \x1b[1;32murl_range_request_cooldown\x1b[0m: range 请求冷却时间，默认值 \x1b[1;36m0\x1b[0m，某个 ip 对某个资源执行一次 range 请求后必须过一定的冷却时间后才能对相同范围再次请求。特别的，若 \x1b[1;36m<= 0\x1b[0m，则不需要冷却
@@ -73,6 +74,7 @@ cookies_path = environ.get("cookies_path", "")
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
 cdn_image = environ.get("cdn_image") is not None
 cdn_image_warmup_ids = environ.get("cdn_image_warmup_ids", "")
+cdn_image_warmup_no_path_cache = environ.get("cdn_image_warmup_no_path_cache") is not None
 url_ttl = float(environ.get("url_ttl", "1"))
 url_reuse_factor = int(environ.get("url_reuse_factor", "-1"))
 url_range_request_cooldown = int(environ.get("url_range_request_cooldown", "0"))
@@ -508,7 +510,10 @@ async def get_dir_patht_by_id(client: ClientSession, id: str) -> list[tuple[str,
     json = await request_json(
         client, 
         "https://webapi.115.com/files", 
-        params={"count_folders": "0", "record_open_time": "0", "show_dir": "1", "cid": id, "limit": "1", "offset": "0"}, 
+        params={
+            "count_folders": "0", "record_open_time": "0", "show_dir": "1", 
+            "cid": id, "limit": "1", "offset": "0", 
+        }, 
     )
     return [(info["cid"], info["name"]) for info in json["path"][1:]]
 
@@ -574,7 +579,7 @@ async def get_pickcode_by_path(
             raise FileNotFoundError(path)
     else:
         pid = 0
-    params = {"count_folders": 0, "record_open_time": 0, "show_dir": 1, "cid": pid, "limit": 1000, "offset": 0}
+    params = {"count_folders": 0, "record_open_time": 0, "show_dir": 1, "cid": pid, "limit": 5000, "offset": 0}
     while True:
         json = await request_json(
             client, 
@@ -591,7 +596,7 @@ async def get_pickcode_by_path(
                     return pickcode
         if json["offset"] + len(json["data"]) == json["count"]:
             break
-        params["offset"] += 1000
+        params["offset"] += 5000
     raise FileNotFoundError(path)
 
 
@@ -605,7 +610,7 @@ def reduce_image_url_layers(url: str) -> str:
 
 async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | dict[str, str] = None) -> int:
     api = "https://proapi.115.com/android/files/imglist"
-    payload: dict = {"cid": id, "limit": 1000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
+    payload: dict = {"cid": id, "limit": 5000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
     count = 0
     while True:
         resp = await request_json(client, api, params=payload)
@@ -630,10 +635,13 @@ async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | d
                 if dirname:
                     path = dirname + "/" + path
                 PATH_TO_ID[path] = file_id
-        count += len(resp["data"])
-        if resp["offset"] + resp["page_size"] >= resp["count"]:
+        total = resp["count"]
+        delta = len(resp["data"])
+        count += delta
+        logger.info("successfully cached %s (finished=%s, total=%s) cdn images in %s", delta, count, total, id)
+        if count >= total:
             break
-        payload["offset"] += 1000
+        payload["offset"] += 5000
     return count
 
 
@@ -641,11 +649,13 @@ async def periodically_warmup_cdn_image(client: ClientSession, ids: str):
     id_list = [int(id) for id in ids.split(",") if id]
     if not id_list:
         return
-    cache: dict[str, str] = {}
+    cache: None | dict[str, str] = None
+    if not cdn_image_warmup_no_path_cache:
+        cache = {}
     while True:
         start = time()
         for id in map(str, id_list):
-            if id in cache:
+            if cache and id in cache:
                 logger.warning("skipped cdn images warmup-ing in %s", id)
                 continue
             logger.info("background task start: warmup-ing cdn images in %s", id)

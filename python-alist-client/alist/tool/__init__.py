@@ -36,7 +36,7 @@ def alist_update_115_cookies(
             if only_not_work and storage["status"] == "work":
                 continue
             addition = loads(storage["addition"])
-            addition["cookies"] = cookies
+            addition["cookie"] = cookies
             storage["addition"] = dumps(addition)
             client.admin_storage_update(storage)
 
@@ -117,7 +117,6 @@ def alist_batch_add_115_share_links(
 
 def alist_batch_download_file_or_make_strm(
     alist_client: None | AlistClient = None, 
-    alist_token: str = "", 
     alist_base_dir: str = "/", 
     output_dir: str = "", 
     strm_file_predicate: Container[str] | Callable[[AlistPath], bool] = {
@@ -135,7 +134,6 @@ def alist_batch_download_file_or_make_strm(
     """批量导出 strm 和下载文件
 
     :param alist_client: alist 客户端对象，例如 AlistClient(origin="http://localhost:5244", username="admin", password="123456")
-    :param alist_token: Alist 签名 token，默认为空
     :param alist_base_dir: 需要同步的 Alist 的目录，默认为 "/"
     :param output_dir: 文件输出目录，默认为当前工作目录
     :param strm_file_predicate: 判断是否要下载为 strm，如果为 Callable，则调用以判断，如果为 Container，则用扩展名判断
@@ -174,7 +172,7 @@ def alist_batch_download_file_or_make_strm(
                 if exists(local_path) and not overwrite:
                     logger and logger.info(f"跳过文件：{local_path!r}")
                     return
-                url = path.get_url(token=alist_token)
+                url = path.get_url(ensure_ascii=False)
                 if dir_ := dirname(local_path):
                     await to_thread(makedirs, dir_, exist_ok=True)
                 if use_strm:
@@ -216,7 +214,7 @@ def alist_batch_download_file_or_make_strm(
                 if exists(local_path) and not overwrite:
                     logger and logger.info(f"跳过文件：{local_path!r}")
                     return
-                url = path.get_url(token=alist_token)
+                url = path.get_url(ensure_ascii=False)
                 if dir_ := dirname(local_path):
                     makedirs(dir_, exist_ok=True)
                 if use_strm:

@@ -2123,8 +2123,8 @@ class P115Client:
             }
         else:
             payload = {
-                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
-                "record_open_time": 1, "show_dir": 1, **payload, 
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": 0, **payload, 
             }
         if payload.keys() & frozenset(("asc", "fc_mix", "o")):
             payload["custom_order"] = 1
@@ -2209,8 +2209,8 @@ class P115Client:
             }
         else:
             payload = {
-                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
-                "record_open_time": 1, "show_dir": 1, **payload, 
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": 0, **payload, 
             }
         if payload.keys() & frozenset(("asc", "fc_mix", "o")):
             payload["custom_order"] = 1
@@ -2295,8 +2295,8 @@ class P115Client:
             }
         else:
             payload = {
-                "aid": 1, "cid": 0, "count_folders": 1, "limit": 32, "offset": 0, 
-                "record_open_time": 1, "show_dir": 1, **payload, 
+                "aid": 1, "count_folders": 1, "limit": 32, "offset": 0, 
+                "record_open_time": 1, "show_dir": 1, "cid": 0, **payload, 
             }
         if payload.keys() & frozenset(("asc", "fc_mix", "o")):
             payload["custom_order"] = 1
@@ -2375,7 +2375,7 @@ class P115Client:
     @overload
     def fs_files_imglist(
         self, 
-        payload: int | dict = 0, 
+        payload: int | str | dict = 0, 
         /, 
         *, 
         async_: Literal[False] = False, 
@@ -2385,7 +2385,7 @@ class P115Client:
     @overload
     def fs_files_imglist(
         self, 
-        payload: int | dict = 0, 
+        payload: int | str | dict = 0, 
         /, 
         *, 
         async_: Literal[True], 
@@ -2394,7 +2394,7 @@ class P115Client:
         ...
     def fs_files_imglist(
         self, 
-        payload: int | dict = 0, 
+        payload: int | str | dict = 0, 
         /, 
         *, 
         async_: Literal[False, True] = False, 
@@ -2404,7 +2404,7 @@ class P115Client:
         GET https://proapi.115.com/android/files/imglist
         payload:
             - cid: int | str = 0 # 文件夹 id
-            - limit: int = 32    # 一页大小，意思就是 page_size
+            - limit: int = 32    # 一页大小，建议控制在 <= 9000，不然会报错
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
             - aid: int | str = 1
@@ -2420,10 +2420,10 @@ class P115Client:
                 # - 上次打开时间："user_otime"
         """
         api = "https://proapi.115.com/android/files/imglist"
-        if isinstance(payload, int):
+        if isinstance(payload, (int, str)):
             payload = {"limit": 32, "offset": 0, "aid": 1, "cid": payload}
         else:
-            payload = {"limit": 32, "offset": 0, "aid": 1, **payload}
+            payload = {"limit": 32, "offset": 0, "aid": 1, "cid": 0, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3073,6 +3073,8 @@ class P115Client:
         api = "https://webapi.115.com/category/get"
         if isinstance(payload, (int, str)):
             payload = {"cid": payload}
+        else:
+            payload = {"cid": 0, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
