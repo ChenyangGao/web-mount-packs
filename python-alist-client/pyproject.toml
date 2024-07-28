@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-alist"
-version = "0.0.13.5.3.1"
+version = "0.0.13.5.3.2.2"
 description = "Python wrapper for alist."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

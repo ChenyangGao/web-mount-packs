@@ -5527,7 +5527,7 @@ class AlistFileSystem:
                 raise NotADirectoryError(errno.ENOTDIR, path)
             if attr["hash_info"] is None:
                 raise PermissionError(errno.EPERM, f"remove a storage (or non-actual path) by `rmdir` is not allowed: {path!r}")
-            elif not (yield self.dirlen(path, password, async_=async_)):
+            elif (yield self.dirlen(path, password, async_=async_)):
                 raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
             dir_, name = splitpath(path)
             yield self.fs_remove(dir_, [name], async_=async_)
@@ -5895,7 +5895,7 @@ class AlistFileSystem:
                     path = joinpath(cast(str, attr["path"]), name or uuid4().hex)
                     if name and (yield self.exists(path, password or attr["password"], async_=async_)):
                         raise FileExistsError(errno.EEXIST, path)
-                if overwrite:
+                elif overwrite:
                     dir_, name = splitpath(path)
                     yield self.fs_remove(dir_, [name], async_=async_)
                 else:

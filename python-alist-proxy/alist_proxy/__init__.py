@@ -347,4 +347,9 @@ if __name__ == "__main__":
         app.logger.level = 10
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 
-# TODO: pip install alist_proxy[async]
+# TODO: 这个模块作为基础模块，在此基础上可以实现各种监控
+# TODO: 实现同步和异步版本，异步版本可选，通过 pip install alist_proxy[async] 安装
+# TODO: 异步版本使用 blacksheep 或 robyn 实现
+# TODO: 扩展模块：监控后台任务列表，和新增文件，可以决定是否要刷新对应的目录
+# TODO: 扩展模块：监控后台任务列表，只监控完成列表，如果任务已完成，默认行为时，只要任务结果已经被记录，则进行删除
+# TODO: 扩展模块：只监控 fs 事件（包括 webdav），可以把数据存储到 redis streams 中，并实现一个 websocket 接口，从访问的时间点开始（默认，可以自行指定检查点），持续订阅

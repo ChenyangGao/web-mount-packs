@@ -30,7 +30,8 @@ from alist import AlistClient, AlistPath
 from httpx import TimeoutException
 
 
-logging.basicConfig(format="[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) \x1b[1;34m%(name)s\x1b[0m @ \x1b[0m\x1b[1;3;35m%(funcName)s\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s")
+logging.basicConfig(format="[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) \x1b[1;34m%(name)s\x1b[0m"
+                           " @ \x1b[0m\x1b[1;3;35m%(funcName)s\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s")
 logger = logging.getLogger("alist")
 logger.setLevel(logging.DEBUG)
 
@@ -188,23 +189,26 @@ def alist_batch_download(
         1) 如果为 False，则无文件会被下载
         2) 如果为 None，则全部文件都会被下载
         3) 如果为 Callable，则调用以筛选
-        4) 如果为 Container，则用扩展名判断，不在此中的都被过滤
+        4) 如果为 Container，则用扩展名（要用小写字母，带前缀句点，例如 .mkv）判断，不在此中的都被过滤
     :param strm_predicate: 断言以筛选，选择某些文件生成为 strm（优先级高于 predicate）
         1) 如果为 None，则无 strm
         2) 如果为 Callable，则调用以筛选
-        3) 如果为 Container，则用扩展名判断，不在此中的都被过滤
+        3) 如果为 Container，则用扩展名（要用小写字母，带前缀句点，例如 .mkv）判断，不在此中的都被过滤
     :param custom_url: 生成文件的 url，默认为 None，表示使用 alist 提供的 url
     :param password: `remote_dir` 的访问密码
     :param refresh: 是否刷新目录，刷新会更新 alist 上相应目录的缓存
     :param resume: 是否断点续传，默认为 True，如果为 False，那么总是覆盖
     :param max_workers: 下载（而非罗列目录）的最大并发数
     :param logger: 日志实例，用于输出信息，如果为 None，则不输出
-    :param sync: 是否同步目录结构，如果为 True，则会删除 `local_dir` 下所有不由本批下载的文件和文件夹
+    :param sync: 是否同步目录结构，如果为 True，则会在收尾时一起删除 `local_dir` 下所有不由本批下载的文件和目录
     :param async_: 是否异步执行
+
+    :return: 所有涉及到的文件和目录和操作的成功与否的字典
     """
-    local_dir = abspath(local_dir)
     if client is None:
         client = AlistClient()
+    remote_dir = client.fs.abspath(remote_dir)
+    local_dir = abspath(local_dir)
     if predicate is False or predicate is None:
         pass
     elif not callable(predicate):
