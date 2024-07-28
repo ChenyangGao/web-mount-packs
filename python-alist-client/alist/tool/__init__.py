@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "alist_update_115_cookie", "alist_batch_add_115_share_links", 
+    "alist_update_115_cookies", "alist_batch_add_115_share_links", 
     "alist_batch_download", "alist_batch_strm_download", 
 ]
 
@@ -15,15 +15,16 @@ from mimetypes import types_map
 
 from asyncio import run, to_thread, Semaphore, TaskGroup
 from collections import deque
-from collections.abc import Callable, Container, Iterable
+from collections.abc import Callable, Container, Coroutine, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, aclosing
 from functools import partial
+from inspect import isawaitable
 from json import dumps, loads
 from os import makedirs, remove, scandir, stat
-from os.path import abspath, dirname, join as joinpath, normpath, splitext
+from os.path import abspath, dirname, join as joinpath, normpath, sep, splitext
 from shutil import rmtree
-from typing import cast
+from typing import cast, overload, Any, Literal
 
 from alist import AlistClient, AlistPath
 from httpx import TimeoutException
@@ -126,61 +127,127 @@ def alist_batch_add_115_share_links(
         print(payload)
 
 
+@overload
 def alist_batch_download(
     client: None | AlistClient = None, 
     remote_dir: str = "/", 
     local_dir: str = "", 
-    predicate: None | Container[str] | Callable[[AlistPath], bool] = None, 
+    predicate: None | Literal[False] | Container[str] | Callable[[AlistPath], bool] = None, 
     strm_predicate: None | Container[str] | Callable[[AlistPath], bool] = None,  
+    custom_url: None | Callable[[AlistPath], str] = None, 
+    password: str = "", 
+    refresh: bool = False, 
     resume: bool = True, 
     max_workers: int = 5, 
     logger = logger, 
-    password: str = "", 
     sync: bool = False, 
-    async_: bool = False, 
-):
+    *, 
+    async_: Literal[False] = False, 
+) -> dict[str, bool]:
+    ...
+@overload
+def alist_batch_download(
+    client: None | AlistClient = None, 
+    remote_dir: str = "/", 
+    local_dir: str = "", 
+    predicate: None | Literal[False] | Container[str] | Callable[[AlistPath], bool] = None, 
+    strm_predicate: None | Container[str] | Callable[[AlistPath], bool] = None,  
+    custom_url: None | Callable[[AlistPath], str] = None, 
+    password: str = "", 
+    refresh: bool = False, 
+    resume: bool = True, 
+    max_workers: int = 5, 
+    logger = logger, 
+    sync: bool = False, 
+    *, 
+    async_: Literal[True], 
+) -> Coroutine[Any, Any, dict[str, bool]]:
+    ...
+def alist_batch_download(
+    client: None | AlistClient = None, 
+    remote_dir: str = "/", 
+    local_dir: str = "", 
+    predicate: None | Literal[False] | Container[str] | Callable[[AlistPath], bool] = None, 
+    strm_predicate: None | Container[str] | Callable[[AlistPath], bool] = None,  
+    custom_url: None | Callable[[AlistPath], str] = None, 
+    password: str = "", 
+    refresh: bool = False, 
+    resume: bool = True, 
+    max_workers: int = 5, 
+    logger = logger, 
+    sync: bool = False, 
+    *, 
+    async_: Literal[False, True] = False, 
+) -> dict[str, bool] | Coroutine[Any, Any, dict[str, bool]]:
     """批量下载文件
 
     :param client: alist 客户端对象，例如 AlistClient(origin="http://localhost:5244", username="admin", password="123456")
     :param remote_dir: 需要同步的 Alist 的目录，默认为 "/"
     :param local_dir: 文件输出目录，默认为当前工作目录
     :param predicate: 断言以筛选
-        1) 如果为 None，则不筛选 
-        2) 如果为 Callable，则调用以筛选
-        3) 如果为 Container，则用扩展名判断，不在此中的都被过滤
+        1) 如果为 False，则无文件会被下载
+        2) 如果为 None，则全部文件都会被下载
+        3) 如果为 Callable，则调用以筛选
+        4) 如果为 Container，则用扩展名判断，不在此中的都被过滤
     :param strm_predicate: 断言以筛选，选择某些文件生成为 strm（优先级高于 predicate）
         1) 如果为 None，则无 strm
         2) 如果为 Callable，则调用以筛选
         3) 如果为 Container，则用扩展名判断，不在此中的都被过滤
-    :param resume: 是否断点续传，默认为 True，如果为 False，那么总是覆盖
-    :param max_workers: 最大并发数
-    :param logger: 日志实例，用于输出信息，如果为 None，则不输出
+    :param custom_url: 生成文件的 url，默认为 None，表示使用 alist 提供的 url
     :param password: `remote_dir` 的访问密码
+    :param refresh: 是否刷新目录，刷新会更新 alist 上相应目录的缓存
+    :param resume: 是否断点续传，默认为 True，如果为 False，那么总是覆盖
+    :param max_workers: 下载（而非罗列目录）的最大并发数
+    :param logger: 日志实例，用于输出信息，如果为 None，则不输出
     :param sync: 是否同步目录结构，如果为 True，则会删除 `local_dir` 下所有不由本批下载的文件和文件夹
     :param async_: 是否异步执行
     """
     local_dir = abspath(local_dir)
     if client is None:
         client = AlistClient()
-    if predicate is not None and not callable(predicate):
-        predicate = cast(Callable[[AlistPath], bool], lambda path, *, _pred=predicate.__contains__: path.is_file() and _pred(path.suffix))
+    if predicate is False or predicate is None:
+        pass
+    elif not callable(predicate):
+        predicate = cast(Callable[[AlistPath], bool], lambda path, *, _pred=predicate.__contains__: path.is_file() and _pred(path.suffix.lower()))
     if strm_predicate is None:
         pass
     elif callable(strm_predicate):
-        strm_predicate = cast(Callable[[AlistPath], bool], lambda path, *, _pred=strm_predicate: path.is_file() and _pred(path.suffix))
+        strm_predicate = cast(Callable[[AlistPath], bool], lambda path, *, _pred=strm_predicate: path.is_file() and _pred(path.suffix.lower()))
     else:
-        strm_predicate = cast(Callable[[AlistPath], bool], lambda path, *, _pred=strm_predicate.__contains__: path.is_file() and _pred(path.suffix))
+        strm_predicate = cast(Callable[[AlistPath], bool], lambda path, *, _pred=strm_predicate.__contains__: path.is_file() and _pred(path.suffix.lower()))
     full_predicate: None | Callable[[AlistPath], bool]
-    if predicate is None:
+    if predicate is False:
+        if strm_predicate is None:
+            raise ValueError("no files will be downloaded")
         full_predicate = strm_predicate
+    elif predicate is None:
+        full_predicate = None
     elif strm_predicate is None:
         full_predicate = predicate
     else:
         full_predicate = lambda path: strm_predicate(path) or predicate(path)
     if sync:
-        seen: set[str] = set()
-        seen_add = seen.add
+        seen: dict[str, bool] = {}
         local_dir_len = len(local_dir) + 1
+        def clean():
+            dq = deque((local_dir,))
+            push = dq.append
+            pop = dq.pop
+            while dq:
+                dir_ = pop()
+                for entry in scandir(dir_):
+                    path = entry.path[local_dir_len:]
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if path + sep in seen:
+                                push(entry.path)
+                            else:
+                                rmtree(entry)
+                        else:
+                            if path not in seen:
+                                remove(entry)
+                    except OSError:
+                        pass
     if async_:
         try:
             from aiofile import async_open
@@ -196,15 +263,23 @@ def alist_batch_download(
                 if use_strm:
                     local_path = splitext(local_path)[0] + ".strm"
                 if sync:
-                    seen_add(local_path[local_dir_len:])
-                url = path.get_url()
+                    seen[local_path[local_dir_len:]] = False
+                if custom_url is None:
+                    url = path.get_url()
+                else:
+                    url = custom_url(path)
+                    if isawaitable(url):
+                        url = await url
+                    if not isinstance(url, str):
+                        raise ValueError(f"can't make url, got {url!r}")
                 skipsize = 0
                 if resume:
                     if use_strm:
                         try:
-                            if open(local_path, encoding="utf-8").read() == url:
-                                logger and logger.info(f"\x1b[1;33mSKIPPED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
-                                return
+                            async with async_open(local_path, encoding="utf-8") as f:
+                                if (await f.read()) == url:
+                                    logger and logger.info(f"\x1b[1;33mSKIPPED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
+                                    return
                         except FileNotFoundError:
                             pass
                     else:
@@ -241,6 +316,8 @@ def alist_batch_download(
                             async for chunk in resp.aiter_bytes(1 << 16):
                                 await write(chunk)
                     logger and logger.info(f"\x1b[1;32mDOWNLOADED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
+                if sync:
+                    seen[local_path[local_dir_len:]] = True
             except:
                 logger and logger.exception(f"\x1b[1;31mFAILED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
         async def request():
@@ -249,20 +326,29 @@ def alist_batch_download(
                 dir_ = "."
                 async for path in client.fs.iter(
                     remote_dir, 
-                    topdown=None, 
                     max_depth=-1, 
                     predicate=full_predicate, 
+                    password=password, 
+                    refresh=refresh, 
+                    onerror=True, 
                     async_=True, 
                 ):
-                    local_path = joinpath(local_dir, normpath(path.relative_to(remote_dir)))
-                    if dir_ != (dir_ := dirname(local_path)):
-                        await to_thread(makedirs, dir_, exist_ok=True)
+                    local_relpath = normpath(path.relative_to(remote_dir))
+                    if dir_ != (dir_ := dirname(local_relpath)):
+                        local_dir = joinpath(local_dir, dir_)
+                        try:
+                            await to_thread(makedirs, local_dir, exist_ok=True)
+                        except FileExistsError:
+                            await to_thread(remove, local_dir)
+                            await to_thread(makedirs, local_dir)
                         if sync:    
                             dir0 = dir_
                             while dir0:
-                                seen_add(dir0)
+                                seen[dir0 + sep] = True
                                 dir0 = dirname(dir0)
-                    create_task(alist_batch_download_async(path, local_path))
+                    create_task(alist_batch_download_async(path, joinpath(local_dir, local_relpath)))
+        if sync:
+            clean()
         return request()
     else:
         def alist_batch_download_sync(path: AlistPath, local_path: str):
@@ -271,8 +357,13 @@ def alist_batch_download(
                 if use_strm:
                     local_path = splitext(local_path)[0] + ".strm"
                 if sync:
-                    seen_add(local_path[local_dir_len:])
-                url = path.get_url()
+                    seen[local_path[local_dir_len:]] = False
+                if custom_url is None:
+                    url = path.get_url()
+                else:
+                    url = custom_url(path)
+                    if not isinstance(url, str):
+                        raise ValueError(f"can't make url, got {url!r}")
                 skipsize = 0
                 if resume:
                     if use_strm:
@@ -314,6 +405,8 @@ def alist_batch_download(
                         for chunk in resp.iter_bytes(1 << 16):
                             write(chunk)
                     logger and logger.info(f"\x1b[1;32mDOWNLOADED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
+                if sync:
+                    seen[local_path[local_dir_len:]] = True
             except:
                 logger and logger.exception(f"\x1b[1;31mFAILED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
         executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -323,52 +416,53 @@ def alist_batch_download(
                 dir_ = ""
                 for path in client.fs.iter(
                     remote_dir, 
-                    topdown=None, 
                     max_depth=-1, 
                     predicate=full_predicate, 
+                    password=password, 
+                    refresh=refresh, 
+                    onerror=True, 
                 ):
                     local_relpath = normpath(path.relative_to(remote_dir))
-                    local_path = joinpath(local_dir, local_relpath)
                     if dir_ != (dir_ := dirname(local_relpath)):
-                        makedirs(joinpath(local_dir, dir_), exist_ok=True)
+                        local_dir = joinpath(local_dir, dir_)
+                        try:
+                            makedirs(local_dir, exist_ok=True)
+                        except FileExistsError:
+                            remove(local_dir)
+                            makedirs(local_dir, exist_ok=True)
                         if sync:    
                             dir0 = dir_
                             while dir0:
-                                seen_add(dir0)
+                                seen[dir0 + sep] = True
                                 dir0 = dirname(dir0)
-                    submit(alist_batch_download_sync, path, local_path)
+                    submit(alist_batch_download_sync, path, joinpath(local_dir, local_relpath))
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         if sync:
-            dq = deque((local_dir,))
-            push = dq.append
-            pop = dq.pop
-            while dq:
-                dir_ = pop()
-                for entry in scandir(dir_):
-                    path = entry.path[local_dir_len:]
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            if path in seen:
-                                push(entry.path)
-                            else:
-                                rmtree(entry)
-                        else:
-                            if path not in seen:
-                                remove(entry)
-                    except OSError:
-                        pass
+            clean()
+        return seen
 
 
 alist_batch_strm_download = partial(
     alist_batch_download, 
     predicate=(
-        {k for k, v in types_map.items() if v.startswith(("image/", "text/"))} | # type: ignore
-        {".nfo", ".ass", ".idx", ".sbv", ".smi", ".srt", ".sub", ".ssa", ".txt", ".vtt"}
+        {
+            ".avif", ".bmp", ".gif", ".heic", ".heif", ".ico", ".jpeg", ".jpg", ".png", ".psd", ".raw", 
+            ".svg", ".tif", ".tiff", ".webp", 
+        } | {
+            k for k, v in types_map.items() if v.startswith("image/")
+        } | {
+            ".nfo", ".ass", ".idx", ".sbv", ".smi", ".srt", ".sub", ".ssa", ".txt", ".vtt", 
+        }
     ), 
-    strm_predicate={
-        k for k, v in types_map.items() if v.startswith("video/") # type: ignore
-    }
+    strm_predicate=(
+        {
+            ".3g2", ".3gp", ".asf", ".avi", ".divx", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", 
+            ".mpg", ".mts", ".ogg", ".ogv", ".rm", ".rmvb", ".swf", ".ts", ".vob", ".webm", ".wmv", ".xvid", 
+        } | {
+            k for k, v in types_map.items() if v.startswith("video/")
+        }
+    )
 )
 
 # TODO: 再实现一个 alist_batch_upload
