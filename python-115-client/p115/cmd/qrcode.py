@@ -58,7 +58,8 @@ def main(args):
         from p115 import AuthenticationError
 
         try:
-            client = P115Client(cookies)
+            client = P115Client("")
+            client.cookies = cookies
             client.login_another_app(app=args.app, replace=True)
         except AuthenticationError:
             client = P115Client(app=args.app)

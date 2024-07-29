@@ -26,7 +26,7 @@ from os.path import abspath, dirname, join as joinpath, normpath, sep, splitext
 from shutil import rmtree
 from typing import cast, overload, Any, Literal
 
-from alist import AlistClient, AlistPath
+from alist.component import AlistClient, AlistPath
 from httpx import TimeoutException
 
 
@@ -37,12 +37,14 @@ logger.setLevel(logging.DEBUG)
 
 
 def alist_update_115_cookies(
-    client: AlistClient, 
+    client: str | AlistClient, 
     cookies: str, 
     only_not_work: bool = False, 
 ):
     """更新 alist 中有关 115 的存储的 cookies
     """
+    if isinstance(client, str):
+        client = AlistClient.from_auth(client)
     storages = client.admin_storage_list()["data"]["content"]
     for storage in storages:
         if storage["driver"] in ("115 Cloud", "115 Share"):
@@ -55,7 +57,7 @@ def alist_update_115_cookies(
 
 
 def alist_batch_add_115_share_links(
-    client: AlistClient, 
+    client: str | AlistClient, 
     share_links: str | Iterable[str], 
     cookies: str, 
     mount_root: str = "/", 
@@ -76,6 +78,8 @@ def alist_batch_add_115_share_links(
         run([executable, "-m", "pip", "install", "-U", "python-115", "python-retrytools"], check=True)
         from p115 import P115ShareFileSystem
         from retrytools import retry
+    if isinstance(client, str):
+        client = AlistClient.from_auth(client)
     if isinstance(share_links, str):
         share_links = (share_links,)
     mount_root = mount_root.strip("/")
@@ -130,7 +134,7 @@ def alist_batch_add_115_share_links(
 
 @overload
 def alist_batch_download(
-    client: None | AlistClient = None, 
+    client: None | str | AlistClient = None, 
     remote_dir: str = "/", 
     local_dir: str = "", 
     predicate: None | Literal[False] | Container[str] | Callable[[AlistPath], bool] = None, 
@@ -139,7 +143,7 @@ def alist_batch_download(
     password: str = "", 
     refresh: bool = False, 
     resume: bool = True, 
-    max_workers: int = 5, 
+    max_workers: int = 1, 
     logger = logger, 
     sync: bool = False, 
     *, 
@@ -148,7 +152,7 @@ def alist_batch_download(
     ...
 @overload
 def alist_batch_download(
-    client: None | AlistClient = None, 
+    client: None | str | AlistClient = None, 
     remote_dir: str = "/", 
     local_dir: str = "", 
     predicate: None | Literal[False] | Container[str] | Callable[[AlistPath], bool] = None, 
@@ -157,7 +161,7 @@ def alist_batch_download(
     password: str = "", 
     refresh: bool = False, 
     resume: bool = True, 
-    max_workers: int = 5, 
+    max_workers: int = 1, 
     logger = logger, 
     sync: bool = False, 
     *, 
@@ -165,7 +169,7 @@ def alist_batch_download(
 ) -> Coroutine[Any, Any, dict[str, bool]]:
     ...
 def alist_batch_download(
-    client: None | AlistClient = None, 
+    client: None | str | AlistClient = None, 
     remote_dir: str = "/", 
     local_dir: str = "", 
     predicate: None | Literal[False] | Container[str] | Callable[[AlistPath], bool] = None, 
@@ -174,7 +178,7 @@ def alist_batch_download(
     password: str = "", 
     refresh: bool = False, 
     resume: bool = True, 
-    max_workers: int = 5, 
+    max_workers: int = 1, 
     logger = logger, 
     sync: bool = False, 
     *, 
@@ -207,6 +211,8 @@ def alist_batch_download(
     """
     if client is None:
         client = AlistClient()
+    elif isinstance(client, str):
+        client = AlistClient.from_auth(client)
     remote_dir = client.fs.abspath(remote_dir)
     local_dir = abspath(local_dir)
     if predicate is False or predicate is None:
@@ -230,17 +236,22 @@ def alist_batch_download(
         full_predicate = predicate
     else:
         full_predicate = lambda path: strm_predicate(path) or predicate(path)
+    def onerror(e):
+        if isinstance(e, (FileNotFoundError, NotADirectoryError)):
+            logger and logger.exception("failed to iterdir: %s", e)
+        else:
+            raise e
     if sync:
         seen: dict[str, bool] = {}
-        local_dir_len = len(local_dir) + 1
+        local_local_reldirlen = len(local_dir) + 1
         def clean():
             dq = deque((local_dir,))
             push = dq.append
             pop = dq.pop
             while dq:
-                dir_ = pop()
-                for entry in scandir(dir_):
-                    path = entry.path[local_dir_len:]
+                local_reldir = pop()
+                for entry in scandir(local_reldir):
+                    path = entry.path[local_local_reldirlen:]
                     try:
                         if entry.is_dir(follow_symlinks=False):
                             if path + sep in seen:
@@ -267,7 +278,7 @@ def alist_batch_download(
                 if use_strm:
                     local_path = splitext(local_path)[0] + ".strm"
                 if sync:
-                    seen[local_path[local_dir_len:]] = False
+                    seen[local_path[local_local_reldirlen:]] = False
                 if custom_url is None:
                     url = path.get_url()
                 else:
@@ -306,47 +317,45 @@ def alist_batch_download(
                 else:
                     headers = {"Range": f"bytes={skipsize}-"}
                     async with async_semaphore:
-                        async with (
-                            aclosing(await client.request(url, "GET", headers=headers, parse=None, async_=True)) as resp, 
-                            async_open(local_path, mode="ab" if skipsize else "wb") as file, 
-                        ):
+                        async with aclosing(await client.request(url, "GET", headers=headers, parse=None, async_=True)) as resp:
                             if (
                                 resp.headers["Content-Type"] == "application/json; charset=utf-8" 
                                 and resp.headers.get("Accept-Range") != "bytes"
                             ):
                                 resp.read()
                                 raise OSError(resp.json())
-                            write = file.write
-                            async for chunk in resp.aiter_bytes(1 << 16):
-                                await write(chunk)
+                            async with async_open(local_path, mode="ab" if skipsize else "wb") as file:
+                                write = file.write
+                                async for chunk in resp.aiter_bytes(1 << 16):
+                                    await write(chunk)
                     logger and logger.info(f"\x1b[1;32mDOWNLOADED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
                 if sync:
-                    seen[local_path[local_dir_len:]] = True
+                    seen[local_path[local_local_reldirlen:]] = True
             except:
                 logger and logger.exception(f"\x1b[1;31mFAILED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
         async def request():
             async with TaskGroup() as tg:
                 create_task = tg.create_task
-                dir_ = "."
+                local_reldir = "."
                 async for path in client.fs.iter(
                     remote_dir, 
                     max_depth=-1, 
                     predicate=full_predicate, 
                     password=password, 
                     refresh=refresh, 
-                    onerror=True, 
+                    onerror=onerror, 
                     async_=True, 
                 ):
                     local_relpath = normpath(path.relative_to(remote_dir))
-                    if dir_ != (dir_ := dirname(local_relpath)):
-                        local_dir = joinpath(local_dir, dir_)
+                    if local_reldir != (local_reldir := dirname(local_relpath)):
+                        dir_ = joinpath(local_dir, local_reldir)
                         try:
-                            await to_thread(makedirs, local_dir, exist_ok=True)
+                            await to_thread(makedirs, dir_, exist_ok=True)
                         except FileExistsError:
-                            await to_thread(remove, local_dir)
-                            await to_thread(makedirs, local_dir)
+                            await to_thread(remove, dir_)
+                            await to_thread(makedirs, dir_)
                         if sync:    
-                            dir0 = dir_
+                            dir0 = local_reldir
                             while dir0:
                                 seen[dir0 + sep] = True
                                 dir0 = dirname(dir0)
@@ -361,7 +370,7 @@ def alist_batch_download(
                 if use_strm:
                     local_path = splitext(local_path)[0] + ".strm"
                 if sync:
-                    seen[local_path[local_dir_len:]] = False
+                    seen[local_path[local_local_reldirlen:]] = False
                 if custom_url is None:
                     url = path.get_url()
                 else:
@@ -395,47 +404,45 @@ def alist_batch_download(
                     logger and logger.info(f"\x1b[1;2;32mCREATED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
                 else:
                     headers = {"Range": f"bytes={skipsize}-"}
-                    with (
-                        closing(client.request(url, "GET", headers=headers, parse=None)) as resp, 
-                        open(local_path, mode="ab" if skipsize else "wb") as file, 
-                    ):
+                    with closing(client.request(url, "GET", headers=headers, parse=None)) as resp:
                         if (
                             resp.headers["Content-Type"] == "application/json; charset=utf-8" 
                             and resp.headers.get("Accept-Range") != "bytes"
                         ):
                             resp.read()
                             raise OSError(resp.json())
-                        write = file.write
-                        for chunk in resp.iter_bytes(1 << 16):
-                            write(chunk)
+                        with open(local_path, mode="ab" if skipsize else "wb") as file:
+                            write = file.write
+                            for chunk in resp.iter_bytes(1 << 16):
+                                write(chunk)
                     logger and logger.info(f"\x1b[1;32mDOWNLOADED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
                 if sync:
-                    seen[local_path[local_dir_len:]] = True
+                    seen[local_path[local_local_reldirlen:]] = True
             except:
                 logger and logger.exception(f"\x1b[1;31mFAILED\x1b[0m: \x1b[4;34m{local_path!r}\x1b[0m")
         executor = ThreadPoolExecutor(max_workers=max_workers)
         try:
             with executor:
                 submit = executor.submit
-                dir_ = ""
+                local_reldir = ""
                 for path in client.fs.iter(
                     remote_dir, 
                     max_depth=-1, 
                     predicate=full_predicate, 
                     password=password, 
                     refresh=refresh, 
-                    onerror=True, 
+                    onerror=onerror, 
                 ):
                     local_relpath = normpath(path.relative_to(remote_dir))
-                    if dir_ != (dir_ := dirname(local_relpath)):
-                        local_dir = joinpath(local_dir, dir_)
+                    if local_reldir != (local_reldir := dirname(local_relpath)):
+                        dir_ = joinpath(local_dir, local_reldir)
                         try:
-                            makedirs(local_dir, exist_ok=True)
+                            makedirs(dir_, exist_ok=True)
                         except FileExistsError:
-                            remove(local_dir)
-                            makedirs(local_dir, exist_ok=True)
+                            remove(dir_)
+                            makedirs(dir_, exist_ok=True)
                         if sync:    
-                            dir0 = dir_
+                            dir0 = local_reldir
                             while dir0:
                                 seen[dir0 + sep] = True
                                 dir0 = dirname(dir0)

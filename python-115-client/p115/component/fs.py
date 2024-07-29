@@ -32,7 +32,7 @@ from warnings import warn
 
 from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from posixpatht import (
     basename, commonpath, dirname, escape, joins, normpath, split, splits, 
     unescape, path_is_dir_form, 
@@ -1787,8 +1787,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 # - 应用: 6
                 # - 书籍: 7
         """
+        path_to_id = self.path_to_id
+        attr_cache = self.attr_cache
+        get_version = self.get_version
+        if page_size <= 0:
+            page_size = 1_000
+        seen: set[int] = set()
+        seen_add = seen.add
+
         def normalize_attr(attr, ancestors, dirname, /, **extra):
             attr = normalize_info(attr, **extra)
+            if (fid := attr["id"]) in seen:
+                raise RuntimeError(f"{attr['parent_id']} detected count changes during iteration")
+            seen_add(fid)
             is_directory = attr["is_directory"]
             attr["ancestors"] = [*ancestors, {
                 "id": attr["id"], 
@@ -1818,64 +1829,34 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         old_attr.update(attr)
             return attr
 
-        path_to_id = self.path_to_id
-        attr_cache = self.attr_cache
-        get_version = self.get_version
-        if page_size <= 0:
-            page_size = 1_000
-
-        if async_:
-            async def request():
-                nonlocal start, stop
-                if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
-                    return
-                version = None
-                if attr_cache is None and isinstance(id_or_path, int):
-                    id = id_or_path
-                else:
-                    attr = None
-                    path_class = type(self).path_class
-                    if not refresh:
-                        if isinstance(id_or_path, AttrDict):
-                            attr = id_or_path
-                        elif isinstance(id_or_path, path_class):
-                            attr = id_or_path.__dict__
-                    if attr is None:
-                        if isinstance(id_or_path, int):
-                            attr = await self._attr(id_or_path, async_=True)
-                        elif isinstance(id_or_path, (AttrDict, path_class)):
-                            attr = await self._attr(id_or_path["id"], async_=True)
-                        else:
-                            attr = await self._attr_path(
-                                id_or_path, 
-                                pid=pid, 
-                                ensure_dir=True, 
-                                async_=True, 
-                            )
-                    if not attr["is_directory"]:
-                        raise NotADirectoryError(
-                            errno.ENOTDIR, 
-                            f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
-                        )
-                    id = attr["id"]
-                    if get_version is not None:
-                        version = get_version(attr)
-                payload["cid"] = id
-                payload["limit"] = page_size
-                offset = int(payload.setdefault("offset", 0))
-                if offset < 0:
-                    offset = payload["offset"] = 0
-                if attr_cache is None:
-                    pid_attrs = None
-                else:
-                    pid_attrs = attr_cache.get(id)
-                if (
-                    refresh or 
-                    pid_attrs is None or 
-                    "version" not in pid_attrs or
-                    version != pid_attrs["version"]
-                ):
-                    async def iterdir(fetch_all: bool = True) -> AsyncIterator[AttrDict]:
+        def gen_step():
+            nonlocal start, stop
+            if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
+                return
+            version = None
+            if attr_cache is None and isinstance(id_or_path, int):
+                id = id_or_path
+            else:
+                attr = yield self.attr(id_or_path, pid=pid, ensure_dir=True, async_=async_)
+                id = attr["id"]
+                if attr_cache is not None and get_version is not None:
+                    version = get_version(attr)
+            payload["cid"] = id
+            payload["limit"] = page_size
+            offset = int(payload.setdefault("offset", 0))
+            if offset < 0:
+                offset = payload["offset"] = 0
+            if attr_cache is None:
+                pid_attrs = None
+            else:
+                pid_attrs = attr_cache.get(id)
+            if (
+                refresh or 
+                pid_attrs is None or 
+                "version" not in pid_attrs or
+                version != pid_attrs["version"]
+            ):
+                    def iterdir(fetch_all: bool = True):
                         nonlocal start, stop
                         get_files = self.fs_files
                         if fetch_all:
@@ -1883,18 +1864,18 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         else:
                             count = -1
                             if start < 0:
-                                count = await self.dirlen(id, async_=True)
+                                count = yield self.dirlen(id, async_=async_)
                                 start += count
                                 if start < 0:
                                     start = 0
                             elif start >= 100:
-                                count = await self.dirlen(id, async_=True)
+                                count = yield self.dirlen(id, async_=async_)
                                 if start >= count:
                                     return
                             if stop is not None:
                                 if stop < 0:
                                     if count < 0:
-                                        count = await self.dirlen(id, async_=True)
+                                        count = yield self.dirlen(id, async_=async_)
                                     stop += count
                                 if start >= stop or stop <= 0:
                                     return
@@ -1903,7 +1884,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             if stop is not None:
                                 if total < page_size:
                                     payload["limit"] = total
-                        resp = await get_files(payload, async_=True)
+                        resp = yield get_files(payload, async_=async_)
                         ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
                         ancestors.extend(
                             {
@@ -1927,173 +1908,26 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         elif stop is None or stop > count:
                             total = count - start
                         for attr in resp["data"]:
-                            yield normalize_attr(attr, ancestors, dirname, fs=self)
+                            yield Yield(normalize_attr(attr, ancestors, dirname, fs=self), identity=True)
                         if total <= page_size:
                             return
                         for _ in range((total - 1) // page_size):
                             payload["offset"] += page_size
-                            resp = await get_files(payload, async_=True)
+                            resp = yield get_files(payload, async_=async_)
                             if resp["count"] != count:
                                 raise RuntimeError(f"{id} detected count changes during iteration")
                             for attr in resp["data"]:
-                                yield normalize_attr(attr, ancestors, dirname, fs=self)
+                                yield Yield(normalize_attr(attr, ancestors, dirname, fs=self), identity=True)
                     if attr_cache is None:
-                        async for attr in iterdir(False):
-                            yield attr
-                        return
+                        return YieldFrom(run_gen_step_iter(iterdir(False), async_=async_), identity=True)
                     else:
-                        children = {a["id"]: a async for a in iterdir()}
+                        if async_:
+                            async def request():
+                                return {a["id"]: a async for a in run_gen_step_iter(iterdir, async_=True)}
+                            children = yield request
+                        else:
+                            children = {a["id"]: a for a in run_gen_step_iter(iterdir, async_=False)}
                         attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
-                else:
-                    children = pid_attrs["children"]
-                count = len(children)
-                if start is None:
-                    start = 0
-                elif start < 0:
-                    start += count
-                    if start < 0:
-                        start = 0
-                if stop is None:
-                    stop = count
-                elif stop < 0:
-                    stop += count
-                if start >= stop or stop <= 0 or start >= count:
-                    return
-                match payload.get("o"):
-                    case "file_name":
-                        key = lambda attr: attr["name"]
-                    case "file_size":
-                        key = lambda attr: attr.get("size") or 0
-                    case "file_type":
-                        key = lambda attr: attr.get("ico", "")
-                    case "user_utime":
-                        key = lambda attr: attr["utime"]
-                    case "user_ptime":
-                        key = lambda attr: attr["ptime"]
-                    case "user_otime":
-                        key = lambda attr: attr["open_time"]
-                    case _:
-                        for attr in islice(children.values(), start, stop):
-                            yield attr
-                        return
-                for attr in sorted(
-                    children.values(), 
-                    key=key, 
-                    reverse=payload.get("asc", True), 
-                )[start:stop]:
-                    yield attr
-            return request()
-        else:
-            if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
-                return iter(())
-            version = None
-            if attr_cache is None and isinstance(id_or_path, int):
-                id = id_or_path
-            else:
-                attr = None
-                path_class = type(self).path_class
-                if not refresh:
-                    if isinstance(id_or_path, AttrDict):
-                        attr = id_or_path
-                    elif isinstance(id_or_path, path_class):
-                        attr = id_or_path.__dict__
-                if attr is None:
-                    if isinstance(id_or_path, int):
-                        attr = self._attr(id_or_path)
-                    elif isinstance(id_or_path, (AttrDict, path_class)):
-                        attr = self._attr(id_or_path["id"])
-                    else:
-                        attr = self._attr_path(id_or_path, pid=pid, ensure_dir=True)
-                if not attr["is_directory"]:
-                    raise NotADirectoryError(
-                        errno.ENOTDIR, 
-                        f"{attr['path']!r} (id={attr['id']!r}) is not a directory", 
-                    )
-                id = attr["id"]
-                if get_version is not None:
-                    version = get_version(attr)
-            payload["cid"] = id
-            payload["limit"] = page_size
-            offset = int(payload.setdefault("offset", 0))
-            if offset < 0:
-                offset = payload["offset"] = 0
-            if attr_cache is None:
-                pid_attrs = None
-            else:
-                pid_attrs = attr_cache.get(id)
-            if (
-                refresh or 
-                pid_attrs is None or 
-                "version" not in pid_attrs or
-                version != pid_attrs["version"]
-            ):
-                def iterdir(fetch_all: bool = True) -> Iterator[AttrDict]:
-                    nonlocal start, stop
-                    get_files = self.fs_files
-                    if fetch_all:
-                        payload["offset"] = 0
-                    else:
-                        count = -1
-                        if start < 0:
-                            count = self.dirlen(id)
-                            start += count
-                            if start < 0:
-                                start = 0
-                        elif start >= 100:
-                            count = self.dirlen(id)
-                            if start >= count:
-                                return
-                        if stop is not None:
-                            if stop < 0:
-                                if count < 0:
-                                    count = self.dirlen(id)
-                                stop += count
-                            if start >= stop or stop <= 0:
-                                return
-                            total = stop - start
-                        payload["offset"] = start
-                        if stop is not None:
-                            if total < page_size:
-                                payload["limit"] = total
-                    resp = get_files(payload)
-                    ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
-                    ancestors.extend(
-                        {
-                            "id": int(p["cid"]), 
-                            "parent_id": int(p["pid"]), 
-                            "name": p["name"], 
-                            "is_directory": True, 
-                        } for p in resp["path"][1:]
-                    )
-                    if len(ancestors) == 1:
-                        dirname = "/"
-                    else:
-                        dirname = joins([cast(str, a["name"]) for a in ancestors]) + "/"
-                    if path_to_id is not None:
-                        path_to_id[dirname] = id
-                    count = resp["count"]
-                    if fetch_all:
-                        total = count
-                    elif start >= count:
-                        return
-                    elif stop is None or stop > count:
-                        total = count - start
-                    for attr in resp["data"]:
-                        yield normalize_attr(attr, ancestors, dirname, fs=self)
-                    if total <= page_size:
-                        return
-                    for _ in range((total - 1) // page_size):
-                        payload["offset"] += page_size
-                        resp = get_files(payload)
-                        if resp["count"] != count:
-                            raise RuntimeError(f"{id} detected count changes during iteration")
-                        for attr in resp["data"]:
-                            yield normalize_attr(attr, ancestors, dirname, fs=self)
-                if attr_cache is None:
-                    return iterdir(False)
-                else:
-                    children = {a["id"]: a for a in iterdir()}
-                    attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
             else:
                 children = pid_attrs["children"]
             count = len(children)
@@ -2108,7 +1942,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             elif stop < 0:
                 stop += count
             if start >= stop or stop <= 0 or start >= count:
-                return iter(())
+                return
             match payload.get("o"):
                 case "file_name":
                     key = lambda attr: attr["name"]
@@ -2123,10 +1957,16 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 case "user_otime":
                     key = lambda attr: attr["open_time"]
                 case _:
-                    return islice(children.values(), start, stop)
-            return iter(sorted(
-                children.values(), key=key, reverse=payload.get("asc", True), 
-            )[start:stop])
+                    return YieldFrom(islice(children.values(), start, stop), identity=True)
+            return YieldFrom(
+                sorted(
+                    children.values(), 
+                    key=key, 
+                    reverse=payload.get("asc", True), 
+                )[start:stop], 
+                identity=True, 
+            )
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def copy(
@@ -3024,42 +2864,26 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         "获取重复文件（不含当前这个）"
         if page_size <= 0:
             page_size = 1150
-        if async_:
-            async def request():
-                payload = {
-                    "file_id": await self.get_id(id_or_path, pid=pid, async_=True), 
-                    "offset": 0, 
-                    "limit": page_size, 
-                    "format": "json", 
-                }
-                while True:
-                    resp = await self.client.fs_get_repeat(
-                        payload, 
-                        request=self.async_request, 
-                        async_=True, 
-                    )
-                    data = check_response(resp)["data"]
-                    for val in data:
-                        yield val
-                    if len(data) < page_size:
-                        break
-                    payload["offset"] += page_size # type: ignore
-        else:
-            def request():
-                payload = {
-                    "file_id": self.get_id(id_or_path, pid=pid), 
-                    "offset": 0, 
-                    "limit": page_size, 
-                    "format": "json", 
-                }
-                while True:
-                    resp = self.client.fs_get_repeat(payload, request=self.request)
-                    data = check_response(resp)["data"]
-                    yield from data
-                    if len(data) < page_size:
-                        break
-                    payload["offset"] += page_size # type: ignore
-        return request()
+        def gen_step():
+            payload: dict = {
+                "file_id": (yield self.get_id(id_or_path, pid=pid, async_=async_)), 
+                "offset": 0, 
+                "limit": page_size, 
+                "format": "json", 
+            }
+            request = partial(
+                self.client.fs_get_repeat, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            while True:
+                resp = yield request(payload)
+                data = check_response(resp)["data"]
+                yield YieldFrom(data, identity=True)
+                if len(data) < page_size:
+                    break
+                payload["offset"] += page_size
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def labels(
@@ -3925,55 +3749,30 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         """
         if page_size <= 0:
             page_size = 1_000
-        if async_:
-            async def request():
-                attr = await self.attr(id_or_path, pid=pid, async_=True)
-                payload["cid"] = attr["id"]
-                payload["limit"] = page_size
-                offset = int(payload.setdefault("offset", 0))
-                if offset < 0:
-                    payload["offset"] = 0
-                if not attr["is_directory"]:
-                    payload.setdefault("search_value", attr["sha1"])
-                search = self.fs_search
-                while True:
-                    resp = await search(payload, async_=True)
-                    if resp["offset"] != offset:
-                        break
-                    data = resp["data"]
-                    if not data:
-                        return
-                    for attr in resp["data"]:
-                        attr = normalize_info(attr, fs=self)
-                        yield P115Path(attr)
-                    offset = payload["offset"] = offset + resp["page_size"]
-                    if offset >= resp["count"]:
-                        break
-        else:
-            def request():
-                attr = self.attr(id_or_path, pid=pid)
-                payload["cid"] = attr["id"]
-                payload["limit"] = page_size
-                offset = int(payload.setdefault("offset", 0))
-                if offset < 0:
-                    payload["offset"] = 0
-                if not attr["is_directory"]:
-                    payload.setdefault("search_value", attr["sha1"])
-                search = self.fs_search
-                while True:
-                    resp = search(payload)
-                    if resp["offset"] != offset:
-                        break
-                    data = resp["data"]
-                    if not data:
-                        return
-                    for attr in resp["data"]:
-                        attr = normalize_info(attr, fs=self)
-                        yield P115Path(attr)
-                    offset = payload["offset"] = offset + resp["page_size"]
-                    if offset >= resp["count"]:
-                        break
-        return request()
+        def gen_step():
+            attr = yield self.attr(id_or_path, pid=pid, async_=async_)
+            payload["cid"] = attr["id"]
+            payload["limit"] = page_size
+            offset = int(payload.setdefault("offset", 0))
+            if offset < 0:
+                payload["offset"] = 0
+            if not attr["is_directory"]:
+                payload.setdefault("search_value", attr["sha1"])
+            search = self.fs_search
+            while True:
+                resp = yield search(payload, async_=async_)
+                if resp["offset"] != offset:
+                    break
+                data = resp["data"]
+                if not data:
+                    return
+                for attr in resp["data"]:
+                    attr = normalize_info(attr, fs=self)
+                    yield Yield(P115Path(attr), identity=True)
+                offset = payload["offset"] = offset + resp["page_size"]
+                if offset >= resp["count"]:
+                    break
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def star(

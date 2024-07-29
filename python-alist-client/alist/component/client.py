@@ -79,14 +79,17 @@ async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]
 
 
 @overload
-def check_response(resp: dict, /) -> dict:
+def check_response(resp: dict, /, **extras) -> dict:
     ...
 @overload
-def check_response(resp: Awaitable[dict], /) -> Awaitable[dict]:
+def check_response(resp: Awaitable[dict], /, **extras) -> Awaitable[dict]:
     ...
-def check_response(resp: dict | Awaitable[dict], /) -> dict | Awaitable[dict]:
+def check_response(resp: dict | Awaitable[dict], /, **extras) -> dict | Awaitable[dict]:
     def check(resp: dict) -> dict:
         code = resp["code"]
+        message = resp.get("message", "")
+        if extras:
+            resp.update(extras)
         if 200 <= code < 300:
             return resp
         elif code == 401:
@@ -94,7 +97,6 @@ def check_response(resp: dict | Awaitable[dict], /) -> dict | Awaitable[dict]:
         elif code == 403:
             raise PermissionError(errno.EACCES, resp)
         elif code == 500:
-            message = resp["message"]
             if (message.endswith("object not found") 
                 or message.startswith("failed get storage: storage not found")
             ):

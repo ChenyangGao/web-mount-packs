@@ -1806,12 +1806,15 @@ class AlistFileSystem:
                 "new_name": new_name, 
             } for src_name, new_name in rename_pairs]
         }
-        return check_response(self.client.fs_batch_rename( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_batch_rename( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_copy(
@@ -1853,12 +1856,15 @@ class AlistFileSystem:
         else:
             dst_dir = self.abspath(dst_dir)
         payload = {"src_dir": src_dir, "dst_dir": dst_dir, "names": names}
-        return check_response(self.client.fs_copy( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_copy( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_dirs(
@@ -1905,12 +1911,15 @@ class AlistFileSystem:
             "password": password, 
             "refresh": refresh, 
         }
-        return check_response(self.client.fs_dirs( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_dirs( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_form(
@@ -1950,14 +1959,17 @@ class AlistFileSystem:
             path = cast(str, path["path"])
         else:
             path = self.abspath(path)
-        return check_response(self.client.fs_form( # type: ignore
-            file, 
-            path, 
-            as_task=as_task, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_form( # type: ignore
+                file, 
+                path, 
+                as_task=as_task, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            path=path, 
+        )
 
     @overload
     def fs_get(
@@ -2003,12 +2015,16 @@ class AlistFileSystem:
             if default_headers := self.request_kwargs.get("headers"):
                 headers = {**default_headers, **headers}
             request_kwargs["headers"] = headers
-        return check_response(self.client.fs_get( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_get( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **request_kwargs, 
+            ), 
+            payload=payload, 
+            headers=headers, 
+        )
 
     @overload
     def fs_list(
@@ -2062,12 +2078,15 @@ class AlistFileSystem:
             "per_page": per_page, 
             "refresh": refresh, 
         }
-        return check_response(self.client.fs_list( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_list( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_mkdir(
@@ -2098,14 +2117,18 @@ class AlistFileSystem:
             path = cast(str, path["path"])
         else:
             path = self.abspath(path)
+        payload = {"path": path}
         if path == "/":
-            return {"code": 200}
-        return check_response(self.client.fs_mkdir( # type: ignore
-            {"path": path}, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+            return {"code": 200, "payload": payload}
+        return check_response(
+            self.client.fs_mkdir( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_move(
@@ -2151,12 +2174,15 @@ class AlistFileSystem:
         if src_dir == dst_dir:
             return {"code": 200}
         payload = {"src_dir": src_dir, "dst_dir": dst_dir, "names": names}
-        return check_response(self.client.fs_move( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_move( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_put(
@@ -2199,15 +2225,18 @@ class AlistFileSystem:
             path = cast(str, path["path"])
         else:
             path = self.abspath(path)
-        return check_response(self.client.fs_put( # type: ignore
-            file, 
-            path, 
-            as_task=as_task, 
-            filesize=filesize, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_put( # type: ignore
+                file, 
+                path, 
+                as_task=as_task, 
+                filesize=filesize, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            path=path, 
+        )
 
     @overload
     def fs_recursive_move(
@@ -2246,12 +2275,15 @@ class AlistFileSystem:
         else:
             dst_dir = self.abspath(dst_dir)
         payload = {"src_dir": src_dir, "dst_dir": dst_dir}
-        return check_response(self.client.fs_recursive_move( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_recursive_move( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_regex_rename(
@@ -2293,12 +2325,15 @@ class AlistFileSystem:
             "src_name_regex": src_name_regex, 
             "new_name_regex": new_name_regex, 
         }
-        return check_response(self.client.fs_regex_rename( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_regex_rename( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_remove(
@@ -2335,12 +2370,15 @@ class AlistFileSystem:
         else:
             src_dir = self.abspath(src_dir)
         payload = {"names": names, "dir": src_dir}
-        return check_response(self.client.fs_remove( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_remove( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_remove_empty_directory(
@@ -2372,12 +2410,15 @@ class AlistFileSystem:
         else:
             src_dir = self.abspath(src_dir)
         payload = {"src_dir": src_dir}
-        return check_response(self.client.fs_remove_empty_directory( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_remove_empty_directory( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_rename(
@@ -2412,12 +2453,15 @@ class AlistFileSystem:
         else:
             path = self.abspath(path)
         payload = {"path": path, "name": name}
-        return check_response(self.client.fs_rename( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_rename( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_search(
@@ -2473,12 +2517,15 @@ class AlistFileSystem:
             "per_page": per_page, 
             "password": password, 
         }
-        return check_response(self.client.fs_search( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.fs_search( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_storage_delete(
@@ -2502,12 +2549,16 @@ class AlistFileSystem:
         /, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.admin_storage_delete( # type: ignore
-            id, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        payload = {"id": id}
+        return check_response(
+            self.client.admin_storage_delete( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_storage_disable(
@@ -2531,12 +2582,16 @@ class AlistFileSystem:
         id: int | str, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.admin_storage_disable( # type: ignore
-            {"id": id}, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        payload = {"id": id}
+        return check_response(
+            self.client.admin_storage_disable( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_storage_enable(
@@ -2560,17 +2615,23 @@ class AlistFileSystem:
         id: int | str, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.admin_storage_enable( # type: ignore
-            {"id": id}, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        payload = {"id": id}
+        return check_response(
+            self.client.admin_storage_enable( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_storage_list(
         self, 
         /, 
+        payload: dict = {"page": 1, "per_page": 0}, 
+        *, 
         async_: Literal[False] = False, 
     ) -> dict:
         ...
@@ -2578,19 +2639,27 @@ class AlistFileSystem:
     def fs_storage_list(
         self, 
         /, 
+        payload: dict = {"page": 1, "per_page": 0}, 
+        *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_storage_list(
         self, 
         /, 
+        payload: dict = {"page": 1, "per_page": 0}, 
+        *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.admin_storage_list( # type: ignore
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+            self.client.admin_storage_list( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     @overload
     def fs_storage_update(
@@ -2614,11 +2683,15 @@ class AlistFileSystem:
         payload: dict, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.admin_storage_update( # type: ignore
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-            **self.request_kwargs, 
-        ))
+        return check_response(
+                self.client.admin_storage_update( # type: ignore
+                payload, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+                **self.request_kwargs, 
+            ), 
+            payload=payload, 
+        )
 
     def abspath(
         self, 

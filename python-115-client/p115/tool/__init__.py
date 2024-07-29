@@ -3,8 +3,8 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "login_scan_cookie", "crack_captcha", "wish_make", "wish_answer", 
-    "wish_list", "wish_aid_list", "wish_adopt", 
+    "login_scan_cookie", "crack_captcha", "remove_receive_dir", 
+    "wish_make", "wish_answer", "wish_list", "wish_aid_list", "wish_adopt", 
     "parse_export_dir_as_dict_iter", "parse_export_dir_as_path_iter", 
     "export_dir", "export_dir_parse_iter", 
 ]
@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable, Iterator
 from io import TextIOBase, TextIOWrapper
 from os import PathLike
 from re import compile as re_compile
+from time import sleep, time
 from typing import cast, IO
 
 from concurrenttools import thread_pool_batch
@@ -78,7 +79,7 @@ def login_scan_cookie(
     |     22 | R1      | wechatmini | 115生活(微信小程序)    |
     |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     if not app:
         if (resp := client.login_device()) is None:
@@ -127,7 +128,7 @@ def crack_captcha(
                 run([executable, "-m", "pip", "install", "-U", "ddddocr==1.4.11"], check=True)
                 from ddddocr import DdddOcr # type: ignore
             crack = CAPTCHA_CRACK = cast(Callable[[bytes], str], DdddOcr(show_ad=False).classification)
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     while True:
         captcha = crack(client.captcha_code())
@@ -153,6 +154,32 @@ def crack_captcha(
     return resp["state"]
 
 
+def remove_receive_dir(client: P115Client, password: str):
+    """删除目录 "/我的接收"
+    :param client: 115 客户端或 cookies
+    :param password: 回收站密码（即 安全密钥，是 6 位数字）
+    """
+    if not isinstance(client, P115Client):
+        client = P115Client(client)
+    fs = client.fs
+    try:
+        attr = fs.attr("/我的接收", ensure_dir=True)
+    except FileNotFoundError:
+        return
+    now = str(int(time()))
+    fs.rmtree(attr)
+    recyclebin = client.recyclebin
+    while True:
+        for i, info in enumerate(recyclebin):
+            # NOTE: 因为删除后，并不能立即在回收站看到被删除的文件夹，所以看情况需要等一等
+            if not i and info["dtime"] < now:
+                sleep(0.1)
+                break
+            if info["cid"] == 0 and info["file_name"] == "我的接收":
+                recyclebin.remove(info["id"], password)
+                return
+
+
 def wish_make(
     client: str | P115Client, 
     content: str = "随便许个愿", 
@@ -165,7 +192,7 @@ def wish_make(
 
     :return: 许愿 id
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     return check_response(client.act_xys_wish(
         {"rewardSpace": size, "content": content}
@@ -186,7 +213,7 @@ def wish_answer(
 
     :return: 助愿 id
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     if not isinstance(file_ids, (int, str)):
         file_ids = ",".join(map(str, file_ids))
@@ -207,7 +234,7 @@ def wish_list(
         - 1: 进行中
         - 2: 已实现
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     payload: dict = {"type": type, "limit": 1000, "page": 1}
     ls = adds = check_response(client.act_xys_my_desire(payload))["data"]["list"]
@@ -226,7 +253,7 @@ def wish_aid_list(
     :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     payload: dict = {"id": wish_id, "limit": 1000, "page": 1}
     ls = adds = check_response(client.act_xys_desire_aid_list(payload))["data"]["list"]
@@ -249,7 +276,7 @@ def wish_adopt(
     :param aid_id: 助愿 id
     :param to_cid: 助愿的分享文件保存到你的网盘中目录的 id
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     return check_response(client.act_xys_adopt({"did": wish_id, "aid": aid_id, "to_cid": to_cid}))
 
@@ -339,7 +366,7 @@ def export_dir(
     :param export_file_ids: 待导出的文件夹 id 或 路径
     :param target_pid: 导出到的目标文件夹 id 或 路径
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     if isinstance(export_file_ids, str):
         export_file_ids = client.fs.get_id(export_file_ids, pid=0)
@@ -365,7 +392,7 @@ def export_dir_parse_iter(
 
     :return: 解析导出文件的迭代器
     """
-    if isinstance(client, str):
+    if not isinstance(client, P115Client):
         client = P115Client(client)
     future = export_dir(client, export_file_ids, target_pid)
     result = future.result()
