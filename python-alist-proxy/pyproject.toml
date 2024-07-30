@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "alist_proxy"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python alist proxy and monitor."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -26,7 +26,12 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-flask = "*"
+aiohttp = "*"
+blacksheep = "*"
+orjson = "*"
+redis = "*"
+uvicorn = "*"
+python-alist = ">=0.0.13"
 
 [tool.poetry.scripts]
 alist-proxy = "alist_proxy.__main__:main"

@@ -2,354 +2,468 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
-__doc__ = "\t\t🌍🚢 alist 网络代理抓包 🕷️🕸️"
+__version__ = (0, 0, 1)
+__all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
-from argparse import ArgumentParser, RawTextHelpFormatter
+import logging
+
+from asyncio import create_task, sleep, Queue
+from collections.abc import Callable
+from functools import partial
+from inspect import isawaitable
+from itertools import islice
+from os.path import basename as os_basename
+from posixpath import basename, join as joinpath, split as splitpath
+from shutil import COPY_BUFSIZE # type: ignore
+from re import compile as re_compile
+from traceback import format_exc
+from typing import cast, Any
+from urllib.parse import unquote, urlsplit
+from xml.etree.ElementTree import fromstring
+
+from aiohttp import ClientSession
+from alist import AlistClient
+from blacksheep import redirect, Application, Request, Response, Router, WebSocket
+from blacksheep.contents import Content, StreamedContent
+from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
+from orjson import dumps, loads
+from redis.asyncio import Redis
+from redis.exceptions import ResponseError
+
 
 DEFAULT_METHODS = [
     "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", 
     "TRACE", "PATCH", "MKCOL", "COPY", "MOVE", "PROPFIND", 
     "PROPPATCH", "LOCK", "UNLOCK", "REPORT", "ACL", 
 ]
-
-parser = ArgumentParser(
-    description=__doc__, 
-    formatter_class=RawTextHelpFormatter, 
-    epilog="""\t\t🔧🔨 使用技巧 🔩🪛
-
-本工具可以自己提供 collect 函数的定义，因此具有一定的可定制性
-
-1. 把日志输出到本地文件
-
-.. code: python
-
-    python alist_proxy.py -c '
-    import logging
-    from logging.handlers import TimedRotatingFileHandler
-
-    logger = logging.getLogger("alist")
-    logger.setLevel(logging.INFO)
-    handler = TimedRotatingFileHandler("alist.log", when="midnight", backupCount=3650)
-    handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s"))
-    logger.addHandler(handler)
-
-    collect = logger.info
-    '
-
-2. 使用 mongodb 存储采集到的日志
-
-.. code: python
-
-    python alist_proxy.py -c '
-    from pymongo import MongoClient
-
-    client = MongoClient("localhost", 27017)
-    collect = client.log.alist.insert_one
-    '
-
-3. 使用 sqlite 收集采集到的日志，单独开启一个线程作为工作线程
-
-.. code: python
-
-    python alist_proxy.py --queue-collect -c '
-    from json import dumps
-    from sqlite3 import connect
-    from threading import local
-
-    ctx = local()
-
-    def collect(event):
-        try:
-            con = ctx.con
-        except AttributeError:
-            con = ctx.con = connect("alist_log.db")
-            con.execute(\"""
-            CREATE TABLE IF NOT EXISTS log ( 
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-                data JSON 
-            ); 
-            \""")
-        try:
-            con.execute("INSERT INTO log(data) VALUES (?)", (dumps(event),))
-            con.commit()
-        except:
-            con.rollback()
-            raise
-    '
-
-4. 如果并发量特别大，可以按批插入数据，以 mongodb 为例
-
-第 1 种策略是收集到一定数量时，进行批量插入
-
-.. code: python
-
-    python alist_proxy.py -c '
-    from atexit import register
-    from threading import Lock
-
-    from pymongo import MongoClient
-
-    client = MongoClient("localhost", 27017)
-
-    BATCHSIZE = 100
-
-    cache = []
-    push = cache.append
-    insert_many = client.log.alist.insert_many
-    cache_lock = Lock()
-
-    def work():
-        with cache_lock:
-            if len(cache) >= BATCHSIZE:
-                insert_many(cache)
-                cache.clear()
-
-    def collect(event):
-        push(event)
-        work()
-
-    def end_work():
-        with cache_lock:
-            if cache:
-                insert_many(cache)
-                cache.clear()
-
-    register(end_work)
-    '
-
-第 2 种策略是定期进行批量插入
-
-.. code: python
-
-    python alist_proxy.py -c '
-    from atexit import register
-    from time import sleep
-    from _thread import start_new_thread
-
-    from pymongo import MongoClient
-
-    client = MongoClient("localhost", 27017)
-
-    INTERVAL = 1
-    running = True
-
-    cache = []
-    collect = cache.append
-    insert_many = client.log.alist.insert_many
-
-    def worker():
-        while running:
-            length = len(cache)
-            if length:
-                insert_many(cache[:length])
-                del cache[:length]
-            sleep(INTERVAL)
-
-    def end_work():
-        global running
-        running = False
-        if cache:
-            cache_copy = cache.copy()
-            cache.clear()
-            insert_many(cache_copy)
-
-    register(end_work)
-
-    start_new_thread(worker, ())
-    '
-"""
-)
-parser.add_argument("-b", "--base-url", default="http://localhost:5244", 
-                    help="被代理的网络服务的 base_url，默认值：'http://localhost:5244'")
-parser.add_argument("-m", "--method", metavar="method", dest="methods", default=DEFAULT_METHODS, nargs="*", 
-                    help=f"被代理的 http 方法，默认值：{DEFAULT_METHODS}")
-parser.add_argument("-c", "--collect", default="", help="""\
-提供一段代码，里面必须暴露一个名为 collect 的函数，这个函数接受一个位置参数，用来传入 1 条日志
-除此以外，我还会给这个函数注入一些全局变量
-    - app: 这个 flask 应用对象
-    - request: 当前的请求对象
-
-默认的行为是把信息输出到日志里面，代码为
-
-    collect = app.logger.info
-
-""")
-parser.add_argument("-q", "--queue-collect", action="store_true", 
-                    help=f"单独启动个线程用来执行收集，通过队列进行中转")
-
-if __name__ == "__main__":
-    parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
-    parser.add_argument("-p", "--port", default=5245, type=int, help="端口号，默认值：5245")
-    parser.add_argument("-d", "--debug", action="store_true", help="启用 flask 的 debug 模式")
-    parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
-
-    args = parser.parse_args()
-    if args.version:
-        print(".".join(map(str, __version__)))
-        raise SystemExit(0)
-else:
-    from sys import argv
-    from warnings import warn
-
-    try:
-        args_start = argv.index("--")
-        args, unknown = parser.parse_known_args(argv[args_start+1:])
-        if unknown:
-            warn(f"unknown args passed: {unknown}")
-    except ValueError:
-        args = parser.parse_args([])
-
-
-from functools import partial
-from json import loads
-from shutil import COPY_BUFSIZE # type: ignore
-from re import compile as re_compile
-from textwrap import dedent
-from traceback import format_exc
-
-try:
-    from flask import request, Flask, Response
-    from urllib3.poolmanager import PoolManager
-except ImportError:
-    from sys import executable
-    from subprocess import run
-    run([executable, "-m", "pip", "install", "-U", "flask", "urllib3"], check=True)
-    from flask import request, Flask, Response
-    from urllib3.poolmanager import PoolManager
-
-
 CRE_charset_search = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
-
-BASE_URL = args.base_url.rstrip("/")
-if not BASE_URL.startswith(("http://", "https://")):
-    if BASE_URL.startswith("/"):
-        BASE_URL = "http://localhost" + BASE_URL
-    elif BASE_URL.startswith("://"):
-        BASE_URL = "http" + BASE_URL
-    else:
-        BASE_URL = "http://" + BASE_URL
-METHODS = args.methods or DEFAULT_METHODS
-
-app = Flask(__name__)
-app.logger.level = 20
-
-pool = PoolManager(num_pools=128, headers={"User-Agent": ""})
-urllib3_request = pool.request
-
-code = dedent(args.collect).strip()
-if code:
-    ns: dict = {"request": request, "app": app}
-    exec(code, ns)
-    collect = ns["collect"]
-else:
-    collect = app.logger.info
-
-queue_collect = args.queue_collect
-if queue_collect:
-    from _thread import start_new_thread
-    from queue import Queue
-
-    queue: Queue = Queue()
-    work = collect
-
-    def worker():
-        while True:
-            task = queue.get()
-            try:
-                work(task)
-            except BaseException as e:
-                app.logger.exception(e)
-            finally:
-                queue.task_done()
-
-    start_new_thread(worker, ())
-    collect = queue.put
+CRE_copy_name_extract = re_compile(r"^copy \[(.*?)\]\(/(.*?)\) to \[(.*?)\]\(/(.*)\)$").fullmatch
+CRE_upload_name_extract = re_compile(r"^upload (.*?) to \[(.*?)\]\(/(.*)\)$").fullmatch
+CRE_transfer_name_extract = re_compile(r"^transfer (.*?) to \[(.*)\]$").fullmatch
+logging.basicConfig(format="[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) "
+                            "\x1b[0m\x1b[1;35malist-proxy\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s")
 
 
-def get_charset(content_type: str, default="utf-8") -> str:
+def get_charset(content_type: str, default: str = "utf-8") -> str:
     match = CRE_charset_search(content_type)
     if match is None:
         return "utf-8"
     return match["charset"]
 
 
-@app.route("/", defaults={"path": ""}, methods=METHODS)  
-@app.route("/<path:path>", methods=METHODS)
-def redirect(path: str):
-    original_base_url = request.host_url.rstrip("/")
-    request_headers = {k.lower(): v for k, v in request.headers.items() if k.lower() != "host"}
-    if (destination := request_headers.get("destination") or "").startswith(original_base_url):
-        request_headers["destination"] = BASE_URL + destination[len(original_base_url):]
-    payload = dict(
-        method  = request.method, 
-        url     = BASE_URL + request.url[len(original_base_url):], 
-        headers = request_headers, 
-    )
-    result: dict = {
-        "request": {
-            "url": request.url, 
-            "payload": dict(payload), 
-        }
-    }
-    try:
-        content_type = request_headers.get("content-type") or ""
-        if content_type.startswith("application/json"):
-            data = payload["body"] = request.get_data()
-            result["request"]["payload"]["json"] = loads(data.decode(get_charset(content_type)))
-        elif content_type.startswith(("text/", "application/xml", "application/x-www-form-urlencoded")):
-            data = payload["body"] = request.get_data()
-            result["request"]["payload"]["text"] = data.decode(get_charset(content_type))
-        else:
-            payload["body"] = iter(partial(request.stream.read, COPY_BUFSIZE), b"")
-        response = urllib3_request( # type: ignore
-            **payload, 
-            timeout         = None, 
-            redirect        = False, 
-            preload_content = False, 
-            decode_content  = False, 
+def make_application(
+    base_url: str = "http://localhost:5244", 
+    collect: None | Callable[[dict], Any] = None, 
+    project: None | Callable[[dict], Any] = None, 
+    methods: list[str] = DEFAULT_METHODS, 
+) -> Application:
+    """创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
+
+    :param base_url: alist 的 base_url
+    :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
+    :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
+    :param methods: 需要监听的 HTTP 方法集
+
+    :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
+    """
+    app = Application(router=Router())
+    logger = getattr(app, "logger")
+    logger.level = 20
+    if collect is None:
+        collect = logger.info
+    setattr(app, "collect", collect)
+
+    queue: Queue = Queue()
+    get, put_nowait, task_done = queue.get, queue.put_nowait, queue.task_done
+
+    async def work():
+        while True:
+            task = await get()
+            try:
+                ret = collect(task)
+                if isawaitable(ret):
+                    await ret
+            except BaseException as e:
+                logger.exception(e)
+            finally:
+                task_done()
+
+    @app.on_middlewares_configuration
+    def configure_forwarded_headers(app: Application):
+        app.middlewares.insert(0, ForwardedHeadersMiddleware())
+
+    @app.lifespan
+    async def register_http_client(app: Application):
+        async with ClientSession() as client:
+            app.services.register(ClientSession, instance=client)
+            yield
+
+    @app.after_start
+    async def on_start(app: Application):
+        create_task(work())
+
+    @app.router.route("/", methods=methods)  
+    @app.router.route("/<path:path>", methods=methods)
+    async def proxy(request: Request, client: ClientSession, path: str = ""):
+        proxy_base_url = f"{request.scheme}://{request.host}"
+        request_headers = [
+            (k, base_url + v[len(proxy_base_url):] if k == "destination" and v.startswith(proxy_base_url) else v)
+            for k, v in ((str(k.lower(), "utf-8"), str(v, "utf-8")) for k, v in request.headers)
+            if k != "host"
+        ]
+        url_path = str(request.url)
+        payload: dict = dict(
+            method  = request.method, 
+            url     = base_url + url_path, 
+            headers = request_headers, 
         )
-        result["response"] = {
-            "status": response.status, 
-            "headers": dict(response.headers), 
+        result: dict = {
+            "request": {
+                "url": proxy_base_url + url_path, 
+                "payload": dict(payload), 
+            }
         }
-        content_type = response.headers.get("content-type") or ""
-        if content_type.startswith(("text/", "application/json", "application/xml")):
-            excluded_headers = ["content-encoding", "content-length", "date", "transfer-encoding"]
-            headers          = [(k, v) for k, v in response.headers.items() if k.lower() not in excluded_headers]
-            response.decode_content = True
-            content = response.read()
-            if content_type.startswith("application/json"):
-                result["response"]["json"] = loads(content.decode(get_charset(content_type)))
-            else:
-                result["response"]["text"] = content.decode(get_charset(content_type))
-            return Response(content, response.status, headers)
-        else:
-            excluded_headers = ["date"]
-            headers          = [(k, v) for k, v in response.headers.items() if k.lower() not in excluded_headers]
-            return Response(response, response.status, headers)
-    except BaseException as e:
-        result["exception"] = {
-            "reason": f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
-            "traceback": format_exc(), 
-        }
-        raise
-    finally:
         try:
-            collect(result)
+            data: None | bytes
+            if url_path.startswith(("/d/", "/p/")):
+                return redirect(base_url + url_path)
+            content_type = str(request.headers.get_first(b"content-type") or b"", "utf-8")
+            if content_type.startswith("application/json"):
+                data = payload["data"] = await request.read()
+                if data:
+                    result["request"]["payload"]["json"] = loads(data.decode(get_charset(content_type)))
+            elif content_type.startswith(("application/xml", "text/xml", "application/x-www-form-urlencoded")):
+                data = payload["data"] = await request.read()
+                if data:
+                    result["request"]["payload"]["text"] = data.decode(get_charset(content_type))
+            else:
+                payload["data"] = request.stream()
+            response = await client.request(
+                **payload, 
+                allow_redirects=False, 
+                raise_for_status=False, 
+                timeout=None, 
+            )
+            response_status  = response.status
+            response_headers = [
+                (k, proxy_base_url + v[len(base_url):] if k == "location" and v.startswith(base_url) else v)
+                for k, v in ((k.lower(), v) for k, v in response.headers.items())
+                if k.lower() != "date"
+            ]
+            result["response"] = {
+                "status": response_status, 
+                "headers": response_headers, 
+            }
+            content_type = response.headers.get("content-type", "")
+            if content_type.startswith(("application/json", "application/xml", "text/xml")):
+                excluded_headers = ("content-encoding", "content-length", "transfer-encoding")
+                headers          = [
+                    (bytes(k, "utf-8"), bytes(v, "utf-8")) 
+                    for k, v in response_headers if k not in excluded_headers
+                ]
+                content = await response.read()
+                if content_type.startswith("application/json"):
+                    result["response"]["json"] = loads(content.decode(get_charset(content_type)))
+                    if url_path == "/api/fs/get":
+                        json = result["response"]["json"]
+                        if json["code"] == 200:
+                            raw_url = json["data"].get("raw_url") or ""
+                            if raw_url.startswith(base_url):
+                                json["data"]["raw_url"] = proxy_base_url + raw_url[len(base_url):]
+                                content = dumps(json)
+                else:
+                    result["response"]["text"] = content.decode(get_charset(content_type))
+                return Response(response_status, headers, Content(bytes(content_type, "utf-8"), content))
+            else:
+                headers = [(bytes(k, "utf-8"), bytes(v, "utf-8")) for k, v in response_headers]
+                async def reader():
+                    async with response:
+                        async for chunk in response.content.iter_chunked(COPY_BUFSIZE):
+                            yield chunk
+                return Response(response_status, headers, StreamedContent(bytes(content_type, "utf-8"), reader))
         except BaseException as e:
-            app.logger.exception(e)
+            result["exception"] = {
+                "reason": f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
+                "traceback": format_exc(), 
+            }
+            raise
+        finally:
+            try:
+                if project is not None:
+                    result = project(result)
+                if result is not None:
+                    put_nowait(result)
+            except BaseException as e:
+                logger.exception(e)
+
+    return app
 
 
-if __name__ == "__main__":
-    if args.debug:
-        app.logger.level = 10
-    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
+def make_application_with_fs_events(
+    alist_token: str, 
+    base_url: str = "http://localhost:5244", 
+    collect: None | Callable[[dict], Any] = None, 
+) -> Application:
+    """只收集和文件系统操作有关的事件
 
-# TODO: 这个模块作为基础模块，在此基础上可以实现各种监控
-# TODO: 实现同步和异步版本，异步版本可选，通过 pip install alist_proxy[async] 安装
-# TODO: 异步版本使用 blacksheep 或 robyn 实现
-# TODO: 扩展模块：监控后台任务列表，和新增文件，可以决定是否要刷新对应的目录
-# TODO: 扩展模块：监控后台任务列表，只监控完成列表，如果任务已完成，默认行为时，只要任务结果已经被记录，则进行删除
-# TODO: 扩展模块：只监控 fs 事件（包括 webdav），可以把数据存储到 redis streams 中，并实现一个 websocket 接口，从访问的时间点开始（默认，可以自行指定检查点），持续订阅
+    :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
+    :param base_url: alist 的 base_url
+    :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
+
+    :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
+    """
+    def project(data):
+        if not(response := data.get("response")) or not(200 <= response["status"] < 300):
+            return
+        payload = data["request"]["payload"]
+        url = payload["url"]
+        urlp = urlsplit(url)
+        path = unquote(urlp.path)
+        if path.startswith("/api/fs"):
+            if not(200 <= response["json"]["code"] < 300):
+                return
+            data = {"category": "web", "type": "", "method": basename(urlp.path), "payload": payload.get("json")}
+            if result := response["json"]["data"]:
+                data["result"] = result
+            match data["method"]:
+                case "put" | "form":
+                    file_path = next(v for k, v in payload["headers"] if k == "file-path")
+                    data.update(type="upload", payload={"path": unquote(file_path)})
+                case "rename" | "batch_rename" | "regex_rename":
+                    data["type"] = "rename"
+                case "move" | "recursive_move":
+                    data["type"] = "move"
+                case "remove" | "remove_empty_directory":
+                    data["type"] = "remove"
+                case "copy":
+                    data["type"] = "copy"
+                case "mkdir":
+                    data["type"] = "mkdir"
+                case "get" | "list" | "search" | "dirs":
+                    data["type"] = "find"
+                case _:
+                    return
+            return data
+        elif path.startswith("/dav"):
+            path = path.removeprefix("/dav")
+            data = {
+                "category": "dav", 
+                "type": "", 
+                "method": payload["method"], 
+                "payload": {
+                    "path": path.rstrip("/"), 
+                    "is_dir": path.endswith("/"), 
+                }, 
+            }
+            match data["method"]:
+                case "PUT":
+                    data["type"] = "upload"
+                case "DELETE":
+                    data["type"] = "remove"
+                case "MKCOL":
+                    data["type"] = "mkdir"
+                case "COPY":
+                    data["type"] = "copy"
+                    destination = next(v for k, v in payload["headers"] if k == "destination")
+                    data["payload"]["to_path"] = unquote(urlsplit(destination).path).rstrip("/")
+                case "MOVE":
+                    data["type"] = "move"
+                    destination = next(v for k, v in payload["headers"] if k == "destination")
+                    data["payload"]["to_path"] = unquote(urlsplit(destination).path).rstrip("/")
+                case "PROPFIND":
+                    data["type"] = "find"
+                    data["result"] = list(islice(
+                        ({sel.tag.removeprefix("{DAV:}").removeprefix("{SAR:}").removeprefix("get"): sel.text for sel in el} 
+                            for el in fromstring(response["text"]).iterfind(".//{DAV:}prop")
+                        ), 2, None, 2
+                    ))
+                case _:
+                    return
+            return data
+
+    app = make_application(base_url=base_url, collect=collect, project=project)
+    collect = cast(Callable, getattr(app, "collect"))
+    logger  = getattr(app, "logger")
+
+    if alist_token:
+        client  = AlistClient.from_auth(alist_token, base_url)
+        resp    = client.auth_me()
+        if resp["code"] != 200:
+            raise ValueError(resp)
+        elif resp["data"]["id"] != 1:
+            raise ValueError("you are not admin of alist")
+
+        @app.after_start
+        async def pull_copy_tasklist(app: Application):
+            copy_tasklist = client.copy_tasklist
+            list_done, remove = copy_tasklist.list_done, copy_tasklist.remove
+            async def work():
+                while True:
+                    try:
+                        tasklist = await list_done(async_=True)
+                    except BaseException as e:
+                        logger.exception(e)
+                    else:
+                        if not tasklist:
+                            await sleep(1)
+                            continue
+                        for task in tasklist:
+                            if task["state"] == 2:
+                                src_sto, src_path, dst_sto, dst_dir = CRE_copy_name_extract(task["name"]).groups() # type: ignore
+                                src_dir, name = splitpath(src_path)
+                                try:
+                                    collect({
+                                        "category": "task", 
+                                        "type": "copy", 
+                                        "method": "copy", 
+                                        "payload": {
+                                            "src_path": joinpath(src_sto, src_dir, name), 
+                                            "dst_path": joinpath(dst_sto, dst_dir, name), 
+                                            "src_storage": src_sto, 
+                                            "dst_storage": dst_sto, 
+                                            "src_dir": joinpath(src_sto, src_dir), 
+                                            "dst_dir": joinpath(dst_sto, dst_dir), 
+                                            "name": name, 
+                                            "is_dir": task["status"] != "getting src object", 
+                                        }
+                                    })
+                                    await remove(task["id"], async_=True)
+                                except BaseException as e:
+                                    logger.exception(e)
+            create_task(work())
+
+        @app.after_start
+        async def pull_upload_tasklist():
+            upload_tasklist = client.upload_tasklist
+            list_done, remove = upload_tasklist.list_done, upload_tasklist.remove
+            async def work():
+                while True:
+                    try:
+                        tasklist = await list_done(async_=True)
+                    except BaseException as e:
+                        logger.exception(e)
+                    else:
+                        if not tasklist:
+                            await sleep(1)
+                            continue
+                        for task in tasklist:
+                            if task["state"] == 2:
+                                name, dst_sto, dst_dir = CRE_upload_name_extract(task["name"]).groups() # type: ignore
+                                try:
+                                    collect({
+                                        "category": "task", 
+                                        "type": "upload", 
+                                        "method": "upload", 
+                                        "payload": {
+                                            "path": joinpath(dst_sto, dst_dir, name), 
+                                            "dst_storage": dst_sto, 
+                                            "dst_dir": joinpath(dst_sto, dst_dir), 
+                                            "name": name, 
+                                            "is_dir": False, 
+                                        }
+
+                                    })
+                                    await remove(task["id"], async_=True)
+                                except BaseException as e:
+                                    logger.exception(e)
+            create_task(work())
+
+        @app.after_start
+        async def pull_offline_download_transfer_tasklist():
+            offline_download_transfer_tasklist = client.offline_download_transfer_tasklist
+            list_done, remove = offline_download_transfer_tasklist.list_done, offline_download_transfer_tasklist.remove
+            async def work():
+                while True:
+                    try:
+                        tasklist = await list_done(async_=True)
+                    except BaseException as e:
+                        logger.exception(e)
+                    else:
+                        if not tasklist:
+                            await sleep(1)
+                            continue
+                        for task in tasklist:
+                            if task["state"] == 2:
+                                local_path, dst_dir = CRE_transfer_name_extract(task["name"]).groups() # type: ignore
+                                name = os_basename(local_path)
+                                try:
+                                    collect({
+                                        "category": "task", 
+                                        "type": "upload", 
+                                        "method": "transfer", 
+                                        "payload": {
+                                            "path": joinpath(dst_dir, name), 
+                                            "dst_dir": dst_dir, 
+                                            "name": name, 
+                                            "is_dir": False, 
+                                        }
+                                    })
+                                    await remove(task["id"], async_=True)
+                                except BaseException as e:
+                                    logger.exception(e)
+            create_task(work())
+
+    return app
+
+
+def make_application_with_fs_event_stream(
+    alist_token: str, 
+    base_url: str = "http://localhost:5244", 
+    redis_host: str = "localhost", 
+    redis_port: int = 6379, 
+    redis_key: str  = "alist:fs", 
+):
+    """只收集和文件系统操作有关的事件，存储到 redis streams，并且可以通过 websocket 拉取
+
+    :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
+    :param base_url: alist 的 base_url
+    :param redis_host: redis 服务所在的主机
+    :param redis_port: redis 服务的端口
+    :param redis_key: redis streams 的键名
+
+    :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
+    """
+    redis: Any = None
+
+    app = make_application_with_fs_events(
+        alist_token=alist_token, 
+        base_url=base_url, 
+        collect=lambda data: redis.xadd(redis_key, {"data": dumps(data)}), 
+    )
+
+    @app.lifespan
+    async def register_redis(app: Application):
+        nonlocal redis
+        async with Redis(host=redis_host, port=redis_port) as redis:
+            app.services.register(Redis, instance=redis)
+            yield
+
+    @app.router.route("/pull", methods=["GET_WS"])
+    async def push(websocket: WebSocket, lastid: str = "", group: str = "", name: str = ""):
+        await websocket.accept()
+        async with Redis(host=redis_host, port=redis_port) as redis:
+            if group:
+                try:
+                    await redis.xgroup_create(name=redis_key, groupname=group)
+                except ResponseError as e:
+                    if str(e) != "BUSYGROUP Consumer Group name already exists":
+                        raise
+                if lastid:
+                    last_id = bytes(lastid, "utf-8")
+                else:
+                    last_id = b">"
+                read: Callable = partial(redis.xreadgroup, groupname=group, consumername=name)
+            else:
+                if lastid:
+                    last_id = bytes(lastid, "utf-8")
+                else:
+                    last_id = b"$"
+                read = redis.xread
+            while True:
+                messages = await read(streams={redis_key: last_id}, block=1000)
+                if messages:
+                    for last_id, item in messages[0][1]:
+                        await websocket.send_bytes(b'{"id": "%s", "data": %s}' % (last_id, item[b"data"]))
+
+    return app
+

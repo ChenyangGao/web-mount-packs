@@ -361,7 +361,7 @@ def alist_batch_download(
                                 dir0 = dirname(dir0)
                     create_task(alist_batch_download_async(path, joinpath(local_dir, local_relpath)))
         if sync:
-            clean()
+            await to_thread(clean)
         return request()
     else:
         def alist_batch_download_sync(path: AlistPath, local_path: str):
