@@ -1,8 +1,8 @@
+// 0.7.10
+
 syntax = "proto3";
 
 package clouddrive;
-
-// 0.7.0-beta2
 
 option csharp_namespace = "CloudDriveSrv.Protos";
 
@@ -46,6 +46,8 @@ service CloudDriveFileSrv {
   rpc RenameFiles(RenameFilesRequest) returns (FileOperationResult) {}
   // move files to a dest folder
   rpc MoveFile(MoveFileRequest) returns (FileOperationResult) {}
+  // copy files to a dest folder
+  rpc CopyFile(CopyFileRequest) returns (FileOperationResult) {}
   // delete a single file
   rpc DeleteFile(FileRequest) returns (FileOperationResult) {}
   // delete a single file permanently, only aliyundrive supports this currently
@@ -55,7 +57,7 @@ service CloudDriveFileSrv {
   // batch delete files permanently, only aliyundrive supports this currently
   rpc DeleteFilesPermanently(MultiFileRequest) returns (FileOperationResult) {}
   // add offline files by providing magnet, sha1, ..., applies only with folders
-  // with canOfflineDownload is tru
+  // with canOfflineDownload is true
   rpc AddOfflineFiles(AddOfflineFileRequest) returns (FileOperationResult) {}
   // remove offline files by info hash
   rpc RemoveOfflineFiles(RemoveOfflineFilesRequest)
@@ -376,6 +378,10 @@ message MoveFileRequest {
   repeated string theFilePaths = 1;
   string destPath = 2;
 }
+message CopyFileRequest {
+  repeated string theFilePaths = 1;
+  string destPath = 2;
+}
 message WriteFileRequest {
   uint64 fileHandle = 1;
   uint64 startPos = 2;
@@ -487,6 +493,8 @@ message AccountStatusResult {
   double accountBalance = 3;
   AccountPlan accountPlan = 4;
   repeated AccountRole accountRoles = 5;
+  optional AccountPlan secondPlan = 6;
+  optional string partnerReferralCode = 7;
 }
 message AccountPlan {
   string planName = 1;
@@ -513,6 +521,7 @@ message RunInfo {
   uint64 fhTableCount = 4;
   uint64 dirCacheCount = 5;
   uint64 tempFileCount = 6;
+  uint64 dbDirCacheCount = 7;
 }
 message MountOption {
   string mountPoint = 1;
@@ -595,6 +604,7 @@ message TransferTaskStatus {
   uint32 uploadCount = 2;
   string clouddriveVersion = 3;
   repeated UploadFileInfo uploadFileStatusChanges = 4;
+  bool hasUpdate = 5;
 }
 message ExitedMessage {
   enum ExitReason {
@@ -790,6 +800,8 @@ message SystemSettings {
   optional double maxDownloadSpeedKBytesPerSecond = 11;
   optional double maxUploadSpeedKBytesPerSecond = 12;
   optional string deviceName = 13;
+  optional bool dirCachePersistence = 14;
+  optional string dirCacheDbLocation = 15;
 }
 message SetDirCacheTimeRequest {
   string path = 1;
@@ -834,6 +846,7 @@ message CloudDrivePlan {
   bool isActive = 7;
   optional string fontAwesomeIcon = 8;
   optional double originalPrice = 9;
+  repeated AccountRole planRoles = 10;
 }
 message GetCloudDrivePlansResult { repeated CloudDrivePlan plans = 1; }
 message JoinPlanRequest {

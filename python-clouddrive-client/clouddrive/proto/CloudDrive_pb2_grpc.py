@@ -95,6 +95,11 @@ class CloudDriveFileSrvStub(object):
                 request_serializer=CloudDrive__pb2.MoveFileRequest.SerializeToString,
                 response_deserializer=CloudDrive__pb2.FileOperationResult.FromString,
                 )
+        self.CopyFile = channel.unary_unary(
+                '/clouddrive.CloudDriveFileSrv/CopyFile',
+                request_serializer=CloudDrive__pb2.CopyFileRequest.SerializeToString,
+                response_deserializer=CloudDrive__pb2.FileOperationResult.FromString,
+                )
         self.DeleteFile = channel.unary_unary(
                 '/clouddrive.CloudDriveFileSrv/DeleteFile',
                 request_serializer=CloudDrive__pb2.FileRequest.SerializeToString,
@@ -739,6 +744,13 @@ class CloudDriveFileSrvServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CopyFile(self, request, context):
+        """copy files to a dest folder
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def DeleteFile(self, request, context):
         """delete a single file
         """
@@ -769,7 +781,7 @@ class CloudDriveFileSrvServicer(object):
 
     def AddOfflineFiles(self, request, context):
         """add offline files by providing magnet, sha1, ..., applies only with folders
-        with canOfflineDownload is tru
+        with canOfflineDownload is true
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1561,6 +1573,11 @@ def add_CloudDriveFileSrvServicer_to_server(servicer, server):
             'MoveFile': grpc.unary_unary_rpc_method_handler(
                     servicer.MoveFile,
                     request_deserializer=CloudDrive__pb2.MoveFileRequest.FromString,
+                    response_serializer=CloudDrive__pb2.FileOperationResult.SerializeToString,
+            ),
+            'CopyFile': grpc.unary_unary_rpc_method_handler(
+                    servicer.CopyFile,
+                    request_deserializer=CloudDrive__pb2.CopyFileRequest.FromString,
                     response_serializer=CloudDrive__pb2.FileOperationResult.SerializeToString,
             ),
             'DeleteFile': grpc.unary_unary_rpc_method_handler(
@@ -2366,6 +2383,23 @@ class CloudDriveFileSrv(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/MoveFile',
             CloudDrive__pb2.MoveFileRequest.SerializeToString,
+            CloudDrive__pb2.FileOperationResult.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def CopyFile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/clouddrive.CloudDriveFileSrv/CopyFile',
+            CloudDrive__pb2.CopyFileRequest.SerializeToString,
             CloudDrive__pb2.FileOperationResult.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

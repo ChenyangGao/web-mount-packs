@@ -81,6 +81,10 @@ class CloudDriveFileSrvBase(abc.ABC):
         pass
 
     @abc.abstractmethod
+    async def CopyFile(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.CopyFileRequest, CloudDrive_pb2.FileOperationResult]') -> None:
+        pass
+
+    @abc.abstractmethod
     async def DeleteFile(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.FileRequest, CloudDrive_pb2.FileOperationResult]') -> None:
         pass
 
@@ -596,6 +600,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 self.MoveFile,
                 grpclib.const.Cardinality.UNARY_UNARY,
                 CloudDrive_pb2.MoveFileRequest,
+                CloudDrive_pb2.FileOperationResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/CopyFile': grpclib.const.Handler(
+                self.CopyFile,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.CopyFileRequest,
                 CloudDrive_pb2.FileOperationResult,
             ),
             '/clouddrive.CloudDriveFileSrv/DeleteFile': grpclib.const.Handler(
@@ -1328,6 +1338,12 @@ class CloudDriveFileSrvStub:
             channel,
             '/clouddrive.CloudDriveFileSrv/MoveFile',
             CloudDrive_pb2.MoveFileRequest,
+            CloudDrive_pb2.FileOperationResult,
+        )
+        self.CopyFile = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/CopyFile',
+            CloudDrive_pb2.CopyFileRequest,
             CloudDrive_pb2.FileOperationResult,
         )
         self.DeleteFile = grpclib.client.UnaryUnaryMethod(

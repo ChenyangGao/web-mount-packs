@@ -4,8 +4,9 @@
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["Client", "CLOUDDRIVE_API_MAP"]
 
+from collections.abc import Coroutine
 from functools import cached_property
-from typing import Any, Iterator, Never, Optional
+from typing import overload, Any, Iterable, Literal, Never, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
@@ -18,133 +19,133 @@ PROTO_DIR = str(pathlib.Path(__file__).parent / "proto")
 if PROTO_DIR not in sys.path:
     sys.path.append(PROTO_DIR)
 
-import CloudDrive_pb2 # type: ignore
-import CloudDrive_pb2_grpc # type: ignore
-import CloudDrive_grpc # type: ignore
+import clouddrive.pb2
+from .proto import CloudDrive_grpc, CloudDrive_pb2_grpc
 
 
 CLOUDDRIVE_API_MAP = {
-    "GetSystemInfo": {"return": CloudDrive_pb2.CloudDriveSystemInfo}, 
-    "GetToken": {"argument": CloudDrive_pb2.GetTokenRequest, "return": CloudDrive_pb2.JWTToken}, 
-    "Login": {"argument": CloudDrive_pb2.UserLoginRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "Register": {"argument": CloudDrive_pb2.UserRegisterRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "SendResetAccountEmail": {"argument": CloudDrive_pb2.SendResetAccountEmailRequest}, 
-    "ResetAccount": {"argument": CloudDrive_pb2.ResetAccountRequest}, 
+    "GetSystemInfo": {"return": clouddrive.pb2.CloudDriveSystemInfo}, 
+    "GetToken": {"argument": clouddrive.pb2.GetTokenRequest, "return": clouddrive.pb2.JWTToken}, 
+    "Login": {"argument": clouddrive.pb2.UserLoginRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "Register": {"argument": clouddrive.pb2.UserRegisterRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "SendResetAccountEmail": {"argument": clouddrive.pb2.SendResetAccountEmailRequest}, 
+    "ResetAccount": {"argument": clouddrive.pb2.ResetAccountRequest}, 
     "SendConfirmEmail": {}, 
-    "ConfirmEmail": {"argument": CloudDrive_pb2.ConfirmEmailRequest}, 
-    "GetAccountStatus": {"return": CloudDrive_pb2.AccountStatusResult}, 
-    "GetSubFiles": {"argument": CloudDrive_pb2.ListSubFileRequest, "return": Iterator[CloudDrive_pb2.SubFilesReply]}, 
-    "GetSearchResults": {"argument": CloudDrive_pb2.SearchRequest, "return": Iterator[CloudDrive_pb2.SubFilesReply]}, 
-    "FindFileByPath": {"argument": CloudDrive_pb2.FindFileByPathRequest, "return": CloudDrive_pb2.CloudDriveFile}, 
-    "CreateFolder": {"argument": CloudDrive_pb2.CreateFolderRequest, "return": CloudDrive_pb2.CreateFolderResult}, 
-    "RenameFile": {"argument": CloudDrive_pb2.RenameFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "RenameFiles": {"argument": CloudDrive_pb2.RenameFilesRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "MoveFile": {"argument": CloudDrive_pb2.MoveFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "DeleteFile": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "DeleteFilePermanently": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "DeleteFiles": {"argument": CloudDrive_pb2.MultiFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "DeleteFilesPermanently": {"argument": CloudDrive_pb2.MultiFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "AddOfflineFiles": {"argument": CloudDrive_pb2.AddOfflineFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "RemoveOfflineFiles": {"argument": CloudDrive_pb2.RemoveOfflineFilesRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "ListOfflineFilesByPath": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.OfflineFileListResult}, 
-    "ListAllOfflineFiles": {"argument": CloudDrive_pb2.OfflineFileListAllRequest, "return": CloudDrive_pb2.OfflineFileListAllResult}, 
-    "GetFileDetailProperties": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileDetailProperties}, 
-    "GetSpaceInfo": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.SpaceInfo}, 
-    "GetCloudMemberships": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.CloudMemberships}, 
-    "GetRuntimeInfo": {"return": CloudDrive_pb2.RuntimeInfo}, 
-    "GetRunningInfo": {"return": CloudDrive_pb2.RunInfo}, 
-    "Logout": {"argument": CloudDrive_pb2.UserLogoutRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "CanAddMoreMountPoints": {"return": CloudDrive_pb2.FileOperationResult}, 
-    "GetMountPoints": {"return": CloudDrive_pb2.GetMountPointsResult}, 
-    "AddMountPoint": {"argument": CloudDrive_pb2.MountOption, "return": CloudDrive_pb2.MountPointResult}, 
-    "RemoveMountPoint": {"argument": CloudDrive_pb2.MountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
-    "Mount": {"argument": CloudDrive_pb2.MountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
-    "Unmount": {"argument": CloudDrive_pb2.MountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
-    "UpdateMountPoint": {"argument": CloudDrive_pb2.UpdateMountPointRequest, "return": CloudDrive_pb2.MountPointResult}, 
-    "GetAvailableDriveLetters": {"return": CloudDrive_pb2.GetAvailableDriveLettersResult}, 
-    "HasDriveLetters": {"return": CloudDrive_pb2.HasDriveLettersResult}, 
-    "LocalGetSubFiles": {"argument": CloudDrive_pb2.LocalGetSubFilesRequest, "return": Iterator[CloudDrive_pb2.LocalGetSubFilesResult]}, 
-    "GetAllTasksCount": {"return": CloudDrive_pb2.GetAllTasksCountResult}, 
-    "GetDownloadFileCount": {"return": CloudDrive_pb2.GetDownloadFileCountResult}, 
-    "GetDownloadFileList": {"return": CloudDrive_pb2.GetDownloadFileListResult}, 
-    "GetUploadFileCount": {"return": CloudDrive_pb2.GetUploadFileCountResult}, 
-    "GetUploadFileList": {"argument": CloudDrive_pb2.GetUploadFileListRequest, "return": CloudDrive_pb2.GetUploadFileListResult}, 
+    "ConfirmEmail": {"argument": clouddrive.pb2.ConfirmEmailRequest}, 
+    "GetAccountStatus": {"return": clouddrive.pb2.AccountStatusResult}, 
+    "GetSubFiles": {"argument": clouddrive.pb2.ListSubFileRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
+    "GetSearchResults": {"argument": clouddrive.pb2.SearchRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
+    "FindFileByPath": {"argument": clouddrive.pb2.FindFileByPathRequest, "return": clouddrive.pb2.CloudDriveFile}, 
+    "CreateFolder": {"argument": clouddrive.pb2.CreateFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
+    "RenameFile": {"argument": clouddrive.pb2.RenameFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "RenameFiles": {"argument": clouddrive.pb2.RenameFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "MoveFile": {"argument": clouddrive.pb2.MoveFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "CopyFile": {"argument": clouddrive.pb2.CopyFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFile": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFilePermanently": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFiles": {"argument": clouddrive.pb2.MultiFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFilesPermanently": {"argument": clouddrive.pb2.MultiFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "AddOfflineFiles": {"argument": clouddrive.pb2.AddOfflineFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "RemoveOfflineFiles": {"argument": clouddrive.pb2.RemoveOfflineFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "ListOfflineFilesByPath": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.OfflineFileListResult}, 
+    "ListAllOfflineFiles": {"argument": clouddrive.pb2.OfflineFileListAllRequest, "return": clouddrive.pb2.OfflineFileListAllResult}, 
+    "GetFileDetailProperties": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileDetailProperties}, 
+    "GetSpaceInfo": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.SpaceInfo}, 
+    "GetCloudMemberships": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.CloudMemberships}, 
+    "GetRuntimeInfo": {"return": clouddrive.pb2.RuntimeInfo}, 
+    "GetRunningInfo": {"return": clouddrive.pb2.RunInfo}, 
+    "Logout": {"argument": clouddrive.pb2.UserLogoutRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "CanAddMoreMountPoints": {"return": clouddrive.pb2.FileOperationResult}, 
+    "GetMountPoints": {"return": clouddrive.pb2.GetMountPointsResult}, 
+    "AddMountPoint": {"argument": clouddrive.pb2.MountOption, "return": clouddrive.pb2.MountPointResult}, 
+    "RemoveMountPoint": {"argument": clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "Mount": {"argument": clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "Unmount": {"argument": clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "UpdateMountPoint": {"argument": clouddrive.pb2.UpdateMountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "GetAvailableDriveLetters": {"return": clouddrive.pb2.GetAvailableDriveLettersResult}, 
+    "HasDriveLetters": {"return": clouddrive.pb2.HasDriveLettersResult}, 
+    "LocalGetSubFiles": {"argument": clouddrive.pb2.LocalGetSubFilesRequest, "return": Iterable[clouddrive.pb2.LocalGetSubFilesResult]}, 
+    "GetAllTasksCount": {"return": clouddrive.pb2.GetAllTasksCountResult}, 
+    "GetDownloadFileCount": {"return": clouddrive.pb2.GetDownloadFileCountResult}, 
+    "GetDownloadFileList": {"return": clouddrive.pb2.GetDownloadFileListResult}, 
+    "GetUploadFileCount": {"return": clouddrive.pb2.GetUploadFileCountResult}, 
+    "GetUploadFileList": {"argument": clouddrive.pb2.GetUploadFileListRequest, "return": clouddrive.pb2.GetUploadFileListResult}, 
     "CancelAllUploadFiles": {}, 
-    "CancelUploadFiles": {"argument": CloudDrive_pb2.MultpleUploadFileKeyRequest}, 
+    "CancelUploadFiles": {"argument": clouddrive.pb2.MultpleUploadFileKeyRequest}, 
     "PauseAllUploadFiles": {}, 
-    "PauseUploadFiles": {"argument": CloudDrive_pb2.MultpleUploadFileKeyRequest}, 
+    "PauseUploadFiles": {"argument": clouddrive.pb2.MultpleUploadFileKeyRequest}, 
     "ResumeAllUploadFiles": {}, 
-    "ResumeUploadFiles": {"argument": CloudDrive_pb2.MultpleUploadFileKeyRequest}, 
-    "CanAddMoreCloudApis": {"return": CloudDrive_pb2.FileOperationResult}, 
-    "APILogin115Editthiscookie": {"argument": CloudDrive_pb2.Login115EditthiscookieRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APILogin115QRCode": {"argument": CloudDrive_pb2.Login115QrCodeRequest, "return": Iterator[CloudDrive_pb2.QRCodeScanMessage]}, 
-    "APILoginAliyundriveOAuth": {"argument": CloudDrive_pb2.LoginAliyundriveOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APILoginAliyundriveRefreshtoken": {"argument": CloudDrive_pb2.LoginAliyundriveRefreshtokenRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APILoginAliyunDriveQRCode": {"argument": CloudDrive_pb2.LoginAliyundriveQRCodeRequest, "return": Iterator[CloudDrive_pb2.QRCodeScanMessage]}, 
-    "APILoginBaiduPanOAuth": {"argument": CloudDrive_pb2.LoginBaiduPanOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APILoginOneDriveOAuth": {"argument": CloudDrive_pb2.LoginOneDriveOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "ApiLoginGoogleDriveOAuth": {"argument": CloudDrive_pb2.LoginGoogleDriveOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "ApiLoginGoogleDriveRefreshToken": {"argument": CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "ApiLoginXunleiOAuth": {"argument": CloudDrive_pb2.LoginXunleiOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "ApiLogin123panOAuth": {"argument": CloudDrive_pb2.Login123panOAuthRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APILogin189QRCode": {"return": Iterator[CloudDrive_pb2.QRCodeScanMessage]}, 
-    "APILoginPikPak": {"argument": CloudDrive_pb2.UserLoginRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APILoginWebDav": {"argument": CloudDrive_pb2.LoginWebDavRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "APIAddLocalFolder": {"argument": CloudDrive_pb2.AddLocalFolderRequest, "return": CloudDrive_pb2.APILoginResult}, 
-    "RemoveCloudAPI": {"argument": CloudDrive_pb2.RemoveCloudAPIRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "GetAllCloudApis": {"return": CloudDrive_pb2.CloudAPIList}, 
-    "GetCloudAPIConfig": {"argument": CloudDrive_pb2.GetCloudAPIConfigRequest, "return": CloudDrive_pb2.CloudAPIConfig}, 
-    "SetCloudAPIConfig": {"argument": CloudDrive_pb2.SetCloudAPIConfigRequest}, 
-    "GetSystemSettings": {"return": CloudDrive_pb2.SystemSettings}, 
-    "SetSystemSettings": {"argument": CloudDrive_pb2.SystemSettings}, 
-    "SetDirCacheTimeSecs": {"argument": CloudDrive_pb2.SetDirCacheTimeRequest}, 
-    "GetEffectiveDirCacheTimeSecs": {"argument": CloudDrive_pb2.GetEffectiveDirCacheTimeRequest, "return": CloudDrive_pb2.GetEffectiveDirCacheTimeResult}, 
-    "GetOpenFileTable": {"argument": CloudDrive_pb2.GetOpenFileTableRequest, "return": CloudDrive_pb2.OpenFileTable}, 
-    "GetDirCacheTable": {"return": CloudDrive_pb2.DirCacheTable}, 
-    "GetReferencedEntryPaths": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.StringList}, 
-    "GetTempFileTable": {"return": CloudDrive_pb2.TempFileTable}, 
-    "PushTaskChange": {"return": Iterator[CloudDrive_pb2.GetAllTasksCountResult]}, 
-    "PushMessage": {"return": Iterator[CloudDrive_pb2.CloudDrivePushMessage]}, 
-    "GetCloudDrive1UserData": {"return": CloudDrive_pb2.StringResult}, 
+    "ResumeUploadFiles": {"argument": clouddrive.pb2.MultpleUploadFileKeyRequest}, 
+    "CanAddMoreCloudApis": {"return": clouddrive.pb2.FileOperationResult}, 
+    "APILogin115Editthiscookie": {"argument": clouddrive.pb2.Login115EditthiscookieRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILogin115QRCode": {"argument": clouddrive.pb2.Login115QrCodeRequest, "return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
+    "APILoginAliyundriveOAuth": {"argument": clouddrive.pb2.LoginAliyundriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginAliyundriveRefreshtoken": {"argument": clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginAliyunDriveQRCode": {"argument": clouddrive.pb2.LoginAliyundriveQRCodeRequest, "return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
+    "APILoginBaiduPanOAuth": {"argument": clouddrive.pb2.LoginBaiduPanOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginOneDriveOAuth": {"argument": clouddrive.pb2.LoginOneDriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLoginGoogleDriveOAuth": {"argument": clouddrive.pb2.LoginGoogleDriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLoginGoogleDriveRefreshToken": {"argument": clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLoginXunleiOAuth": {"argument": clouddrive.pb2.LoginXunleiOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLogin123panOAuth": {"argument": clouddrive.pb2.Login123panOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILogin189QRCode": {"return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
+    "APILoginPikPak": {"argument": clouddrive.pb2.UserLoginRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginWebDav": {"argument": clouddrive.pb2.LoginWebDavRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APIAddLocalFolder": {"argument": clouddrive.pb2.AddLocalFolderRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "RemoveCloudAPI": {"argument": clouddrive.pb2.RemoveCloudAPIRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "GetAllCloudApis": {"return": clouddrive.pb2.CloudAPIList}, 
+    "GetCloudAPIConfig": {"argument": clouddrive.pb2.GetCloudAPIConfigRequest, "return": clouddrive.pb2.CloudAPIConfig}, 
+    "SetCloudAPIConfig": {"argument": clouddrive.pb2.SetCloudAPIConfigRequest}, 
+    "GetSystemSettings": {"return": clouddrive.pb2.SystemSettings}, 
+    "SetSystemSettings": {"argument": clouddrive.pb2.SystemSettings}, 
+    "SetDirCacheTimeSecs": {"argument": clouddrive.pb2.SetDirCacheTimeRequest}, 
+    "GetEffectiveDirCacheTimeSecs": {"argument": clouddrive.pb2.GetEffectiveDirCacheTimeRequest, "return": clouddrive.pb2.GetEffectiveDirCacheTimeResult}, 
+    "GetOpenFileTable": {"argument": clouddrive.pb2.GetOpenFileTableRequest, "return": clouddrive.pb2.OpenFileTable}, 
+    "GetDirCacheTable": {"return": clouddrive.pb2.DirCacheTable}, 
+    "GetReferencedEntryPaths": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringList}, 
+    "GetTempFileTable": {"return": clouddrive.pb2.TempFileTable}, 
+    "PushTaskChange": {"return": Iterable[clouddrive.pb2.GetAllTasksCountResult]}, 
+    "PushMessage": {"return": Iterable[clouddrive.pb2.CloudDrivePushMessage]}, 
+    "GetCloudDrive1UserData": {"return": clouddrive.pb2.StringResult}, 
     "RestartService": {}, 
     "ShutdownService": {}, 
-    "HasUpdate": {"return": CloudDrive_pb2.UpdateResult}, 
-    "CheckUpdate": {"return": CloudDrive_pb2.UpdateResult}, 
+    "HasUpdate": {"return": clouddrive.pb2.UpdateResult}, 
+    "CheckUpdate": {"return": clouddrive.pb2.UpdateResult}, 
     "DownloadUpdate": {}, 
     "UpdateSystem": {}, 
-    "GetMetaData": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.FileMetaData}, 
-    "GetOriginalPath": {"argument": CloudDrive_pb2.FileRequest, "return": CloudDrive_pb2.StringResult}, 
-    "ChangePassword": {"argument": CloudDrive_pb2.ChangePasswordRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "CreateFile": {"argument": CloudDrive_pb2.CreateFileRequest, "return": CloudDrive_pb2.CreateFileResult}, 
-    "CloseFile": {"argument": CloudDrive_pb2.CloseFileRequest, "return": CloudDrive_pb2.FileOperationResult}, 
-    "WriteToFileStream": {"argument": Iterator[CloudDrive_pb2.WriteFileRequest], "return": CloudDrive_pb2.WriteFileResult}, 
-    "WriteToFile": {"argument": CloudDrive_pb2.WriteFileRequest, "return": CloudDrive_pb2.WriteFileResult}, 
-    "GetPromotions": {"return": CloudDrive_pb2.GetPromotionsResult}, 
+    "GetMetaData": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileMetaData}, 
+    "GetOriginalPath": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringResult}, 
+    "ChangePassword": {"argument": clouddrive.pb2.ChangePasswordRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "CreateFile": {"argument": clouddrive.pb2.CreateFileRequest, "return": clouddrive.pb2.CreateFileResult}, 
+    "CloseFile": {"argument": clouddrive.pb2.CloseFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "WriteToFileStream": {"argument": Sequence[clouddrive.pb2.WriteFileRequest], "return": clouddrive.pb2.WriteFileResult}, 
+    "WriteToFile": {"argument": clouddrive.pb2.WriteFileRequest, "return": clouddrive.pb2.WriteFileResult}, 
+    "GetPromotions": {"return": clouddrive.pb2.GetPromotionsResult}, 
     "UpdatePromotionResult": {}, 
-    "GetCloudDrivePlans": {"return": CloudDrive_pb2.GetCloudDrivePlansResult}, 
-    "JoinPlan": {"argument": CloudDrive_pb2.JoinPlanRequest, "return": CloudDrive_pb2.JoinPlanResult}, 
-    "BindCloudAccount": {"argument": CloudDrive_pb2.BindCloudAccountRequest}, 
-    "TransferBalance": {"argument": CloudDrive_pb2.TransferBalanceRequest}, 
-    "ChangeEmail": {"argument": CloudDrive_pb2.ChangeUserNameEmailRequest}, 
-    "GetBalanceLog": {"return": CloudDrive_pb2.BalanceLogResult}, 
-    "CheckActivationCode": {"argument": CloudDrive_pb2.StringValue, "return": CloudDrive_pb2.CheckActivationCodeResult}, 
-    "ActivatePlan": {"argument": CloudDrive_pb2.StringValue, "return": CloudDrive_pb2.JoinPlanResult}, 
-    "CheckCouponCode": {"argument": CloudDrive_pb2.CheckCouponCodeRequest, "return": CloudDrive_pb2.CouponCodeResult}, 
-    "GetReferralCode": {"return": CloudDrive_pb2.StringValue}, 
-    "BackupGetAll": {"return": CloudDrive_pb2.BackupList}, 
-    "BackupAdd": {"argument": CloudDrive_pb2.Backup}, 
-    "BackupRemove": {"argument": CloudDrive_pb2.StringValue}, 
-    "BackupUpdate": {"argument": CloudDrive_pb2.Backup}, 
-    "BackupAddDestination": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
-    "BackupRemoveDestination": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
-    "BackupSetEnabled": {"argument": CloudDrive_pb2.BackupSetEnabledRequest}, 
-    "BackupSetFileSystemWatchEnabled": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
-    "BackupUpdateStrategies": {"argument": CloudDrive_pb2.BackupModifyRequest}, 
-    "BackupRestartWalkingThrough": {"argument": CloudDrive_pb2.StringValue}, 
-    "CanAddMoreBackups": {"return": CloudDrive_pb2.FileOperationResult}, 
-    "GetMachineId": {"return": CloudDrive_pb2.StringResult}, 
-    "GetOnlineDevices": {"return": CloudDrive_pb2.OnlineDevices}, 
-    "KickoutDevice": {"argument": CloudDrive_pb2.DeviceRequest}, 
+    "GetCloudDrivePlans": {"return": clouddrive.pb2.GetCloudDrivePlansResult}, 
+    "JoinPlan": {"argument": clouddrive.pb2.JoinPlanRequest, "return": clouddrive.pb2.JoinPlanResult}, 
+    "BindCloudAccount": {"argument": clouddrive.pb2.BindCloudAccountRequest}, 
+    "TransferBalance": {"argument": clouddrive.pb2.TransferBalanceRequest}, 
+    "ChangeEmail": {"argument": clouddrive.pb2.ChangeUserNameEmailRequest}, 
+    "GetBalanceLog": {"return": clouddrive.pb2.BalanceLogResult}, 
+    "CheckActivationCode": {"argument": clouddrive.pb2.StringValue, "return": clouddrive.pb2.CheckActivationCodeResult}, 
+    "ActivatePlan": {"argument": clouddrive.pb2.StringValue, "return": clouddrive.pb2.JoinPlanResult}, 
+    "CheckCouponCode": {"argument": clouddrive.pb2.CheckCouponCodeRequest, "return": clouddrive.pb2.CouponCodeResult}, 
+    "GetReferralCode": {"return": clouddrive.pb2.StringValue}, 
+    "BackupGetAll": {"return": clouddrive.pb2.BackupList}, 
+    "BackupAdd": {"argument": clouddrive.pb2.Backup}, 
+    "BackupRemove": {"argument": clouddrive.pb2.StringValue}, 
+    "BackupUpdate": {"argument": clouddrive.pb2.Backup}, 
+    "BackupAddDestination": {"argument": clouddrive.pb2.BackupModifyRequest}, 
+    "BackupRemoveDestination": {"argument": clouddrive.pb2.BackupModifyRequest}, 
+    "BackupSetEnabled": {"argument": clouddrive.pb2.BackupSetEnabledRequest}, 
+    "BackupSetFileSystemWatchEnabled": {"argument": clouddrive.pb2.BackupModifyRequest}, 
+    "BackupUpdateStrategies": {"argument": clouddrive.pb2.BackupModifyRequest}, 
+    "BackupRestartWalkingThrough": {"argument": clouddrive.pb2.StringValue}, 
+    "CanAddMoreBackups": {"return": clouddrive.pb2.FileOperationResult}, 
+    "GetMachineId": {"return": clouddrive.pb2.StringResult}, 
+    "GetOnlineDevices": {"return": clouddrive.pb2.OnlineDevices}, 
+    "KickoutDevice": {"argument": clouddrive.pb2.DeviceRequest}, 
 }
 
 
@@ -202,7 +203,7 @@ class Client:
         return insecure_channel(self.origin.authority)
 
     @cached_property
-    def stub(self, /) -> CloudDrive_pb2_grpc.CloudDriveFileSrvStub:
+    def stub(self, /) -> clouddrive.proto.CloudDrive_pb2_grpc.CloudDriveFileSrvStub:
         return CloudDrive_pb2_grpc.CloudDriveFileSrvStub(self.channel)
 
     @cached_property
@@ -211,7 +212,7 @@ class Client:
         return AsyncChannel(origin.host, origin.port)
 
     @cached_property
-    def async_stub(self, /) -> CloudDrive_grpc.CloudDriveFileSrvStub:
+    def async_stub(self, /) -> clouddrive.proto.CloudDrive_grpc.CloudDriveFileSrvStub:
         return CloudDrive_grpc.CloudDriveFileSrvStub(self.async_channel)
 
     def close(self, /):
@@ -235,10 +236,28 @@ class Client:
             username = self.username
         if not password:
             password = self.password
-        response = self.stub.GetToken(CloudDrive_pb2.GetTokenRequest(userName=username, password=password))
+        response = self.stub.GetToken(clouddrive.pb2.GetTokenRequest(userName=username, password=password))
         self.metadata[:] = [("authorization", "Bearer " + response.token),]
 
-    def GetSystemInfo(self, /, async_: bool = False) -> CloudDrive_pb2.CloudDriveSystemInfo:
+    @overload
+    def GetSystemInfo(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CloudDriveSystemInfo:
+        ...
+    @overload
+    def GetSystemInfo(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CloudDriveSystemInfo]:
+        ...
+    def GetSystemInfo(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CloudDriveSystemInfo | Coroutine[Any, Any, clouddrive.pb2.CloudDriveSystemInfo]:
         """
         public methods, no authorization is required
         returns if clouddrive has logged in to cloudfs server and the user name
@@ -256,9 +275,33 @@ class Client:
           string UserName = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetSystemInfo(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetSystemInfo(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetSystemInfo(Empty(), metadata=self.metadata)
 
-    def GetToken(self, arg: CloudDrive_pb2.GetTokenRequest, /, async_: bool = False) -> CloudDrive_pb2.JWTToken:
+    @overload
+    def GetToken(
+        self, 
+        arg: clouddrive.pb2.GetTokenRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.JWTToken:
+        ...
+    @overload
+    def GetToken(
+        self, 
+        arg: clouddrive.pb2.GetTokenRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.JWTToken]:
+        ...
+    def GetToken(
+        self, 
+        arg: clouddrive.pb2.GetTokenRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.JWTToken | Coroutine[Any, Any, clouddrive.pb2.JWTToken]:
         """
         get bearer token by username and password
 
@@ -280,9 +323,33 @@ class Client:
           google.protobuf.Timestamp expiration = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetToken(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetToken(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetToken(arg, metadata=self.metadata)
 
-    def Login(self, arg: CloudDrive_pb2.UserLoginRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def Login(
+        self, 
+        arg: clouddrive.pb2.UserLoginRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def Login(
+        self, 
+        arg: clouddrive.pb2.UserLoginRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def Login(
+        self, 
+        arg: clouddrive.pb2.UserLoginRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         login to cloudfs server
 
@@ -304,9 +371,33 @@ class Client:
           bool synDataToCloud = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).Login(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.Login(arg, metadata=self.metadata)
+        else:
+            return self.stub.Login(arg, metadata=self.metadata)
 
-    def Register(self, arg: CloudDrive_pb2.UserRegisterRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def Register(
+        self, 
+        arg: clouddrive.pb2.UserRegisterRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def Register(
+        self, 
+        arg: clouddrive.pb2.UserRegisterRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def Register(
+        self, 
+        arg: clouddrive.pb2.UserRegisterRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         register a new count
 
@@ -327,9 +418,33 @@ class Client:
           string password = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).Register(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.Register(arg, metadata=self.metadata)
+        else:
+            return self.stub.Register(arg, metadata=self.metadata)
 
-    def SendResetAccountEmail(self, arg: CloudDrive_pb2.SendResetAccountEmailRequest, /, async_: bool = False) -> None:
+    @overload
+    def SendResetAccountEmail(
+        self, 
+        arg: clouddrive.pb2.SendResetAccountEmailRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def SendResetAccountEmail(
+        self, 
+        arg: clouddrive.pb2.SendResetAccountEmailRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def SendResetAccountEmail(
+        self, 
+        arg: clouddrive.pb2.SendResetAccountEmailRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         asks cloudfs server to send reset account email with reset link
 
@@ -343,9 +458,37 @@ class Client:
 
         message SendResetAccountEmailRequest { string email = 1; }
         """
-        return (self.async_stub if async_ else self.stub).SendResetAccountEmail(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.SendResetAccountEmail(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.SendResetAccountEmail(arg, metadata=self.metadata)
+            return None
 
-    def ResetAccount(self, arg: CloudDrive_pb2.ResetAccountRequest, /, async_: bool = False) -> None:
+    @overload
+    def ResetAccount(
+        self, 
+        arg: clouddrive.pb2.ResetAccountRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ResetAccount(
+        self, 
+        arg: clouddrive.pb2.ResetAccountRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ResetAccount(
+        self, 
+        arg: clouddrive.pb2.ResetAccountRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         reset account's data, set new password, with received reset code from email
 
@@ -361,9 +504,34 @@ class Client:
           string newPassword = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).ResetAccount(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.ResetAccount(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ResetAccount(arg, metadata=self.metadata)
+            return None
 
-    def SendConfirmEmail(self, /, async_: bool = False) -> None:
+    @overload
+    def SendConfirmEmail(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def SendConfirmEmail(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def SendConfirmEmail(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         authorized methods, Authorization header with Bearer {token} is requirerd
         asks cloudfs server to send confirm email with confirm link
@@ -374,9 +542,37 @@ class Client:
         // asks cloudfs server to send confirm email with confirm link
         rpc SendConfirmEmail(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).SendConfirmEmail(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.SendConfirmEmail(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.SendConfirmEmail(Empty(), metadata=self.metadata)
+            return None
 
-    def ConfirmEmail(self, arg: CloudDrive_pb2.ConfirmEmailRequest, /, async_: bool = False) -> None:
+    @overload
+    def ConfirmEmail(
+        self, 
+        arg: clouddrive.pb2.ConfirmEmailRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ConfirmEmail(
+        self, 
+        arg: clouddrive.pb2.ConfirmEmailRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ConfirmEmail(
+        self, 
+        arg: clouddrive.pb2.ConfirmEmailRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         confirm email by confirm code
 
@@ -389,9 +585,34 @@ class Client:
 
         message ConfirmEmailRequest { string confirmCode = 1; }
         """
-        return (self.async_stub if async_ else self.stub).ConfirmEmail(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.ConfirmEmail(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ConfirmEmail(arg, metadata=self.metadata)
+            return None
 
-    def GetAccountStatus(self, /, async_: bool = False) -> CloudDrive_pb2.AccountStatusResult:
+    @overload
+    def GetAccountStatus(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.AccountStatusResult:
+        ...
+    @overload
+    def GetAccountStatus(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.AccountStatusResult]:
+        ...
+    def GetAccountStatus(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.AccountStatusResult | Coroutine[Any, Any, clouddrive.pb2.AccountStatusResult]:
         """
         get account status
 
@@ -420,11 +641,37 @@ class Client:
           double accountBalance = 3;
           AccountPlan accountPlan = 4;
           repeated AccountRole accountRoles = 5;
+          optional AccountPlan secondPlan = 6;
+          optional string partnerReferralCode = 7;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetAccountStatus(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetAccountStatus(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetAccountStatus(Empty(), metadata=self.metadata)
 
-    def GetSubFiles(self, arg: CloudDrive_pb2.ListSubFileRequest, /, async_: bool = False) -> Iterator[CloudDrive_pb2.SubFilesReply]:
+    @overload
+    def GetSubFiles(
+        self, 
+        arg: clouddrive.pb2.ListSubFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.SubFilesReply]:
+        ...
+    @overload
+    def GetSubFiles(
+        self, 
+        arg: clouddrive.pb2.ListSubFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
+        ...
+    def GetSubFiles(
+        self, 
+        arg: clouddrive.pb2.ListSubFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.SubFilesReply] | Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
         """
         get all subfiles by path
 
@@ -488,9 +735,33 @@ class Client:
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetSubFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetSubFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetSubFiles(arg, metadata=self.metadata)
 
-    def GetSearchResults(self, arg: CloudDrive_pb2.SearchRequest, /, async_: bool = False) -> Iterator[CloudDrive_pb2.SubFilesReply]:
+    @overload
+    def GetSearchResults(
+        self, 
+        arg: clouddrive.pb2.SearchRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.SubFilesReply]:
+        ...
+    @overload
+    def GetSearchResults(
+        self, 
+        arg: clouddrive.pb2.SearchRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
+        ...
+    def GetSearchResults(
+        self, 
+        arg: clouddrive.pb2.SearchRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.SubFilesReply] | Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
         """
         search under path
 
@@ -555,9 +826,33 @@ class Client:
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetSearchResults(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetSearchResults(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetSearchResults(arg, metadata=self.metadata)
 
-    def FindFileByPath(self, arg: CloudDrive_pb2.FindFileByPathRequest, /, async_: bool = False) -> CloudDrive_pb2.CloudDriveFile:
+    @overload
+    def FindFileByPath(
+        self, 
+        arg: clouddrive.pb2.FindFileByPathRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CloudDriveFile:
+        ...
+    @overload
+    def FindFileByPath(
+        self, 
+        arg: clouddrive.pb2.FindFileByPathRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CloudDriveFile]:
+        ...
+    def FindFileByPath(
+        self, 
+        arg: clouddrive.pb2.FindFileByPathRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CloudDriveFile | Coroutine[Any, Any, clouddrive.pb2.CloudDriveFile]:
         """
         find file info by full path
 
@@ -634,9 +929,33 @@ class Client:
           string path = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).FindFileByPath(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.FindFileByPath(arg, metadata=self.metadata)
+        else:
+            return self.stub.FindFileByPath(arg, metadata=self.metadata)
 
-    def CreateFolder(self, arg: CloudDrive_pb2.CreateFolderRequest, /, async_: bool = False) -> CloudDrive_pb2.CreateFolderResult:
+    @overload
+    def CreateFolder(
+        self, 
+        arg: clouddrive.pb2.CreateFolderRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CreateFolderResult:
+        ...
+    @overload
+    def CreateFolder(
+        self, 
+        arg: clouddrive.pb2.CreateFolderRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
+        ...
+    def CreateFolder(
+        self, 
+        arg: clouddrive.pb2.CreateFolderRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CreateFolderResult | Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
         """
         create a folder under path
 
@@ -707,9 +1026,33 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).CreateFolder(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.CreateFolder(arg, metadata=self.metadata)
+        else:
+            return self.stub.CreateFolder(arg, metadata=self.metadata)
 
-    def RenameFile(self, arg: CloudDrive_pb2.RenameFileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def RenameFile(
+        self, 
+        arg: clouddrive.pb2.RenameFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def RenameFile(
+        self, 
+        arg: clouddrive.pb2.RenameFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def RenameFile(
+        self, 
+        arg: clouddrive.pb2.RenameFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         rename a single file
 
@@ -730,9 +1073,33 @@ class Client:
           string newName = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).RenameFile(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.RenameFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.RenameFile(arg, metadata=self.metadata)
 
-    def RenameFiles(self, arg: CloudDrive_pb2.RenameFilesRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def RenameFiles(
+        self, 
+        arg: clouddrive.pb2.RenameFilesRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def RenameFiles(
+        self, 
+        arg: clouddrive.pb2.RenameFilesRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def RenameFiles(
+        self, 
+        arg: clouddrive.pb2.RenameFilesRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         batch rename files
 
@@ -754,9 +1121,33 @@ class Client:
         }
         message RenameFilesRequest { repeated RenameFileRequest renameFiles = 1; }
         """
-        return (self.async_stub if async_ else self.stub).RenameFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.RenameFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.RenameFiles(arg, metadata=self.metadata)
 
-    def MoveFile(self, arg: CloudDrive_pb2.MoveFileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def MoveFile(
+        self, 
+        arg: clouddrive.pb2.MoveFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def MoveFile(
+        self, 
+        arg: clouddrive.pb2.MoveFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def MoveFile(
+        self, 
+        arg: clouddrive.pb2.MoveFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         move files to a dest folder
 
@@ -777,9 +1168,80 @@ class Client:
           string destPath = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).MoveFile(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.MoveFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.MoveFile(arg, metadata=self.metadata)
 
-    def DeleteFile(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def CopyFile(
+        self, 
+        arg: clouddrive.pb2.CopyFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def CopyFile(
+        self, 
+        arg: clouddrive.pb2.CopyFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def CopyFile(
+        self, 
+        arg: clouddrive.pb2.CopyFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        """
+        copy files to a dest folder
+
+        ------------------- protobuf rpc definition --------------------
+
+        // copy files to a dest folder
+        rpc CopyFile(CopyFileRequest) returns (FileOperationResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message CopyFileRequest {
+          repeated string theFilePaths = 1;
+          string destPath = 2;
+        }
+        message FileOperationResult {
+          bool success = 1;
+          string errorMessage = 2;
+          repeated string resultFilePaths = 3;
+        }
+        """
+        if async_:
+            return self.async_stub.CopyFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.CopyFile(arg, metadata=self.metadata)
+
+    @overload
+    def DeleteFile(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def DeleteFile(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def DeleteFile(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         delete a single file
 
@@ -797,9 +1259,33 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).DeleteFile(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.DeleteFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.DeleteFile(arg, metadata=self.metadata)
 
-    def DeleteFilePermanently(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def DeleteFilePermanently(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def DeleteFilePermanently(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def DeleteFilePermanently(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         delete a single file permanently, only aliyundrive supports this currently
 
@@ -817,9 +1303,33 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).DeleteFilePermanently(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.DeleteFilePermanently(arg, metadata=self.metadata)
+        else:
+            return self.stub.DeleteFilePermanently(arg, metadata=self.metadata)
 
-    def DeleteFiles(self, arg: CloudDrive_pb2.MultiFileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def DeleteFiles(
+        self, 
+        arg: clouddrive.pb2.MultiFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def DeleteFiles(
+        self, 
+        arg: clouddrive.pb2.MultiFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def DeleteFiles(
+        self, 
+        arg: clouddrive.pb2.MultiFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         batch delete files
 
@@ -837,9 +1347,33 @@ class Client:
         }
         message MultiFileRequest { repeated string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).DeleteFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.DeleteFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.DeleteFiles(arg, metadata=self.metadata)
 
-    def DeleteFilesPermanently(self, arg: CloudDrive_pb2.MultiFileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def DeleteFilesPermanently(
+        self, 
+        arg: clouddrive.pb2.MultiFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def DeleteFilesPermanently(
+        self, 
+        arg: clouddrive.pb2.MultiFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def DeleteFilesPermanently(
+        self, 
+        arg: clouddrive.pb2.MultiFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         batch delete files permanently, only aliyundrive supports this currently
 
@@ -857,17 +1391,41 @@ class Client:
         }
         message MultiFileRequest { repeated string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).DeleteFilesPermanently(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.DeleteFilesPermanently(arg, metadata=self.metadata)
+        else:
+            return self.stub.DeleteFilesPermanently(arg, metadata=self.metadata)
 
-    def AddOfflineFiles(self, arg: CloudDrive_pb2.AddOfflineFileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def AddOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.AddOfflineFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def AddOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.AddOfflineFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def AddOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.AddOfflineFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         add offline files by providing magnet, sha1, ..., applies only with folders
-        with canOfflineDownload is tru
+        with canOfflineDownload is true
 
         ------------------- protobuf rpc definition --------------------
 
         // add offline files by providing magnet, sha1, ..., applies only with folders
-        // with canOfflineDownload is tru
+        // with canOfflineDownload is true
         rpc AddOfflineFiles(AddOfflineFileRequest) returns (FileOperationResult) {}
 
         ------------------- protobuf type definition -------------------
@@ -882,9 +1440,33 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).AddOfflineFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.AddOfflineFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.AddOfflineFiles(arg, metadata=self.metadata)
 
-    def RemoveOfflineFiles(self, arg: CloudDrive_pb2.RemoveOfflineFilesRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def RemoveOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.RemoveOfflineFilesRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def RemoveOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.RemoveOfflineFilesRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def RemoveOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.RemoveOfflineFilesRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         remove offline files by info hash
 
@@ -908,9 +1490,33 @@ class Client:
           repeated string infoHashes = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).RemoveOfflineFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.RemoveOfflineFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.RemoveOfflineFiles(arg, metadata=self.metadata)
 
-    def ListOfflineFilesByPath(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.OfflineFileListResult:
+    @overload
+    def ListOfflineFilesByPath(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.OfflineFileListResult:
+        ...
+    @overload
+    def ListOfflineFilesByPath(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.OfflineFileListResult]:
+        ...
+    def ListOfflineFilesByPath(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.OfflineFileListResult | Coroutine[Any, Any, clouddrive.pb2.OfflineFileListResult]:
         """
         list offline files
 
@@ -943,9 +1549,33 @@ class Client:
           uint32 total = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).ListOfflineFilesByPath(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ListOfflineFilesByPath(arg, metadata=self.metadata)
+        else:
+            return self.stub.ListOfflineFilesByPath(arg, metadata=self.metadata)
 
-    def ListAllOfflineFiles(self, arg: CloudDrive_pb2.OfflineFileListAllRequest, /, async_: bool = False) -> CloudDrive_pb2.OfflineFileListAllResult:
+    @overload
+    def ListAllOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.OfflineFileListAllRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.OfflineFileListAllResult:
+        ...
+    @overload
+    def ListAllOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.OfflineFileListAllRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.OfflineFileListAllResult]:
+        ...
+    def ListAllOfflineFiles(
+        self, 
+        arg: clouddrive.pb2.OfflineFileListAllRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.OfflineFileListAllResult | Coroutine[Any, Any, clouddrive.pb2.OfflineFileListAllResult]:
         """
         list all offline files of a cloud with pagination
 
@@ -987,9 +1617,33 @@ class Client:
           uint32 total = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).ListAllOfflineFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ListAllOfflineFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.ListAllOfflineFiles(arg, metadata=self.metadata)
 
-    def GetFileDetailProperties(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileDetailProperties:
+    @overload
+    def GetFileDetailProperties(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileDetailProperties:
+        ...
+    @overload
+    def GetFileDetailProperties(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileDetailProperties]:
+        ...
+    def GetFileDetailProperties(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileDetailProperties | Coroutine[Any, Any, clouddrive.pb2.FileDetailProperties]:
         """
         get folder properties, applies only with folders with hasDetailProperties
         is true
@@ -1012,9 +1666,33 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetFileDetailProperties(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetFileDetailProperties(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetFileDetailProperties(arg, metadata=self.metadata)
 
-    def GetSpaceInfo(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.SpaceInfo:
+    @overload
+    def GetSpaceInfo(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.SpaceInfo:
+        ...
+    @overload
+    def GetSpaceInfo(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.SpaceInfo]:
+        ...
+    def GetSpaceInfo(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.SpaceInfo | Coroutine[Any, Any, clouddrive.pb2.SpaceInfo]:
         """
         get total/free/used space of a cloud path
 
@@ -1032,9 +1710,33 @@ class Client:
           int64 freeSpace = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetSpaceInfo(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetSpaceInfo(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetSpaceInfo(arg, metadata=self.metadata)
 
-    def GetCloudMemberships(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.CloudMemberships:
+    @overload
+    def GetCloudMemberships(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CloudMemberships:
+        ...
+    @overload
+    def GetCloudMemberships(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CloudMemberships]:
+        ...
+    def GetCloudMemberships(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CloudMemberships | Coroutine[Any, Any, clouddrive.pb2.CloudMemberships]:
         """
         get cloud account memberships
 
@@ -1053,9 +1755,30 @@ class Client:
         message CloudMemberships { repeated CloudMembership memberships = 1; }
         message FileRequest { string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetCloudMemberships(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetCloudMemberships(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetCloudMemberships(arg, metadata=self.metadata)
 
-    def GetRuntimeInfo(self, /, async_: bool = False) -> CloudDrive_pb2.RuntimeInfo:
+    @overload
+    def GetRuntimeInfo(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.RuntimeInfo:
+        ...
+    @overload
+    def GetRuntimeInfo(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.RuntimeInfo]:
+        ...
+    def GetRuntimeInfo(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.RuntimeInfo | Coroutine[Any, Any, clouddrive.pb2.RuntimeInfo]:
         """
         get server runtime info
 
@@ -1073,9 +1796,30 @@ class Client:
           string osInfo = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetRuntimeInfo(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetRuntimeInfo(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetRuntimeInfo(Empty(), metadata=self.metadata)
 
-    def GetRunningInfo(self, /, async_: bool = False) -> CloudDrive_pb2.RunInfo:
+    @overload
+    def GetRunningInfo(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.RunInfo:
+        ...
+    @overload
+    def GetRunningInfo(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.RunInfo]:
+        ...
+    def GetRunningInfo(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.RunInfo | Coroutine[Any, Any, clouddrive.pb2.RunInfo]:
         """
         get server stats, including cpu/mem/uptime
 
@@ -1093,11 +1837,36 @@ class Client:
           uint64 fhTableCount = 4;
           uint64 dirCacheCount = 5;
           uint64 tempFileCount = 6;
+          uint64 dbDirCacheCount = 7;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetRunningInfo(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetRunningInfo(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetRunningInfo(Empty(), metadata=self.metadata)
 
-    def Logout(self, arg: CloudDrive_pb2.UserLogoutRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def Logout(
+        self, 
+        arg: clouddrive.pb2.UserLogoutRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def Logout(
+        self, 
+        arg: clouddrive.pb2.UserLogoutRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def Logout(
+        self, 
+        arg: clouddrive.pb2.UserLogoutRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         logout from cloudfs server
 
@@ -1115,9 +1884,30 @@ class Client:
         }
         message UserLogoutRequest { bool logoutFromCloudFS = 1; }
         """
-        return (self.async_stub if async_ else self.stub).Logout(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.Logout(arg, metadata=self.metadata)
+        else:
+            return self.stub.Logout(arg, metadata=self.metadata)
 
-    def CanAddMoreMountPoints(self, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def CanAddMoreMountPoints(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def CanAddMoreMountPoints(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def CanAddMoreMountPoints(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         check if current user can add more mount point
 
@@ -1135,9 +1925,30 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).CanAddMoreMountPoints(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.CanAddMoreMountPoints(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.CanAddMoreMountPoints(Empty(), metadata=self.metadata)
 
-    def GetMountPoints(self, /, async_: bool = False) -> CloudDrive_pb2.GetMountPointsResult:
+    @overload
+    def GetMountPoints(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetMountPointsResult:
+        ...
+    @overload
+    def GetMountPoints(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetMountPointsResult]:
+        ...
+    def GetMountPoints(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetMountPointsResult | Coroutine[Any, Any, clouddrive.pb2.GetMountPointsResult]:
         """
         get all mount points
 
@@ -1162,9 +1973,33 @@ class Client:
           string failReason = 10;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetMountPoints(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetMountPoints(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetMountPoints(Empty(), metadata=self.metadata)
 
-    def AddMountPoint(self, arg: CloudDrive_pb2.MountOption, /, async_: bool = False) -> CloudDrive_pb2.MountPointResult:
+    @overload
+    def AddMountPoint(
+        self, 
+        arg: clouddrive.pb2.MountOption, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.MountPointResult:
+        ...
+    @overload
+    def AddMountPoint(
+        self, 
+        arg: clouddrive.pb2.MountOption, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
+        ...
+    def AddMountPoint(
+        self, 
+        arg: clouddrive.pb2.MountOption, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         """
         add a new mount point
 
@@ -1191,9 +2026,33 @@ class Client:
           string failReason = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).AddMountPoint(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.AddMountPoint(arg, metadata=self.metadata)
+        else:
+            return self.stub.AddMountPoint(arg, metadata=self.metadata)
 
-    def RemoveMountPoint(self, arg: CloudDrive_pb2.MountPointRequest, /, async_: bool = False) -> CloudDrive_pb2.MountPointResult:
+    @overload
+    def RemoveMountPoint(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.MountPointResult:
+        ...
+    @overload
+    def RemoveMountPoint(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
+        ...
+    def RemoveMountPoint(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         """
         remove a mountpoint
 
@@ -1210,9 +2069,33 @@ class Client:
           string failReason = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).RemoveMountPoint(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.RemoveMountPoint(arg, metadata=self.metadata)
+        else:
+            return self.stub.RemoveMountPoint(arg, metadata=self.metadata)
 
-    def Mount(self, arg: CloudDrive_pb2.MountPointRequest, /, async_: bool = False) -> CloudDrive_pb2.MountPointResult:
+    @overload
+    def Mount(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.MountPointResult:
+        ...
+    @overload
+    def Mount(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
+        ...
+    def Mount(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         """
         mount a mount point
 
@@ -1229,9 +2112,33 @@ class Client:
           string failReason = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).Mount(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.Mount(arg, metadata=self.metadata)
+        else:
+            return self.stub.Mount(arg, metadata=self.metadata)
 
-    def Unmount(self, arg: CloudDrive_pb2.MountPointRequest, /, async_: bool = False) -> CloudDrive_pb2.MountPointResult:
+    @overload
+    def Unmount(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.MountPointResult:
+        ...
+    @overload
+    def Unmount(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
+        ...
+    def Unmount(
+        self, 
+        arg: clouddrive.pb2.MountPointRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         """
         unmount a mount point
 
@@ -1248,9 +2155,33 @@ class Client:
           string failReason = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).Unmount(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.Unmount(arg, metadata=self.metadata)
+        else:
+            return self.stub.Unmount(arg, metadata=self.metadata)
 
-    def UpdateMountPoint(self, arg: CloudDrive_pb2.UpdateMountPointRequest, /, async_: bool = False) -> CloudDrive_pb2.MountPointResult:
+    @overload
+    def UpdateMountPoint(
+        self, 
+        arg: clouddrive.pb2.UpdateMountPointRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.MountPointResult:
+        ...
+    @overload
+    def UpdateMountPoint(
+        self, 
+        arg: clouddrive.pb2.UpdateMountPointRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
+        ...
+    def UpdateMountPoint(
+        self, 
+        arg: clouddrive.pb2.UpdateMountPointRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         """
         change mount point settings
 
@@ -1281,9 +2212,30 @@ class Client:
           MountOption newMountOption = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).UpdateMountPoint(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.UpdateMountPoint(arg, metadata=self.metadata)
+        else:
+            return self.stub.UpdateMountPoint(arg, metadata=self.metadata)
 
-    def GetAvailableDriveLetters(self, /, async_: bool = False) -> CloudDrive_pb2.GetAvailableDriveLettersResult:
+    @overload
+    def GetAvailableDriveLetters(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetAvailableDriveLettersResult:
+        ...
+    @overload
+    def GetAvailableDriveLetters(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetAvailableDriveLettersResult]:
+        ...
+    def GetAvailableDriveLetters(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetAvailableDriveLettersResult | Coroutine[Any, Any, clouddrive.pb2.GetAvailableDriveLettersResult]:
         """
         get all unused drive letters from server's local storage, applies to
         windows only
@@ -1299,9 +2251,30 @@ class Client:
 
         message GetAvailableDriveLettersResult { repeated string driveLetters = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetAvailableDriveLetters(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetAvailableDriveLetters(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetAvailableDriveLetters(Empty(), metadata=self.metadata)
 
-    def HasDriveLetters(self, /, async_: bool = False) -> CloudDrive_pb2.HasDriveLettersResult:
+    @overload
+    def HasDriveLetters(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.HasDriveLettersResult:
+        ...
+    @overload
+    def HasDriveLetters(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.HasDriveLettersResult]:
+        ...
+    def HasDriveLetters(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.HasDriveLettersResult | Coroutine[Any, Any, clouddrive.pb2.HasDriveLettersResult]:
         """
         check if server has driver letters, returns true only on windows
 
@@ -1314,9 +2287,33 @@ class Client:
 
         message HasDriveLettersResult { bool hasDriveLetters = 1; }
         """
-        return (self.async_stub if async_ else self.stub).HasDriveLetters(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.HasDriveLetters(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.HasDriveLetters(Empty(), metadata=self.metadata)
 
-    def LocalGetSubFiles(self, arg: CloudDrive_pb2.LocalGetSubFilesRequest, /, async_: bool = False) -> Iterator[CloudDrive_pb2.LocalGetSubFilesResult]:
+    @overload
+    def LocalGetSubFiles(
+        self, 
+        arg: clouddrive.pb2.LocalGetSubFilesRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.LocalGetSubFilesResult]:
+        ...
+    @overload
+    def LocalGetSubFiles(
+        self, 
+        arg: clouddrive.pb2.LocalGetSubFilesRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.LocalGetSubFilesResult]]:
+        ...
+    def LocalGetSubFiles(
+        self, 
+        arg: clouddrive.pb2.LocalGetSubFilesRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.LocalGetSubFilesResult] | Coroutine[Any, Any, Iterable[clouddrive.pb2.LocalGetSubFilesResult]]:
         """
         get subfiles of a local path, used for adding mountpoint from web ui
 
@@ -1336,9 +2333,30 @@ class Client:
         }
         message LocalGetSubFilesResult { repeated string subFiles = 1; }
         """
-        return (self.async_stub if async_ else self.stub).LocalGetSubFiles(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.LocalGetSubFiles(arg, metadata=self.metadata)
+        else:
+            return self.stub.LocalGetSubFiles(arg, metadata=self.metadata)
 
-    def GetAllTasksCount(self, /, async_: bool = False) -> CloudDrive_pb2.GetAllTasksCountResult:
+    @overload
+    def GetAllTasksCount(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetAllTasksCountResult:
+        ...
+    @overload
+    def GetAllTasksCount(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetAllTasksCountResult]:
+        ...
+    def GetAllTasksCount(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetAllTasksCountResult | Coroutine[Any, Any, clouddrive.pb2.GetAllTasksCountResult]:
         """
         get all transfer tasks' count
 
@@ -1367,9 +2385,30 @@ class Client:
           string errorMessage = 6;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetAllTasksCount(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetAllTasksCount(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetAllTasksCount(Empty(), metadata=self.metadata)
 
-    def GetDownloadFileCount(self, /, async_: bool = False) -> CloudDrive_pb2.GetDownloadFileCountResult:
+    @overload
+    def GetDownloadFileCount(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetDownloadFileCountResult:
+        ...
+    @overload
+    def GetDownloadFileCount(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetDownloadFileCountResult]:
+        ...
+    def GetDownloadFileCount(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetDownloadFileCountResult | Coroutine[Any, Any, clouddrive.pb2.GetDownloadFileCountResult]:
         """
         get download tasks' count
 
@@ -1383,9 +2422,30 @@ class Client:
 
         message GetDownloadFileCountResult { uint32 fileCount = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetDownloadFileCount(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetDownloadFileCount(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetDownloadFileCount(Empty(), metadata=self.metadata)
 
-    def GetDownloadFileList(self, /, async_: bool = False) -> CloudDrive_pb2.GetDownloadFileListResult:
+    @overload
+    def GetDownloadFileList(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetDownloadFileListResult:
+        ...
+    @overload
+    def GetDownloadFileList(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetDownloadFileListResult]:
+        ...
+    def GetDownloadFileList(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetDownloadFileListResult | Coroutine[Any, Any, clouddrive.pb2.GetDownloadFileListResult]:
         """
         get all download tasks
 
@@ -1410,9 +2470,30 @@ class Client:
           repeated DownloadFileInfo downloadFiles = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetDownloadFileList(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetDownloadFileList(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetDownloadFileList(Empty(), metadata=self.metadata)
 
-    def GetUploadFileCount(self, /, async_: bool = False) -> CloudDrive_pb2.GetUploadFileCountResult:
+    @overload
+    def GetUploadFileCount(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetUploadFileCountResult:
+        ...
+    @overload
+    def GetUploadFileCount(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetUploadFileCountResult]:
+        ...
+    def GetUploadFileCount(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetUploadFileCountResult | Coroutine[Any, Any, clouddrive.pb2.GetUploadFileCountResult]:
         """
         get all upload tasks' count
 
@@ -1426,9 +2507,33 @@ class Client:
 
         message GetUploadFileCountResult { uint32 fileCount = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetUploadFileCount(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetUploadFileCount(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetUploadFileCount(Empty(), metadata=self.metadata)
 
-    def GetUploadFileList(self, arg: CloudDrive_pb2.GetUploadFileListRequest, /, async_: bool = False) -> CloudDrive_pb2.GetUploadFileListResult:
+    @overload
+    def GetUploadFileList(
+        self, 
+        arg: clouddrive.pb2.GetUploadFileListRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetUploadFileListResult:
+        ...
+    @overload
+    def GetUploadFileList(
+        self, 
+        arg: clouddrive.pb2.GetUploadFileListRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetUploadFileListResult]:
+        ...
+    def GetUploadFileList(
+        self, 
+        arg: clouddrive.pb2.GetUploadFileListRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetUploadFileListResult | Coroutine[Any, Any, clouddrive.pb2.GetUploadFileListResult]:
         """
         get upload tasks, paged by providing page number and items per page and
         file name filter
@@ -1462,9 +2567,30 @@ class Client:
           string errorMessage = 6;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetUploadFileList(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetUploadFileList(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetUploadFileList(arg, metadata=self.metadata)
 
-    def CancelAllUploadFiles(self, /, async_: bool = False) -> None:
+    @overload
+    def CancelAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def CancelAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def CancelAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         cancel all upload tasks
 
@@ -1474,9 +2600,37 @@ class Client:
         rpc CancelAllUploadFiles(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).CancelAllUploadFiles(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.CancelAllUploadFiles(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.CancelAllUploadFiles(Empty(), metadata=self.metadata)
+            return None
 
-    def CancelUploadFiles(self, arg: CloudDrive_pb2.MultpleUploadFileKeyRequest, /, async_: bool = False) -> None:
+    @overload
+    def CancelUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def CancelUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def CancelUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         cancel selected upload tasks
 
@@ -1490,9 +2644,34 @@ class Client:
 
         message MultpleUploadFileKeyRequest { repeated string keys = 1; }
         """
-        return (self.async_stub if async_ else self.stub).CancelUploadFiles(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.CancelUploadFiles(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.CancelUploadFiles(arg, metadata=self.metadata)
+            return None
 
-    def PauseAllUploadFiles(self, /, async_: bool = False) -> None:
+    @overload
+    def PauseAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def PauseAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def PauseAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         pause all upload tasks
 
@@ -1502,9 +2681,37 @@ class Client:
         rpc PauseAllUploadFiles(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).PauseAllUploadFiles(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.PauseAllUploadFiles(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.PauseAllUploadFiles(Empty(), metadata=self.metadata)
+            return None
 
-    def PauseUploadFiles(self, arg: CloudDrive_pb2.MultpleUploadFileKeyRequest, /, async_: bool = False) -> None:
+    @overload
+    def PauseUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def PauseUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def PauseUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         pause selected upload tasks
 
@@ -1518,9 +2725,34 @@ class Client:
 
         message MultpleUploadFileKeyRequest { repeated string keys = 1; }
         """
-        return (self.async_stub if async_ else self.stub).PauseUploadFiles(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.PauseUploadFiles(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.PauseUploadFiles(arg, metadata=self.metadata)
+            return None
 
-    def ResumeAllUploadFiles(self, /, async_: bool = False) -> None:
+    @overload
+    def ResumeAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ResumeAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ResumeAllUploadFiles(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         resume all upload tasks
 
@@ -1530,9 +2762,37 @@ class Client:
         rpc ResumeAllUploadFiles(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).ResumeAllUploadFiles(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.ResumeAllUploadFiles(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ResumeAllUploadFiles(Empty(), metadata=self.metadata)
+            return None
 
-    def ResumeUploadFiles(self, arg: CloudDrive_pb2.MultpleUploadFileKeyRequest, /, async_: bool = False) -> None:
+    @overload
+    def ResumeUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ResumeUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ResumeUploadFiles(
+        self, 
+        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         resume selected upload tasks
 
@@ -1546,9 +2806,34 @@ class Client:
 
         message MultpleUploadFileKeyRequest { repeated string keys = 1; }
         """
-        return (self.async_stub if async_ else self.stub).ResumeUploadFiles(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.ResumeUploadFiles(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ResumeUploadFiles(arg, metadata=self.metadata)
+            return None
 
-    def CanAddMoreCloudApis(self, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def CanAddMoreCloudApis(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def CanAddMoreCloudApis(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def CanAddMoreCloudApis(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         check if current user can add more cloud apis
 
@@ -1566,9 +2851,33 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).CanAddMoreCloudApis(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.CanAddMoreCloudApis(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.CanAddMoreCloudApis(Empty(), metadata=self.metadata)
 
-    def APILogin115Editthiscookie(self, arg: CloudDrive_pb2.Login115EditthiscookieRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILogin115Editthiscookie(
+        self, 
+        arg: clouddrive.pb2.Login115EditthiscookieRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILogin115Editthiscookie(
+        self, 
+        arg: clouddrive.pb2.Login115EditthiscookieRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILogin115Editthiscookie(
+        self, 
+        arg: clouddrive.pb2.Login115EditthiscookieRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add 115 cloud with editthiscookie
 
@@ -1586,9 +2895,33 @@ class Client:
         }
         message Login115EditthiscookieRequest { string editThiscookieString = 1; }
         """
-        return (self.async_stub if async_ else self.stub).APILogin115Editthiscookie(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILogin115Editthiscookie(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILogin115Editthiscookie(arg, metadata=self.metadata)
 
-    def APILogin115QRCode(self, arg: CloudDrive_pb2.Login115QrCodeRequest, /, async_: bool = False) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
+    @overload
+    def APILogin115QRCode(
+        self, 
+        arg: clouddrive.pb2.Login115QrCodeRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.QRCodeScanMessage]:
+        ...
+    @overload
+    def APILogin115QRCode(
+        self, 
+        arg: clouddrive.pb2.Login115QrCodeRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
+        ...
+    def APILogin115QRCode(
+        self, 
+        arg: clouddrive.pb2.Login115QrCodeRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.QRCodeScanMessage] | Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
         """
         add 115 cloud with qr scanning
 
@@ -1613,9 +2946,33 @@ class Client:
           ERROR = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILogin115QRCode(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILogin115QRCode(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILogin115QRCode(arg, metadata=self.metadata)
 
-    def APILoginAliyundriveOAuth(self, arg: CloudDrive_pb2.LoginAliyundriveOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILoginAliyundriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveOAuthRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILoginAliyundriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveOAuthRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILoginAliyundriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveOAuthRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add AliyunDriveOpen with OAuth result
 
@@ -1637,9 +2994,33 @@ class Client:
           uint64 expires_in = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginAliyundriveOAuth(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginAliyundriveOAuth(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginAliyundriveOAuth(arg, metadata=self.metadata)
 
-    def APILoginAliyundriveRefreshtoken(self, arg: CloudDrive_pb2.LoginAliyundriveRefreshtokenRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILoginAliyundriveRefreshtoken(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILoginAliyundriveRefreshtoken(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILoginAliyundriveRefreshtoken(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add AliyunDrive with refresh token
 
@@ -1660,9 +3041,33 @@ class Client:
           bool useOpenAPI = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginAliyundriveRefreshtoken(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginAliyundriveRefreshtoken(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginAliyundriveRefreshtoken(arg, metadata=self.metadata)
 
-    def APILoginAliyunDriveQRCode(self, arg: CloudDrive_pb2.LoginAliyundriveQRCodeRequest, /, async_: bool = False) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
+    @overload
+    def APILoginAliyunDriveQRCode(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.QRCodeScanMessage]:
+        ...
+    @overload
+    def APILoginAliyunDriveQRCode(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
+        ...
+    def APILoginAliyunDriveQRCode(
+        self, 
+        arg: clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.QRCodeScanMessage] | Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
         """
         add AliyunDrive with qr scanning
 
@@ -1687,9 +3092,33 @@ class Client:
           ERROR = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginAliyunDriveQRCode(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginAliyunDriveQRCode(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginAliyunDriveQRCode(arg, metadata=self.metadata)
 
-    def APILoginBaiduPanOAuth(self, arg: CloudDrive_pb2.LoginBaiduPanOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILoginBaiduPanOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginBaiduPanOAuthRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILoginBaiduPanOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginBaiduPanOAuthRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILoginBaiduPanOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginBaiduPanOAuthRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add BaiduPan with OAuth result
 
@@ -1711,9 +3140,33 @@ class Client:
           uint64 expires_in = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginBaiduPanOAuth(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginBaiduPanOAuth(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginBaiduPanOAuth(arg, metadata=self.metadata)
 
-    def APILoginOneDriveOAuth(self, arg: CloudDrive_pb2.LoginOneDriveOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILoginOneDriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginOneDriveOAuthRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILoginOneDriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginOneDriveOAuthRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILoginOneDriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginOneDriveOAuthRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add OneDrive with OAuth result
 
@@ -1735,9 +3188,33 @@ class Client:
           uint64 expires_in = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginOneDriveOAuth(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginOneDriveOAuth(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginOneDriveOAuth(arg, metadata=self.metadata)
 
-    def ApiLoginGoogleDriveOAuth(self, arg: CloudDrive_pb2.LoginGoogleDriveOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def ApiLoginGoogleDriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def ApiLoginGoogleDriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def ApiLoginGoogleDriveOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add Google Drive with OAuth result
 
@@ -1759,9 +3236,33 @@ class Client:
           uint64 expires_in = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).ApiLoginGoogleDriveOAuth(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ApiLoginGoogleDriveOAuth(arg, metadata=self.metadata)
+        else:
+            return self.stub.ApiLoginGoogleDriveOAuth(arg, metadata=self.metadata)
 
-    def ApiLoginGoogleDriveRefreshToken(self, arg: CloudDrive_pb2.LoginGoogleDriveRefreshTokenRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def ApiLoginGoogleDriveRefreshToken(
+        self, 
+        arg: clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def ApiLoginGoogleDriveRefreshToken(
+        self, 
+        arg: clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def ApiLoginGoogleDriveRefreshToken(
+        self, 
+        arg: clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add Google Drive with refresh token
 
@@ -1783,9 +3284,33 @@ class Client:
           string refresh_token = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
+        else:
+            return self.stub.ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
 
-    def ApiLoginXunleiOAuth(self, arg: CloudDrive_pb2.LoginXunleiOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def ApiLoginXunleiOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginXunleiOAuthRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def ApiLoginXunleiOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginXunleiOAuthRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def ApiLoginXunleiOAuth(
+        self, 
+        arg: clouddrive.pb2.LoginXunleiOAuthRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add Xunlei Drive with OAuth result
 
@@ -1806,9 +3331,33 @@ class Client:
           uint64 expires_in = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).ApiLoginXunleiOAuth(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ApiLoginXunleiOAuth(arg, metadata=self.metadata)
+        else:
+            return self.stub.ApiLoginXunleiOAuth(arg, metadata=self.metadata)
 
-    def ApiLogin123panOAuth(self, arg: CloudDrive_pb2.Login123panOAuthRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def ApiLogin123panOAuth(
+        self, 
+        arg: clouddrive.pb2.Login123panOAuthRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def ApiLogin123panOAuth(
+        self, 
+        arg: clouddrive.pb2.Login123panOAuthRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def ApiLogin123panOAuth(
+        self, 
+        arg: clouddrive.pb2.Login123panOAuthRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add 123 cloud with client id and client secret
 
@@ -1829,9 +3378,30 @@ class Client:
           uint64 expires_in = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).ApiLogin123panOAuth(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ApiLogin123panOAuth(arg, metadata=self.metadata)
+        else:
+            return self.stub.ApiLogin123panOAuth(arg, metadata=self.metadata)
 
-    def APILogin189QRCode(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.QRCodeScanMessage]:
+    @overload
+    def APILogin189QRCode(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.QRCodeScanMessage]:
+        ...
+    @overload
+    def APILogin189QRCode(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
+        ...
+    def APILogin189QRCode(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.QRCodeScanMessage] | Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
         """
         add 189 cloud with qr scanning
 
@@ -1855,9 +3425,33 @@ class Client:
           ERROR = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILogin189QRCode(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILogin189QRCode(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.APILogin189QRCode(Empty(), metadata=self.metadata)
 
-    def APILoginPikPak(self, arg: CloudDrive_pb2.UserLoginRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILoginPikPak(
+        self, 
+        arg: clouddrive.pb2.UserLoginRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILoginPikPak(
+        self, 
+        arg: clouddrive.pb2.UserLoginRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILoginPikPak(
+        self, 
+        arg: clouddrive.pb2.UserLoginRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add PikPak cloud with username and password
 
@@ -1878,9 +3472,33 @@ class Client:
           bool synDataToCloud = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginPikPak(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginPikPak(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginPikPak(arg, metadata=self.metadata)
 
-    def APILoginWebDav(self, arg: CloudDrive_pb2.LoginWebDavRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APILoginWebDav(
+        self, 
+        arg: clouddrive.pb2.LoginWebDavRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APILoginWebDav(
+        self, 
+        arg: clouddrive.pb2.LoginWebDavRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APILoginWebDav(
+        self, 
+        arg: clouddrive.pb2.LoginWebDavRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add webdav
 
@@ -1901,9 +3519,33 @@ class Client:
           string password = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).APILoginWebDav(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APILoginWebDav(arg, metadata=self.metadata)
+        else:
+            return self.stub.APILoginWebDav(arg, metadata=self.metadata)
 
-    def APIAddLocalFolder(self, arg: CloudDrive_pb2.AddLocalFolderRequest, /, async_: bool = False) -> CloudDrive_pb2.APILoginResult:
+    @overload
+    def APIAddLocalFolder(
+        self, 
+        arg: clouddrive.pb2.AddLocalFolderRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.APILoginResult:
+        ...
+    @overload
+    def APIAddLocalFolder(
+        self, 
+        arg: clouddrive.pb2.AddLocalFolderRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
+        ...
+    def APIAddLocalFolder(
+        self, 
+        arg: clouddrive.pb2.AddLocalFolderRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add local folder
 
@@ -1920,9 +3562,33 @@ class Client:
         }
         message AddLocalFolderRequest { string localFolderPath = 1; }
         """
-        return (self.async_stub if async_ else self.stub).APIAddLocalFolder(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.APIAddLocalFolder(arg, metadata=self.metadata)
+        else:
+            return self.stub.APIAddLocalFolder(arg, metadata=self.metadata)
 
-    def RemoveCloudAPI(self, arg: CloudDrive_pb2.RemoveCloudAPIRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def RemoveCloudAPI(
+        self, 
+        arg: clouddrive.pb2.RemoveCloudAPIRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def RemoveCloudAPI(
+        self, 
+        arg: clouddrive.pb2.RemoveCloudAPIRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def RemoveCloudAPI(
+        self, 
+        arg: clouddrive.pb2.RemoveCloudAPIRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         remove a cloud
 
@@ -1944,9 +3610,30 @@ class Client:
           bool permanentRemove = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).RemoveCloudAPI(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.RemoveCloudAPI(arg, metadata=self.metadata)
+        else:
+            return self.stub.RemoveCloudAPI(arg, metadata=self.metadata)
 
-    def GetAllCloudApis(self, /, async_: bool = False) -> CloudDrive_pb2.CloudAPIList:
+    @overload
+    def GetAllCloudApis(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CloudAPIList:
+        ...
+    @overload
+    def GetAllCloudApis(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CloudAPIList]:
+        ...
+    def GetAllCloudApis(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CloudAPIList | Coroutine[Any, Any, clouddrive.pb2.CloudAPIList]:
         """
         get all cloud apis
 
@@ -1966,9 +3653,33 @@ class Client:
         }
         message CloudAPIList { repeated CloudAPI apis = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetAllCloudApis(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetAllCloudApis(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetAllCloudApis(Empty(), metadata=self.metadata)
 
-    def GetCloudAPIConfig(self, arg: CloudDrive_pb2.GetCloudAPIConfigRequest, /, async_: bool = False) -> CloudDrive_pb2.CloudAPIConfig:
+    @overload
+    def GetCloudAPIConfig(
+        self, 
+        arg: clouddrive.pb2.GetCloudAPIConfigRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CloudAPIConfig:
+        ...
+    @overload
+    def GetCloudAPIConfig(
+        self, 
+        arg: clouddrive.pb2.GetCloudAPIConfigRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CloudAPIConfig]:
+        ...
+    def GetCloudAPIConfig(
+        self, 
+        arg: clouddrive.pb2.GetCloudAPIConfigRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CloudAPIConfig | Coroutine[Any, Any, clouddrive.pb2.CloudAPIConfig]:
         """
         get CloudAPI configuration
 
@@ -2003,9 +3714,33 @@ class Client:
           optional string password = 5;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetCloudAPIConfig(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetCloudAPIConfig(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetCloudAPIConfig(arg, metadata=self.metadata)
 
-    def SetCloudAPIConfig(self, arg: CloudDrive_pb2.SetCloudAPIConfigRequest, /, async_: bool = False) -> None:
+    @overload
+    def SetCloudAPIConfig(
+        self, 
+        arg: clouddrive.pb2.SetCloudAPIConfigRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def SetCloudAPIConfig(
+        self, 
+        arg: clouddrive.pb2.SetCloudAPIConfigRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def SetCloudAPIConfig(
+        self, 
+        arg: clouddrive.pb2.SetCloudAPIConfigRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         set CloudAPI configuration
 
@@ -2035,9 +3770,34 @@ class Client:
           CloudAPIConfig config = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).SetCloudAPIConfig(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.SetCloudAPIConfig(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.SetCloudAPIConfig(arg, metadata=self.metadata)
+            return None
 
-    def GetSystemSettings(self, /, async_: bool = False) -> CloudDrive_pb2.SystemSettings:
+    @overload
+    def GetSystemSettings(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.SystemSettings:
+        ...
+    @overload
+    def GetSystemSettings(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.SystemSettings]:
+        ...
+    def GetSystemSettings(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.SystemSettings | Coroutine[Any, Any, clouddrive.pb2.SystemSettings]:
         """
         get all system setings value
 
@@ -2066,15 +3826,41 @@ class Client:
           optional double maxDownloadSpeedKBytesPerSecond = 11;
           optional double maxUploadSpeedKBytesPerSecond = 12;
           optional string deviceName = 13;
+          optional bool dirCachePersistence = 14;
+          optional string dirCacheDbLocation = 15;
         }
         enum UpdateChannel {
           Release = 0;
           Beta = 1;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetSystemSettings(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetSystemSettings(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetSystemSettings(Empty(), metadata=self.metadata)
 
-    def SetSystemSettings(self, arg: CloudDrive_pb2.SystemSettings, /, async_: bool = False) -> None:
+    @overload
+    def SetSystemSettings(
+        self, 
+        arg: clouddrive.pb2.SystemSettings, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def SetSystemSettings(
+        self, 
+        arg: clouddrive.pb2.SystemSettings, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def SetSystemSettings(
+        self, 
+        arg: clouddrive.pb2.SystemSettings, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         set selected system settings value
 
@@ -2103,15 +3889,45 @@ class Client:
           optional double maxDownloadSpeedKBytesPerSecond = 11;
           optional double maxUploadSpeedKBytesPerSecond = 12;
           optional string deviceName = 13;
+          optional bool dirCachePersistence = 14;
+          optional string dirCacheDbLocation = 15;
         }
         enum UpdateChannel {
           Release = 0;
           Beta = 1;
         }
         """
-        return (self.async_stub if async_ else self.stub).SetSystemSettings(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.SetSystemSettings(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.SetSystemSettings(arg, metadata=self.metadata)
+            return None
 
-    def SetDirCacheTimeSecs(self, arg: CloudDrive_pb2.SetDirCacheTimeRequest, /, async_: bool = False) -> None:
+    @overload
+    def SetDirCacheTimeSecs(
+        self, 
+        arg: clouddrive.pb2.SetDirCacheTimeRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def SetDirCacheTimeSecs(
+        self, 
+        arg: clouddrive.pb2.SetDirCacheTimeRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def SetDirCacheTimeSecs(
+        self, 
+        arg: clouddrive.pb2.SetDirCacheTimeRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         set dir cache time
 
@@ -2129,9 +3945,37 @@ class Client:
           optional uint64 dirCachTimeToLiveSecs = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).SetDirCacheTimeSecs(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.SetDirCacheTimeSecs(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.SetDirCacheTimeSecs(arg, metadata=self.metadata)
+            return None
 
-    def GetEffectiveDirCacheTimeSecs(self, arg: CloudDrive_pb2.GetEffectiveDirCacheTimeRequest, /, async_: bool = False) -> CloudDrive_pb2.GetEffectiveDirCacheTimeResult:
+    @overload
+    def GetEffectiveDirCacheTimeSecs(
+        self, 
+        arg: clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetEffectiveDirCacheTimeResult:
+        ...
+    @overload
+    def GetEffectiveDirCacheTimeSecs(
+        self, 
+        arg: clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetEffectiveDirCacheTimeResult]:
+        ...
+    def GetEffectiveDirCacheTimeSecs(
+        self, 
+        arg: clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetEffectiveDirCacheTimeResult | Coroutine[Any, Any, clouddrive.pb2.GetEffectiveDirCacheTimeResult]:
         """
         get dir cache time in effect (default value will be returned)
 
@@ -2146,9 +3990,33 @@ class Client:
         message GetEffectiveDirCacheTimeRequest { string path = 1; }
         message GetEffectiveDirCacheTimeResult { uint64 dirCacheTimeSecs = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
 
-    def GetOpenFileTable(self, arg: CloudDrive_pb2.GetOpenFileTableRequest, /, async_: bool = False) -> CloudDrive_pb2.OpenFileTable:
+    @overload
+    def GetOpenFileTable(
+        self, 
+        arg: clouddrive.pb2.GetOpenFileTableRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.OpenFileTable:
+        ...
+    @overload
+    def GetOpenFileTable(
+        self, 
+        arg: clouddrive.pb2.GetOpenFileTableRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.OpenFileTable]:
+        ...
+    def GetOpenFileTable(
+        self, 
+        arg: clouddrive.pb2.GetOpenFileTableRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.OpenFileTable | Coroutine[Any, Any, clouddrive.pb2.OpenFileTable]:
         """
         get open file table
 
@@ -2165,9 +4033,30 @@ class Client:
           uint64 localOpenFileCount = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetOpenFileTable(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetOpenFileTable(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetOpenFileTable(arg, metadata=self.metadata)
 
-    def GetDirCacheTable(self, /, async_: bool = False) -> CloudDrive_pb2.DirCacheTable:
+    @overload
+    def GetDirCacheTable(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.DirCacheTable:
+        ...
+    @overload
+    def GetDirCacheTable(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.DirCacheTable]:
+        ...
+    def GetDirCacheTable(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.DirCacheTable | Coroutine[Any, Any, clouddrive.pb2.DirCacheTable]:
         """
         get dir cache table
 
@@ -2180,9 +4069,33 @@ class Client:
 
         message DirCacheTable { map<string, DirCacheItem> dirCacheTable = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetDirCacheTable(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetDirCacheTable(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetDirCacheTable(Empty(), metadata=self.metadata)
 
-    def GetReferencedEntryPaths(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.StringList:
+    @overload
+    def GetReferencedEntryPaths(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.StringList:
+        ...
+    @overload
+    def GetReferencedEntryPaths(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.StringList]:
+        ...
+    def GetReferencedEntryPaths(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.StringList | Coroutine[Any, Any, clouddrive.pb2.StringList]:
         """
         get referenced entry paths of parent path
 
@@ -2196,9 +4109,30 @@ class Client:
         message FileRequest { string path = 1; }
         message StringList { repeated string values = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetReferencedEntryPaths(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetReferencedEntryPaths(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetReferencedEntryPaths(arg, metadata=self.metadata)
 
-    def GetTempFileTable(self, /, async_: bool = False) -> CloudDrive_pb2.TempFileTable:
+    @overload
+    def GetTempFileTable(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.TempFileTable:
+        ...
+    @overload
+    def GetTempFileTable(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.TempFileTable]:
+        ...
+    def GetTempFileTable(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.TempFileTable | Coroutine[Any, Any, clouddrive.pb2.TempFileTable]:
         """
         get temp file table
 
@@ -2214,9 +4148,30 @@ class Client:
           repeated string tempFiles = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetTempFileTable(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetTempFileTable(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetTempFileTable(Empty(), metadata=self.metadata)
 
-    def PushTaskChange(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.GetAllTasksCountResult]:
+    @overload
+    def PushTaskChange(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.GetAllTasksCountResult]:
+        ...
+    @overload
+    def PushTaskChange(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.GetAllTasksCountResult]]:
+        ...
+    def PushTaskChange(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.GetAllTasksCountResult] | Coroutine[Any, Any, Iterable[clouddrive.pb2.GetAllTasksCountResult]]:
         """
         [deprecated] use PushMessage instead
         push upload/download task count changes to client, also can be used for
@@ -2249,9 +4204,30 @@ class Client:
           string errorMessage = 6;
         }
         """
-        return (self.async_stub if async_ else self.stub).PushTaskChange(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.PushTaskChange(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.PushTaskChange(Empty(), metadata=self.metadata)
 
-    def PushMessage(self, /, async_: bool = False) -> Iterator[CloudDrive_pb2.CloudDrivePushMessage]:
+    @overload
+    def PushMessage(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> Iterable[clouddrive.pb2.CloudDrivePushMessage]:
+        ...
+    @overload
+    def PushMessage(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.CloudDrivePushMessage]]:
+        ...
+    def PushMessage(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> Iterable[clouddrive.pb2.CloudDrivePushMessage] | Coroutine[Any, Any, Iterable[clouddrive.pb2.CloudDrivePushMessage]]:
         """
         general message notification
 
@@ -2307,9 +4283,30 @@ class Client:
           optional string message = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).PushMessage(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.PushMessage(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.PushMessage(Empty(), metadata=self.metadata)
 
-    def GetCloudDrive1UserData(self, /, async_: bool = False) -> CloudDrive_pb2.StringResult:
+    @overload
+    def GetCloudDrive1UserData(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.StringResult:
+        ...
+    @overload
+    def GetCloudDrive1UserData(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.StringResult]:
+        ...
+    def GetCloudDrive1UserData(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.StringResult | Coroutine[Any, Any, clouddrive.pb2.StringResult]:
         """
         get CloudDrive1's user data string
 
@@ -2322,9 +4319,30 @@ class Client:
 
         message StringResult { string result = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetCloudDrive1UserData(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetCloudDrive1UserData(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetCloudDrive1UserData(Empty(), metadata=self.metadata)
 
-    def RestartService(self, /, async_: bool = False) -> None:
+    @overload
+    def RestartService(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def RestartService(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def RestartService(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         restart service
 
@@ -2333,9 +4351,34 @@ class Client:
         // restart service
         rpc RestartService(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).RestartService(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.RestartService(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.RestartService(Empty(), metadata=self.metadata)
+            return None
 
-    def ShutdownService(self, /, async_: bool = False) -> None:
+    @overload
+    def ShutdownService(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ShutdownService(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ShutdownService(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         shutdown service
 
@@ -2344,9 +4387,34 @@ class Client:
         // shutdown service
         rpc ShutdownService(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).ShutdownService(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.ShutdownService(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ShutdownService(Empty(), metadata=self.metadata)
+            return None
 
-    def HasUpdate(self, /, async_: bool = False) -> CloudDrive_pb2.UpdateResult:
+    @overload
+    def HasUpdate(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.UpdateResult:
+        ...
+    @overload
+    def HasUpdate(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.UpdateResult]:
+        ...
+    def HasUpdate(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.UpdateResult | Coroutine[Any, Any, clouddrive.pb2.UpdateResult]:
         """
         check if has updates available
 
@@ -2363,9 +4431,30 @@ class Client:
           string description = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).HasUpdate(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.HasUpdate(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.HasUpdate(Empty(), metadata=self.metadata)
 
-    def CheckUpdate(self, /, async_: bool = False) -> CloudDrive_pb2.UpdateResult:
+    @overload
+    def CheckUpdate(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.UpdateResult:
+        ...
+    @overload
+    def CheckUpdate(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.UpdateResult]:
+        ...
+    def CheckUpdate(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.UpdateResult | Coroutine[Any, Any, clouddrive.pb2.UpdateResult]:
         """
         check software updates
 
@@ -2382,9 +4471,30 @@ class Client:
           string description = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).CheckUpdate(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.CheckUpdate(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.CheckUpdate(Empty(), metadata=self.metadata)
 
-    def DownloadUpdate(self, /, async_: bool = False) -> None:
+    @overload
+    def DownloadUpdate(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def DownloadUpdate(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def DownloadUpdate(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         download newest version
 
@@ -2393,9 +4503,34 @@ class Client:
         // download newest version
         rpc DownloadUpdate(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).DownloadUpdate(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.DownloadUpdate(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.DownloadUpdate(Empty(), metadata=self.metadata)
+            return None
 
-    def UpdateSystem(self, /, async_: bool = False) -> None:
+    @overload
+    def UpdateSystem(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def UpdateSystem(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def UpdateSystem(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         update to newest version
 
@@ -2404,9 +4539,37 @@ class Client:
         // update to newest version
         rpc UpdateSystem(google.protobuf.Empty) returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).UpdateSystem(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.UpdateSystem(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.UpdateSystem(Empty(), metadata=self.metadata)
+            return None
 
-    def GetMetaData(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileMetaData:
+    @overload
+    def GetMetaData(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileMetaData:
+        ...
+    @overload
+    def GetMetaData(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileMetaData]:
+        ...
+    def GetMetaData(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileMetaData | Coroutine[Any, Any, clouddrive.pb2.FileMetaData]:
         """
         get file metadata
 
@@ -2420,9 +4583,33 @@ class Client:
         message FileMetaData { map<string, string> metadata = 1; }
         message FileRequest { string path = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetMetaData(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetMetaData(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetMetaData(arg, metadata=self.metadata)
 
-    def GetOriginalPath(self, arg: CloudDrive_pb2.FileRequest, /, async_: bool = False) -> CloudDrive_pb2.StringResult:
+    @overload
+    def GetOriginalPath(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.StringResult:
+        ...
+    @overload
+    def GetOriginalPath(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.StringResult]:
+        ...
+    def GetOriginalPath(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.StringResult | Coroutine[Any, Any, clouddrive.pb2.StringResult]:
         """
         get file's original path from search result
 
@@ -2436,9 +4623,33 @@ class Client:
         message FileRequest { string path = 1; }
         message StringResult { string result = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetOriginalPath(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetOriginalPath(arg, metadata=self.metadata)
+        else:
+            return self.stub.GetOriginalPath(arg, metadata=self.metadata)
 
-    def ChangePassword(self, arg: CloudDrive_pb2.ChangePasswordRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def ChangePassword(
+        self, 
+        arg: clouddrive.pb2.ChangePasswordRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def ChangePassword(
+        self, 
+        arg: clouddrive.pb2.ChangePasswordRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def ChangePassword(
+        self, 
+        arg: clouddrive.pb2.ChangePasswordRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         change password
 
@@ -2459,9 +4670,33 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).ChangePassword(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ChangePassword(arg, metadata=self.metadata)
+        else:
+            return self.stub.ChangePassword(arg, metadata=self.metadata)
 
-    def CreateFile(self, arg: CloudDrive_pb2.CreateFileRequest, /, async_: bool = False) -> CloudDrive_pb2.CreateFileResult:
+    @overload
+    def CreateFile(
+        self, 
+        arg: clouddrive.pb2.CreateFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CreateFileResult:
+        ...
+    @overload
+    def CreateFile(
+        self, 
+        arg: clouddrive.pb2.CreateFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CreateFileResult]:
+        ...
+    def CreateFile(
+        self, 
+        arg: clouddrive.pb2.CreateFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CreateFileResult | Coroutine[Any, Any, clouddrive.pb2.CreateFileResult]:
         """
         create a new file
 
@@ -2478,9 +4713,33 @@ class Client:
         }
         message CreateFileResult { uint64 fileHandle = 1; }
         """
-        return (self.async_stub if async_ else self.stub).CreateFile(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.CreateFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.CreateFile(arg, metadata=self.metadata)
 
-    def CloseFile(self, arg: CloudDrive_pb2.CloseFileRequest, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def CloseFile(
+        self, 
+        arg: clouddrive.pb2.CloseFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def CloseFile(
+        self, 
+        arg: clouddrive.pb2.CloseFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def CloseFile(
+        self, 
+        arg: clouddrive.pb2.CloseFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         close an opened file
 
@@ -2498,9 +4757,33 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).CloseFile(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.CloseFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.CloseFile(arg, metadata=self.metadata)
 
-    def WriteToFileStream(self, arg: Iterator[CloudDrive_pb2.WriteFileRequest], /, async_: bool = False) -> CloudDrive_pb2.WriteFileResult:
+    @overload
+    def WriteToFileStream(
+        self, 
+        arg: Sequence[clouddrive.pb2.WriteFileRequest], 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.WriteFileResult:
+        ...
+    @overload
+    def WriteToFileStream(
+        self, 
+        arg: Sequence[clouddrive.pb2.WriteFileRequest], 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
+        ...
+    def WriteToFileStream(
+        self, 
+        arg: Sequence[clouddrive.pb2.WriteFileRequest], 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.WriteFileResult | Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
         """
         write a stream to an opened file
 
@@ -2520,9 +4803,33 @@ class Client:
         }
         message WriteFileResult { uint64 bytesWritten = 1; }
         """
-        return (self.async_stub if async_ else self.stub).WriteToFileStream(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.WriteToFileStream(arg, metadata=self.metadata)
+        else:
+            return self.stub.WriteToFileStream(arg, metadata=self.metadata)
 
-    def WriteToFile(self, arg: CloudDrive_pb2.WriteFileRequest, /, async_: bool = False) -> CloudDrive_pb2.WriteFileResult:
+    @overload
+    def WriteToFile(
+        self, 
+        arg: clouddrive.pb2.WriteFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.WriteFileResult:
+        ...
+    @overload
+    def WriteToFile(
+        self, 
+        arg: clouddrive.pb2.WriteFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
+        ...
+    def WriteToFile(
+        self, 
+        arg: clouddrive.pb2.WriteFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.WriteFileResult | Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
         """
         write to an opened file
 
@@ -2542,9 +4849,30 @@ class Client:
         }
         message WriteFileResult { uint64 bytesWritten = 1; }
         """
-        return (self.async_stub if async_ else self.stub).WriteToFile(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.WriteToFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.WriteToFile(arg, metadata=self.metadata)
 
-    def GetPromotions(self, /, async_: bool = False) -> CloudDrive_pb2.GetPromotionsResult:
+    @overload
+    def GetPromotions(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetPromotionsResult:
+        ...
+    @overload
+    def GetPromotions(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetPromotionsResult]:
+        ...
+    def GetPromotions(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetPromotionsResult | Coroutine[Any, Any, clouddrive.pb2.GetPromotionsResult]:
         """
         get promotions
 
@@ -2566,9 +4894,30 @@ class Client:
           string url = 7;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetPromotions(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetPromotions(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetPromotions(Empty(), metadata=self.metadata)
 
-    def UpdatePromotionResult(self, /, async_: bool = False) -> None:
+    @overload
+    def UpdatePromotionResult(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def UpdatePromotionResult(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def UpdatePromotionResult(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         update promotion result after purchased
 
@@ -2578,9 +4927,34 @@ class Client:
         rpc UpdatePromotionResult(google.protobuf.Empty)
             returns (google.protobuf.Empty) {}
         """
-        return (self.async_stub if async_ else self.stub).UpdatePromotionResult(Empty(), metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.UpdatePromotionResult(Empty(), metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.UpdatePromotionResult(Empty(), metadata=self.metadata)
+            return None
 
-    def GetCloudDrivePlans(self, /, async_: bool = False) -> CloudDrive_pb2.GetCloudDrivePlansResult:
+    @overload
+    def GetCloudDrivePlans(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.GetCloudDrivePlansResult:
+        ...
+    @overload
+    def GetCloudDrivePlans(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.GetCloudDrivePlansResult]:
+        ...
+    def GetCloudDrivePlans(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.GetCloudDrivePlansResult | Coroutine[Any, Any, clouddrive.pb2.GetCloudDrivePlansResult]:
         """
         get cloudfs plans
 
@@ -2602,12 +4976,37 @@ class Client:
           bool isActive = 7;
           optional string fontAwesomeIcon = 8;
           optional double originalPrice = 9;
+          repeated AccountRole planRoles = 10;
         }
         message GetCloudDrivePlansResult { repeated CloudDrivePlan plans = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetCloudDrivePlans(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetCloudDrivePlans(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetCloudDrivePlans(Empty(), metadata=self.metadata)
 
-    def JoinPlan(self, arg: CloudDrive_pb2.JoinPlanRequest, /, async_: bool = False) -> CloudDrive_pb2.JoinPlanResult:
+    @overload
+    def JoinPlan(
+        self, 
+        arg: clouddrive.pb2.JoinPlanRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.JoinPlanResult:
+        ...
+    @overload
+    def JoinPlan(
+        self, 
+        arg: clouddrive.pb2.JoinPlanRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
+        ...
+    def JoinPlan(
+        self, 
+        arg: clouddrive.pb2.JoinPlanRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.JoinPlanResult | Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
         """
         join a plan
 
@@ -2636,9 +5035,33 @@ class Client:
           map<string, string> paymentMethods = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).JoinPlan(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.JoinPlan(arg, metadata=self.metadata)
+        else:
+            return self.stub.JoinPlan(arg, metadata=self.metadata)
 
-    def BindCloudAccount(self, arg: CloudDrive_pb2.BindCloudAccountRequest, /, async_: bool = False) -> None:
+    @overload
+    def BindCloudAccount(
+        self, 
+        arg: clouddrive.pb2.BindCloudAccountRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BindCloudAccount(
+        self, 
+        arg: clouddrive.pb2.BindCloudAccountRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BindCloudAccount(
+        self, 
+        arg: clouddrive.pb2.BindCloudAccountRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         bind account to a cloud account id
 
@@ -2655,9 +5078,37 @@ class Client:
           string cloudAccountId = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).BindCloudAccount(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BindCloudAccount(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BindCloudAccount(arg, metadata=self.metadata)
+            return None
 
-    def TransferBalance(self, arg: CloudDrive_pb2.TransferBalanceRequest, /, async_: bool = False) -> None:
+    @overload
+    def TransferBalance(
+        self, 
+        arg: clouddrive.pb2.TransferBalanceRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def TransferBalance(
+        self, 
+        arg: clouddrive.pb2.TransferBalanceRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def TransferBalance(
+        self, 
+        arg: clouddrive.pb2.TransferBalanceRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         transfer balance to another user
 
@@ -2674,9 +5125,37 @@ class Client:
           string password = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).TransferBalance(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.TransferBalance(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.TransferBalance(arg, metadata=self.metadata)
+            return None
 
-    def ChangeEmail(self, arg: CloudDrive_pb2.ChangeUserNameEmailRequest, /, async_: bool = False) -> None:
+    @overload
+    def ChangeEmail(
+        self, 
+        arg: clouddrive.pb2.ChangeUserNameEmailRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ChangeEmail(
+        self, 
+        arg: clouddrive.pb2.ChangeUserNameEmailRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ChangeEmail(
+        self, 
+        arg: clouddrive.pb2.ChangeUserNameEmailRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         change email
 
@@ -2693,9 +5172,34 @@ class Client:
           string password = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).ChangeEmail(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.ChangeEmail(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ChangeEmail(arg, metadata=self.metadata)
+            return None
 
-    def GetBalanceLog(self, /, async_: bool = False) -> CloudDrive_pb2.BalanceLogResult:
+    @overload
+    def GetBalanceLog(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.BalanceLogResult:
+        ...
+    @overload
+    def GetBalanceLog(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.BalanceLogResult]:
+        ...
+    def GetBalanceLog(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.BalanceLogResult | Coroutine[Any, Any, clouddrive.pb2.BalanceLogResult]:
         """
         chech balance log
 
@@ -2722,9 +5226,33 @@ class Client:
         }
         message BalanceLogResult { repeated BalanceLog logs = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetBalanceLog(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetBalanceLog(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetBalanceLog(Empty(), metadata=self.metadata)
 
-    def CheckActivationCode(self, arg: CloudDrive_pb2.StringValue, /, async_: bool = False) -> CloudDrive_pb2.CheckActivationCodeResult:
+    @overload
+    def CheckActivationCode(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CheckActivationCodeResult:
+        ...
+    @overload
+    def CheckActivationCode(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CheckActivationCodeResult]:
+        ...
+    def CheckActivationCode(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CheckActivationCodeResult | Coroutine[Any, Any, clouddrive.pb2.CheckActivationCodeResult]:
         """
         check activation code for a plan
 
@@ -2742,9 +5270,33 @@ class Client:
         }
         message StringValue { string value = 1; }
         """
-        return (self.async_stub if async_ else self.stub).CheckActivationCode(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.CheckActivationCode(arg, metadata=self.metadata)
+        else:
+            return self.stub.CheckActivationCode(arg, metadata=self.metadata)
 
-    def ActivatePlan(self, arg: CloudDrive_pb2.StringValue, /, async_: bool = False) -> CloudDrive_pb2.JoinPlanResult:
+    @overload
+    def ActivatePlan(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.JoinPlanResult:
+        ...
+    @overload
+    def ActivatePlan(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
+        ...
+    def ActivatePlan(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.JoinPlanResult | Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
         """
         Activate plan using an activation code
 
@@ -2770,9 +5322,33 @@ class Client:
         }
         message StringValue { string value = 1; }
         """
-        return (self.async_stub if async_ else self.stub).ActivatePlan(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.ActivatePlan(arg, metadata=self.metadata)
+        else:
+            return self.stub.ActivatePlan(arg, metadata=self.metadata)
 
-    def CheckCouponCode(self, arg: CloudDrive_pb2.CheckCouponCodeRequest, /, async_: bool = False) -> CloudDrive_pb2.CouponCodeResult:
+    @overload
+    def CheckCouponCode(
+        self, 
+        arg: clouddrive.pb2.CheckCouponCodeRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CouponCodeResult:
+        ...
+    @overload
+    def CheckCouponCode(
+        self, 
+        arg: clouddrive.pb2.CheckCouponCodeRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CouponCodeResult]:
+        ...
+    def CheckCouponCode(
+        self, 
+        arg: clouddrive.pb2.CheckCouponCodeRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CouponCodeResult | Coroutine[Any, Any, clouddrive.pb2.CouponCodeResult]:
         """
         check counpon code for a plan
 
@@ -2794,9 +5370,30 @@ class Client:
           double couponDiscountAmount = 4;
         }
         """
-        return (self.async_stub if async_ else self.stub).CheckCouponCode(arg, metadata=self.metadata)
+        if async_:
+            return self.async_stub.CheckCouponCode(arg, metadata=self.metadata)
+        else:
+            return self.stub.CheckCouponCode(arg, metadata=self.metadata)
 
-    def GetReferralCode(self, /, async_: bool = False) -> CloudDrive_pb2.StringValue:
+    @overload
+    def GetReferralCode(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.StringValue:
+        ...
+    @overload
+    def GetReferralCode(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.StringValue]:
+        ...
+    def GetReferralCode(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.StringValue | Coroutine[Any, Any, clouddrive.pb2.StringValue]:
         """
         get referral code of current user
 
@@ -2809,9 +5406,30 @@ class Client:
 
         message StringValue { string value = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetReferralCode(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetReferralCode(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetReferralCode(Empty(), metadata=self.metadata)
 
-    def BackupGetAll(self, /, async_: bool = False) -> CloudDrive_pb2.BackupList:
+    @overload
+    def BackupGetAll(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.BackupList:
+        ...
+    @overload
+    def BackupGetAll(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.BackupList]:
+        ...
+    def BackupGetAll(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.BackupList | Coroutine[Any, Any, clouddrive.pb2.BackupList]:
         """
         // list all backups
 
@@ -2843,9 +5461,33 @@ class Client:
           string watcherStatusMessage = 5;
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupGetAll(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.BackupGetAll(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.BackupGetAll(Empty(), metadata=self.metadata)
 
-    def BackupAdd(self, arg: CloudDrive_pb2.Backup, /, async_: bool = False) -> None:
+    @overload
+    def BackupAdd(
+        self, 
+        arg: clouddrive.pb2.Backup, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupAdd(
+        self, 
+        arg: clouddrive.pb2.Backup, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupAdd(
+        self, 
+        arg: clouddrive.pb2.Backup, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         add a backup
 
@@ -2904,9 +5546,37 @@ class Client:
           optional DaysOfWeek daysOfWeek = 5; // none means every day
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupAdd(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupAdd(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupAdd(arg, metadata=self.metadata)
+            return None
 
-    def BackupRemove(self, arg: CloudDrive_pb2.StringValue, /, async_: bool = False) -> None:
+    @overload
+    def BackupRemove(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupRemove(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupRemove(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         remove a backup by it's source path
 
@@ -2919,9 +5589,37 @@ class Client:
 
         message StringValue { string value = 1; }
         """
-        return (self.async_stub if async_ else self.stub).BackupRemove(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupRemove(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupRemove(arg, metadata=self.metadata)
+            return None
 
-    def BackupUpdate(self, arg: CloudDrive_pb2.Backup, /, async_: bool = False) -> None:
+    @overload
+    def BackupUpdate(
+        self, 
+        arg: clouddrive.pb2.Backup, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupUpdate(
+        self, 
+        arg: clouddrive.pb2.Backup, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupUpdate(
+        self, 
+        arg: clouddrive.pb2.Backup, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         update a backup
 
@@ -2980,9 +5678,37 @@ class Client:
           optional DaysOfWeek daysOfWeek = 5; // none means every day
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupUpdate(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupUpdate(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupUpdate(arg, metadata=self.metadata)
+            return None
 
-    def BackupAddDestination(self, arg: CloudDrive_pb2.BackupModifyRequest, /, async_: bool = False) -> None:
+    @overload
+    def BackupAddDestination(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupAddDestination(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupAddDestination(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         add destinations to a backup
 
@@ -3031,9 +5757,37 @@ class Client:
           KeepHistoryVersion = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupAddDestination(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupAddDestination(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupAddDestination(arg, metadata=self.metadata)
+            return None
 
-    def BackupRemoveDestination(self, arg: CloudDrive_pb2.BackupModifyRequest, /, async_: bool = False) -> None:
+    @overload
+    def BackupRemoveDestination(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupRemoveDestination(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupRemoveDestination(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         remove destinations from a backup
 
@@ -3082,9 +5836,37 @@ class Client:
           KeepHistoryVersion = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupRemoveDestination(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupRemoveDestination(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupRemoveDestination(arg, metadata=self.metadata)
+            return None
 
-    def BackupSetEnabled(self, arg: CloudDrive_pb2.BackupSetEnabledRequest, /, async_: bool = False) -> None:
+    @overload
+    def BackupSetEnabled(
+        self, 
+        arg: clouddrive.pb2.BackupSetEnabledRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupSetEnabled(
+        self, 
+        arg: clouddrive.pb2.BackupSetEnabledRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupSetEnabled(
+        self, 
+        arg: clouddrive.pb2.BackupSetEnabledRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         enable/disable a backup
 
@@ -3101,9 +5883,37 @@ class Client:
           bool isEnabled = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupSetEnabled(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupSetEnabled(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupSetEnabled(arg, metadata=self.metadata)
+            return None
 
-    def BackupSetFileSystemWatchEnabled(self, arg: CloudDrive_pb2.BackupModifyRequest, /, async_: bool = False) -> None:
+    @overload
+    def BackupSetFileSystemWatchEnabled(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupSetFileSystemWatchEnabled(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupSetFileSystemWatchEnabled(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         enable/disable a backup's FileSystemWatch
 
@@ -3152,9 +5962,37 @@ class Client:
           KeepHistoryVersion = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupSetFileSystemWatchEnabled(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupSetFileSystemWatchEnabled(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupSetFileSystemWatchEnabled(arg, metadata=self.metadata)
+            return None
 
-    def BackupUpdateStrategies(self, arg: CloudDrive_pb2.BackupModifyRequest, /, async_: bool = False) -> None:
+    @overload
+    def BackupUpdateStrategies(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupUpdateStrategies(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupUpdateStrategies(
+        self, 
+        arg: clouddrive.pb2.BackupModifyRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         deprecated, use BackupUpdate instead
 
@@ -3203,9 +6041,37 @@ class Client:
           KeepHistoryVersion = 2;
         }
         """
-        return (self.async_stub if async_ else self.stub).BackupUpdateStrategies(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupUpdateStrategies(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupUpdateStrategies(arg, metadata=self.metadata)
+            return None
 
-    def BackupRestartWalkingThrough(self, arg: CloudDrive_pb2.StringValue, /, async_: bool = False) -> None:
+    @overload
+    def BackupRestartWalkingThrough(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def BackupRestartWalkingThrough(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def BackupRestartWalkingThrough(
+        self, 
+        arg: clouddrive.pb2.StringValue, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         restart a backup walking through
 
@@ -3219,9 +6085,34 @@ class Client:
 
         message StringValue { string value = 1; }
         """
-        return (self.async_stub if async_ else self.stub).BackupRestartWalkingThrough(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.BackupRestartWalkingThrough(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.BackupRestartWalkingThrough(arg, metadata=self.metadata)
+            return None
 
-    def CanAddMoreBackups(self, /, async_: bool = False) -> CloudDrive_pb2.FileOperationResult:
+    @overload
+    def CanAddMoreBackups(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def CanAddMoreBackups(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def CanAddMoreBackups(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         """
         check if current plan can support more backups
 
@@ -3238,9 +6129,30 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
-        return (self.async_stub if async_ else self.stub).CanAddMoreBackups(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.CanAddMoreBackups(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.CanAddMoreBackups(Empty(), metadata=self.metadata)
 
-    def GetMachineId(self, /, async_: bool = False) -> CloudDrive_pb2.StringResult:
+    @overload
+    def GetMachineId(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.StringResult:
+        ...
+    @overload
+    def GetMachineId(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.StringResult]:
+        ...
+    def GetMachineId(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.StringResult | Coroutine[Any, Any, clouddrive.pb2.StringResult]:
         """
         get machine id
 
@@ -3253,9 +6165,30 @@ class Client:
 
         message StringResult { string result = 1; }
         """
-        return (self.async_stub if async_ else self.stub).GetMachineId(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetMachineId(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetMachineId(Empty(), metadata=self.metadata)
 
-    def GetOnlineDevices(self, /, async_: bool = False) -> CloudDrive_pb2.OnlineDevices:
+    @overload
+    def GetOnlineDevices(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.OnlineDevices:
+        ...
+    @overload
+    def GetOnlineDevices(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.OnlineDevices]:
+        ...
+    def GetOnlineDevices(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.OnlineDevices | Coroutine[Any, Any, clouddrive.pb2.OnlineDevices]:
         """
         get online devices
 
@@ -3278,9 +6211,33 @@ class Client:
           repeated Device devices = 1;
         }
         """
-        return (self.async_stub if async_ else self.stub).GetOnlineDevices(Empty(), metadata=self.metadata)
+        if async_:
+            return self.async_stub.GetOnlineDevices(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.GetOnlineDevices(Empty(), metadata=self.metadata)
 
-    def KickoutDevice(self, arg: CloudDrive_pb2.DeviceRequest, /, async_: bool = False) -> None:
+    @overload
+    def KickoutDevice(
+        self, 
+        arg: clouddrive.pb2.DeviceRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def KickoutDevice(
+        self, 
+        arg: clouddrive.pb2.DeviceRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def KickoutDevice(
+        self, 
+        arg: clouddrive.pb2.DeviceRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
         """
         kickout a device
 
@@ -3295,5 +6252,12 @@ class Client:
           string deviceId = 1;
         }
         """
-        return (self.async_stub if async_ else self.stub).KickoutDevice(arg, metadata=self.metadata)
+        if async_:
+            async def request():
+                await self.async_stub.KickoutDevice(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.KickoutDevice(arg, metadata=self.metadata)
+            return None
 

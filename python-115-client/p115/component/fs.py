@@ -3454,7 +3454,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     dst_name = data["file_name"]
                     return (yield partial(self.attr, [dst_name], pid=dst_pid, async_=async_))
             else:
-                # TODO: 115 是允许文件同名的（文件夹不可同名），因此改成一个 uuid 名字是这是多此一举
                 yield partial(self.fs_rename, src_id, str(uuid4()), async_=async_)
                 try:
                     yield partial(self.fs_move, src_id, dst_pid, async_=async_)

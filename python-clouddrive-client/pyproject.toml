@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "clouddrive"
-version = "0.0.12.2.9"
+version = "0.0.12.3"
 description = "Python wrapper for CloudDrive."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-clouddrive-client"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-clouddrive-client"
-keywords = ["nas", "clouddrive"]
+keywords = ["client", "clouddrive"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",

@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).parent
 PROTO_DIR = PROJECT_DIR / "proto"
 PROTO_FILE = PROTO_DIR / "CloudDrive.proto"
-PROTO_PYFILE = PROTO_DIR / "CloudDrive_pb2.py"
+PROTO_PYFILE = PROTO_DIR / "clouddrive.pb2.py"
 
 need_make_pyproto = False
 
@@ -116,34 +116,105 @@ for name, meta in rpcs.items():
         if rettype not in messages:
             raise NotImplementedError(meta)
         if not retspec:
-            ret_anno = f"CloudDrive_pb2.{rettype}"
+            ret_anno = f"clouddrive.pb2.{rettype}"
         elif retspec == "repeated":
-            ret_anno = f"list[CloudDrive_pb2.{rettype}]"
+            ret_anno = f"list[clouddrive.pb2.{rettype}]"
         elif retspec == "stream":
-            ret_anno = f"Iterator[CloudDrive_pb2.{rettype}]"
+            ret_anno = f"Iterable[clouddrive.pb2.{rettype}]"
         else:
             raise NotImplementedError(meta)
         refs.add(rettype)
         refs.update(messages[rettype]["refers"])
     if argtype == "google.protobuf.Empty":
         arg_anno = "None"
-        method_header = f"def {name}(self, /, async_: bool = False) -> {ret_anno}:"
-        method_body = f"return (self.async_stub if async_ else self.stub).{name}(Empty(), metadata=self.metadata)"
+        method_header = f"""\
+@overload
+def {name}(
+    self, 
+    /, 
+    async_: Literal[False] = False, 
+) -> {ret_anno}:
+    ...
+@overload
+def {name}(
+    self, 
+    /, 
+    async_: Literal[True], 
+) -> Coroutine[Any, Any, {ret_anno}]:
+    ...
+def {name}(
+    self, 
+    /, 
+    async_: Literal[False, True] = False, 
+) -> {ret_anno} | Coroutine[Any, Any, {ret_anno}]:"""
+        if ret_anno == "None":
+            method_body = f"""\
+if async_:
+    async def request():
+        await self.async_stub.{name}(Empty(), metadata=self.metadata)
+        return None
+    return request()
+else:
+    self.stub.{name}(Empty(), metadata=self.metadata)
+    return None"""
+        else:
+            method_body = f"""\
+if async_:
+    return self.async_stub.{name}(Empty(), metadata=self.metadata)
+else:
+    return self.stub.{name}(Empty(), metadata=self.metadata)"""
     else:
         if argtype not in messages:
             raise NotImplementedError(meta)
         if not argspec:
-            arg_anno = f"CloudDrive_pb2.{argtype}"
+            arg_anno = f"clouddrive.pb2.{argtype}"
         elif argspec == "repeated":
-            arg_anno = f"list[CloudDrive_pb2.{argtype}]"
+            arg_anno = f"list[clouddrive.pb2.{argtype}]"
         elif argspec == "stream":
-            arg_anno = f"Iterator[CloudDrive_pb2.{argtype}]"
+            arg_anno = f"Sequence[clouddrive.pb2.{argtype}]"
         else:
             raise NotImplementedError(meta)
         refs.add(argtype)
         refs.update(messages[argtype]["refers"])
-        method_header = f"def {name}(self, arg: {arg_anno}, /, async_: bool = False) -> {ret_anno}:"
-        method_body = f"return (self.async_stub if async_ else self.stub).{name}(arg, metadata=self.metadata)"
+        method_header = f"""\
+@overload
+def {name}(
+    self, 
+    arg: {arg_anno}, 
+    /, 
+    async_: Literal[False] = False, 
+) -> {ret_anno}:
+    ...
+@overload
+def {name}(
+    self, 
+    arg: {arg_anno}, 
+    /, 
+    async_: Literal[True], 
+) -> Coroutine[Any, Any, {ret_anno}]:
+    ...
+def {name}(
+    self, 
+    arg: {arg_anno}, 
+    /, 
+    async_: Literal[False, True] = False, 
+) -> {ret_anno} | Coroutine[Any, Any, {ret_anno}]:"""
+        if ret_anno == "None":
+            method_body = f"""\
+if async_:
+    async def request():
+        await self.async_stub.{name}(arg, metadata=self.metadata)
+        return None
+    return request()
+else:
+    self.stub.{name}(arg, metadata=self.metadata)
+    return None"""
+        else:
+            method_body = f"""\
+if async_:
+    return self.async_stub.{name}(arg, metadata=self.metadata)
+else:
+    return self.stub.{name}(arg, metadata=self.metadata)"""
     method_map[name] = "{%s}" % ", ".join(f'"{k}": {v}' for k, v in (("argument", arg_anno), ("return", ret_anno)) if v != "None")
     method_doc_parts = [
         CRE_comment_prefix_sub("", meta["comment"]), 
@@ -176,8 +247,9 @@ file.write("""\
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["Client", "CLOUDDRIVE_API_MAP"]
 
+from collections.abc import Coroutine
 from functools import cached_property
-from typing import Any, Iterator, Never, Optional
+from typing import overload, Any, Iterable, Literal, Never, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
@@ -190,9 +262,8 @@ PROTO_DIR = str(pathlib.Path(__file__).parent / "proto")
 if PROTO_DIR not in sys.path:
     sys.path.append(PROTO_DIR)
 
-import CloudDrive_pb2 # type: ignore
-import CloudDrive_pb2_grpc # type: ignore
-import CloudDrive_grpc # type: ignore
+import clouddrive.pb2
+from .proto import CloudDrive_grpc, CloudDrive_pb2_grpc
 
 
 CLOUDDRIVE_API_MAP = {
@@ -254,7 +325,7 @@ class Client:
         return insecure_channel(self.origin.authority)
 
     @cached_property
-    def stub(self, /) -> CloudDrive_pb2_grpc.CloudDriveFileSrvStub:
+    def stub(self, /) -> clouddrive.proto.CloudDrive_pb2_grpc.CloudDriveFileSrvStub:
         return CloudDrive_pb2_grpc.CloudDriveFileSrvStub(self.channel)
 
     @cached_property
@@ -263,7 +334,7 @@ class Client:
         return AsyncChannel(origin.host, origin.port)
 
     @cached_property
-    def async_stub(self, /) -> CloudDrive_grpc.CloudDriveFileSrvStub:
+    def async_stub(self, /) -> clouddrive.proto.CloudDrive_grpc.CloudDriveFileSrvStub:
         return CloudDrive_grpc.CloudDriveFileSrvStub(self.async_channel)
 
     def close(self, /):
@@ -287,7 +358,7 @@ class Client:
             username = self.username
         if not password:
             password = self.password
-        response = self.stub.GetToken(CloudDrive_pb2.GetTokenRequest(userName=username, password=password))
+        response = self.stub.GetToken(clouddrive.pb2.GetTokenRequest(userName=username, password=password))
         self.metadata[:] = [("authorization", "Bearer " + response.token),]
 
 """)
@@ -304,5 +375,4 @@ for method_def in method_defs:
 # 3. 支持 snake case 格式的 api，接受 None 或 dict，返回 None、dict、list[dict]、Iterator[dict]、Iterator[list[dict]] (内部调用驼峰式的相应接口)，要做 check_response
 # 4. snake case 格式的 api，参数需要做转换，用一个专门的字典来收集相关的嵌套类型（需要被迭代转换）
 # 5. snake case 格式的 api 的签名，参数和返回值，用层级嵌套的 dict 来表示，通过第 4 条的原理，迭代生成
-# 6. CloudDrive_pb2 变为 clouddrive.pb2
 

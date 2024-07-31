@@ -11,7 +11,7 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 12)
+__version__ = (0, 0, 12, 3)
 __all__ = [
     "CLOUDDRIVE_API_MAP", "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
     "CloudDriveDownloadTaskList", "CloudDriveUploadTaskList", 
@@ -843,7 +843,7 @@ class CloudDriveFileSystem:
     @check_response
     def _iterdir(self, path: str, /, refresh: bool = False):
         it = self.client.GetSubFiles(CloudDrive_pb2.ListSubFileRequest(path=path, forceRefresh=refresh))
-        it = iter(check_response(it.__next__), None)
+        it = iter(check_response(iter(it).__next__), None)
         return (a for m in it for a in m.subFiles)
 
     @check_response
@@ -873,7 +873,7 @@ class CloudDriveFileSystem:
             forceRefresh=refresh, 
             fuzzyMatch=fuzzy, 
         ))
-        it = iter(check_response(it.__next__), None)
+        it = iter(check_response(iter(it).__next__), None)
         return (a for m in it for a in m.subFiles)
 
     @check_response
@@ -2357,7 +2357,7 @@ class CloudDriveDownloadTaskList:
     def list(
         self, 
         /, 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ) -> list[dict] | Coroutine[None, None, list[dict]]:
         "列出所有任务"
         if async_:
@@ -2417,7 +2417,7 @@ class CloudDriveUploadTaskList:
         self, 
         /, 
         keys: None | str | Iterable[str] = None, 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ):
         "取消某些任务"
         if keys is None:
@@ -2444,7 +2444,7 @@ class CloudDriveUploadTaskList:
     def clear(
         self, 
         /, 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ) -> None | Coroutine[None, None, None]:
         "清空任务列表"
         return self.cancel()
@@ -2488,7 +2488,7 @@ class CloudDriveUploadTaskList:
         /, 
         key: str, 
         default=None, 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ) -> Any | Coroutine[None, None, Any]:
         "获取某个任务信息"
         if async_:
@@ -2517,7 +2517,7 @@ class CloudDriveUploadTaskList:
         self, 
         /, 
         keys: None | str | Iterable[str] = None, 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ):
         "暂停某些任务"
         if keys is None:
@@ -2547,7 +2547,7 @@ class CloudDriveUploadTaskList:
         self, 
         /, 
         keys: None | str | Iterable[str] = None, 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ):
         "恢复某些任务"
         if keys is None:
@@ -2616,7 +2616,7 @@ class CloudDriveUploadTaskList:
         page: int = 0, 
         page_size: int = 0, 
         filter: str = "", 
-        async_: bool = False, 
+        async_: Literal[False, True] = False, 
     ) -> list[dict] | Coroutine[None, None, list[dict]]:
         "列出所有任务"
         if async_:
