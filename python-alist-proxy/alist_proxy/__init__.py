@@ -2,15 +2,16 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 4)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
 
-from asyncio import create_task, sleep, Queue
+from asyncio import create_task, get_running_loop, sleep, to_thread, Queue
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from inspect import isawaitable
+from inspect import isawaitable, iscoroutinefunction
 from itertools import islice
 from os.path import basename as os_basename
 from posixpath import basename, join as joinpath, split as splitpath
@@ -56,6 +57,7 @@ def make_application(
     collect: None | Callable[[dict], Any] = None, 
     project: None | Callable[[dict], Any] = None, 
     methods: list[str] = DEFAULT_METHODS, 
+    threaded: bool = False, 
 ) -> Application:
     """创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
 
@@ -63,30 +65,53 @@ def make_application(
     :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
     :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
     :param methods: 需要监听的 HTTP 方法集
+    :param threaded: collect 和 project，如果不是 async 函数，就放到单独的线程中运行
 
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
     app = Application(router=Router())
     logger = getattr(app, "logger")
     logger.level = 20
+
     if collect is None:
         collect = logger.info
-    setattr(app, "collect", collect)
+    if threaded:
+        if not iscoroutinefunction(collect):
+            collect_ = collect
+            collect = lambda *args, **kwds: to_thread(collect_, *args, **kwds)
+        if project is not None and not iscoroutinefunction(project):
+            project_ = project
+            project = lambda *args, **kwds: to_thread(project_, *args, **kwds)
+        @app.lifespan
+        async def register_executor(app: Application):
+            executor = ThreadPoolExecutor(thread_name_prefix="alist-proxy")
+            setattr(get_running_loop(), "_default_executor", executor)
+            try:
+                with executor:
+                    app.services.register(ThreadPoolExecutor, instance=executor)
+                    yield
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
 
-    queue: Queue = Queue()
-    get, put_nowait, task_done = queue.get, queue.put_nowait, queue.task_done
+    mailbox: Queue[dict]
+    setattr(app, "mailbox", mailbox := Queue())
+    setattr(app, "recv", recv := mailbox.get)
+    setattr(app, "send", send := mailbox.put_nowait)
+    setattr(app, "done", done := mailbox.task_done)
 
     async def work():
         while True:
-            task = await get()
+            task = await recv()
             try:
-                ret = collect(task)
-                if isawaitable(ret):
+                if project is not None:
+                    if isawaitable(task := project(task)):
+                        task = await task
+                if task is not None and isawaitable(ret := collect(task)):
                     await ret
             except BaseException as e:
                 logger.exception(e)
             finally:
-                task_done()
+                done()
 
     @app.on_middlewares_configuration
     def configure_forwarded_headers(app: Application):
@@ -188,13 +213,7 @@ def make_application(
             }
             raise
         finally:
-            try:
-                if project is not None:
-                    result = project(result)
-                if result is not None:
-                    put_nowait(result)
-            except BaseException as e:
-                logger.exception(e)
+            send(result)
 
     return app
 
@@ -203,12 +222,14 @@ def make_application_with_fs_events(
     alist_token: str, 
     base_url: str = "http://localhost:5244", 
     collect: None | Callable[[dict], Any] = None, 
+    threaded: bool = False, 
 ) -> Application:
     """只收集和文件系统操作有关的事件
 
     :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
     :param base_url: alist 的 base_url
     :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
+    :param threaded: collect 如果不是 async 函数，就放到单独的线程中运行
 
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
@@ -226,21 +247,21 @@ def make_application_with_fs_events(
             if result := response["json"]["data"]:
                 data["result"] = result
             match data["method"]:
-                case "put" | "form":
+                case "copy":
+                    data["type"] = "copy"
+                case "form" | "put":
                     file_path = next(v for k, v in payload["headers"] if k == "file-path")
                     data.update(type="upload", payload={"path": unquote(file_path)})
-                case "rename" | "batch_rename" | "regex_rename":
-                    data["type"] = "rename"
+                case "get" | "list" | "search" | "dirs":
+                    data["type"] = "find"
+                case "mkdir":
+                    data["type"] = "mkdir"
                 case "move" | "recursive_move":
                     data["type"] = "move"
                 case "remove" | "remove_empty_directory":
                     data["type"] = "remove"
-                case "copy":
-                    data["type"] = "copy"
-                case "mkdir":
-                    data["type"] = "mkdir"
-                case "get" | "list" | "search" | "dirs":
-                    data["type"] = "find"
+                case "rename" | "batch_rename" | "regex_rename":
+                    data["type"] = "rename"
                 case _:
                     return
             return data
@@ -256,16 +277,14 @@ def make_application_with_fs_events(
                 }, 
             }
             match data["method"]:
-                case "PUT":
-                    data["type"] = "upload"
-                case "DELETE":
-                    data["type"] = "remove"
-                case "MKCOL":
-                    data["type"] = "mkdir"
                 case "COPY":
                     data["type"] = "copy"
                     destination = next(v for k, v in payload["headers"] if k == "destination")
                     data["payload"]["to_path"] = unquote(urlsplit(destination).path).rstrip("/")
+                case "DELETE":
+                    data["type"] = "remove"
+                case "MKCOL":
+                    data["type"] = "mkdir"
                 case "MOVE":
                     data["type"] = "move"
                     destination = next(v for k, v in payload["headers"] if k == "destination")
@@ -277,13 +296,20 @@ def make_application_with_fs_events(
                             for el in fromstring(response["text"]).iterfind(".//{DAV:}prop")
                         ), 2, None, 2
                     ))
+                case "PUT":
+                    data["type"] = "upload"
                 case _:
                     return
             return data
 
-    app = make_application(base_url=base_url, collect=collect, project=project)
-    collect = cast(Callable, getattr(app, "collect"))
-    logger  = getattr(app, "logger")
+    app = make_application(
+        base_url=base_url, 
+        collect=collect, 
+        project=project, 
+        threaded=threaded, 
+    )
+    logger = getattr(app, "logger")
+    send = getattr(app, "send")
 
     if alist_token:
         client  = AlistClient.from_auth(alist_token, base_url)
@@ -309,10 +335,10 @@ def make_application_with_fs_events(
                             continue
                         for task in tasklist:
                             if task["state"] == 2:
-                                src_sto, src_path, dst_sto, dst_dir = CRE_copy_name_extract(task["name"]).groups() # type: ignore
-                                src_dir, name = splitpath(src_path)
                                 try:
-                                    collect({
+                                    src_sto, src_path, dst_sto, dst_dir = CRE_copy_name_extract(task["name"]).groups() # type: ignore
+                                    src_dir, name = splitpath(src_path)
+                                    send({
                                         "category": "task", 
                                         "type": "copy", 
                                         "method": "copy", 
@@ -348,9 +374,9 @@ def make_application_with_fs_events(
                             continue
                         for task in tasklist:
                             if task["state"] == 2:
-                                name, dst_sto, dst_dir = CRE_upload_name_extract(task["name"]).groups() # type: ignore
                                 try:
-                                    collect({
+                                    name, dst_sto, dst_dir = CRE_upload_name_extract(task["name"]).groups() # type: ignore
+                                    send({
                                         "category": "task", 
                                         "type": "upload", 
                                         "method": "upload", 
@@ -361,7 +387,6 @@ def make_application_with_fs_events(
                                             "name": name, 
                                             "is_dir": False, 
                                         }
-
                                     })
                                     await remove(task["id"], async_=True)
                                 except BaseException as e:
@@ -384,10 +409,10 @@ def make_application_with_fs_events(
                             continue
                         for task in tasklist:
                             if task["state"] == 2:
-                                local_path, dst_dir = CRE_transfer_name_extract(task["name"]).groups() # type: ignore
-                                name = os_basename(local_path)
                                 try:
-                                    collect({
+                                    local_path, dst_dir = CRE_transfer_name_extract(task["name"]).groups() # type: ignore
+                                    name = os_basename(local_path)
+                                    send({
                                         "category": "task", 
                                         "type": "upload", 
                                         "method": "transfer", 
@@ -460,7 +485,7 @@ def make_application_with_fs_event_stream(
                     last_id = b"$"
                 read = redis.xread
             while True:
-                messages = await read(streams={redis_key: last_id}, block=1000)
+                messages = await read(streams={redis_key: last_id})
                 if messages:
                     for last_id, item in messages[0][1]:
                         await websocket.send_bytes(b'{"id": "%s", "data": %s}' % (last_id, item[b"data"]))

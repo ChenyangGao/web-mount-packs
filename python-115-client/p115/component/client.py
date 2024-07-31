@@ -274,6 +274,7 @@ class P115Client:
         self, 
         /, 
         cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel] = None, 
+        check_cookies: bool = True, 
         app: str = "web", 
         console_qrcode: bool = True, 
     ):
@@ -291,9 +292,10 @@ class P115Client:
             cookies = resp["data"]["cookie"]
         if cookies:
             setattr(self, "cookies", cookies)
-            upload_info = self.upload_info
-            if not upload_info["state"]:
-                raise AuthenticationError(upload_info)
+            if check_cookies:
+                upload_info = self.upload_info
+                if not upload_info["state"]:
+                    raise AuthenticationError(upload_info)
 
     def __del__(self, /):
         self.close()
@@ -357,6 +359,12 @@ class P115Client:
             for cookie in cookies:
                 set_cookie(create_cookie("", cookie))
         self.__dict__.pop("upload_info", None)
+
+    @property
+    def cookies_all(self, /) -> str:
+        """所有和 115 有关的 cookie 值
+        """
+        return "; ".join(f"{cookie.name}={cookie.value}" for cookie in self.cookiejar if cookie.domain.endswith(".115.com"))
 
     @property
     def headers(self, /) -> CIMultiDict:

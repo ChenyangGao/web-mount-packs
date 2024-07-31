@@ -24,13 +24,14 @@ PACKAGE CONTENTS
     __main__
 
 FUNCTIONS
-    make_application(base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, project: None | collections.abc.Callable[[dict], typing.Any] = None, methods: list[str] = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'CONNECT', 'OPTIONS', 'TRACE', 'PATCH', 'MKCOL', 'COPY', 'MOVE', 'PROPFIND', 'PROPPATCH', 'LOCK', 'UNLOCK', 'REPORT', 'ACL']) -> blacksheep.server.application.Application
+    make_application(base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, project: None | collections.abc.Callable[[dict], typing.Any] = None, methods: list[str] = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'CONNECT', 'OPTIONS', 'TRACE', 'PATCH', 'MKCOL', 'COPY', 'MOVE', 'PROPFIND', 'PROPPATCH', 'LOCK', 'UNLOCK', 'REPORT', 'ACL'], threaded: bool = False) -> blacksheep.server.application.Application
         创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
         
         :param base_url: alist 的 base_url
         :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
         :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
         :param methods: 需要监听的 HTTP 方法集
+        :param threaded: collect 和 project，如果不是 async 函数，就放到单独的线程中运行
         
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     
@@ -45,12 +46,13 @@ FUNCTIONS
         
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     
-    make_application_with_fs_events(alist_token: str, base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None) -> blacksheep.server.application.Application
+    make_application_with_fs_events(alist_token: str, base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, threaded: bool = False) -> blacksheep.server.application.Application
         只收集和文件系统操作有关的事件
         
         :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
         :param base_url: alist 的 base_url
         :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
+        :param threaded: collect 如果不是 async 函数，就放到单独的线程中运行
         
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
 
@@ -58,7 +60,7 @@ DATA
     __all__ = ['make_application', 'make_application_with_fs_events', 'make_application_with_fs_event_stream']
 
 VERSION
-    (0, 0, 1)
+    (0, 0, 4)
 
 AUTHOR
     ChenyangGao <https://chenyanggao.github.io>
@@ -140,48 +142,48 @@ run(pull())
 你可以从 <kbd>/pull</kbd> 接口拉取 json 格式的数据。这些数据有几个共同的字段
 
 1. category: 任务类别。有 3 个可能的值：
-    - web: 由网页直接调用接口成功后产生
-    - dav: 通过 webdav 的成功操作产生
-    - task: 监控后台任务，由执行成功的任务产生
+    - <kbd>web</kbd>: 由网页直接调用接口成功后产生
+    - <kbd>dav</kbd>: 通过 webdav 的成功操作产生
+    - <kbd>task</kbd>: 监控后台任务，由执行成功的任务产生
 2. type: 任务类型。可能的取值如下：
-    - upload: 上传/创建 文件
-    - rename: 文件或目录的改名
-    - move: 移动文件或目录（webdav 还包括改名）
-    - remove: 删除文件或目录
-    - copy: 复制文件或目录
-    - mkdir: 创建空目录
-    - find: 查询文件或目录的信息，或罗列目录
+    - <kbd>upload</kbd>: 上传/创建 文件
+    - <kbd>rename</kbd>: 文件或目录的改名
+    - <kbd>move</kbd>: 移动文件或目录（webdav 还包括改名）
+    - <kbd>remove</kbd>: 删除文件或目录
+    - <kbd>copy</kbd>: 复制文件或目录
+    - <kbd>mkdir</kbd>: 创建空目录
+    - <kbd>find</kbd>: 查询文件或目录的信息，或罗列目录
 3. method: 具体的操作方法
 4. payload: 和路径有关的数据，每组（由 (method, category, type) 一起确定）都有所不同
 
 同一种 category 的各个 method 的 payload 的字段构成近似。
 
-- web: payload 收集了相关的查询参数，详见 https://alist.nn.ci/guide/api/fs.html
-- dav: 一般包含
-    - 1) path: 被操作的路径 
-    - 2) is_dir: 是否目录
+- <kbd>web</kbd>: payload 收集了相关的查询参数，详见 https://alist.nn.ci/guide/api/fs.html
+- <kbd>dav</kbd>: 一般包含
+    - <kbd>path</kbd>: 被操作的路径 
+    - <kbd>is_dir</kbd>: 是否目录
 
     可能包含
 
-    - 3) to_path: 操作后的路径（COPY 或 MOVE）
-- task: 目前有 3 种情况
-    - method 为 copy，即复制，包含 
-        - src_path: 源路径
-        - dst_path: 目标路径
-        - src_storage: 源所在存储
-        - dst_storage: 目标所在存储
-        - src_dir: 源所在目录
-        - dst_dir: 目标所在目录
-        - name: 名字
-        - is_dir: 是否目录
-    - method 为 upload，即上传，包含
-        - path: 目标路径
-        - dst_storage: 目标所在存储
-        - dst_dir: 目标所在目录
-        - name: 名字
-        - is_dir: 是否目录，必为 False
-    - method 为 transfer，即离线下载后上传，包含
-        - path: 目标路径
-        - dst_dir: 目标所在目录
-        - name: 名字
-        - is_dir: 是否目录，必为 False
+    - <kbd>to_path</kbd>: 操作后的路径（COPY 或 MOVE）
+- <kbd>task</kbd>: 目前有 3 种情况
+    - <kbd>method</kbd> 为 copy，即复制，包含 
+        - <kbd>src_path</kbd>: 源路径
+        - <kbd>dst_path</kbd>: 目标路径
+        - <kbd>src_storage</kbd>: 源所在存储
+        - <kbd>dst_storage</kbd>: 目标所在存储
+        - <kbd>src_dir</kbd>: 源所在目录
+        - <kbd>dst_dir</kbd>: 目标所在目录
+        - <kbd>name</kbd>: 名字
+        - <kbd>is_dir</kbd>: 是否目录
+    - <kbd>method</kbd> 为 upload，即上传，包含
+        - <kbd>path</kbd>: 目标路径
+        - <kbd>dst_storage</kbd>: 目标所在存储
+        - <kbd>dst_dir</kbd>: 目标所在目录
+        - <kbd>name</kbd>: 名字
+        - <kbd>is_dir</kbd>: 是否目录，必为 False
+    - <kbd>method</kbd> 为 transfer，即离线下载后上传，包含
+        - <kbd>path</kbd>: 目标路径
+        - <kbd>dst_dir</kbd>: 目标所在目录
+        - <kbd>name</kbd>: 名字
+        - <kbd>is_dir</kbd>: 是否目录，必为 False
