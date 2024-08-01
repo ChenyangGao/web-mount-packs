@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 3)
+__version__ = (0, 2, 4)
 __requirements__ = ["cachetools", "flask", "Flask-Compress", "python-115", "urllib3_request", "werkzeug", "wsgidav"]
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
@@ -453,8 +453,8 @@ class FileResource(DavPathBase, DAVNonCollection):
             self.__dict__["size"] = url["size"]
             return url["data"]["source_url"]
         else:
-            url = relogin_wrap(attr.get_url, headers={"User-Agent": user_agent})
-        return str(url)
+            name = attr["name"].translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
+            return f"/{name}?id={attr['id']}&password={password}"
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (

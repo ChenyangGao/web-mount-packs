@@ -77,11 +77,9 @@ def make_application(
         collect = logger.info
     if threaded:
         if not iscoroutinefunction(collect):
-            collect_ = collect
-            collect = lambda *args, **kwds: to_thread(collect_, *args, **kwds)
+            collect = partial(to_thread, collect)
         if project is not None and not iscoroutinefunction(project):
-            project_ = project
-            project = lambda *args, **kwds: to_thread(project_, *args, **kwds)
+            project = partial(to_thread, project)
         @app.lifespan
         async def register_executor(app: Application):
             executor = ThreadPoolExecutor(thread_name_prefix="alist-proxy")
@@ -115,7 +113,7 @@ def make_application(
 
     @app.on_middlewares_configuration
     def configure_forwarded_headers(app: Application):
-        app.middlewares.insert(0, ForwardedHeadersMiddleware())
+        app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
 
     @app.lifespan
     async def register_http_client(app: Application):

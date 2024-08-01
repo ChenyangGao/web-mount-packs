@@ -126,6 +126,7 @@ try:
     from blacksheep.common.types import normalize_headers
     from blacksheep.contents import FormContent
     from blacksheep.exceptions import HTTPException
+    from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
     from blacksheep.messages import Request, Response
     from cachetools import LRUCache, TTLCache
     from Crypto.PublicKey import RSA
@@ -141,6 +142,7 @@ except ImportError:
     from blacksheep.common.types import normalize_headers
     from blacksheep.contents import FormContent
     from blacksheep.exceptions import HTTPException
+    from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
     from blacksheep.messages import Request, Response
     from cachetools import LRUCache, TTLCache
     from Crypto.PublicKey import RSA
@@ -497,6 +499,11 @@ def process_info(info: dict, dir: None | str = None) -> str:
     elif dir is not None:
         PATH_TO_ID[fn] = fid
     return pickcode
+
+
+@app.on_middlewares_configuration
+def configure_forwarded_headers(app):
+    app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
 
 
 @app.lifespan

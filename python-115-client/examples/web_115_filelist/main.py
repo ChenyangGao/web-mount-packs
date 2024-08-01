@@ -168,7 +168,7 @@ common_status_docs = docs(responses={
 
 @app.on_middlewares_configuration
 def configure_forwarded_headers(app):
-    app.middlewares.insert(0, ForwardedHeadersMiddleware())
+    app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
 
 
 def format_bytes(
