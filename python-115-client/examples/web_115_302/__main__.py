@@ -453,8 +453,7 @@ class FileResource(DavPathBase, DAVNonCollection):
             self.__dict__["size"] = url["size"]
             return url["data"]["source_url"]
         else:
-            name = attr["name"].translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
-            return f"/{name}?id={attr['id']}&password={password}"
+            return f"/{quote(attr['name'], safe='')}?id={attr['id']}&password={password}"
 
     def get_etag(self, /) -> str:
         return "%s-%s-%s" % (
