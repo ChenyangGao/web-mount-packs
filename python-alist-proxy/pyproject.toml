@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "alist_proxy"
-version = "0.0.4.1"
+version = "0.0.5"
 description = "Python alist proxy and monitor."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

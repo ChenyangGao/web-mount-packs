@@ -51,7 +51,7 @@ def main():
     debug = args.debug
     if debug:
         getattr(app, "logger").level = 10
-    app.show_error_details = True
+        app.show_error_details = True
     run(
         app, 
         host=args.host, 

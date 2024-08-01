@@ -2,12 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
 
-from asyncio import create_task, get_running_loop, sleep, to_thread, Queue
+from asyncio import get_running_loop, sleep, to_thread, TaskGroup
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -91,29 +91,32 @@ def make_application(
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
 
-    mailbox: Queue[dict]
-    setattr(app, "mailbox", mailbox := Queue())
-    setattr(app, "recv", recv := mailbox.get)
-    setattr(app, "send", send := mailbox.put_nowait)
-    setattr(app, "done", done := mailbox.task_done)
+    @app.on_middlewares_configuration
+    def configure_forwarded_headers(app: Application):
+        app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
 
-    async def work():
-        while True:
-            task = await recv()
+    @app.on_start
+    async def on_start(app: Application):
+        app.__dict__["running"] = True
+
+    @app.lifespan
+    async def register_task_group(app: Application):
+        async def work(result: dict):
             try:
+                task = result
                 if project is not None:
                     if isawaitable(task := project(task)):
                         task = await task
                 if task is not None and isawaitable(ret := collect(task)):
                     await ret
             except BaseException as e:
-                logger.exception(e)
-            finally:
-                done()
-
-    @app.on_middlewares_configuration
-    def configure_forwarded_headers(app: Application):
-        app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
+                logger.exception(f"can't collect data: {result!r}")
+        async with TaskGroup() as task_group:
+            app.services.register(TaskGroup, instance=task_group)
+            create_task = task_group.create_task
+            task_group.__dict__["collect"] = lambda result: create_task(work(result))
+            yield
+            app.__dict__["running"] = False
 
     @app.lifespan
     async def register_http_client(app: Application):
@@ -121,13 +124,14 @@ def make_application(
             app.services.register(ClientSession, instance=client)
             yield
 
-    @app.after_start
-    async def on_start(app: Application):
-        create_task(work())
-
     @app.router.route("/", methods=methods)  
     @app.router.route("/<path:path>", methods=methods)
-    async def proxy(request: Request, client: ClientSession, path: str = ""):
+    async def proxy(
+        request: Request, 
+        client: ClientSession, 
+        task_group: TaskGroup, 
+        path: str = "", 
+    ):
         proxy_base_url = f"{request.scheme}://{request.host}"
         request_headers = [
             (k, base_url + v[len(proxy_base_url):] if k == "destination" and v.startswith(proxy_base_url) else v)
@@ -211,7 +215,7 @@ def make_application(
             }
             raise
         finally:
-            send(result)
+            task_group.__dict__["collect"](result)
 
     return app
 
@@ -232,6 +236,8 @@ def make_application_with_fs_events(
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
     def project(data):
+        if "category" in data:
+            return data
         if not(response := data.get("response")) or not(200 <= response["status"] < 300):
             return
         payload = data["request"]["payload"]
@@ -306,8 +312,8 @@ def make_application_with_fs_events(
         project=project, 
         threaded=threaded, 
     )
+    app_ns = app.__dict__
     logger = getattr(app, "logger")
-    send = getattr(app, "send")
 
     if alist_token:
         client  = AlistClient.from_auth(alist_token, base_url)
@@ -319,10 +325,12 @@ def make_application_with_fs_events(
 
         @app.after_start
         async def pull_copy_tasklist(app: Application):
+            task_group = app.services.resolve(TaskGroup)
+            collect: Callable[[dict], None] = task_group.__dict__["collect"]
             copy_tasklist = client.copy_tasklist
             list_done, remove = copy_tasklist.list_done, copy_tasklist.remove
             async def work():
-                while True:
+                while app_ns["running"]:
                     try:
                         tasklist = await list_done(async_=True)
                     except BaseException as e:
@@ -336,7 +344,7 @@ def make_application_with_fs_events(
                                 try:
                                     src_sto, src_path, dst_sto, dst_dir = CRE_copy_name_extract(task["name"]).groups() # type: ignore
                                     src_dir, name = splitpath(src_path)
-                                    send({
+                                    collect({
                                         "category": "task", 
                                         "type": "copy", 
                                         "method": "copy", 
@@ -354,14 +362,16 @@ def make_application_with_fs_events(
                                     await remove(task["id"], async_=True)
                                 except BaseException as e:
                                     logger.exception(e)
-            create_task(work())
+            task_group.create_task(work())
 
         @app.after_start
         async def pull_upload_tasklist():
+            task_group = app.services.resolve(TaskGroup)
+            collect: Callable[[dict], None] = task_group.__dict__["collect"]
             upload_tasklist = client.upload_tasklist
             list_done, remove = upload_tasklist.list_done, upload_tasklist.remove
             async def work():
-                while True:
+                while app_ns["running"]:
                     try:
                         tasklist = await list_done(async_=True)
                     except BaseException as e:
@@ -374,7 +384,7 @@ def make_application_with_fs_events(
                             if task["state"] == 2:
                                 try:
                                     name, dst_sto, dst_dir = CRE_upload_name_extract(task["name"]).groups() # type: ignore
-                                    send({
+                                    collect({
                                         "category": "task", 
                                         "type": "upload", 
                                         "method": "upload", 
@@ -389,14 +399,16 @@ def make_application_with_fs_events(
                                     await remove(task["id"], async_=True)
                                 except BaseException as e:
                                     logger.exception(e)
-            create_task(work())
+            task_group.create_task(work())
 
         @app.after_start
         async def pull_offline_download_transfer_tasklist():
+            task_group = app.services.resolve(TaskGroup)
+            collect: Callable[[dict], None] = task_group.__dict__["collect"]
             offline_download_transfer_tasklist = client.offline_download_transfer_tasklist
             list_done, remove = offline_download_transfer_tasklist.list_done, offline_download_transfer_tasklist.remove
             async def work():
-                while True:
+                while app_ns["running"]:
                     try:
                         tasklist = await list_done(async_=True)
                     except BaseException as e:
@@ -410,7 +422,7 @@ def make_application_with_fs_events(
                                 try:
                                     local_path, dst_dir = CRE_transfer_name_extract(task["name"]).groups() # type: ignore
                                     name = os_basename(local_path)
-                                    send({
+                                    collect({
                                         "category": "task", 
                                         "type": "upload", 
                                         "method": "transfer", 
@@ -424,7 +436,7 @@ def make_application_with_fs_events(
                                     await remove(task["id"], async_=True)
                                 except BaseException as e:
                                     logger.exception(e)
-            create_task(work())
+            task_group.create_task(work())
 
     return app
 
