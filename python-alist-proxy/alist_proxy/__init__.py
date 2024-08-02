@@ -399,7 +399,7 @@ def make_application_with_fs_events(
                         "is_dir": False, 
                     }
                 }
-            run_worker(client.upload_tasklist, convert)
+            run_worker(client.offline_download_transfer_tasklist, convert)
 
     return app
 
