@@ -2,12 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
 
-from asyncio import get_running_loop, sleep, to_thread, TaskGroup
+from asyncio import get_running_loop, to_thread, TaskGroup
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -135,7 +135,7 @@ def make_application(
         proxy_base_url = f"{request.scheme}://{request.host}"
         request_headers = [
             (k, base_url + v[len(proxy_base_url):] if k == "destination" and v.startswith(proxy_base_url) else v)
-            for k, v in ((str(k.lower(), "utf-8"), str(v, "utf-8")) for k, v in request.headers)
+            for k, v in ((str(k.lower(), "latin-1"), str(v, "latin-1")) for k, v in request.headers)
             if k != "host"
         ]
         url_path = str(request.url)
@@ -154,7 +154,7 @@ def make_application(
             data: None | bytes
             if url_path.startswith(("/d/", "/p/")):
                 return redirect(base_url + url_path)
-            content_type = str(request.headers.get_first(b"content-type") or b"", "utf-8")
+            content_type = str(request.headers.get_first(b"content-type") or b"", "latin-1")
             if content_type.startswith("application/json"):
                 data = payload["data"] = await request.read()
                 if data:
@@ -185,7 +185,7 @@ def make_application(
             if content_type.startswith(("application/json", "application/xml", "text/xml")):
                 excluded_headers = ("content-encoding", "content-length", "transfer-encoding")
                 headers          = [
-                    (bytes(k, "utf-8"), bytes(v, "utf-8")) 
+                    (bytes(k, "latin-1"), bytes(v, "latin-1")) 
                     for k, v in response_headers if k not in excluded_headers
                 ]
                 content = await response.read()
@@ -200,14 +200,14 @@ def make_application(
                                 content = dumps(json)
                 else:
                     result["response"]["text"] = content.decode(get_charset(content_type))
-                return Response(response_status, headers, Content(bytes(content_type, "utf-8"), content))
+                return Response(response_status, headers, Content(bytes(content_type, "latin-1"), content))
             else:
-                headers = [(bytes(k, "utf-8"), bytes(v, "utf-8")) for k, v in response_headers]
+                headers = [(bytes(k, "latin-1"), bytes(v, "latin-1")) for k, v in response_headers]
                 async def reader():
                     async with response:
                         async for chunk in response.content.iter_chunked(COPY_BUFSIZE):
                             yield chunk
-                return Response(response_status, headers, StreamedContent(bytes(content_type, "utf-8"), reader))
+                return Response(response_status, headers, StreamedContent(bytes(content_type, "latin-1"), reader))
         except BaseException as e:
             result["exception"] = {
                 "reason": f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
@@ -323,120 +323,83 @@ def make_application_with_fs_events(
         elif resp["data"]["id"] != 1:
             raise ValueError("you are not admin of alist")
 
-        @app.after_start
-        async def pull_copy_tasklist(app: Application):
+        def run_worker(tasklist, convert):
             task_group = app.services.resolve(TaskGroup)
             collect: Callable[[dict], None] = task_group.__dict__["collect"]
-            copy_tasklist = client.copy_tasklist
-            list_done, remove = copy_tasklist.list_done, copy_tasklist.remove
+            list_done, remove = tasklist.list_done, tasklist.remove
             async def work():
                 while app_ns["running"]:
                     try:
-                        tasklist = await list_done(async_=True)
+                        ls = await list_done(async_=True)
                     except BaseException as e:
                         logger.exception(e)
                     else:
-                        if not tasklist:
-                            await sleep(1)
-                            continue
-                        for task in tasklist:
+                        for task in ls:
                             if task["state"] == 2:
                                 try:
-                                    src_sto, src_path, dst_sto, dst_dir = CRE_copy_name_extract(task["name"]).groups() # type: ignore
-                                    src_dir, name = splitpath(src_path)
-                                    collect({
-                                        "category": "task", 
-                                        "type": "copy", 
-                                        "method": "copy", 
-                                        "payload": {
-                                            "src_path": joinpath(src_sto, src_dir, name), 
-                                            "dst_path": joinpath(dst_sto, dst_dir, name), 
-                                            "src_storage": src_sto, 
-                                            "dst_storage": dst_sto, 
-                                            "src_dir": joinpath(src_sto, src_dir), 
-                                            "dst_dir": joinpath(dst_sto, dst_dir), 
-                                            "name": name, 
-                                            "is_dir": task["status"] != "getting src object", 
-                                        }
-                                    })
+                                    collect(convert(task))
                                     await remove(task["id"], async_=True)
                                 except BaseException as e:
                                     logger.exception(e)
             task_group.create_task(work())
+
+        @app.after_start
+        async def pull_copy_tasklist():
+            def convert(task: dict) -> dict:
+                src_sto, src_path, dst_sto, dst_dir = CRE_copy_name_extract(task["name"]).groups() # type: ignore
+                src_dir, name = splitpath(src_path)
+                return {
+                    "category": "task", 
+                    "type": "copy", 
+                    "method": "copy", 
+                    "payload": {
+                        "src_path": joinpath(src_sto, src_dir, name), 
+                        "dst_path": joinpath(dst_sto, dst_dir, name), 
+                        "src_storage": src_sto, 
+                        "dst_storage": dst_sto, 
+                        "src_dir": joinpath(src_sto, src_dir), 
+                        "dst_dir": joinpath(dst_sto, dst_dir), 
+                        "name": name, 
+                        "is_dir": task["status"] != "getting src object", 
+                    }
+                }
+            run_worker(client.copy_tasklist, convert)
 
         @app.after_start
         async def pull_upload_tasklist():
-            task_group = app.services.resolve(TaskGroup)
-            collect: Callable[[dict], None] = task_group.__dict__["collect"]
-            upload_tasklist = client.upload_tasklist
-            list_done, remove = upload_tasklist.list_done, upload_tasklist.remove
-            async def work():
-                while app_ns["running"]:
-                    try:
-                        tasklist = await list_done(async_=True)
-                    except BaseException as e:
-                        logger.exception(e)
-                    else:
-                        if not tasklist:
-                            await sleep(1)
-                            continue
-                        for task in tasklist:
-                            if task["state"] == 2:
-                                try:
-                                    name, dst_sto, dst_dir = CRE_upload_name_extract(task["name"]).groups() # type: ignore
-                                    collect({
-                                        "category": "task", 
-                                        "type": "upload", 
-                                        "method": "upload", 
-                                        "payload": {
-                                            "path": joinpath(dst_sto, dst_dir, name), 
-                                            "dst_storage": dst_sto, 
-                                            "dst_dir": joinpath(dst_sto, dst_dir), 
-                                            "name": name, 
-                                            "is_dir": False, 
-                                        }
-                                    })
-                                    await remove(task["id"], async_=True)
-                                except BaseException as e:
-                                    logger.exception(e)
-            task_group.create_task(work())
+            def convert(task: dict) -> dict:
+                name, dst_sto, dst_dir = CRE_upload_name_extract(task["name"]).groups() # type: ignore
+                return {
+                    "category": "task", 
+                    "type": "upload", 
+                    "method": "upload", 
+                    "payload": {
+                        "path": joinpath(dst_sto, dst_dir, name), 
+                        "dst_storage": dst_sto, 
+                        "dst_dir": joinpath(dst_sto, dst_dir), 
+                        "name": name, 
+                        "is_dir": False, 
+                    }
+                }
+            run_worker(client.upload_tasklist, convert)
 
         @app.after_start
-        async def pull_offline_download_transfer_tasklist():
-            task_group = app.services.resolve(TaskGroup)
-            collect: Callable[[dict], None] = task_group.__dict__["collect"]
-            offline_download_transfer_tasklist = client.offline_download_transfer_tasklist
-            list_done, remove = offline_download_transfer_tasklist.list_done, offline_download_transfer_tasklist.remove
-            async def work():
-                while app_ns["running"]:
-                    try:
-                        tasklist = await list_done(async_=True)
-                    except BaseException as e:
-                        logger.exception(e)
-                    else:
-                        if not tasklist:
-                            await sleep(1)
-                            continue
-                        for task in tasklist:
-                            if task["state"] == 2:
-                                try:
-                                    local_path, dst_dir = CRE_transfer_name_extract(task["name"]).groups() # type: ignore
-                                    name = os_basename(local_path)
-                                    collect({
-                                        "category": "task", 
-                                        "type": "upload", 
-                                        "method": "transfer", 
-                                        "payload": {
-                                            "path": joinpath(dst_dir, name), 
-                                            "dst_dir": dst_dir, 
-                                            "name": name, 
-                                            "is_dir": False, 
-                                        }
-                                    })
-                                    await remove(task["id"], async_=True)
-                                except BaseException as e:
-                                    logger.exception(e)
-            task_group.create_task(work())
+        async def pull_offline_download_transfer_tasklist(app: Application):
+            def convert(task: dict) -> dict:
+                local_path, dst_dir = CRE_transfer_name_extract(task["name"]).groups() # type: ignore
+                name = os_basename(local_path)
+                return {
+                    "category": "task", 
+                    "type": "upload", 
+                    "method": "transfer", 
+                    "payload": {
+                        "path": joinpath(dst_dir, name), 
+                        "dst_dir": dst_dir, 
+                        "name": name, 
+                        "is_dir": False, 
+                    }
+                }
+            run_worker(client.upload_tasklist, convert)
 
     return app
 
@@ -484,13 +447,13 @@ def make_application_with_fs_event_stream(
                     if str(e) != "BUSYGROUP Consumer Group name already exists":
                         raise
                 if lastid:
-                    last_id = bytes(lastid, "utf-8")
+                    last_id = bytes(lastid, "latin-1")
                 else:
                     last_id = b">"
                 read: Callable = partial(redis.xreadgroup, groupname=group, consumername=name)
             else:
                 if lastid:
-                    last_id = bytes(lastid, "utf-8")
+                    last_id = bytes(lastid, "latin-1")
                 else:
                     last_id = b"$"
                 read = redis.xread
