@@ -59,6 +59,7 @@ def main():
         reload=debug, 
         proxy_headers=True, 
         forwarded_allow_ips="*", 
+        timeout_graceful_shutdown=1, 
     )
 
 

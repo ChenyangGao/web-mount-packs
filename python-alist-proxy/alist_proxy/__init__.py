@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
@@ -70,6 +70,7 @@ def make_application(
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
     app = Application(router=Router())
+    app_ns = app.__dict__
     logger = getattr(app, "logger")
     logger.level = 20
 
@@ -97,7 +98,7 @@ def make_application(
 
     @app.on_start
     async def on_start(app: Application):
-        app.__dict__["running"] = True
+        app_ns["running"] = True
 
     @app.lifespan
     async def register_task_group(app: Application):
@@ -116,7 +117,7 @@ def make_application(
             create_task = task_group.create_task
             task_group.__dict__["collect"] = lambda result: create_task(work(result))
             yield
-            app.__dict__["running"] = False
+            app_ns["running"] = False
 
     @app.lifespan
     async def register_http_client(app: Application):
@@ -428,6 +429,7 @@ def make_application_with_fs_event_stream(
         base_url=base_url, 
         collect=lambda data: redis.xadd(redis_key, {"data": dumps(data)}), 
     )
+    app_ns = app.__dict__
 
     @app.lifespan
     async def register_redis(app: Application):
@@ -457,8 +459,8 @@ def make_application_with_fs_event_stream(
                 else:
                     last_id = b"$"
                 read = redis.xread
-            while True:
-                messages = await read(streams={redis_key: last_id})
+            while app_ns["running"]:
+                messages = await read(streams={redis_key: last_id}, block=1000)
                 if messages:
                     for last_id, item in messages[0][1]:
                         await websocket.send_bytes(b'{"id": "%s", "data": %s}' % (last_id, item[b"data"]))
