@@ -5,8 +5,7 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "P115PathBase", "P115FileSystemBase", 
-    "AttrDict", "IDOrPathType", "P115FSType", "P115PathType", 
+    "P115PathBase", "P115FileSystemBase", "IDOrPathType", "P115FSType", "P115PathType", 
 ]
 
 import errno
@@ -36,6 +35,7 @@ from types import MappingProxyType
 from urllib.parse import parse_qsl, urlparse
 
 from asynctools import async_map
+from dictattr import AttrDict
 from download import AsyncDownloadTask, DownloadTask
 from filewrap import SupportsWrite
 from glob_pattern import translate_iter
@@ -46,7 +46,6 @@ from posixpatht import basename, commonpath, dirname, escape, joins, normpath, s
 from .client import check_response, P115Client, P115Url
 
 
-AttrDict: TypeAlias = dict # TODO: TypedDict with extra keys
 IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str] | AttrDict
 P115FSType = TypeVar("P115FSType", bound="P115FileSystemBase")
 P115PathType = TypeVar("P115PathType", bound="P115PathBase")
@@ -3481,7 +3480,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             if _depth == 0 and min_depth <= 0:
                 print(".")
             try:
-                ls = yield self.listdir_attr(top, pid=pid, async_=async_)
+                subattrs = yield self.listdir_attr(top, pid=pid, async_=async_)
             except OSError as e:
                 if callable(onerror):
                     yield partial(onerror, e)
@@ -3489,7 +3488,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     raise
             pred: Literal[None, 1, False, True] = True
             next_depth = _depth + 1
-            for attr, nattr in pairwise(chain(ls, (None,))):
+            for attr, nattr in pairwise(chain(subattrs, (None,))):
                 attr = cast(AttrDict, attr)
                 if predicate is not None:
                     pred = yield partial(predicate, attr)
@@ -3567,11 +3566,11 @@ class P115FileSystemBase(Generic[P115PathType]):
                     iter_me = min_depth <= 0 or depth >= min_depth
                     push_me = max_depth < 0 or depth < max_depth
                     if iter_me or push_me:
-                        ls = yield self.listdir_attr(parent, async_=async_, **kwargs)
+                        subattrs = yield self.listdir_attr(parent, async_=async_, **kwargs)
                         if iter_me:
                             dirs: list[AttrDict] = []
                             files: list[AttrDict] = []
-                            for attr in ls:
+                            for attr in subattrs:
                                 if attr["is_directory"]:
                                     dirs.append(attr)
                                     if push_me:
@@ -3580,7 +3579,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                                     files.append(attr)
                             yield Yield((parent["path"], dirs, files), identity=True)
                         else:
-                            for attr in ls:
+                            for attr in subattrs:
                                 if attr["is_directory"]:
                                     push((depth, attr))
                 except OSError as e:
@@ -3643,7 +3642,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 max_depth -= 1
             yield_me = min_depth <= 0
             try:
-                ls = yield self.iterdir(top, pid=pid, async_=async_, **kwargs)
+                subattrs = yield self.listdir_attr(top, pid=pid, async_=async_, **kwargs)
             except OSError as e:
                 if callable(onerror):
                     yield partial(onerror, e)
@@ -3652,7 +3651,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 return
             dirs: list[AttrDict] = []
             files: list[AttrDict] = []
-            for attr in ls:
+            for attr in subattrs:
                 if attr["is_directory"]:
                     dirs.append(attr)
                 else:

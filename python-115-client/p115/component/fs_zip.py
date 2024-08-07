@@ -21,20 +21,21 @@ from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
 from typing import cast, overload, Any, Literal, Never, Self
 
+from dictattr import AttrDict
 from iterutils import run_gen_step
 from posixpatht import escape, joins, splits, path_is_dir_form
 
 from .client import check_response, P115Client, ExtractProgress, P115Url
-from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
+from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
 def normalize_info(
     info: Mapping, 
     **extra_data, 
-) -> AttrDict:
+) -> AttrDict[str, Any]:
     timestamp = info.get("time") or 0
     is_directory = info["file_category"] == 0
-    return {
+    return AttrDict({
         "name": info["file_name"], 
         "is_directory": is_directory, 
         "file_category": info["file_category"], 
@@ -43,7 +44,7 @@ def normalize_info(
         "time": datetime.fromtimestamp(timestamp), 
         "timestamp": timestamp, 
         **extra_data, 
-    }
+    })
 
 
 # TODO: 兼容 pathlib.Path 和 zipfile.Path 的接口
@@ -175,7 +176,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             if self.full_loaded:
                 raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
             if id == 0:
-                attr = self.id_to_attr[0] = {
+                attr = self.id_to_attr[0] = AttrDict({
                     "id": 0, 
                     "parent_id": 0, 
                     "name": "", 
@@ -188,7 +189,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"id": 0, "name": ""}], 
-                }
+                })
                 return attr
             dq = deque((0,))
             get, put = dq.popleft, dq.append

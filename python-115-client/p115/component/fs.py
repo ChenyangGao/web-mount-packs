@@ -30,6 +30,7 @@ from typing import cast, overload, Any, Literal, Self
 from uuid import uuid4
 from warnings import warn
 
+from dictattr import AttrDict
 from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
@@ -40,14 +41,14 @@ from posixpatht import (
 from yarl import URL
 
 from .client import check_response, P115Client, P115Url
-from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
+from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
 def normalize_info(
     info: Mapping, 
     keep_raw: bool = False, 
     **extra_data, 
-) -> AttrDict:
+) -> AttrDict[str, Any]:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -56,14 +57,14 @@ def normalize_info(
         fid = info["cid"]
         parent_id = info["pid"]
         is_directory = True
-    info2 =  {
+    info2: AttrDict[str, Any] = AttrDict({
         "id": int(fid), 
         "parent_id": int(parent_id), 
         "name": info["n"], 
         "is_directory": is_directory, 
         "size": info.get("s"), 
         "sha1": info.get("sha"), 
-    }
+    })
     for k1, k2, k3 in (
         ("te", "etime", "mtime"), 
         ("tu", "utime", None), 
@@ -1327,7 +1328,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     info = resp["data"][0]
                     etime = datetime.fromtimestamp(int(info["te"]))
                     utime = datetime.fromtimestamp(int(info["tu"]))
-                return {
+                return AttrDict({
                     "id": 0, 
                     "parent_id": 0, 
                     "name": "", 
@@ -1343,7 +1344,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}], 
-                }
+                })
             attr_cache = self.attr_cache
             get_version = self.get_version
             if attr_cache is None:

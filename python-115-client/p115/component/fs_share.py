@@ -23,11 +23,12 @@ from stat import S_IFDIR, S_IFREG
 from time import time
 from typing import cast, overload, Any, Literal, Never, Self
 
+from dictattr import AttrDict
 from iterutils import run_gen_step
 from posixpatht import escape, joins, splits, path_is_dir_form
 
 from .client import check_response, P115Client, P115Url
-from .fs_base import AttrDict, IDOrPathType, P115PathBase, P115FileSystemBase
+from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
 CRE_SHARE_LINK_search1 = re_compile(r"(?:/s/|share\.115\.com/)(?P<share_code>[a-z0-9]+)\?password=(?P<receive_code>[a-z0-9]{4})").search
@@ -38,7 +39,7 @@ def normalize_info(
     info: Mapping, 
     keep_raw: bool = False, 
     **extra_data, 
-) -> AttrDict:
+) -> AttrDict[str, Any]:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -47,14 +48,14 @@ def normalize_info(
         fid = info["cid"]
         parent_id = info["pid"]
         is_directory = True
-    info2 =  {
+    info2: AttrDict[str, Any] = AttrDict({
         "name": info["n"], 
         "is_directory": is_directory, 
         "size": info.get("s"), 
         "id": int(fid), 
         "parent_id": int(parent_id), 
         "sha1": info.get("sha"), 
-    }
+    })
     timestamp = info2["timestamp"] = int(info["t"])
     info2["time"] = datetime.fromtimestamp(timestamp)
     if "pc" in info:
@@ -317,7 +318,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             if self.full_loaded:
                 raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}")
             if id == 0:
-                attr = self.id_to_attr[0] = {
+                attr = self.id_to_attr[0] = AttrDict({
                     "id": 0, 
                     "parent_id": 0, 
                     "name": "", 
@@ -329,7 +330,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     "ico": "folder", 
                     "fs": self, 
                     "ancestors": [{"id": 0, "name": ""}], 
-                }
+                })
                 return attr
             # NOTE: quick detection of id existence
             yield partial(
