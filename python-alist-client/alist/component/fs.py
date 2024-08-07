@@ -6209,7 +6209,7 @@ class AlistFileSystem:
         async_: Literal[False, True] = False, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]] | AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         def gen_step():
-            nonlocal top, password
+            nonlocal top, password, min_depth, max_depth
             if not max_depth:
                 return
             if min_depth > 0:

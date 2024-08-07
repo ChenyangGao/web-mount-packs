@@ -3692,6 +3692,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         **kwargs, 
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]] | AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         def gen_step():
+            nonlocal min_depth, max_depth
             if not max_depth:
                 return
             if min_depth > 0:
@@ -3714,9 +3715,9 @@ class P115FileSystemBase(Generic[P115PathType]):
                     dirs.append(attr)
                 else:
                     files.append(attr)
-            parent = yield self.get_path(top, pid=pid, async_=async_)
+            parent_path = yield self.get_path(top, pid=pid, async_=async_)
             if yield_me and topdown:
-                yield Yield((parent["path"], dirs, files), identity=True)
+                yield Yield((parent_path, dirs, files), identity=True)
             for attr in dirs:
                 yield YieldFrom(self.walk_attr_dfs(
                     attr, 
@@ -3727,7 +3728,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     async_=async_, 
                 ))
             if yield_me and not topdown:
-                yield Yield((parent["path"], dirs, files), identity=True)
+                yield Yield((parent_path, dirs, files), identity=True)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
