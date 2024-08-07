@@ -2723,8 +2723,8 @@ class P115FileSystemBase(Generic[P115PathType]):
                 return attr["size"] == 0
         return run_gen_step(gen_step, async_=async_)
 
-    # TODO: 之后把 _iter_bfs 和 _iter_bfs_async 合并为一个
-    def _iter_bfs(
+    @overload
+    def iter_bfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -2733,48 +2733,13 @@ class P115FileSystemBase(Generic[P115PathType]):
         max_depth: int = 1, 
         predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
-        dq: deque[tuple[int, P115PathType]] = deque()
-        push, pop = dq.append, dq.popleft
-        path_class = type(self).path_class
-        # TODO: 这里需要检查是否报错
-        path = self.as_path(top, pid=pid)
-        push((0, path))
-        while dq:
-            depth, path = pop()
-            if min_depth <= 0:
-                pred = predicate(path) if predicate else True
-                if pred is None:
-                    return
-                elif pred:
-                    yield path
-                    if pred is 1:
-                        return
-                min_depth = 1
-            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
-                return
-            depth += 1
-            try:
-                for attr in self.iterdir(path, **kwargs):
-                    path = path_class(attr)
-                    pred = predicate(path) if predicate else True
-                    if pred is None:
-                        continue
-                    elif pred:
-                        if depth >= min_depth:
-                            yield path
-                        if pred is 1:
-                            continue
-                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
-                        push((depth, path))
-            except OSError as e:
-                if callable(onerror):
-                    onerror(e)
-                elif onerror:
-                    raise
-
-    async def _iter_bfs_async(
+        ...
+    @overload
+    def iter_bfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -2783,54 +2748,79 @@ class P115FileSystemBase(Generic[P115PathType]):
         max_depth: int = 1, 
         predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[True], 
         **kwargs, 
     ) -> AsyncIterator[P115PathType]:
-        dq: deque[tuple[int, P115PathType]] = deque()
-        push, pop = dq.append, dq.popleft
-        path_class = type(self).path_class
-        path = await self.as_path(top, pid=pid, async_=True)
-        push((0, path))
-        while dq:
-            depth, path = pop()
-            if min_depth <= 0:
-                pred = predicate(path) if predicate else True
-                if isawaitable(pred):
-                    pred = await pred
-                if pred is None:
-                    return
-                elif pred:
-                    yield path
-                    if pred is 1:
-                        return
-                min_depth = 1
-            if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
-                return
-            depth += 1
+        ...
+    def iter_bfs(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
+        def gen_step():
+            nonlocal min_depth, max_depth
+            dq: deque[tuple[int, P115PathType]] = deque()
+            push, pop = dq.append, dq.popleft
             try:
-                async for attr in self.iterdir(path, async_=True, **kwargs):
-                    path = path_class(attr)
-                    pred = predicate(path) if predicate else True
-                    if isawaitable(pred):
-                        pred = await pred
-                    if pred is None:
-                        continue
-                    elif pred:
-                        if depth >= min_depth:
-                            yield path
-                        if pred is 1:
-                            continue
-                    if path.is_dir() and (max_depth < 0 or depth < max_depth):
-                        push((depth, path))
+                path = yield self.as_path(top, pid=pid, async_=async_)
             except OSError as e:
                 if callable(onerror):
-                    ret = onerror(e)
-                    if isawaitable(ret):
-                        await ret
+                    yield partial(onerror, e)
                 elif onerror:
                     raise
+                return
+            push((0, path))
+            while dq:
+                depth, path = pop()
+                if min_depth <= 0:
+                    if predicate is None:
+                        pred = True
+                    else:
+                        pred = yield partial(predicate, path)
+                    if pred is None:
+                        return
+                    elif pred:
+                        yield Yield(path, identity=True)
+                        if pred is 1:
+                            return
+                    min_depth = 1
+                if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
+                    return
+                depth += 1
+                try:
+                    subpaths = yield self.listdir_path(path, async_=async_, **kwargs)
+                    for path in subpaths:
+                        if predicate is None:
+                            pred = True
+                        else:
+                            pred = yield partial(predicate, path)
+                        if pred is None:
+                            continue
+                        elif pred:
+                            if depth >= min_depth:
+                                yield Yield(path, identity=True)
+                            if pred is 1:
+                                continue
+                        if path.is_dir() and (max_depth < 0 or depth < max_depth):
+                            push((depth, path))
+                except OSError as e:
+                    if callable(onerror):
+                        yield partial(onerror, e)
+                    elif onerror:
+                        raise
+        return run_gen_step_iter(gen_step, async_=async_)
 
-    # TODO: 之后把 _iter_dfs 和 _iter_dfs_async 合并为一个
-    def _iter_dfs(
+    @overload
+    def iter_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -2840,59 +2830,13 @@ class P115FileSystemBase(Generic[P115PathType]):
         max_depth: int = 1, 
         predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[False] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType]:
-        if not max_depth:
-            return
-        global_yield_me: Literal[1, False, True] = True
-        if min_depth > 1:
-            global_yield_me = False
-            min_depth -= 1
-        elif min_depth <= 0:
-            path = self.as_path(top, pid=pid)
-            pred = predicate(path) if predicate else True
-            if pred is None:
-                return
-            elif pred:
-                yield path
-                if pred is 1:
-                    return
-            if path.is_file():
-                return
-            min_depth = 1
-            top = path.id
-        if max_depth > 0:
-            max_depth -= 1
-        path_class = type(self).path_class
-        try:
-            for attr in self.iterdir(top, pid=pid, **kwargs):
-                path = path_class(attr)
-                yield_me = global_yield_me
-                if yield_me and predicate:
-                    pred = predicate(path)
-                    if pred is None:
-                        continue
-                    yield_me = pred 
-                if yield_me and topdown:
-                    yield path
-                if yield_me is not 1 and path.is_dir():
-                    yield from self._iter_dfs(
-                        path, 
-                        topdown=topdown, 
-                        min_depth=min_depth, 
-                        max_depth=max_depth, 
-                        predicate=predicate, 
-                        onerror=onerror, 
-                    )
-                if yield_me and not topdown:
-                    yield path
-        except OSError as e:
-            if callable(onerror):
-                onerror(e)
-            elif onerror:
-                raise
-
-    async def _iter_dfs_async(
+        ...
+    @overload
+    def iter_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -2902,64 +2846,82 @@ class P115FileSystemBase(Generic[P115PathType]):
         max_depth: int = 1, 
         predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[True], 
         **kwargs, 
     ) -> AsyncIterator[P115PathType]:
-        if not max_depth:
-            return
-        global_yield_me: Literal[1, False, True] = True
-        if min_depth > 1:
-            global_yield_me = False
-            min_depth -= 1
-        elif min_depth <= 0:
-            path = await self.as_path(top, pid=pid, async_=True)
-            pred = predicate(path) if predicate else True
-            if isawaitable(pred):
-                pred = await pred
-            if pred is None:
+        ...
+    def iter_dfs(
+        self, 
+        top: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        topdown: bool = True, 
+        min_depth: int = 1, 
+        max_depth: int = 1, 
+        predicate: None | Callable[[P115PathType], Literal[None, 1, False, True]] = None, 
+        onerror: bool | Callable[[OSError], bool] = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **kwargs, 
+    ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
+        def gen_step():
+            nonlocal top, min_depth, max_depth
+            if not max_depth:
                 return
-            elif pred:
-                yield path
-                if pred is 1:
+            global_yield_me: Literal[1, False, True] = True
+            if min_depth > 1:
+                global_yield_me = False
+                min_depth -= 1
+            elif min_depth <= 0:
+                path = yield self.as_path(top, pid=pid, async_=async_)
+                if predicate is None:
+                    pred = True
+                else:
+                    pred = yield partial(predicate, path)
+                if pred is None:
                     return
-            if path.is_file():
+                elif pred:
+                    yield Yield(path, identity=True)
+                    if pred is 1:
+                        return
+                if path.is_file():
+                    return
+                min_depth = 1
+                top = path.id
+            if max_depth > 0:
+                max_depth -= 1
+            try:
+                subpaths = yield self.listdir_path(top, pid=pid, async_=async_, **kwargs)
+            except OSError as e:
+                if callable(onerror):
+                    yield partial(onerror, e)
+                elif onerror:
+                    raise
                 return
-            min_depth = 1
-            top = path.id
-        if max_depth > 0:
-            max_depth -= 1
-        path_class = type(self).path_class
-        try:
-            async for attr in self.iterdir(top, pid=pid, async_=True, **kwargs):
-                path = path_class(attr)
+            for path in subpaths:
                 yield_me = global_yield_me
-                if yield_me and predicate:
-                    pred = predicate(path)
-                    if isawaitable(pred):
-                        pred = await pred
+                if yield_me and predicate is not None:
+                    pred = yield partial(predicate, path)
                     if pred is None:
                         continue
                     yield_me = pred 
                 if yield_me and topdown:
-                    yield path
+                    yield Yield(path, identity=True)
                 if yield_me is not 1 and path.is_dir():
-                    async for subpath in self._iter_dfs_async(
+                    yield YieldFrom(self.iter_dfs(
                         path, 
                         topdown=topdown, 
                         min_depth=min_depth, 
                         max_depth=max_depth, 
                         predicate=predicate, 
                         onerror=onerror, 
-                    ):
-                        yield subpath
+                        async_=async_, 
+                        **kwargs, 
+                    ), identity=True)
                 if yield_me and not topdown:
-                    yield path
-        except OSError as e:
-            if callable(onerror):
-                ret = onerror(e)
-                if isawaitable(ret):
-                    await ret
-            elif onerror:
-                raise
+                    yield Yield(path, identity=True)
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def iter(
@@ -3007,40 +2969,19 @@ class P115FileSystemBase(Generic[P115PathType]):
         async_: Literal[False, True] = False, 
         **kwargs, 
     ) -> Iterator[P115PathType] | AsyncIterator[P115PathType]:
-        if async_:
-            if topdown is None:
-                return self._iter_bfs_async(
-                    top, 
-                    pid=pid, 
-                    min_depth=min_depth, 
-                    max_depth=max_depth, 
-                    predicate=predicate, 
-                    onerror=onerror, 
-                    **kwargs, 
-                )
-            else:
-                return self._iter_dfs_async(
-                    top, 
-                    pid=pid, 
-                    topdown=topdown, 
-                    min_depth=min_depth, 
-                    max_depth=max_depth, 
-                    predicate=predicate, 
-                    onerror=onerror, 
-                    **kwargs, 
-                )
-        elif topdown is None:
-            return self._iter_bfs(
+        if topdown is None:
+            return self.iter_bfs(
                 top, 
                 pid=pid, 
                 min_depth=min_depth, 
                 max_depth=max_depth, 
                 predicate=predicate, 
                 onerror=onerror, 
+                async_=async_, # type: ignore
                 **kwargs, 
             )
         else:
-            return self._iter_dfs(
+            return self.iter_dfs(
                 top, 
                 pid=pid, 
                 topdown=topdown, 
@@ -3048,6 +2989,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 max_depth=max_depth, 
                 predicate=predicate, 
                 onerror=onerror, 
+                async_=async_, # type: ignore
                 **kwargs, 
             )
 
@@ -3575,7 +3517,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         return run_gen_step(gen_step, async_=async_)
 
     @overload
-    async def walk_attr_bfs(
+    def walk_attr_bfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -3589,7 +3531,7 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         ...
     @overload
-    async def walk_attr_bfs(
+    def walk_attr_bfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -3602,7 +3544,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         **kwargs, 
     ) -> AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         ...
-    async def walk_attr_bfs(
+    def walk_attr_bfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -3649,7 +3591,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
-    async def walk_attr_dfs(
+    def walk_attr_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -3664,7 +3606,7 @@ class P115FileSystemBase(Generic[P115PathType]):
     ) -> Iterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         ...
     @overload
-    async def walk_attr_dfs(
+    def walk_attr_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 
@@ -3678,7 +3620,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         **kwargs, 
     ) -> AsyncIterator[tuple[str, list[AttrDict], list[AttrDict]]]:
         ...
-    async def walk_attr_dfs(
+    def walk_attr_dfs(
         self, 
         top: IDOrPathType = "", 
         /, 

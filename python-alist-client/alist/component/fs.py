@@ -4107,7 +4107,7 @@ class AlistFileSystem:
         top: PathType = "", 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[AlistPath], None | bool] = None, 
+        predicate: None | Callable[[AlistPath], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4122,7 +4122,7 @@ class AlistFileSystem:
         top: PathType = "", 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[AlistPath], None | bool] = None, 
+        predicate: None | Callable[[AlistPath], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4136,7 +4136,7 @@ class AlistFileSystem:
         top: PathType = "", 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: None | Callable[[AlistPath], None | bool] = None, 
+        predicate: None | Callable[[AlistPath], Literal[None, 1, False, True]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4169,6 +4169,8 @@ class AlistFileSystem:
                         return
                     elif pred:
                         yield Yield(path, identity=True)
+                        if pred is 1:
+                            return
                     min_depth = 1
                 if depth == 0 and (not path.is_dir() or 0 <= max_depth <= depth):
                     return
@@ -4182,8 +4184,11 @@ class AlistFileSystem:
                             pred = yield partial(predicate, path)
                         if pred is None:
                             continue
-                        elif pred and depth >= min_depth:
-                            yield Yield(path, identity=True)
+                        elif pred:
+                            if depth >= min_depth:
+                                yield Yield(path, identity=True)
+                            if pred is 1:
+                                continue
                         if path.is_dir() and (max_depth < 0 or depth < max_depth):
                             push((depth, path))
                 except OSError as e:
@@ -4201,7 +4206,7 @@ class AlistFileSystem:
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        predicate: Optional[Callable[[AlistPath], Literal[None, 1, False, True]]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4217,7 +4222,7 @@ class AlistFileSystem:
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        predicate: Optional[Callable[[AlistPath], Literal[None, 1, False, True]]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4232,7 +4237,7 @@ class AlistFileSystem:
         topdown: bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        predicate: Optional[Callable[[AlistPath], Literal[None, 1, False, True]]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4243,7 +4248,7 @@ class AlistFileSystem:
             nonlocal min_depth, max_depth
             if not max_depth:
                 return
-            global_yield_me = True
+            global_yield_me: Literal[1, False, True] = True
             if min_depth > 1:
                 global_yield_me = False
                 min_depth -= 1
@@ -4259,6 +4264,8 @@ class AlistFileSystem:
                     return
                 elif pred:
                     yield Yield(path, identity=True)
+                    if pred is 1:
+                        return
                 if path.is_file():
                     return
                 min_depth = 1
@@ -4281,7 +4288,7 @@ class AlistFileSystem:
                     yield_me = pred
                 if yield_me and topdown:
                     yield Yield(path, identity=True)
-                if path.is_dir():
+                if yield_me is not 1 and path.is_dir():
                     yield YieldFrom(self.iter(
                         path, 
                         topdown=topdown, 
@@ -4294,7 +4301,7 @@ class AlistFileSystem:
                         async_=async_, 
                     ), identity=True)
                 if yield_me and not topdown:
-                    yield path
+                    yield Yield(path, identity=True)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -4305,7 +4312,7 @@ class AlistFileSystem:
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        predicate: Optional[Callable[[AlistPath], Literal[None, 1, False, True]]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4321,7 +4328,7 @@ class AlistFileSystem:
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        predicate: Optional[Callable[[AlistPath], Literal[None, 1, False, True]]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
@@ -4336,7 +4343,7 @@ class AlistFileSystem:
         topdown: None | bool = True, 
         min_depth: int = 1, 
         max_depth: int = 1, 
-        predicate: Optional[Callable[[AlistPath], None | bool]] = None, 
+        predicate: Optional[Callable[[AlistPath], Literal[None, 1, False, True]]] = None, 
         onerror: bool | Callable[[OSError], bool] = False, 
         refresh: None | bool = None, 
         password: str = "", 
