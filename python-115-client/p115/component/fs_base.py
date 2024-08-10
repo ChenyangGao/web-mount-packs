@@ -5,7 +5,8 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "P115PathBase", "P115FileSystemBase", "IDOrPathType", "P115FSType", "P115PathType", 
+    "AttrDict", "P115PathBase", "P115FileSystemBase", "IDOrPathType", 
+    "P115FSType", "P115PathType", 
 ]
 
 import errno

@@ -2,26 +2,30 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
-__requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome"]
+__version__ = (0, 0, 9)
+__requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome", "uvicorn"]
+
+from os.path import dirname, expanduser, join as joinpath, realpath
+
 __doc__ = """\
         \x1b[5m🚀\x1b[0m 115 直链服务简单且极速版 \x1b[5m🍳\x1b[0m
 
-链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1;32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1;32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1;32mid\x1b[0m\x1b[4m\x1b[34m}&sha1={\x1b[1;32msha1\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1;32mpath\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
+链接格式（每个参数都是\x1b[1;31m可选的\x1b[0m）：\x1b[4m\x1b[34mhttp://localhost{\x1b[1;32mpath2\x1b[0m\x1b[4m\x1b[34m}?pickcode={\x1b[1;32mpickcode\x1b[0m\x1b[4m\x1b[34m}&id={\x1b[1;32mid\x1b[0m\x1b[4m\x1b[34m}&sha1={\x1b[1;32msha1\x1b[0m\x1b[4m\x1b[34m}&path={\x1b[1;32mpath\x1b[0m\x1b[4m\x1b[34m}&image={\x1b[1;32mimage\x1b[0m\x1b[4m\x1b[34m}&disable_pc={\x1b[1;32mdisable_pc\x1b[0m\x1b[4m\x1b[34m}\x1b[0m
 
 - \x1b[1;32mpickcode\x1b[0m: 文件的 \x1b[1;32mpickcode\x1b[0m，优先级高于 \x1b[1;32mid\x1b[0m
 - \x1b[1;32mid\x1b[0m: 文件的 \x1b[1;32mid\x1b[0m，优先级高于 \x1b[1;32msha1\x1b[0m
 - \x1b[1;32msha1\x1b[0m: 文件的 \x1b[1;32msha1\x1b[0m，优先级高于 \x1b[1;32mpath\x1b[0m
 - \x1b[1;32mpath\x1b[0m: 文件的路径，优先级高于 \x1b[1;32mpath2\x1b[0m
-- \x1b[1;32mpath2\x1b[0m: 文件的路径，这个直接在接口路径之后，不在查询字符串中
+- \x1b[1;32mimage\x1b[0m: 接受 \x1b[1;36m1\x1b[0m | \x1b[1;36mtrue\x1b[0m 或 \x1b[1;36m0\x1b[0m | \x1b[1;36mfalse\x1b[0m，如果为 \x1b[1;36m1\x1b[0m | \x1b[1;36mtrue\x1b[0m 且提供 \x1b[1;32mpickcode\x1b[0m 且设置了环境变量 \x1b[1;32mcdn_image\x1b[0m，则视为请求图片
+- \x1b[1;32mdisable_pc\x1b[0m: 接受 \x1b[1;36m1\x1b[0m | \x1b[1;36mtrue\x1b[0m 或 \x1b[1;36m0\x1b[0m | \x1b[1;36mfalse\x1b[0m，如果为 \x1b[1;36m1\x1b[0m | \x1b[1;36mtrue\x1b[0m，则此次请求视 \x1b[1;32mpath_persistence_commitment\x1b[0m 为 \x1b[1;36mFalse\x1b[0m
 
         \x1b[5m🌍\x1b[0m 环境变量 \x1b[5m🛸\x1b[0m
 
 - \x1b[1;32mcookies\x1b[0m: 115 登录 cookies，优先级高于 \x1b[1;32mcookies_path\x1b[0m
-- \x1b[1;32mcookies_path\x1b[0m: 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 \x1b[4m\x1b[34m115-cookies.txt\x1b[0m 文件中获取，此文件可以在如下路径之一
-    1. 当前工作目录
-    2. 用户根目录
-    3. 此脚本所在目录 下
+- \x1b[1;32mcookies_path\x1b[0m: 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 \x1b[4m\x1b[34m115-cookies.txt\x1b[0m 文件中获取，此文件可以在如下路径之一（按先后顺序）
+    1. 当前工作目录: \x1b[4m\x1b[34m%(file_in_cwd)s\x1b[0m
+    2. 用户根目录: \x1b[4m\x1b[34m%(file_in_home)s\x1b[0m
+    3. 此脚本所在目录: \x1b[4m\x1b[34m%(file_in_dir)s\x1b[0m
 - \x1b[1;32mpath_persistence_commitment\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）路径持久性承诺，只要你能保证文件不会被移动（\x1b[1;31m可新增删除，但对应的路径不可被其他文件复用\x1b[0m），打开此选项，用路径请求直链时，可节约一半时间
 - \x1b[1;32mcdn_image\x1b[0m: （\x1b[1;31m传入任何值都视为设置，包括空字符串\x1b[0m）图片走 cdn，设置此参数会创建一个图片直链的缓存
 - \x1b[1;32mcdn_image_warmup_ids\x1b[0m: 为图片的 cdn 缓存进行预热，接受文件夹 id，如果有多个用逗号(\x1b[1;36m,\x1b[0m)隔开
@@ -43,7 +47,11 @@ __doc__ = """\
 或者（默认端口：\x1b[1;36m8000\x1b[0m，可用命令行参数 \x1b[1m--port\x1b[0m 指定其它）
 
     uvicorn web_115_302_simple:app
-"""
+""" % {
+    "file_in_cwd": joinpath(realpath("."), "115-cookies.txt"), 
+    "file_in_home": joinpath(realpath(expanduser("~")), "115-cookies.txt"), 
+    "file_in_dir": joinpath(realpath(dirname(__file__)), "115-cookies.txt"), 
+}
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -54,7 +62,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
     parser.add_argument("-p", "--port", default=80, type=int, help="端口号，默认值：80")
-    parser.add_argument("-r", "--reload", action="store_true", help="此项目所在目录下的文件发生变动时重启，此选项仅用于调试")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
     args = parser.parse_args()
@@ -62,15 +69,14 @@ if __name__ == "__main__":
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
-from os import environ
-
 print(__doc__)
 
-from os.path import dirname, expanduser, join as joinpath, realpath
+from os import environ, stat
 
-cookies = environ.get("cookies", "").strip()
-device = ""
+cookies = bytearray(environ.get("cookies", "").strip(), "latin-1")
 cookies_path = environ.get("cookies_path", "")
+cookies_path_mtime = 0
+device = ""
 path_persistence_commitment = environ.get("path_persistence_commitment") is not None
 cdn_image = environ.get("cdn_image") is not None
 cdn_image_warmup_ids = environ.get("cdn_image_warmup_ids", "")
@@ -82,7 +88,7 @@ url_range_request_cooldown = int(environ.get("url_range_request_cooldown", "0"))
 if not cookies:
     if cookies_path:
         try:
-            cookies = open(cookies_path).read()
+            cookies[:] = open(cookies_path, "rb").read().strip()
         except FileNotFoundError:
             pass
     else:
@@ -93,13 +99,16 @@ if not cookies:
                 continue
             seen.add(cookies_dir)
             try:
-                if cookies := open(joinpath(cookies_dir, "115-cookies.txt")).read().strip():
-                    cookies_path = joinpath(cookies_dir, "115-cookies.txt")
+                path = joinpath(cookies_dir, "115-cookies.txt")
+                cookies[:] = open(path, "rb").read().strip()
+                if cookies:
+                    cookies_path = path
+                    cookies_path_mtime = stat(cookies_path).st_mtime_ns
                     break
             except FileNotFoundError:
                 pass
 if not cookies:
-    raise SystemExit("未能获得 cookies")
+    raise SystemExit("unable to get cookies")
 
 
 import errno
@@ -113,7 +122,7 @@ except ImportError:
     Buffer = bytes | bytearray | memoryview
 from base64 import b64decode, b64encode
 from enum import Enum
-from functools import update_wrapper
+from functools import partial, update_wrapper
 from posixpath import split as splitpath
 from time import time
 from typing import cast, Final
@@ -131,7 +140,7 @@ try:
     from cachetools import LRUCache, TTLCache
     from Crypto.PublicKey import RSA
     from Crypto.Cipher import PKCS1_v1_5
-    from orjson import loads
+    from orjson import dumps, loads
 except ImportError:
     from sys import executable
     from subprocess import run
@@ -147,7 +156,7 @@ except ImportError:
     from cachetools import LRUCache, TTLCache
     from Crypto.PublicKey import RSA
     from Crypto.Cipher import PKCS1_v1_5
-    from orjson import loads
+    from orjson import dumps, loads
 
 
 G_kts: Final = bytes((
@@ -194,8 +203,8 @@ if url_range_request_cooldown > 0:
     RANGE_REQUEST_COOLDOWN = TTLCache(8196, ttl=url_range_request_cooldown)
 
 
-to_bytes = int.to_bytes
-from_bytes = int.from_bytes
+to_bytes = partial(int.to_bytes, byteorder="big", signed=False)
+from_bytes = partial(int.from_bytes, byteorder="big", signed=False)
 
 
 def bytes_xor(v1: Buffer, v2: Buffer, /, size: int = 0) -> Buffer:
@@ -311,89 +320,91 @@ def check_response(resp: dict, /) -> dict:
     """
     if resp.get("state", True):
         return resp
+    message = str(dumps(resp), "utf-8")
     if "errno" in resp:
         match resp["errno"]:
             # {"state": false, "errno": 99, "error": "请重新登录", "request": "/app/uploadinfo", "data": []}
             case 99:
-                raise AuthenticationError(resp)
+                raise AuthenticationError(message)
             # {"state": false, "errno": 911, "errcode": 911, "error_msg": "请验证账号"}
             case 911:
-                raise AuthenticationError(resp)
+                raise AuthenticationError(message)
             # {"state": false, "errno": 20004, "error": "该目录名称已存在。", "errtype": "war"}
             case 20004:
-                raise FileExistsError(errno.EEXIST, resp)
+                raise FileExistsError(errno.EEXIST, message)
             # {"state": false, "errno": 20009, "error": "父目录不存在。", "errtype": "war"}
             case 20009:
-                raise FileNotFoundError(errno.ENOENT, resp)
+                raise FileNotFoundError(errno.ENOENT, message)
             # {"state": false, "errno": 91002, "error": "不能将文件复制到自身或其子目录下。", "errtype": "war"}
             case 91002:
-                raise OSError(errno.ENOTSUP, resp)
+                raise OSError(errno.ENOTSUP, message)
             # {"state": false, "errno": 91004, "error": "操作的文件(夹)数量超过5万个", "errtype": "war"}
             case 91004:
-                raise OSError(errno.ENOTSUP, resp)
+                raise OSError(errno.ENOTSUP, message)
             # {"state": false, "errno": 91005, "error": "空间不足，复制失败。", "errtype": "war"}
             case 91005:
-                raise OSError(errno.ENOSPC, resp)
+                raise OSError(errno.ENOSPC, message)
             # {"state": false, "errno": 90008, "error": "文件（夹）不存在或已经删除。", "errtype": "war"}
             case 90008:
-                raise FileNotFoundError(errno.ENOENT, resp)
+                raise FileNotFoundError(errno.ENOENT, message)
             # {"state": false,  "errno": 231011, "error": "文件已删除，请勿重复操作","errtype": "war"}
             case 231011:
-                raise FileNotFoundError(errno.ENOENT, resp)
+                raise FileNotFoundError(errno.ENOENT, message)
             # {"state": false, "errno": 990009, "error": "删除[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
             # {"state": false, "errno": 990009, "error": "还原[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
             # {"state": false, "errno": 990009, "error": "复制[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
             # {"state": false, "errno": 990009, "error": "移动[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
             case 990009:
-                raise OSError(errno.EBUSY, resp)
+                raise OSError(errno.EBUSY, message)
             # {"state": false, "errno": 990023, "error": "操作的文件(夹)数量超过5万个", "errtype": ""}
             case 990023:
-                raise OSError(errno.ENOTSUP, resp)
+                raise OSError(errno.ENOTSUP, message)
             # {"state": 0, "errno": 40100000, "code": 40100000, "data": {}, "message": "参数错误！", "error": "参数错误！"}
             case 40100000:
-                raise OSError(errno.EINVAL, resp)
+                raise OSError(errno.EINVAL, message)
             # {"state": 0, "errno": 40101032, "code": 40101032, "data": {}, "message": "请重新登录", "error": "请重新登录"}
             case 40101032:
-                raise AuthenticationError(resp)
+                raise AuthenticationError(message)
     elif "errNo" in resp:
         match resp["errNo"]:
             case 990001:
-                raise AuthenticationError(resp)
+                raise AuthenticationError(message)
     elif "code" in resp:
         match resp["code"]:
             # {'state': False, 'code': 20018, 'message': '文件不存在或已删除。'}
             # {'state': False, 'code': 800001, 'message': '目录不存在。'}
             case 20018 | 800001:
-                raise FileNotFoundError(errno.ENOENT, resp)
+                raise FileNotFoundError(errno.ENOENT, message)
             # {'state': False, 'code': 990002, 'message': '参数错误。'}
             case 990002:
-                raise OSError(errno.EINVAL, resp)
+                raise OSError(errno.EINVAL, message)
             case _:
-                raise OSError(errno.EIO, resp)
-    raise OSError(errno.EIO, resp)
+                raise OSError(errno.EIO, message)
+    raise OSError(errno.EIO, message)
 
 
 def redirect_exception_response(func, /):
     async def wrapper(*args, **kwds):
         try:
             return await func(*args, **kwds)
-        except HTTPException as e:
-            return text(
-                f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
-                e.status, 
-            )
-        except AuthenticationError as e:
-            return text(str(e), 401)
-        except PermissionError as e:
-            return text(str(e), 403)
-        except FileNotFoundError as e:
-            return text(str(e), 404)
-        except (IsADirectoryError, NotADirectoryError) as e:
-            return text(str(e), 406)
-        except OSError as e:
-            return text(str(e), 500)
-        except Exception as e:
-            return text(str(e), 503)
+        except BaseException as e:
+            message = f"{type(e).__module__}.{type(e).__qualname__}: {e}"
+            logger.error(message)
+            if isinstance(e, HTTPException):
+                return text(message, e.status)
+            elif isinstance(e, AuthenticationError):
+                return text(str(e), 401)
+            elif isinstance(e, PermissionError):
+                return text(str(e), 403)
+            elif isinstance(e, FileNotFoundError):
+                return text(str(e), 404)
+            elif isinstance(e, (IsADirectoryError, NotADirectoryError)):
+                return text(str(e), 406)
+            elif isinstance(e, OSError):
+                return text(str(e), 500)
+            elif isinstance(e, Exception):
+                return text(str(e), 503)
+            raise
     return update_wrapper(wrapper, func)
 
 
@@ -405,18 +416,28 @@ async def do_request(
     headers: None | dict[str, str] = None, 
     params: None | dict[str, str] = None, 
 ) -> Response:
-    current_cookies = cookies
-    if headers is None:
-        headers = {"Cookie": cookies}
+    request_headers: list[tuple[bytes, bytes]]
+    if headers:
+        request_headers = normalize_headers(headers) or []
     else:
-        headers["Cookie"] = cookies
-    request = Request(method.upper(), client.get_url(url, params), normalize_headers(headers))
+        request_headers = []
+    current_cookies = bytes(cookies)
+    request_headers.append((b"Cookie", current_cookies))
+    request = Request(method.upper(), client.get_url(url, params), request_headers)
     response = await client.send(request.with_content(content) if content else request)
-    if response.status == 405:
+    if response.status == 401:
+        if current_cookies != cookies:
+            return await do_request(client, url, method, content, headers, params)
+    elif response.status == 405:
         async with cookies_lock:
-            if current_cookies == cookies:
+            if cookies_path:
+                try:
+                    if cookies_path_mtime != stat(cookies_path).st_mtime_ns:
+                        cookies[:] = open(cookies_path, "rb").read().strip()
+                except FileNotFoundError:
+                    await relogin(client)
+            elif current_cookies == cookies:
                 await relogin(client)
-        headers["Cookies"] = cookies
         return await do_request(client, url, method, content, headers, params)
     if response.status >= 400:
         raise HTTPException(response.status, response.reason)
@@ -474,7 +495,7 @@ async def login_qrcode_result(client: ClientSession, uid: str, app: str = "web")
 async def relogin(client: ClientSession) -> dict:
     """自动扫二维码重新登录
     """
-    global cookies, device
+    global cookies_path_mtime, device
     if not device:
         device = await login_device(client)
     logger.warning(f"\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码: {device!r} 🦿\x1b[0m")
@@ -482,9 +503,10 @@ async def relogin(client: ClientSession) -> dict:
     await login_qrcode_scan(client, uid)
     await login_qrcode_scan_confirm(client, uid)
     resp = await login_qrcode_result(client, uid, device)
-    cookies = "; ".join("%s=%s" % e for e in resp["data"]["cookie"].items())
+    cookies[:] = bytes("; ".join("%s=%s" % e for e in resp["data"]["cookie"].items()), "latin-1")
     if cookies_path:
-        open(cookies_path, "w").write(cookies)
+        open(cookies_path, "wb").write(cookies)
+        cookies_path_mtime = stat(cookies_path).st_mtime_ns
     return resp
 
 
@@ -513,7 +535,10 @@ async def register_http_client():
         yield
 
 
-async def get_dir_patht_by_id(client: ClientSession, id: str) -> list[tuple[str, str]]:
+async def get_dir_patht_by_id(
+    client: ClientSession, 
+    id: str, 
+) -> list[tuple[str, str]]:
     json = await request_json(
         client, 
         "https://webapi.115.com/files", 
@@ -525,7 +550,10 @@ async def get_dir_patht_by_id(client: ClientSession, id: str) -> list[tuple[str,
     return [(info["cid"], info["name"]) for info in json["path"][1:]]
 
 
-async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
+async def get_pickcode_by_id(
+    client: ClientSession, 
+    id: str, 
+) -> str:
     if pickcode := ID_TO_PICKCODE.get(id):
         return pickcode
     json = await request_json(
@@ -539,7 +567,10 @@ async def get_pickcode_by_id(client: ClientSession, id: str) -> str:
     return process_info(info)
 
 
-async def get_pickcode_by_sha1(client: ClientSession, sha1: str) -> str:
+async def get_pickcode_by_sha1(
+    client: ClientSession, 
+    sha1: str, 
+) -> str:
     if len(sha1) != 40:
         raise FileNotFoundError(sha1)
     if pickcode := SHA1_TO_PICKCODE.get(sha1):
@@ -615,7 +646,11 @@ def reduce_image_url_layers(url: str) -> str:
     return f"https://imgjump.115.com/?sha1={sha1}&{urlp.query}&size=0"
 
 
-async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | dict[str, str] = None) -> int:
+async def warmup_cdn_image(
+    client: ClientSession, 
+    id: str = "0", 
+    cache: None | dict[str, str] = None, 
+) -> int:
     api = "https://proapi.115.com/android/files/imglist"
     payload: dict = {"cid": id, "limit": 5000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
     count = 0
@@ -652,39 +687,42 @@ async def warmup_cdn_image(client: ClientSession, id: str = "0", cache: None | d
     return count
 
 
-async def periodically_warmup_cdn_image(client: ClientSession, ids: str):
-    id_list = [int(id) for id in ids.split(",") if id]
-    if not id_list:
-        return
-    cache: None | dict[str, str] = None
-    if not cdn_image_warmup_no_path_cache:
-        cache = {}
-    while True:
-        start = time()
-        for id in map(str, id_list):
-            if cache and id in cache:
-                logger.warning("skipped cdn images warmup-ing in %s", id)
-                continue
-            logger.info("background task start: warmup-ing cdn images in %s", id)
-            try:
-                count = await warmup_cdn_image(client, id, cache=cache)
-            except Exception:
-                logger.exception("error occurred while warmup-ing cdn images in %s", id)
-            else:
-                logger.info("background task stop: warmup-ed cdn images in %s, count=%s", id, count)
-        if (interval := start + 3600 - time()) > 0:
-            await sleep(interval)
-
-
-async def configure_background_tasks(app: Application):
-    client = app.services.resolve(ClientSession)
-    create_task(periodically_warmup_cdn_image(client, cdn_image_warmup_ids))
-
 if cdn_image and cdn_image_warmup_ids:
-    app.on_start += configure_background_tasks
+    async def periodically_warmup_cdn_image(client: ClientSession, ids: str):
+        id_list = [int(id) for id in ids.split(",") if id]
+        if not id_list:
+            return
+        cache: None | dict[str, str] = None
+        if not cdn_image_warmup_no_path_cache:
+            cache = {}
+        while True:
+            start = time()
+            for id in map(str, id_list):
+                if cache and id in cache:
+                    logger.warning("skipped cdn images warmup-ing in %s", id)
+                    continue
+                logger.info("background task start: warmup-ing cdn images in %s", id)
+                try:
+                    count = await warmup_cdn_image(client, id, cache=cache)
+                except Exception:
+                    logger.exception("error occurred while warmup-ing cdn images in %s", id)
+                else:
+                    logger.info("background task stop: warmup-ed cdn images in %s, count=%s", id, count)
+            if (interval := start + 3600 - time()) > 0:
+                await sleep(interval)
+
+    @app.on_start
+    async def configure_background_tasks(app: Application):
+        client = app.services.resolve(ClientSession)
+        create_task(periodically_warmup_cdn_image(client, cdn_image_warmup_ids))
 
 
-async def get_image_url(client: ClientSession, pickcode: str) -> bytes:
+async def get_image_url(
+    client: ClientSession, 
+    pickcode: str, 
+) -> bytes:
+    """获取图片的 cdn 链接
+    """
     if IMAGE_URL_CACHE and (url := IMAGE_URL_CACHE.get(pickcode)):
         return url
     json = await request_json(
@@ -756,7 +794,9 @@ async def get_download_url(
         item = next(info for info in data.values())
         ID_TO_PICKCODE[next(iter(data))] = item["pick_code"]
         # NOTE: 还需要继续增加，目前不确定 115 到底支持哪些图片格式
-        if cdn_image and item["file_name"].lower().endswith((".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp")):
+        if cdn_image and item["file_name"].lower().endswith((
+            ".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".raw", ".svg", ".tif", ".tiff", ".webp", 
+        )):
             IMAGE_URL_CACHE[item["pick_code"]] = "" # type: ignore
         url = item["url"]["url"]
         if URL_CACHE is not None:
@@ -773,11 +813,11 @@ if __name__ == "__main__":
         from sys import executable
         from subprocess import run
         run([executable, "-m", "pip", "install", "-U", "uvicorn"], check=True)
+        import uvicorn
     uvicorn.run(
         app=app, 
         host=args.host, 
         port=args.port, 
-        reload=args.reload, 
         proxy_headers=True, 
         forwarded_allow_ips="*", 
     )

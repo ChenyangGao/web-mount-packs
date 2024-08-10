@@ -39,6 +39,7 @@ from uuid import uuid4
 from warnings import filterwarnings, warn
 
 from dateutil.parser import parse as dt_parse
+from dictattr import AttrDict
 from download import AsyncDownloadTask, DownloadTask
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead, SupportsWrite
 from glob_pattern import translate_iter
@@ -52,7 +53,6 @@ from yarl import URL
 from .client import check_response, AlistClient
 
 
-AttrDict: TypeAlias = dict
 PathType: TypeAlias = str | PathLike[str] | AttrDict
 
 
@@ -2770,12 +2770,12 @@ class AlistFileSystem:
                 path = cast(str, attr["path"])
             else:
                 path = self.abspath(path)
-            attr = (yield self.fs_get(
+            attr = AttrDict((yield self.fs_get(
                 path, 
                 password, 
                 headers=headers, 
                 async_=async_, 
-            ))["data"]
+            ))["data"])
             access_time = datetime.now()
             attr["accessed"] = access_time.astimezone().strftime("%Y-%m-%dT%H:%M:%S.%f%z")
             attr["ctime"] = parse_as_timestamp(attr.get("created"))
@@ -4094,7 +4094,7 @@ class AlistFileSystem:
                     return True
                 if attr is None or "hash_info" not in attr:
                     try:
-                        attr = cast(dict, (yield self.attr(path, password, async_=async_)))
+                        attr = cast(AttrDict, (yield self.attr(path, password, async_=async_)))
                     except FileNotFoundError:
                         return False
                 return attr["hash_info"] is None
@@ -4578,11 +4578,12 @@ class AlistFileSystem:
                 path = cast(str, path["path"])
             else:
                 path = self.abspath(path)
-            for attr in data:
+            for i, attr in enumerate(data):
                 attr["ctime"] = parse_as_timestamp(attr.get("created"))
                 attr["mtime"] = parse_as_timestamp(attr.get("modified"))
                 attr["path"] = joinpath(path, attr["name"])
                 attr["password"] = password
+                data[i] = AttrDict(attr)
             return data
         return run_gen_step(gen_step, async_=async_)
 
@@ -4811,10 +4812,10 @@ class AlistFileSystem:
                 )
             # TODO: 还要考虑一种情况，就是 src_path 是个 storage
             if src_attr is None:
-                src_attr = cast(dict, (yield self.attr(src_path, src_password, async_=async_)))
+                src_attr = cast(AttrDict, (yield self.attr(src_path, src_password, async_=async_)))
             try:
                 if dst_attr is None:
-                    dst_attr = cast(dict, (yield self.attr(dst_path, dst_password, async_=async_)))
+                    dst_attr = cast(AttrDict, (yield self.attr(dst_path, dst_password, async_=async_)))
             except FileNotFoundError:
                 return (yield self.rename(
                     src_attr, 
@@ -5159,7 +5160,7 @@ class AlistFileSystem:
                     "remove the root directory is not allowed", 
                 )
             if attr is None or "hash_info" not in attr:
-                attr = cast(dict, (yield self.attr(path, password, async_=async_)))
+                attr = cast(AttrDict, (yield self.attr(path, password, async_=async_)))
             is_storage = attr.get("hash_info") is None
             if attr["is_dir"]:
                 if not recursive:
@@ -5230,7 +5231,7 @@ class AlistFileSystem:
             if (yield dirlen(path, password, async_=async_)):
                 raise OSError(errno.ENOTEMPTY, f"directory is not empty: {path!r}")
             if attr is None or "hash_info" not in attr:
-                attr = cast(dict, (yield self.attr(path, password, async_=async_)))
+                attr = cast(AttrDict, (yield self.attr(path, password, async_=async_)))
             try:
                 storages = yield self.list_storages(async_=async_)
                 storage_path_to_id = {s["mount_path"]: s["id"] for s in storages}
@@ -5348,9 +5349,9 @@ class AlistFileSystem:
             src_dir, src_name = splitpath(src_path)
             dst_dir, dst_name = splitpath(dst_path)
             if src_attr is None or "hash_info" not in src_attr:
-                src_attr = cast(dict, (yield self.attr(src_path, src_password, async_=async_)))
+                src_attr = cast(AttrDict, (yield self.attr(src_path, src_password, async_=async_)))
             try:
-                dst_attr = cast(dict, (yield self.attr(dst_path, dst_password, async_=async_)))
+                dst_attr = cast(AttrDict, (yield self.attr(dst_path, dst_password, async_=async_)))
             except FileNotFoundError:
                 if src_attr["hash_info"] is None:
                     storages = yield self.list_storages(async_=async_)
@@ -5602,7 +5603,7 @@ class AlistFileSystem:
             if path == "/":
                 raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
             if attr is None or "hash_info" not in attr:
-                attr = cast(dict, (yield self.attr(path, password, async_=async_)))
+                attr = cast(AttrDict, (yield self.attr(path, password, async_=async_)))
             if not attr["is_dir"]:
                 raise NotADirectoryError(errno.ENOTDIR, path)
             if attr["hash_info"] is None:
@@ -5792,13 +5793,13 @@ class AlistFileSystem:
                 if path == "/":
                     return "/"
                 if attr is None or "hash_info" not in attr:
-                    attr = cast(dict, (yield self.attr(path, password, async_=async_)))
+                    attr = cast(AttrDict, (yield self.attr(path, password, async_=async_)))
                 while attr["hash_info"] is not None:
                     path = dirname(path)
                     if path == "/":
                         break
                     try:
-                        attr = cast(dict, (yield self.attr(path, password, async_=async_)))
+                        attr = cast(AttrDict, (yield self.attr(path, password, async_=async_)))
                     except FileNotFoundError:
                         pass
                 return path

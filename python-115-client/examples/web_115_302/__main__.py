@@ -260,29 +260,28 @@ except ImportError:
 if not cookies:
     if cookies_path:
         try:
-            cookies = open(cookies_path).read()
+            cookies = open(cookies_path, encoding="utf-8").read().strip()
         except FileNotFoundError:
             pass
     else:
         seen = set()
-        for dir_ in (".", expanduser("~"), dirname(__file__)):
-            dir_ = realpath(dir_)
-            if dir_ in seen:
+        for cookies_dir in (".", expanduser("~"), dirname(__file__)):
+            cookies_dir = realpath(cookies_dir)
+            if cookies_dir in seen:
                 continue
-            seen.add(dir_)
+            seen.add(cookies_dir)
             try:
-                path = joinpath(dir_, "115-cookies.txt")
-                cookies = open(path).read()
-                cookies_path_mtime = stat(path).st_mtime_ns
-                if cookies:
+                path = joinpath(cookies_dir, "115-cookies.txt")
+                if cookies := open(path, encoding="utf-8").read().strip():
                     cookies_path = path
+                    cookies_path_mtime = stat(path).st_mtime_ns
                     break
             except FileNotFoundError:
                 pass
 
 client = P115Client(cookies or None, app=args.login_app or "qandroid")
 if cookies_path and (not exists(cookies_path) or cookies != client.cookies):
-    open(cookies_path, "w").write(client.cookies)
+    open(cookies_path, "w", encoding="utf-8").write(client.cookies)
 
 urlopen = partial(urllib3_request, pool=PoolManager(num_pools=50))
 do_request: None | Callable = None
@@ -746,7 +745,7 @@ def relogin(exc=None):
             try:
                 mtime = stat(cookies_path).st_mtime_ns
                 if mtime != cookies_path_mtime:
-                    client.cookies = open(cookies_path).read()
+                    client.cookies = open(cookies_path, encoding="utf-8").read()
                     cookies_path_mtime = mtime
                     need_update = False
             except FileNotFoundError:
@@ -762,7 +761,7 @@ def relogin(exc=None):
                 )
             client.login_another_app(device, replace=True, request=do_request, timeout=5)
             if cookies_path:
-                open(cookies_path, "w").write(client.cookies)
+                open(cookies_path, "w", encoding="utf-8").write(client.cookies)
                 cookies_path_mtime = stat(cookies_path).st_mtime_ns
 
 
