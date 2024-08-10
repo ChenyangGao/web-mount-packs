@@ -1205,3 +1205,5 @@ if __name__ == "__main__":
 # TODO: 完整的 wsgidav 配置文件支持
 # TODO: 更完整信息的支持，类似 xattr
 
+# TODO: 多应用共用 cookies
+# TODO: 401 报错检查 cookies 是否被更新，如果是，则重跑

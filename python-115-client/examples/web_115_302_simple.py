@@ -73,7 +73,7 @@ print(__doc__)
 
 from os import environ, stat
 
-cookies = bytearray(environ.get("cookies", "").strip(), "latin-1")
+cookies = bytes(environ.get("cookies", "").strip(), "latin-1")
 cookies_path = environ.get("cookies_path", "")
 cookies_path_mtime = 0
 device = ""
@@ -88,7 +88,8 @@ url_range_request_cooldown = int(environ.get("url_range_request_cooldown", "0"))
 if not cookies:
     if cookies_path:
         try:
-            cookies[:] = open(cookies_path, "rb").read().strip()
+            cookies = open(cookies_path, "rb").read().strip()
+            cookies_path_mtime = stat(cookies_path).st_mtime_ns
         except FileNotFoundError:
             pass
     else:
@@ -100,8 +101,7 @@ if not cookies:
             seen.add(cookies_dir)
             try:
                 path = joinpath(cookies_dir, "115-cookies.txt")
-                cookies[:] = open(path, "rb").read().strip()
-                if cookies:
+                if cookies := open(path, "rb").read().strip():
                     cookies_path = path
                     cookies_path_mtime = stat(cookies_path).st_mtime_ns
                     break
@@ -416,24 +416,23 @@ async def do_request(
     headers: None | dict[str, str] = None, 
     params: None | dict[str, str] = None, 
 ) -> Response:
+    global cookies, cookies_path_mtime
     request_headers: list[tuple[bytes, bytes]]
     if headers:
-        request_headers = normalize_headers(headers) or []
+        request_headers = normalize_headers(headers) # type: ignore
     else:
         request_headers = []
-    current_cookies = bytes(cookies)
+    current_cookies = cookies
     request_headers.append((b"Cookie", current_cookies))
     request = Request(method.upper(), client.get_url(url, params), request_headers)
     response = await client.send(request.with_content(content) if content else request)
-    if response.status == 401:
-        if current_cookies != cookies:
-            return await do_request(client, url, method, content, headers, params)
-    elif response.status == 405:
+    if response.status == 405:
         async with cookies_lock:
             if cookies_path:
                 try:
                     if cookies_path_mtime != stat(cookies_path).st_mtime_ns:
-                        cookies[:] = open(cookies_path, "rb").read().strip()
+                        cookies = open(cookies_path, "rb").read().strip()
+                        cookies_path_mtime = stat(cookies_path).st_mtime_ns
                 except FileNotFoundError:
                     await relogin(client)
             elif current_cookies == cookies:
@@ -452,9 +451,24 @@ async def request_json(
     headers: None | dict[str, str] = None, 
     params: None | dict[str, str] = None, 
 ) -> dict:
+    global cookies, cookies_path_mtime
+    current_cookies = cookies
     resp = await do_request(client, url, method, content=content, headers=headers, params=params)
     json = loads((await resp.read()) or b"")
-    return check_response(json)
+    try:
+        return check_response(json)
+    except AuthenticationError:
+        async with cookies_lock:
+            if cookies_path:
+                try:
+                    if cookies_path_mtime != stat(cookies_path).st_mtime_ns:
+                        cookies = open(cookies_path, "rb").read().strip()
+                        cookies_path_mtime = stat(cookies_path).st_mtime_ns
+                except FileNotFoundError:
+                    pass
+            if current_cookies == cookies:
+                raise
+        return await request_json(client, url, method, content=content, headers=headers, params=params)
 
 
 async def login_device(client: ClientSession) -> str:
@@ -495,7 +509,7 @@ async def login_qrcode_result(client: ClientSession, uid: str, app: str = "web")
 async def relogin(client: ClientSession) -> dict:
     """自动扫二维码重新登录
     """
-    global cookies_path_mtime, device
+    global cookies, cookies_path_mtime, device
     if not device:
         device = await login_device(client)
     logger.warning(f"\x1b[1m\x1b[33m[SCAN] 🦾 重新扫码: {device!r} 🦿\x1b[0m")
@@ -503,7 +517,7 @@ async def relogin(client: ClientSession) -> dict:
     await login_qrcode_scan(client, uid)
     await login_qrcode_scan_confirm(client, uid)
     resp = await login_qrcode_result(client, uid, device)
-    cookies[:] = bytes("; ".join("%s=%s" % e for e in resp["data"]["cookie"].items()), "latin-1")
+    cookies = bytes("; ".join("%s=%s" % e for e in resp["data"]["cookie"].items()), "latin-1")
     if cookies_path:
         open(cookies_path, "wb").write(cookies)
         cookies_path_mtime = stat(cookies_path).st_mtime_ns
