@@ -2567,7 +2567,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 id = id_or_path
                 ls = [""]
                 if id:
-                    resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
+                    resp = yield self.client.fs_files({"cid": id, "limit": 1}, async_=async_)
                     if int(resp["path"][-1]["cid"]) == id:
                         ls.extend(p["name"] for p in resp["path"][1:])
                     else:
@@ -2575,7 +2575,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         info = resp["data"][0]
                         pid, name = int(info["cid"]), info["n"]
                         if pid:
-                            resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
+                            resp = yield self.client.fs_files({"cid": pid, "limit": 1}, async_=async_)
                             ls.extend(p["name"] for p in resp["path"][1:])
                         ls.append(name)
                 return ls
@@ -3356,9 +3356,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             src_path = cast(str, src_attr["path"])
             src_patht = splits(src_path)[0]
             try:
-                dst_attr = yield partial(self.attr, dst_path, pid=pid, async_=async_)
+                dst_attr = yield self.attr(dst_path, pid=pid, async_=async_)
             except FileNotFoundError:
-                dst_patht = yield partial(self.get_patht, dst_path, pid=pid, async_=async_)
+                dst_patht = yield self.get_patht(dst_path, pid=pid, async_=async_)
                 dst_path = joins(dst_patht)
                 if dst_patht == src_patht[:len(dst_patht)]:
                     raise PermissionError(
