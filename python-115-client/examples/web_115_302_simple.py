@@ -170,10 +170,11 @@ G_kts: Final = bytes((
     0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77, 0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e, 
     0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c, 0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5, 
 ))
-RSA_encrypt: Final = PKCS1_v1_5.new(RSA.construct((
+RSA_PUBLIC_KEY: Final = RSA.construct((
     0x8686980c0f5a24c4b9d43020cd2c22703ff3f450756529058b1cf88f09b8602136477198a6e2683149659bd122c33592fdb5ad47944ad1ea4d36c6b172aad6338c3bb6ac6227502d010993ac967d1aef00f0c8e038de2e4d3bc2ec368af2e9f10a6f1eda4f7262f136420c07c331b871bf139f74f3010e3c4fe57df3afb71683, 
     0x10001, 
-))).encrypt
+))
+RSA_encrypt: Final = PKCS1_v1_5.new(RSA_PUBLIC_KEY).encrypt
 
 app = Application()
 logger = getattr(app, "logger")
@@ -269,8 +270,8 @@ def rsa_encode(data: Buffer, /) -> bytes:
 
 
 def rsa_decode(cipher_data: Buffer, /) -> bytearray:
-    rsa_e = 0x10001
-    rsa_n = 0x8686980c0f5a24c4b9d43020cd2c22703ff3f450756529058b1cf88f09b8602136477198a6e2683149659bd122c33592fdb5ad47944ad1ea4d36c6b172aad6338c3bb6ac6227502d010993ac967d1aef00f0c8e038de2e4d3bc2ec368af2e9f10a6f1eda4f7262f136420c07c331b871bf139f74f3010e3c4fe57df3afb71683
+    rsa_e = RSA_PUBLIC_KEY.e
+    rsa_n = RSA_PUBLIC_KEY.n
     cipher_data = memoryview(b64decode(cipher_data))
     data = bytearray()
     for l, r, _ in acc_step(0, len(cipher_data), 128):

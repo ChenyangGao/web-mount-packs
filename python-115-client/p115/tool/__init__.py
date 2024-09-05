@@ -3,27 +3,141 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "login_scan_cookie", "crack_captcha", "remove_receive_dir", 
+    "relogin_wrap_maker", "login_scan_cookie", "crack_captcha", "remove_receive_dir", 
     "wish_make", "wish_answer", "wish_list", "wish_aid_list", "wish_adopt", 
     "parse_export_dir_as_dict_iter", "parse_export_dir_as_path_iter", 
     "export_dir", "export_dir_parse_iter", 
 ]
 
-from collections import defaultdict
+from asyncio import Lock as AsyncLock
+from collections import defaultdict, ChainMap
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from inspect import isawaitable
 from io import TextIOBase, TextIOWrapper
 from os import PathLike
 from re import compile as re_compile
+from sys import _getframe
+from threading import Lock
 from time import sleep, time
-from typing import cast, IO
+from typing import cast, Any, IO
+from weakref import WeakKeyDictionary
 
 from concurrenttools import thread_pool_batch
+from httpx import HTTPStatusError
 from p115.component.client import check_response, ExportDirStatus, P115Client
 from posixpatht import escape
 
 
 CAPTCHA_CRACK: Callable[[bytes], str]
 CRE_TREE_PREFIX_match = re_compile("^(?:\| )+\|-").match
+
+
+def _check_for_relogin(e: BaseException) -> bool:
+    status = getattr(e, "status", None) or getattr(e, "code", None) or getattr(e, "status_code", None)
+    if status is None and hasattr(e, "response"):
+        response = e.response
+        status = getattr(response, "status", None) or getattr(response, "code", None) or getattr(response, "status_code", None)
+    return status == 405
+
+
+def relogin_wrap_maker(
+    relogin: None | Callable[[], Any] = None, 
+    client: None | P115Client = None, 
+    check_for_relogin: Callable[[BaseException], bool | int] = _check_for_relogin, 
+    lock: None | AbstractContextManager | AbstractAsyncContextManager = None,   
+) -> Callable:
+    """包装调用：执行调用，成功则返回，当遇到特定错误则重新登录后循环此流程
+
+    :param relogin: 调用以自定义重新登录，如果为 None，则用默认的重新登录
+    :param client: 115 客户端或 cookies，当 relogin 为 None 时被使用
+    :param check_for_relogin: 检查以确定是否要重新登录，如果为 False，则抛出异常
+        - 如果值为 bool，如果为 True，则重新登录
+        - 如果值为 int，则视为返回码，当值为 405 时会重新登录
+    :param lock: 如果不为 None，执行调用时加这个锁（或上下文管理器）
+
+    :return: 返回函数，用于执行调用，必要时会重新登录再重试
+    """
+    if relogin is None:
+        d: WeakKeyDictionary[P115Client, tuple[AbstractContextManager, AbstractAsyncContextManager]] = WeakKeyDictionary()
+    def wrapper(func, /, *args, **kwargs):
+        nonlocal client
+        if relogin is None:
+            if client is None:
+                f = func
+                while hasattr(f, "__wrapped__"):
+                    f = f.__wrapped__
+                if hasattr(f, "__self__"):
+                    f = f.__self__
+                if isinstance(f, P115Client):
+                    client = f
+                elif hasattr(f, "client"):
+                    client = f.client
+                else:
+                    frame = _getframe(1)
+                    client = ChainMap(frame.f_locals, frame.f_globals, frame.f_builtins)["client"]
+            elif not isinstance(client, P115Client):
+                client = P115Client(client)
+            if not isinstance(client, P115Client):
+                raise ValueError("no awailable client")
+            try:
+                relogin_lock, relogin_alock = d[client]
+            except KeyError:
+                relogin_lock, relogin_alock = d[client] = (Lock(), AsyncLock())
+        is_cm = isinstance(lock, AbstractContextManager)
+        while True:
+            try:
+                if is_cm:
+                    with cast(AbstractContextManager, lock):
+                        ret = func(*args, **kwargs)
+                else:
+                    ret = func(*args, **kwargs)
+                if isawaitable(ret):
+                    is_acm = isinstance(lock, AbstractAsyncContextManager)
+                    async def wrap(ret):
+                        while True:
+                            try:
+                                if is_cm:
+                                    with cast(AbstractContextManager, lock):
+                                        return await ret
+                                elif is_acm:
+                                    async with cast(AbstractAsyncContextManager, lock):
+                                        return await ret
+                                else:
+                                    return await ret
+                            except BaseException as e:
+                                res = check_for_relogin(e)
+                                if isawaitable(res):
+                                    res = await res
+                                if not res if isinstance(res, bool) else res != 405:
+                                    raise
+                                if relogin is None:
+                                    client = cast(P115Client, client)
+                                    cookies = client.cookies
+                                    async with relogin_alock:
+                                        if cookies == client.cookies:
+                                            await client.login_another_app(replace=True, async_=True)
+                                else:
+                                    res = relogin()
+                                    if isawaitable(res):
+                                        await res
+                                ret = func(*args, **kwargs)
+                    return wrap(ret)
+                else:
+                    return ret
+            except HTTPStatusError as e:
+                res = check_for_relogin(e)
+                if not res if isinstance(res, bool) else res != 405:
+                    raise
+                if relogin is None:
+                    client = cast(P115Client, client)
+                    cookies = client.cookies
+                    with relogin_lock:
+                        if cookies == client.cookies:
+                            client.login_another_app(replace=True)
+                else:
+                    relogin()
+    return wrapper
 
 
 def login_scan_cookie(
@@ -156,6 +270,7 @@ def crack_captcha(
 
 def remove_receive_dir(client: P115Client, password: str):
     """删除目录 "/我的接收"
+
     :param client: 115 客户端或 cookies
     :param password: 回收站密码（即 安全密钥，是 6 位数字）
     """
@@ -186,6 +301,7 @@ def wish_make(
     size: int = 5, 
 ) -> str:
     """许愿树活动：创建许愿（许愿创建后需要等审核）
+
     :param client: 115 客户端或 cookies
     :param content: 许愿内容
     :param size: 答谢空间大小，单位是 GB
@@ -206,6 +322,7 @@ def wish_answer(
     file_ids: int | str | Iterable[int | str] = "", 
 ) -> str:
     """许愿树活动：创建助愿（助愿创建后需要等审核）
+
     :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
     :param content: 助愿内容
@@ -228,11 +345,14 @@ def wish_list(
     type: int = 0, 
 ) -> list[dict]:
     """许愿树活动：我的许愿列表
+
     :param client: 115 客户端或 cookies
     :param type: 类型
         - 0: 全部
         - 1: 进行中
         - 2: 已实现
+
+    :return: 许愿列表
     """
     if not isinstance(client, P115Client):
         client = P115Client(client)
@@ -250,8 +370,11 @@ def wish_aid_list(
     wish_id: str, 
 ) -> list[dict]:
     """许愿树活动：许愿的助愿列表
+
     :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
+
+    :return: 助愿列表
     """
     if not isinstance(client, P115Client):
         client = P115Client(client)
@@ -271,10 +394,13 @@ def wish_adopt(
     to_cid: int = 0, 
 ) -> dict:
     """许愿树活动：采纳助愿
+
     :param client: 115 客户端或 cookies
     :param wish_id: 许愿 id
     :param aid_id: 助愿 id
     :param to_cid: 助愿的分享文件保存到你的网盘中目录的 id
+
+    :return: 返回信息
     """
     if not isinstance(client, P115Client):
         client = P115Client(client)
@@ -362,9 +488,12 @@ def export_dir(
     target_pid: int | str = 0, 
 ) -> ExportDirStatus:
     """导出目录树
+
     :param client: 115 客户端或 cookies
     :param export_file_ids: 待导出的文件夹 id 或 路径
     :param target_pid: 导出到的目标文件夹 id 或 路径
+
+    :return: 返回对象以获取进度
     """
     if not isinstance(client, P115Client):
         client = P115Client(client)

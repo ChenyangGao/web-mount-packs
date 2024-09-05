@@ -11,11 +11,10 @@ __all__ = [
     "ensure_str", "ensure_bytes", "ensure_functype", 
 ]
 
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, AbstractAsyncContextManager, AbstractContextManager
 from functools import update_wrapper
 from inspect import isawaitable
 from sys import byteorder
-from typing import AsyncContextManager, ContextManager
 from types import FunctionType
 
 from undefined import undefined
@@ -56,7 +55,7 @@ def ensure_cm(
     /, 
     default=undefined, 
 ) -> ContextManager:
-    if isinstance(obj, ContextManager):
+    if isinstance(obj, AbstractContextManager):
         return obj
     elif default is undefined:
         default = obj
@@ -68,7 +67,7 @@ def ensure_acm(
     /, 
     default=undefined, 
 ) -> AsyncContextManager:
-    if isinstance(obj, AsyncContextManager):
+    if isinstance(obj, AbstractAsyncContextManager):
         return obj
     elif default is undefined:
         default = obj

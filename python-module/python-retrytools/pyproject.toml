@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-retrytools"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python retry tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

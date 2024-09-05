@@ -3413,7 +3413,26 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 yield partial(self.fs_rename, src_id, dst_name, async_=async_)
             elif src_name == dst_name:
                 yield partial(self.fs_move, src_id, dst_pid, async_=async_)
-            elif not src_attr["is_directory"] and src_ext != dst_ext:
+            elif src_attr["is_directory"]:
+                yield partial(self.fs_rename, src_id, str(uuid4()), async_=async_)
+                try:
+                    yield partial(self.fs_move, src_id, dst_pid, async_=async_)
+                    try:
+                        yield partial(self.fs_rename, src_id, dst_name, async_=async_)
+                    except:
+                        yield partial(self.fs_move, src_id, src_attr["parent_id"], async_=async_)
+                        raise
+                except:
+                    yield partial(self.fs_rename, src_id, src_name, async_=async_)
+                    raise
+            elif src_ext == dst_ext:
+                yield partial(self.fs_move, src_id, dst_pid, async_=async_)
+                try:
+                    yield partial(self.fs_rename, src_id, dst_name, async_=async_)
+                except:
+                    yield partial(self.fs_move, src_id, src_attr["parent_id"], async_=async_)
+                    raise
+            else:
                 url = yield partial(self.get_url, src_id, async_=async_)
                 client = self.client
                 resp = yield partial(
@@ -3454,18 +3473,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 else:
                     dst_name = data["file_name"]
                     return (yield partial(self.attr, [dst_name], pid=dst_pid, async_=async_))
-            else:
-                yield partial(self.fs_rename, src_id, str(uuid4()), async_=async_)
-                try:
-                    yield partial(self.fs_move, src_id, dst_pid, async_=async_)
-                    try:
-                        yield partial(self.fs_rename, src_id, dst_name, async_=async_)
-                    except:
-                        yield partial(self.fs_move, src_id, src_attr["parent_id"], async_=async_)
-                        raise
-                except:
-                    yield partial(self.fs_rename, src_id, src_name, async_=async_)
-                    raise
             return (yield partial(self.attr, src_id, async_=async_))
         return run_gen_step(gen_step, async_=async_)
 

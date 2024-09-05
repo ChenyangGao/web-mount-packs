@@ -48,7 +48,7 @@ import errno
 import logging
 
 from collections.abc import Callable, Iterable, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
@@ -63,7 +63,7 @@ from _thread import start_new_thread
 from threading import Lock, current_thread
 from time import perf_counter, sleep
 from traceback import format_exc
-from typing import cast, ContextManager, NamedTuple, TypedDict
+from typing import cast, NamedTuple, TypedDict
 from urllib.error import URLError
 from urllib.parse import quote, urljoin
 from warnings import warn
@@ -118,9 +118,9 @@ use_request = args.use_request
 stats_interval = args.stats_interval
 debug = args.debug
 
-login_lock: None | ContextManager = None
-count_lock: None | ContextManager = None
-fs_lock: None | ContextManager = None
+login_lock: None | AbstractContextManager = None
+count_lock: None | AbstractContextManager = None
+fs_lock: None | AbstractContextManager = None
 if max_workers > 1:
     login_lock = Lock()
     count_lock = Lock()
@@ -334,7 +334,7 @@ def highlight_traceback() -> str:
 
 @contextmanager
 def ensure_cm(cm):
-    if isinstance(cm, ContextManager):
+    if isinstance(cm, AbstractContextManager):
         with cm as val:
             yield val
     else:
@@ -458,14 +458,14 @@ def relogin(
 
 
 def relogin_wrap(func, /, *args, **kwds):
-    try:
-        with ensure_cm(fs_lock):
-            return func(*args, **kwds)
-    except StatusError as e:
-        if get_status_code(e) != 405:
-            raise
-        relogin(e)
-    return relogin_wrap(func, *args, **kwds)
+    while True:
+        try:
+            with ensure_cm(fs_lock):
+                return func(*args, **kwds)
+        except StatusError as e:
+            if get_status_code(e) != 405:
+                raise
+            relogin(e)
 
 
 def pull(

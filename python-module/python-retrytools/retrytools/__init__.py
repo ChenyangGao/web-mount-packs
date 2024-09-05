@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["retry", "raise_for_value"]
 
 from collections.abc import Callable, Iterable
@@ -31,7 +31,7 @@ def retry(
     func: Callable[Args, T], 
     /, 
     retry_times: int = 0, 
-    suppress_exceptions: type[BaseException] | tuple[type[BaseException], ...] = Exception, 
+    exceptions: type[BaseException] | tuple[type[BaseException], ...] | Callable[[BaseException], bool] = Exception, 
     do_interval: None | Callable[[int], Any] | int | float = None, 
     mark_async: bool = False, 
 ) -> Callable[Args, T]:
@@ -40,7 +40,7 @@ def retry(
     :param func: The function to be decorated.
     :param retry_times: The number of times the decorated function will be retried if it raises an exception. Default is 0, which means no retries.
                         It will run at least once. If it is less than 0, it will run infinitely. Otherwise, it will run `retry_times`+1 times.
-    :param suppress_exceptions: The type or types of exceptions that should be suppressed during retries.
+    :param exceptions: The exception type or tuple of exception types or callable for check exception that should be suppressed during retries.
     :param do_interval: An optional number or function that can be used to perform a delay between retries. 
                         If None (the default), no delay will be performed.
                         If a number is provided, it represents the number of seconds to sleep before each retry. 
@@ -52,6 +52,10 @@ def retry(
     """
     if retry_times == 0:
         return func
+    if isinstance(exceptions, (type, tuple)):
+        check = lambda e: isinstance(e, exceptions)
+    else:
+        check = exceptions
     if mark_async or iscoroutinefunction(func):
         async def wrapper(*args, **kwds):
             if retry_times > 0:
@@ -66,19 +70,24 @@ def retry(
                 try:
                     if i and do_interval is not None:
                         if callable(do_interval):
-                            sleep_secs = await ensure_awaitable(do_interval(i))
+                            sleep_secs = do_interval(i)
+                            if isawaitable(sleep_secs):
+                                sleep_secs = await sleep_secs
                         else:
                             sleep_secs = do_interval
                         if isinstance(sleep_secs, (int, float)) and sleep_secs > 0:
                             await asleep(sleep_secs)
                     return await ensure_awaitable(func(*args, **kwds))
-                except suppress_exceptions as exc:
-                    add_exc and add_exc(exc)
-                    setattr(exc, "__prev__", prev_exc)
-                    prev_exc = exc
                 except BaseException as exc:
-                    setattr(exc, "__prev__", prev_exc)
-                    raise
+                    add_exc and add_exc(exc)
+                    res = check(exc)
+                    if isawaitable(res):
+                        res = await res
+                    if res:
+                        setattr(exc, "__prev__", prev_exc)
+                    else:
+                        raise
+                    prev_exc = exc
             raise BaseExceptionGroup("too many retries", tuple(excs))
     else:
         def wrapper(*args, **kwds):
@@ -100,13 +109,13 @@ def retry(
                         if isinstance(sleep_secs, (int, float)) and sleep_secs > 0:
                             sleep(sleep_secs)
                     return func(*args, **kwds)
-                except suppress_exceptions as exc:
-                    add_exc and add_exc(exc)
-                    setattr(exc, "__prev__", prev_exc)
-                    prev_exc = exc
                 except BaseException as exc:
-                    setattr(exc, "__prev__", prev_exc)
-                    raise
+                    if check(exc):
+                        add_exc and add_exc(exc)
+                        setattr(exc, "__prev__", prev_exc)
+                    else:
+                        raise
+                    prev_exc = exc
             raise BaseExceptionGroup("too many retries", tuple(excs))
     return wrapper
 

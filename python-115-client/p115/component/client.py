@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["check_response", "P115Client", "P115Url", "ExportDirStatus", "PushExtractProgress", "ExtractProgress"]
+__all__ = [
+    "AVAILABLE_APPMAP", "check_response", "P115Client", "P115Url", 
+    "ExportDirStatus", "PushExtractProgress", "ExtractProgress", 
+]
 
 import errno
 import posixpath
 
-from asyncio import create_task, to_thread
+from asyncio import create_task, to_thread, Lock as AsyncLock
 from base64 import b64encode
 from binascii import b2a_hex
 from collections.abc import (
@@ -25,14 +28,14 @@ from hashlib import md5, sha1
 from hmac import digest as hmac_digest
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from itertools import chain, count, takewhile
 from os import fsdecode, fspath, fstat, isatty, stat, PathLike
 from os import path as ospath
 from re import compile as re_compile
 from socket import getdefaulttimeout, setdefaulttimeout
 from _thread import start_new_thread
-from threading import Condition, Thread
+from threading import Condition, Lock, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
     cast, overload, Any, Final, Literal, NotRequired, Self, TypedDict, 
@@ -78,6 +81,25 @@ from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
+
+AVAILABLE_APPMAP: Final[dict[str, str]] = {
+    "web": "A1", 
+    "desktop": "A1", 
+    "ios": "D1", 
+    "115ios": "D3", 
+    "android": "F1", 
+    "115android": "F3", 
+    #"ipad": "H1", 
+    "115ipad": "H3", 
+    "tv": "I1", 
+    "qandroid": "M1", 
+    #"qios": "N1", 
+    "windows": "P1", 
+    "mac": "P2", 
+    "linux": "P3", 
+    "wechatmini": "R1", 
+    "alipaymini": "R2", 
+}
 
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 CRE_SET_COOKIE = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*")
@@ -189,6 +211,10 @@ def check_response(resp: dict | Coroutine[Any, Any, dict], /) -> dict | Awaitabl
             match resp["errNo"]:
                 case 990001:
                     raise AuthenticationError(resp)
+        elif "code" in resp:
+            match resp["code"]:
+                case 99:
+                    raise AuthenticationError(resp)
         raise OSError(errno.EIO, resp)
     if isinstance(resp, dict):
         return check(resp)
@@ -277,6 +303,7 @@ class P115Client:
         check_cookies: bool = True, 
         app: str = "web", 
         console_qrcode: bool = True, 
+        check_for_relogin: bool | Callable[[BaseException], bool | int] = False, 
     ):
         self.__dict__.update(
             headers = CIMultiDict({
@@ -296,6 +323,16 @@ class P115Client:
                 upload_info = self.upload_info
                 if not upload_info["state"]:
                     raise AuthenticationError(upload_info)
+        if check_for_relogin is True:
+            def check_for_relogin(e: BaseException) -> bool:
+                status = getattr(e, "status", None) or getattr(e, "code", None) or getattr(e, "status_code", None)
+                if status is None and hasattr(e, "response"):
+                    response = e.response
+                    status = getattr(response, "status", None) or getattr(response, "code", None) or getattr(response, "status_code", None)
+                return status == 405
+        setattr(self, "check_for_relogin", check_for_relogin)
+        setattr(self, "_request_lock", Lock())
+        setattr(self, "_request_alock", AsyncLock())
 
     def __del__(self, /):
         self.close()
@@ -399,10 +436,12 @@ class P115Client:
     ):
         """帮助函数：可执行同步和异步的网络请求
         """
+        check_for_relogin = getattr(self, "check_for_relogin", None)
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
-            return httpx_request(
+            do_request = partial(
+                httpx_request, 
                 url=url, 
                 method=method, 
                 async_=async_, 
@@ -414,11 +453,43 @@ class P115Client:
                 request_kwargs["headers"] = {**self.headers, **headers, "Cookie": cookies}
             else:
                 request_kwargs["headers"] = {**self.headers, "Cookie": cookies}
-            return request(
+            do_request = partial(
+                request, 
                 url=url, 
                 method=method, 
                 **request_kwargs, 
             )
+        if callable(check_for_relogin):
+            if async_:
+                async def wrap():
+                    while True:
+                        try:
+                            return await do_request()
+                        except BaseException as e:
+                            res = check_for_relogin(e)
+                            if isawaitable(res):
+                                res = await res
+                            if not res if isinstance(res, bool) else res != 405:
+                                raise
+                            cookies = self.cookies
+                            async with getattr(self, "_request_alock"):
+                                if cookies == self.cookies:
+                                    await self.login_another_app(replace=True, async_=True)
+                return wrap()
+            else:
+                while True:
+                    try:
+                        return do_request()
+                    except BaseException as e:
+                        res = check_for_relogin(e)
+                        if not res if isinstance(res, bool) else res != 405:
+                            raise
+                        cookies = self.cookies
+                        with getattr(self, "_request_lock"):
+                            if cookies == self.cookies:
+                                self.login_another_app(replace=True)
+        else:
+            return do_request()
 
     ########## Login API ##########
 
@@ -868,8 +939,9 @@ class P115Client:
     def login_another_app(
         self, 
         /, 
-        app: str, 
-        replace: bool,
+        app: None | str = None, 
+        replace: bool = False, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> Self:
@@ -878,8 +950,9 @@ class P115Client:
     def login_another_app(
         self, 
         /, 
-        app: str, 
-        replace: bool,
+        app: None | str = None, 
+        replace: bool = False, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, Self]:
@@ -887,13 +960,14 @@ class P115Client:
     def login_another_app(
         self, 
         /, 
-        app: str = "web", 
-        replace: bool = False,
+        app: None | str = None, 
+        replace: bool = False, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> Self | Coroutine[Any, Any, Self]:
         """登录某个设备（同一个设备最多同时一个在线，即最近登录的那个）
-        :param app: 要登录的 app
+        :param app: 要登录的 app，如果为 None，则用同一登录设备
         :param replace: 替换当前 client 对象的 cookie，否则返回新的 client 对象
 
         设备列表如下：
@@ -925,25 +999,34 @@ class P115Client:
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         def gen_step():
-            uid = check_response((yield partial(
-                self.login_qrcode_token, 
+            nonlocal app
+            if app is None:
+                cookie_uid = self.__dict__["cookies"].get("UID")
+                if cookie_uid:
+                    ssent = cookie_uid.split("_")[1]
+                    for app, v in AVAILABLE_APPMAP.items():
+                        if v == ssent:
+                            break
+                    else:
+                        device = yield self.login_device(async_=async_, **request_kwargs)
+                        app = device["icon"]
+                else:
+                    raise LoginError("can't determine app")
+            uid = check_response((yield self.login_qrcode_token(
                 async_=async_, 
                 **request_kwargs, 
             )))["data"]["uid"]
-            check_response((yield partial(
-                self.login_qrcode_scan, 
+            check_response((yield self.login_qrcode_scan(
                 uid, 
                 async_=async_, 
                 **request_kwargs, 
             )))
-            check_response((yield partial(
-                self.login_qrcode_scan_confirm, 
+            check_response((yield self.login_qrcode_scan_confirm(
                 uid, 
                 async_=async_, 
                 **request_kwargs, 
             )))
-            cookies = check_response((yield partial(
-                self.login_qrcode_result, 
+            cookies = check_response((yield self.login_qrcode_result(
                 {"account": uid, "app": app}, 
                 async_=async_, 
                 **request_kwargs, 
@@ -2595,8 +2678,13 @@ class P115Client:
 
         :return: 接口返回值
 
-        # 另外还有个接口不限设备（不强制为 web 的 cookies），但需要破解里面一个 rsa 请求参数的生成方法
-        http://videoplay.115.com/m3u8?filesha1={filesha1}&time={int(time.time())}&userid={client.user_id}&rsa={md5_sign}
+        # 其它替代接口：
+        # 1. 需要破解里面一个 rsa 请求参数的生成方法，此接口不限设备（不强制为 web 的 cookies）
+        GET http://videoplay.115.com/m3u8
+        params = {filesha1: str, time: int, userid: int, rsa: str = "<md5_sign>"}
+        # 2. 需要破解 data 参数具体如何生成
+        POST https://proapi.115.com/android/2.0/video/play
+        data = {data: str = "<{b64encode(rsa_encrypt(data))>"}
         """
         if use_anxia_api:
             api = f"https://v.anxia.com/site/api/video/m3u8/{pickcode}.m3u8?definition={definition}"
@@ -2727,10 +2815,49 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
+    def fs_history(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_history(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_history(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取历史记录
+        GET https://proapi.115.com/android/history
+        payload:
+            - pick_code: str
+            - action: str = "get_one"
+        """
+        api = "https://proapi.115.com/android/history"
+        if isinstance(payload, dict):
+            payload = {"action": "get_one", **payload}
+        else:
+            payload = {"action": "get_one", "pick_code": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
     def fs_history_list(
         self, 
         payload: dict = {}, 
         /, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2738,8 +2865,9 @@ class P115Client:
     @overload
     def fs_history_list(
         self, 
-        payload: dict, 
+        payload: dict = {}, 
         /, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2748,11 +2876,12 @@ class P115Client:
         self, 
         payload: dict = {}, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取历史记录
-        GET https://webapi.115.com/history/list
+        """获取历史记录列表
+        GET https://proapi.115.com/android/history/list
         payload:
             - offset: int = 0
             - limit: int = 32
@@ -2767,7 +2896,7 @@ class P115Client:
                 # - 应用: 6
                 # - 书籍: 7
         """
-        api = "https://webapi.115.com/history/list"
+        api = "https://proapi.115.com/android/history/list"
         if payload:
             payload = {"offset": 0, "limit": 32, **payload}
         else:
@@ -3696,13 +3825,13 @@ class P115Client:
             - file_id: int | str
             - format: str = "json"
             - compat: 0 | 1 = 1
-            - new_html: 0 | 1 = 1
+            - new_html: 0 | 1 = <default>
         """
         api = "https://webapi.115.com/files/desc"
         if isinstance(payload, (int, str)):
-            payload = {"format": "json", "compat": 1, "new_html": 1, "file_id": payload}
+            payload = {"format": "json", "compat": 1, "file_id": payload}
         else:
-            payload = {"format": "json", "compat": 1, "new_html": 1, **payload}
+            payload = {"format": "json", "compat": 1, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -8302,6 +8431,45 @@ class P115Client:
         """
         api = "https://msg.115.com/?ct=contacts&ac=notice&client=web"
         return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def msg_contacts_ls(
+        self, 
+        payload: dict = {}, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def msg_contacts_ls(
+        self, 
+        payload: dict = {}, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def msg_contacts_ls(
+        self, 
+        payload: dict = {}, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取提示消息
+        GET https://pmsg.115.com/api/1.0/app/1.0/contact/ls
+        payload:
+            limit: int = 115
+            skip: int = 0
+            t: 0 | 1 = 1
+        """
+        api = "https://pmsg.115.com/api/1.0/app/1.0/contact/ls"
+        payload = {"limit": 115, "skip": 0, "t": 1, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     ########## Activities API ##########
 
