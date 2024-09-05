@@ -32,6 +32,7 @@ from inspect import isawaitable, iscoroutinefunction
 from itertools import chain, count, takewhile
 from os import fsdecode, fspath, fstat, isatty, stat, PathLike
 from os import path as ospath
+from pathlib import PurePath
 from re import compile as re_compile
 from socket import getdefaulttimeout, setdefaulttimeout
 from _thread import start_new_thread
@@ -299,7 +300,7 @@ class P115Client:
     def __init__(
         self, 
         /, 
-        cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel] = None, 
+        cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel] | PurePath = None, 
         check_cookies: bool = True, 
         app: str = "web", 
         console_qrcode: bool = True, 
@@ -317,6 +318,12 @@ class P115Client:
         if cookies is None:
             resp = self.login_with_qrcode(app, console_qrcode=console_qrcode)
             cookies = resp["data"]["cookie"]
+        elif isinstance(cookies, PurePath) and hasattr(cookies, "open"):
+            setattr(self, "cookies_path", cookies)
+            try:
+                cookies = str(cookies.open("rb").read(), "utf-8")
+            except OSError:
+                cookies = ""
         if cookies:
             setattr(self, "cookies", cookies)
             if check_cookies:
@@ -378,8 +385,15 @@ class P115Client:
     def cookies(self, cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel], /):
         """更新 cookies
         """
+        cookies_path: Any = getattr(self, "cookies_path", None)
+        old_cookies = self.cookies
         if cookies is None:
             self.cookiejar.clear()
+            if old_cookies:
+                try:
+                    cookies_path.open("wb").close()
+                except OSError:
+                    pass
             return
         elif isinstance(cookies, str):
             cookies = cookies.strip()
@@ -388,6 +402,8 @@ class P115Client:
             cookies = cookies_str_to_dict(cookies.strip())
         set_cookie = self.__dict__["cookies"].jar.set_cookie
         if isinstance(cookies, Mapping):
+            if not cookies:
+                return
             for key, val in ItemsView(cookies):
                 set_cookie(create_cookie(key, val, domain=".115.com"))
         else:
@@ -395,7 +411,14 @@ class P115Client:
                 cookies = cookies.jar
             for cookie in cookies:
                 set_cookie(create_cookie("", cookie))
-        self.__dict__.pop("upload_info", None)
+        cookies = self.cookies
+        if cookies != old_cookies:
+            try:
+                with cookies_path.open("wb") as f:
+                    f.write(bytes(cookies, "utf-8"))
+            except OSError:
+                pass
+            self.__dict__.pop("upload_info", None)
 
     @property
     def cookies_all(self, /) -> str:
