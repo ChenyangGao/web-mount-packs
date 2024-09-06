@@ -1530,7 +1530,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         pass
 
             def get_dir_id(path: str):
-                result = yield partial(self.client.fs_files_getid, path, async_=async_)
+                result = check_response((yield self.client.fs_files_getid(
+                    path, 
+                    request=self.async_request if async_ else self.request, 
+                    async_=async_, 
+                )))
                 id = int(result["id"])
                 if id == 0:
                     raise FileNotFoundError(errno.ENOENT, f"directory {path!r} does not exist")
@@ -2077,8 +2081,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     dst_pid = dst_attr["parent_id"]
 
                 if splitext(src_name)[1] != splitext(dst_name)[1]:
-                    dst_name = check_response((yield partial(
-                        self.client.upload_file_init, 
+                    dst_name = check_response((yield self.client.upload_file_init(
                         filename=dst_name, 
                         filesize=src_attr["size"], 
                         filesha1=src_attr["sha1"], 

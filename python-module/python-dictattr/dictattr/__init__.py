@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
-    "odict", "AttrDict", "MapAttr", "MuMapAttr", "DictAttr", "ChainDictAttr", 
+    "odict", "AttrDict", "MapAttr", "MuMapAttr", 
+    "DictAttr", "ChainDictAttr", "UserDictAttr", 
 ]
 
+from collections import UserDict
 from collections.abc import Iterator, Mapping, MutableMapping
 from typing import Generic, Self, TypeVar
 
@@ -71,33 +75,73 @@ class MuMapAttr(MapAttr[K, V]):
         self.__dict__[key] = val
 
 
-class DictAttr(MuMapAttr):
+class DictAttr(MuMapAttr[K, V]):
 
     def __getattr__(self, attr, /):
         return getattr(self.__dict__, attr)
 
     def __getattribute__(self, attr, /):
-        if attr is "__dict__":
+        if attr == "__dict__":
             return super().__getattribute__(attr)
         try:
             return self[attr]
         except KeyError:
             return super().__getattribute__(attr)
 
-    def __getitem__(self, key, /):
+    def __getitem__(self, key, /) -> V | Self: # type: ignore
         d = self.__dict__[key]
         if type(d) is dict:
             return type(self)(d)
         return d
 
 
-class ChainDictAttr(DictAttr):
+class ChainDictAttr(DictAttr[K, V | "ChainDictAttr"]):
 
-    def __getitem__(self, key, /):
+    def __getitem__(self, key, /) -> V | ChainDictAttr:
         try:
-            super().__getitem__(key)
+            return super().__getitem__(key)
         except KeyError:
-            d = type(self)()
-            self.__dict__[key] = d.__dict__
+            d = self.__dict__[key] = type(self)()
             return d
+
+
+class UserDictAttr(UserDict[K, V]):
+
+    @classmethod
+    def of(cls, m: Mapping, /) -> Self:
+        self = cls()
+        self.__dict__["data"] = m # type: ignore
+        return self
+
+    def __delattr__(self, attr, /):
+        try:
+            del self[attr]
+        except KeyError:
+            try:
+                super().__delattr__(attr)
+            except KeyError:
+                raise AttributeError(attr)
+
+    def __getattr__(self, attr, /):
+        return getattr(self.data, attr)
+
+    def __getattribute__(self, attr, /):
+        if attr in ("__dict__", "data") or attr == f"__{attr.strip('_')}__":
+            return super().__getattribute__(attr)
+        try:
+            return self[attr]
+        except KeyError:
+            return super().__getattribute__(attr)
+
+    def __getitem__(self, key, /) -> V | Self: # type: ignore
+        d = super().__getitem__(key)
+        if type(d) is dict:
+            return type(self)(d)
+        return d
+
+    def __setattr__(self, attr, val, /):
+        if attr == "data" and "data" not in self.__dict__:
+            self.__dict__["data"] = val
+        else:
+            self[attr] = val
 

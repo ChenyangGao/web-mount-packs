@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__: list[str] = []
-__doc__ = "115 文件夹信息遍历导出"
+__doc__ = "遍历并导出 115 目录信息"
 
 KEYS = (
     "id", "parent_id", "name", "path", "relpath", "size", "sha1", "pickcode", 
@@ -34,6 +34,7 @@ def main(args):
     from collections.abc import Callable, Sequence
     from functools import partial
     from os.path import expanduser, dirname, join as joinpath, realpath
+    from pathlib import Path
     from sys import stdout
 
     from p115 import P115Client, P115Path
@@ -61,9 +62,11 @@ def main(args):
                 except FileNotFoundError:
                     pass
 
-    client = P115Client(cookies, app=args.app)
-    if cookies_path and cookies != client.cookies:
-        open(cookies_path, "w").write(client.cookies)
+    client = P115Client(cookies, app=args.app, check_for_relogin=True)
+    if cookies_path:
+        if cookies != client.cookies:
+            open(cookies_path, "w").write(client.cookies)
+        client.__dict__["cookies_path"] = Path(cookies_path)
 
     do_request: None | Callable
     match args.use_request:

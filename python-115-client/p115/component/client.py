@@ -43,11 +43,13 @@ from typing import (
 )
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
+from warnings import warn
 from xml.etree.ElementTree import fromstring
 
 from asynctools import as_thread, async_chain, ensure_aiter, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
 from Crypto.Hash.MD4 import MD4Hash
+from dictattr import AttrDict
 from filewrap import (
     Buffer, SupportsRead, 
     bio_chunk_iter, bio_chunk_async_iter, 
@@ -265,7 +267,12 @@ class MultipartResumeData(TypedDict):
 
 class P115Client:
     """115 的客户端对象
+
     :param cookies: 115 的 cookies，要包含 UID、CID 和 SEID，如果为 None，则会要求人工扫二维码登录
+    :param check_for_relogin: 网页请求抛出异常时，判断是否要重新登录并重试
+        - 如果为 False，则不重试
+        - 如果为 True，则自动通过判断 HTTP 响应码为 405 时重新登录并重试
+        - 如果为 Callable，则调用以判断，当返回值为 True 时重新登录并重试
     :param app: 人工扫二维码后绑定的 app
     :param console_qrcode: 在命令行输出二维码，否则在浏览器中打开
 
@@ -301,10 +308,9 @@ class P115Client:
         self, 
         /, 
         cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel] | PurePath = None, 
-        check_cookies: bool = True, 
+        check_for_relogin: bool | Callable[[BaseException], bool | int] = False, 
         app: str = "web", 
         console_qrcode: bool = True, 
-        check_for_relogin: bool | Callable[[BaseException], bool | int] = False, 
     ):
         self.__dict__.update(
             headers = CIMultiDict({
@@ -320,16 +326,13 @@ class P115Client:
             cookies = resp["data"]["cookie"]
         elif isinstance(cookies, PurePath) and hasattr(cookies, "open"):
             setattr(self, "cookies_path", cookies)
+            setattr(self, "cookies_mtime", 0)
             try:
                 cookies = str(cookies.open("rb").read(), "utf-8")
             except OSError:
                 cookies = ""
         if cookies:
             setattr(self, "cookies", cookies)
-            if check_cookies:
-                upload_info = self.upload_info
-                if not upload_info["state"]:
-                    raise AuthenticationError(upload_info)
         if check_for_relogin is True:
             def check_for_relogin(e: BaseException) -> bool:
                 status = getattr(e, "status", None) or getattr(e, "code", None) or getattr(e, "status_code", None)
@@ -385,22 +388,24 @@ class P115Client:
     def cookies(self, cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel], /):
         """更新 cookies
         """
-        cookies_path: Any = getattr(self, "cookies_path", None)
+        ns = self.__dict__
+        cookies_path: Any = ns.get("cookies_path", None)
         old_cookies = self.cookies
         if cookies is None:
             self.cookiejar.clear()
-            if old_cookies:
+            if cookies_path is not None and old_cookies:
                 try:
                     cookies_path.open("wb").close()
-                except OSError:
-                    pass
+                    setattr(self, "cookies_mtime", cookies_path.stat().st_mtime)
+                except (OSError, AttributeError):
+                    setattr(self, "cookies_mtime", 0)
             return
         elif isinstance(cookies, str):
             cookies = cookies.strip()
             if not cookies:
                 return
             cookies = cookies_str_to_dict(cookies.strip())
-        set_cookie = self.__dict__["cookies"].jar.set_cookie
+        set_cookie = ns["cookies"].jar.set_cookie
         if isinstance(cookies, Mapping):
             if not cookies:
                 return
@@ -412,13 +417,15 @@ class P115Client:
             for cookie in cookies:
                 set_cookie(create_cookie("", cookie))
         cookies = self.cookies
-        if cookies != old_cookies:
+        if cookies_path is not None and cookies != old_cookies:
             try:
                 with cookies_path.open("wb") as f:
                     f.write(bytes(cookies, "utf-8"))
+                setattr(self, "cookies_mtime", cookies_path.stat().st_mtime)
             except OSError:
-                pass
-            self.__dict__.pop("upload_info", None)
+                setattr(self, "cookies_mtime", 0)
+            ns.pop("user_id", None)
+            ns.pop("user_key", None)
 
     @property
     def cookies_all(self, /) -> str:
@@ -460,6 +467,7 @@ class P115Client:
         """帮助函数：可执行同步和异步的网络请求
         """
         check_for_relogin = getattr(self, "check_for_relogin", None)
+        cookies_path: Any = getattr(self, "cookies_path", None)
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -490,14 +498,19 @@ class P115Client:
                             return await do_request()
                         except BaseException as e:
                             res = check_for_relogin(e)
-                            if isawaitable(res):
-                                res = await res
                             if not res if isinstance(res, bool) else res != 405:
                                 raise
                             cookies = self.cookies
+                            cookies_mtime = getattr(self, "cookies_mtime", 0)
                             async with getattr(self, "_request_alock"):
-                                if cookies == self.cookies:
-                                    await self.login_another_app(replace=True, async_=True)
+                                cookies_new = self.cookies
+                                cookies_mtime_new = getattr(self, "cookies_mtime", 0)
+                                if cookies == cookies_new:
+                                    warn("relogin to refresh cookies")
+                                    if not cookies_mtime_new or cookies_mtime == cookies_mtime_new:
+                                        await self.login_another_app(replace=True, async_=True)
+                                    else:
+                                        self.cookies = str(cookies_path.open("rb").read(), "utf-8")
                 return wrap()
             else:
                 while True:
@@ -508,9 +521,16 @@ class P115Client:
                         if not res if isinstance(res, bool) else res != 405:
                             raise
                         cookies = self.cookies
+                        cookies_mtime = getattr(self, "cookies_mtime", 0)
                         with getattr(self, "_request_lock"):
-                            if cookies == self.cookies:
-                                self.login_another_app(replace=True)
+                            cookies_new = self.cookies
+                            cookies_mtime_new = getattr(self, "cookies_mtime", 0)
+                            if cookies == cookies_new:
+                                warn("relogin to refresh cookies")
+                                if not cookies_mtime_new or cookies_mtime == cookies_mtime_new:
+                                    self.login_another_app(replace=True)
+                                else:
+                                    self.cookies = str(cookies_path.open("rb").read(), "utf-8")
         else:
             return do_request()
 
@@ -577,6 +597,49 @@ class P115Client:
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/check/sso"
         return self.request(url=api, async_=async_, **request_kwargs)
+
+    @property
+    def login_ssoent(self, /) -> None | str:
+        cookie_uid = self.__dict__["cookies"].get("UID")
+        if cookie_uid:
+            return cookie_uid.split("_")[1]
+        else:
+            return None
+
+    @overload
+    def login_app(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> None | str:
+        ...
+    @overload
+    def login_app(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, None | str]:
+        ...
+    def login_app(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> None | str | Coroutine[Any, Any, None | str]:
+        def gen_step():
+            ssoent = self.login_ssoent
+            if ssoent is None:
+                return None
+            for app, v in AVAILABLE_APPMAP.items():
+                if v == ssoent:
+                    return app
+            device = yield self.login_device(async_=async_, **request_kwargs)
+            if device is None:
+                return None
+            return device["icon"]
+        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def login_device(
@@ -909,8 +972,7 @@ class P115Client:
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         def gen_step():
-            resp = yield partial(
-                cls.login_qrcode_token, 
+            resp = yield cls.login_qrcode_token(
                 async_=async_, 
                 **request_kwargs, 
             )
@@ -928,8 +990,7 @@ class P115Client:
                     startfile(url)
             while True:
                 try:
-                    resp = yield partial(
-                        cls.login_qrcode_status, 
+                    resp = yield cls.login_qrcode_status(
                         qrcode_token, 
                         async_=async_, 
                         **request_kwargs, 
@@ -950,8 +1011,7 @@ class P115Client:
                         raise LoginError("[status=-2] qrcode: canceled")
                     case _:
                         raise LoginError(f"qrcode: aborted with {resp!r}")
-            return (yield partial(
-                cls.login_qrcode_result, 
+            return (yield cls.login_qrcode_result(
                 {"account": qrcode_token["uid"], "app": app}, 
                 async_=async_, 
                 **request_kwargs, 
@@ -1024,16 +1084,8 @@ class P115Client:
         def gen_step():
             nonlocal app
             if app is None:
-                cookie_uid = self.__dict__["cookies"].get("UID")
-                if cookie_uid:
-                    ssent = cookie_uid.split("_")[1]
-                    for app, v in AVAILABLE_APPMAP.items():
-                        if v == ssent:
-                            break
-                    else:
-                        device = yield self.login_device(async_=async_, **request_kwargs)
-                        app = device["icon"]
-                else:
+                app = yield self.login_app(async_=async_, **request_kwargs)
+                if app is None:
                     raise LoginError("can't determine app")
             uid = check_response((yield self.login_qrcode_token(
                 async_=async_, 
@@ -1348,27 +1400,22 @@ class P115Client:
     ):
         """退出当前设备的登录状态
         """
-        def gen_step():
-            login_devices = yield partial(
-                self.login_devices, 
-                async_=async_, 
-                **request_kwargs, 
-            )
-            if login_devices["state"]:
-                current_device = next(d for d in login_devices["data"]["list"] if d["is_current"])
-                yield partial(
-                    self.logout_by_ssoent, 
-                    current_device["ssoent"], 
-                    async_=async_, 
-                    **request_kwargs, 
-                )
-        return run_gen_step(gen_step, async_=async_)
+        ssoent = self.login_ssoent
+        if not ssoent:
+            if async_:
+                async def none():
+                    pass
+                return none()
+            else:
+                return
+        return self.logout_by_ssoent(ssoent, async_=async_, **request_kwargs)
 
     @overload
     def logout_by_app(
         self, 
         /, 
-        app: str,
+        app: None | str = None, 
+        *, 
         async_: Literal[False] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
@@ -1378,7 +1425,8 @@ class P115Client:
     def logout_by_app(
         self, 
         /, 
-        app: str,
+        app: None | str = None, 
+        *, 
         async_: Literal[True], 
         request: None | Callable = None, 
         **request_kwargs, 
@@ -1387,7 +1435,8 @@ class P115Client:
     def logout_by_app(
         self, 
         /, 
-        app: str,
+        app: None | str = None, 
+        *, 
         async_: Literal[False, True] = False, 
         request: None | Callable = None, 
         **request_kwargs, 
@@ -1425,6 +1474,8 @@ class P115Client:
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
+        if app is None:
+            app = self.login_app()
         if app == "desktop":
             app = "web"
         api = f"https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout"
@@ -1438,8 +1489,9 @@ class P115Client:
     @overload
     def logout_by_ssoent(
         self, 
-        payload: str | dict, 
+        payload: None | str | dict = None, 
         /, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1447,16 +1499,18 @@ class P115Client:
     @overload
     def logout_by_ssoent(
         self, 
-        payload: str | dict, 
+        payload: None | str | dict = None, 
         /, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def logout_by_ssoent(
         self, 
-        payload: str | dict, 
+        payload: None | str | dict = None, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -1494,7 +1548,9 @@ class P115Client:
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/mange"
-        if isinstance(payload, str):
+        if payload is None:
+            payload = {"ssoent": self.login_ssoent or ""}
+        elif isinstance(payload, str):
             payload = {"ssoent": payload}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
@@ -5995,24 +6051,19 @@ class P115Client:
         return run_gen_step(gen_step, async_=async_)
 
     @cached_property
-    def upload_info(self, /) -> dict:
-        """获取和上传有关的各种服务信息
-        GET https://proapi.115.com/app/uploadinfo
-        """
-        api = "https://proapi.115.com/app/uploadinfo"
-        return self.request(url=api)
-
-    @property
     def user_id(self, /) -> int:
-        return self.upload_info["user_id"]
+        cookie_uid = self.__dict__["cookies"].get("UID")
+        if cookie_uid:
+            return int(cookie_uid.split("_")[0])
+        else:
+            return 0
 
-    @property
-    def user_key(self, /) -> str:
-        return self.upload_info["userkey"]
-
-    # TODO: 返回一个 DictAttr，这个类型会在一个公共模块中实现
     @cached_property
-    def upload_url(self, /) -> dict:
+    def user_key(self, /) -> str:
+        return self.upload_key()["data"]["userkey"]
+
+    @cached_property
+    def upload_url(self, /) -> AttrDict:
         """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可
         GET https://uplb.115.com/3.0/getuploadinfo.php
         response:
@@ -6020,17 +6071,45 @@ class P115Client:
             - gettokenurl: 上传前需要用此接口获取 token
         """
         api = "https://uplb.115.com/3.0/getuploadinfo.php"
-        return self.request(url=api)
+        return AttrDict(self.request(url=api))
 
     def upload_endpoint_url(
-            self, 
-            /, 
-            bucket: str, 
-            object: str, 
-        ) -> str:
+        self, 
+        /, 
+        bucket: str, 
+        object: str, 
+    ) -> str:
         endpoint = self.upload_url["endpoint"]
         urlp = urlsplit(endpoint)
         return f"{urlp.scheme}://{bucket}.{urlp.netloc}/{object}"
+
+    @overload
+    def upload_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def upload_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取和上传有关的各种服务信息
+        GET https://proapi.115.com/app/uploadinfo
+        """
+        api = "https://proapi.115.com/app/uploadinfo"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
     @staticmethod
