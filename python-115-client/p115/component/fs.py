@@ -1861,78 +1861,81 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 "version" not in pid_attrs or
                 version != pid_attrs["version"]
             ):
-                    def iterdir(fetch_all: bool = True):
-                        nonlocal start, stop
-                        get_files = self.fs_files
-                        if fetch_all:
-                            payload["offset"] = 0
-                        else:
-                            count = -1
+                # TODO: 这个函数具备单独能力，如果需要排序，手动执行
+                # TODO: 再做一个函数，用来实现筛选
+                # TODO: 如果下一次迭代得到的 ancestors 不同，也报错
+                def iterdir(fetch_all: bool = True):
+                    nonlocal start, stop
+                    get_files = self.fs_files
+                    if fetch_all:
+                        payload["offset"] = 0
+                    else:
+                        count = -1
+                        if start < 0:
+                            count = yield self.dirlen(id, async_=async_)
+                            start += count
                             if start < 0:
-                                count = yield self.dirlen(id, async_=async_)
-                                start += count
-                                if start < 0:
-                                    start = 0
-                            elif start >= 100:
-                                count = yield self.dirlen(id, async_=async_)
-                                if start >= count:
-                                    return
-                            if stop is not None:
-                                if stop < 0:
-                                    if count < 0:
-                                        count = yield self.dirlen(id, async_=async_)
-                                    stop += count
-                                if start >= stop or stop <= 0:
-                                    return
-                                total = stop - start
-                            payload["offset"] = start
-                            if stop is not None:
-                                if total < page_size:
-                                    payload["limit"] = total
+                                start = 0
+                        elif start >= 100:
+                            count = yield self.dirlen(id, async_=async_)
+                            if start >= count:
+                                return
+                        if stop is not None:
+                            if stop < 0:
+                                if count < 0:
+                                    count = yield self.dirlen(id, async_=async_)
+                                stop += count
+                            if start >= stop or stop <= 0:
+                                return
+                            total = stop - start
+                        payload["offset"] = start
+                        if stop is not None:
+                            if total < page_size:
+                                payload["limit"] = total
+                    resp = yield get_files(payload, async_=async_)
+                    ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
+                    ancestors.extend(
+                        {
+                            "id": int(p["cid"]), 
+                            "parent_id": int(p["pid"]), 
+                            "name": p["name"], 
+                            "is_directory": True, 
+                        } for p in resp["path"][1:]
+                    )
+                    if len(ancestors) == 1:
+                        dirname = "/"
+                    else:
+                        dirname = joins([cast(str, a["name"]) for a in ancestors]) + "/"
+                    if path_to_id is not None:
+                        path_to_id[dirname] = id
+                    count = resp["count"]
+                    if fetch_all:
+                        total = count
+                    elif start >= count:
+                        return
+                    elif stop is None or stop > count:
+                        total = count - start
+                    for attr in resp["data"]:
+                        yield Yield(normalize_attr(attr, ancestors, dirname, fs=self), identity=True)
+                    if total <= page_size:
+                        return
+                    for _ in range((total - 1) // page_size):
+                        payload["offset"] += page_size
                         resp = yield get_files(payload, async_=async_)
-                        ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
-                        ancestors.extend(
-                            {
-                                "id": int(p["cid"]), 
-                                "parent_id": int(p["pid"]), 
-                                "name": p["name"], 
-                                "is_directory": True, 
-                            } for p in resp["path"][1:]
-                        )
-                        if len(ancestors) == 1:
-                            dirname = "/"
-                        else:
-                            dirname = joins([cast(str, a["name"]) for a in ancestors]) + "/"
-                        if path_to_id is not None:
-                            path_to_id[dirname] = id
-                        count = resp["count"]
-                        if fetch_all:
-                            total = count
-                        elif start >= count:
-                            return
-                        elif stop is None or stop > count:
-                            total = count - start
+                        if resp["count"] != count:
+                            raise RuntimeError(f"{id} detected count changes during iteration")
                         for attr in resp["data"]:
                             yield Yield(normalize_attr(attr, ancestors, dirname, fs=self), identity=True)
-                        if total <= page_size:
-                            return
-                        for _ in range((total - 1) // page_size):
-                            payload["offset"] += page_size
-                            resp = yield get_files(payload, async_=async_)
-                            if resp["count"] != count:
-                                raise RuntimeError(f"{id} detected count changes during iteration")
-                            for attr in resp["data"]:
-                                yield Yield(normalize_attr(attr, ancestors, dirname, fs=self), identity=True)
-                    if attr_cache is None:
-                        return YieldFrom(run_gen_step_iter(iterdir(False), async_=async_), identity=True)
+                if attr_cache is None:
+                    return YieldFrom(run_gen_step_iter(iterdir(False), async_=async_), identity=True)
+                else:
+                    if async_:
+                        async def request():
+                            return {a["id"]: a async for a in run_gen_step_iter(iterdir, async_=True)}
+                        children = yield request
                     else:
-                        if async_:
-                            async def request():
-                                return {a["id"]: a async for a in run_gen_step_iter(iterdir, async_=True)}
-                            children = yield request
-                        else:
-                            children = {a["id"]: a for a in run_gen_step_iter(iterdir, async_=False)}
-                        attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
+                        children = {a["id"]: a for a in run_gen_step_iter(iterdir, async_=False)}
+                    attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
             else:
                 children = pid_attrs["children"]
             count = len(children)
@@ -4268,3 +4271,5 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     mv = move
     rm = remove
 
+# TODO: ip 报错也抛出 loginerror
+# TODO: 关于改文件扩展名，先找出原来的文件，再秒传到新文件名，成功后再用id删除原来的文件

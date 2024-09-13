@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+# TODO: 允许传入 cookies 或 路径
 # TODO: 支持多个不同登录设备并发
 # TODO: 支持同一个 cookies 并发因子，默认值 1
 # TODO: 使用协程进行并发，而非多线程
+# TODO: 如果请求超时，则需要进行重试
+# TODO: 由于一个文件夹里面的变动不可能太多，所以应该使用递增 limit 的方式去获取列表（有时候可能只变动了几个，但文件夹里面有几千个文件，前 2 次拉取应该以适量为主）
+# TODO: 很多文件的更新时间是一样的，但是它们内部却有排序，如何在sqlite数据库里面，也能保持这种顺序，这样的话，就不需要专门为相同的更新时间来分组了
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 0)
@@ -51,26 +55,23 @@ def cut_iter(
         yield start, stop - start
 
 
-def select_subdir_ids(con, id: int = 0, /):
-    sql = '''SELECT id FROM data WHERE parent_id=? AND is_dir=1 AND id != 0'''
+def select_subdir_ids(con, parent_id: int = 0, /):
+    sql = '''SELECT id FROM data WHERE parent_id=? AND is_dir=1'''
     with closing(con.cursor()) as cur:
-        cur.execute(sql, (id,))
+        cur.execute(sql, (parent_id,))
         return [id for id, in cur]
 
 
-def select_grouped_mtime(con, id: int = 0, /):
+def select_grouped_mtime(con, parent_id: int = 0, /):
     sql = '''\
-SELECT
-    id, mtime 
-FROM 
-    data 
-WHERE 
-    parent_id=? AND id != 0 
-ORDER BY mtime DESC'''
+SELECT id, mtime
+FROM data
+WHERE parent_id=?
+ORDER BY mtime DESC;'''
     d: dict[int, set[int]] = {}
     last_mtime = 0
     with closing(con.cursor()) as cur:
-        cur.execute(sql, (id,))
+        cur.execute(sql, (parent_id,))
         n = 0
         for n, (id, mtime) in enumerate(cur, 1):
             if last_mtime != mtime:
@@ -85,7 +86,7 @@ def replace_items(con, items, /):
 INSERT OR REPLACE INTO 
     data(id, parent_id, name, is_dir, size, pickcode, sha1, is_image, mtime) 
 VALUES
-    (?,?,?,?,?,?,?,?,?)'''
+    (?,?,?,?,?,?,?,?,?);'''
     try:
         con.executemany(sql, items)
         con.commit()
@@ -108,13 +109,30 @@ def delete_items(con, ids: int | tuple[int, ...] = 0, /):
         raise
 
 
+def update_ancestors(con, parent_id: int = 0, /, ancestors: list[dict] = []):
+    sql = '''\
+UPDATE
+    data
+SET
+    ancestors = JSON_INSERT(?, '$[#]', JSON_OBJECT('id', id, 'name', name))
+WHERE
+    parent_id=?;'''
+    json_str = dumps(ancestors, ensure_ascii=False)
+    try:
+        con.execute(sql, (json_str, parent_id))
+        con.commit()
+    except BaseException as e:
+        con.rollback()
+        raise
+
+
 def clean(con, top_ids: int | tuple[int, ...] = 0, /):
     if isinstance(top_ids, int):
         ids = "(%s)" % top_ids
     else:
         ids = "(%s)" % (",".join(map(str, top_ids) or "NULL"))
     sql = f'''\
-WITH RECURSIVE ancestors AS (
+WITH RECURSIVE ancestors(id) AS (
     SELECT
         d1.id
     FROM
@@ -128,7 +146,7 @@ WITH RECURSIVE ancestors AS (
     FROM data
     JOIN ancestors ON data.parent_id = ancestors.id
 )
-DELETE FROM data WHERE id in (SELECT * FROM ancestors)
+DELETE FROM data WHERE id in (SELECT id FROM ancestors);
 '''
     try:
         con.execute(sql)
@@ -149,7 +167,7 @@ def normalize_attr(info):
     attr["size"] = info.get("s")
     attr["pickcode"] = info.get("pc")
     attr["sha1"] = info.get("sha")
-    attr["is_image"] = is_dir and bool(info.get("u"))
+    attr["is_image"] = not is_dir and bool(info.get("u"))
     attr["mtime"] = int(info.get("te", 0))
     return attr
 
@@ -160,6 +178,8 @@ def iterdir(client: P115Client, id: int = 0, /):
     if int(files["path"][-1]["cid"]) != id:
         raise NotADirectoryError
     count = files["count"]
+    ancestors = [{"id": 0, "name": ""}]
+    ancestors.extend({"id": int(info["cid"]), "name": info["name"]} for info in files["path"][1:])
     d = {}
     def iter():
         nonlocal files
@@ -182,14 +202,14 @@ def iterdir(client: P115Client, id: int = 0, /):
                         raise RuntimeError
                     d[subid] = attr
                     yield attr
-    return count, MappingProxyType(d), iter()
+    return ancestors, count, MappingProxyType(d), iter()
 
 
 def diff_dir(con, client: P115Client, id: int = 0, /):
     n, saved = select_grouped_mtime(con, id)
-    count, collected, data_it = iterdir(client, id)
+    ancestors, count, collected, data_it = iterdir(client, id)
     if not n:
-        return [tuple(attr.values()) for attr in data_it], []
+        return ancestors, [tuple(attr.values()) for attr in data_it], []
     seen = collected.keys()
     replace_list: list[tuple] = []
     delete_list: list[int] = []
@@ -202,7 +222,7 @@ def diff_dir(con, client: P115Client, id: int = 0, /):
             n -= len(his_ids)
             if not n:
                 replace_list.extend(tuple(attr.values()) for attr in data_it)
-                return replace_list, delete_list
+                return ancestors, replace_list, delete_list
             his_mtime, his_ids = next(it)
         if his_mtime == cur_mtime:
             cur_id = attr["id"]
@@ -210,12 +230,12 @@ def diff_dir(con, client: P115Client, id: int = 0, /):
                 n -= 1
                 his_ids.remove(cur_id)
                 if count - len(seen) == n:
-                    return replace_list, delete_list
+                    return ancestors, replace_list, delete_list
         else:
             replace_list.append(tuple(attr.values()))
     for _, his_ids in it:
         delete_list.extend(his_ids - seen)
-    return replace_list, delete_list
+    return ancestors, replace_list, delete_list
 
 
 def run(
@@ -224,6 +244,7 @@ def run(
     top_ids: int | tuple[int, ...] = 0, 
 ):
     with connect(dbfile) as con:
+        con.execute('PRAGMA journal_mode = WAL;')
         con.execute('''\
 CREATE TABLE IF NOT EXISTS "data" (
     "id" INTEGER,
@@ -235,6 +256,8 @@ CREATE TABLE IF NOT EXISTS "data" (
     "sha1" TEXT,
     "is_image" INTEGER CHECK("is_image" IN (0, 1)),
     "mtime" INTEGER,
+    "ancestors" JSON,
+    "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY("id")
 );''')
         con.execute('''\
@@ -282,7 +305,7 @@ FROM
             id = dq.popleft()
             print("[\x1b[1;32mGOOD\x1b[0m]", id)
             try:
-                a, b = diff_dir(con, client, id)
+                ancestors, to_replace, to_delete = diff_dir(con, client, id)
             except NotADirectoryError:
                 delete_items(con, id)
                 print("[\x1b[1;31mFAIL\x1b[0m]", id)
@@ -291,12 +314,15 @@ FROM
                 dq.appendleft(id)
                 print("[\x1b[1;33mREDO\x1b[0m]", id)
                 continue
-            if a:
-                replace_items(con, a)
-            if b:
-                delete_items(con, b)
+            if to_replace:
+                replace_items(con, to_replace)
+            if to_delete:
+                delete_items(con, to_delete)
+            update_ancestors(con, id, ancestors=ancestors)
             dq.extend(select_subdir_ids(con, id))
         clean(con, top_ids)
+        con.execute('PRAGMA wal_checkpoint;')
+        con.execute('VACUUM;')
 
 
 if __name__ == "__main__":

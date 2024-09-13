@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "odict", "AttrDict", "MapAttr", "MuMapAttr", 
     "DictAttr", "ChainDictAttr", "UserDictAttr", 
@@ -25,6 +25,12 @@ class odict(dict[K, V]):
     __setattr__ = dict.__setitem__ # type: ignore
     __delattr__ = dict.__delitem__ # type: ignore
 
+    def __hash__(self, /) -> int: # type: ignore
+        return id(self)
+
+    def __eq__(self, value, /) -> bool:
+        return self is value or super().__eq__(value)
+
 
 class AttrDict(dict[K, V]):
 
@@ -32,14 +38,19 @@ class AttrDict(dict[K, V]):
         super().__init__(*args, **kwds)
         self.__dict__ = self # type: ignore
 
+    def __hash__(self, /) -> int: # type: ignore
+        return id(self)
+
+    def __eq__(self, value, /) -> bool:
+        return self is value or super().__eq__(value)
+
 
 @Mapping.register
 class MapAttr(Generic[K, V]):
 
-    def __init__(self, d: None | dict = None, /):
+    def __init__(self, /, *args, **kwds):
         self.__dict__: dict[K, V] # type: ignore
-        if d is not None:
-            self.__dict__ = d
+        self.__dict__.update(*args, **kwds)
 
     def __contains__(self, key, /) -> bool:
         return key in self.__dict__
@@ -61,8 +72,16 @@ class MapAttr(Generic[K, V]):
             return f"{mod}.{cls.__qualname__}({self.__dict__})"
 
     @classmethod
-    def of(cls, /, *args, **kwds) -> Self:
-        return cls(dict(*args, **kwds))
+    def of(
+        cls, 
+        d: None | dict[K, V] = None, 
+        /, 
+    ) -> Self:
+        if d is None:
+            return cls()
+        self = __class__.__new__(cls) # type: ignore
+        self.__dict__ = d
+        return self
 
 
 @MutableMapping.register
