@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
-    "odict", "AttrDict", "MapAttr", "MuMapAttr", 
-    "DictAttr", "ChainDictAttr", "UserDictAttr", 
+    "odict", "AttrDict", "MapAttr", "MuMapAttr", "DictAttr", 
+    "ChainDictAttr", "UserDictAttr", "PriorityUserDictAttr", 
 ]
 
 from collections import UserDict
@@ -124,25 +124,41 @@ class ChainDictAttr(DictAttr[K, V | "ChainDictAttr"]):
             return d
 
 
-class UserDictAttr(UserDict[K, V]):
+class UserDictAttr(UserDict):
+
+    def __getattr__(self, attr, /):
+        try:
+            return self[attr]
+        except KeyError as e:
+            raise AttributeError(attr) from e
+
+    def __getitem__(self, key, /):
+        d = super().__getitem__(key)
+        if isinstance(d, Mapping) and not isinstance(d, __class__): # type: ignore
+            return type(self)(d)
+        return d
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        name = cls.__qualname__
+        if (module := cls.__module__) != "__main__":
+            name = f"{module}.{name}"
+        return f"{name}.of({self.data!r})"
 
     @classmethod
     def of(cls, m: Mapping, /) -> Self:
         self = cls()
-        self.__dict__["data"] = m # type: ignore
+        self.__dict__["data"] = m
         return self
+
+
+class PriorityUserDictAttr(UserDictAttr):
 
     def __delattr__(self, attr, /):
         try:
             del self[attr]
         except KeyError:
-            try:
-                super().__delattr__(attr)
-            except KeyError:
-                raise AttributeError(attr)
-
-    def __getattr__(self, attr, /):
-        return getattr(self.data, attr)
+            super().__delattr__(attr)
 
     def __getattribute__(self, attr, /):
         if attr in ("__dict__", "data") or attr == f"__{attr.strip('_')}__":
@@ -152,11 +168,8 @@ class UserDictAttr(UserDict[K, V]):
         except KeyError:
             return super().__getattribute__(attr)
 
-    def __getitem__(self, key, /) -> V | Self: # type: ignore
-        d = super().__getitem__(key)
-        if type(d) is dict:
-            return type(self)(d)
-        return d
+    def __getattr__(self, attr, /):
+        raise AttributeError(attr)
 
     def __setattr__(self, attr, val, /):
         if attr == "data" and "data" not in self.__dict__:

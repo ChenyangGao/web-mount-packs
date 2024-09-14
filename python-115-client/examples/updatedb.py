@@ -173,7 +173,7 @@ def normalize_attr(info):
 
 
 def iterdir(client: P115Client, id: int = 0, /):
-    payload = {"cid": id, "custom_order": 1, "fc_mix": 1, "show_dir": 1, "o": "user_utime", "asc": 0, "limit": 1}
+    payload = {"asc": 0, "cid": id, "custom_order": 1, "fc_mix": 1, "limit": 1, "show_dir": 1, "o": "user_utime"}
     files = check_response(get_files(client, payload))
     if int(files["path"][-1]["cid"]) != id:
         raise NotADirectoryError

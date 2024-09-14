@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dictattr"
-version = "0.0.3"
+version = "0.0.4"
 description = "Python dictattr."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

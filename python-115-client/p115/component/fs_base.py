@@ -1424,8 +1424,8 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
 class P115FileSystemBase(Generic[P115PathType]):
     client: P115Client
-    id: int
-    path: str
+    id: int = 0
+    path: str = "/"
     path_class: type[P115PathType]
     request: None | Callable = None
     async_request: None | Callable = None
