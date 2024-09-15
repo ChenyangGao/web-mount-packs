@@ -81,12 +81,13 @@ class Args(Generic[T, P]):
         """
         if isinstance(args, Args):
             return args(func)
-        type_ = type(args)
-        if type_ is tuple:
-            return func(*args)
-        elif type_ is dict:
-            return func(**args)
-        return func(args)
+        match type(args):
+            case tuple:
+                return func(*args)
+            case dict:
+                return func(**args)
+            case _:
+                return func(args)
 
 
 class UpdativeArgs(Args):

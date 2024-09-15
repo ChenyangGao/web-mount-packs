@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-"""这个模块提供了一些生成 SQL 的函数，主要针对 sqlite
-"""
-
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "AsStr", "make_url", "register_convert", "encode", "enclose", 
