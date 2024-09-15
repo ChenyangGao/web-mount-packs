@@ -257,7 +257,6 @@ CREATE TABLE IF NOT EXISTS "data" (
     "is_image" INTEGER CHECK("is_image" IN (0, 1)),
     "mtime" INTEGER,
     "ancestors" JSON,
-    "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY("id")
 );''')
         con.execute('''\
