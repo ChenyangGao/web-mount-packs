@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 4)
+__version__ = (0, 2, 5)
 __requirements__ = ["cachetools", "flask", "Flask-Compress", "python-115", "urllib3_request", "werkzeug", "wsgidav"]
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
@@ -200,6 +200,7 @@ except ImportError:
 
 import errno
 
+from collections import UserString
 from collections.abc import Callable, MutableMapping
 from functools import cached_property, partial, update_wrapper
 from hashlib import sha1
@@ -245,17 +246,19 @@ login_lock = Lock()
 web_login_lock = Lock()
 fs_lock = Lock() if lock_dir_methods else None
 
+def default(obj, /):
+    if isinstance(obj, UserString):
+        return str(obj)
+    return NotImplemented
+
 dumps: Callable[..., bytes]
 loads: Callable
 try:
-    from orjson import dumps, loads
+    from orjson import dumps as odumps, loads
+    dumps = partial(odumps, default=default)
 except ImportError:
-    odumps: Callable[..., str]
-    try:
-        from ujson import dumps as odumps, loads
-    except ImportError:
-        from json import dumps as odumps, loads
-    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+    from json import dumps as odumps, loads
+    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False, default=default), "utf-8")
 
 if not cookies:
     if cookies_path:
@@ -333,7 +336,7 @@ else:
         else:
             warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
             device = "qandroid"
-fs = client.get_fs(client, attr_cache=LRUCache(65536), path_to_id=LRUCache(65536), request=do_request)
+fs = client.get_fs(client, cache_id_to_readdir=65536, cache_path_to_id=1048576, request=do_request)
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
@@ -847,6 +850,7 @@ def query(path: str):
         if password:
             attr["url"] += "&password=" + password
             attr["short_url"] += "&password=" + password
+        attr["ancestors"] = attr["path"].ancestors
         return attr
 
     match request.args.get("method"):
@@ -870,7 +874,7 @@ def query(path: str):
                     attr = relogin_wrap(fs.attr, fid)
                 else:
                     attr = relogin_wrap(fs.attr, path)
-                if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
+                if root != 0 and not any(info["id"] == root for info in attr["path"].ancestors):
                     raise PermissionError(errno.EACCES, "out of root range")
             update_attr(attr)
             json_str = dumps({k: attr.get(k) for k in KEYS})
@@ -886,7 +890,7 @@ def query(path: str):
                 children = relogin_wrap(fs.listdir_attr, fid)
             else:
                 children = relogin_wrap(fs.listdir_attr, path)
-            if children and root != 0 and not any(info["id"] == root for info in children[0]["ancestors"][:-1]):
+            if children and root != 0 and not any(info["id"] == root for info in children[0]["path"].ancestors[:-1]):
                 raise PermissionError(errno.EACCES, "out of root range")
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
@@ -929,7 +933,7 @@ def query(path: str):
             attr = relogin_wrap(fs.attr, fid)
     else:
         attr = relogin_wrap(fs.attr, path)
-    if root != 0 and not any(info["id"] == root for info in attr["ancestors"]):
+    if root != 0 and not any(info["id"] == root for info in attr["path"].ancestors):
         raise PermissionError(errno.EACCES, "out of root range")
     if not attr["is_directory"]:
         update_attr(attr)
@@ -941,7 +945,7 @@ def query(path: str):
     if fid == root:
         header = f'<strong><a href="/?id={root}&method=list&password={password}" style="border: 1px solid black; text-decoration: none">/</a></strong>'
     else:
-        ancestors = attr["ancestors"]
+        ancestors = attr["path"].ancestors
         last_info = ancestors[-1]
         for i, info in enumerate(ancestors):
             if info["id"] == root:

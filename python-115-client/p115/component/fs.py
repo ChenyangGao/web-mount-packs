@@ -97,8 +97,9 @@ class LRUDict(dict):
                     pass
 
     def setdefault(self, key, default=None, /):
-        super().setdefault(key, default)
+        value = super().setdefault(key, default)
         self.clean()
+        return value
 
     def update(self, iterable=None, /, **pairs):
         pop = self.pop
@@ -196,7 +197,8 @@ class Ancestor(dict[str, int | str]):
 
 
 class P115AncestorPath(UserString):
-    __slots__ = "self",
+    __slots__ = "self"
+    __class__ = str # type: ignore
 
     def __init__(self, _self: Ancestor, /):
         self.self = _self
@@ -698,8 +700,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         client: str | P115Client, 
         password: str = "", 
-        cache_id_to_readdir: bool | int = True, 
-        cache_path_to_id: bool | int = True, 
+        cache_id_to_readdir: bool | int = 1024, 
+        cache_path_to_id: bool | int = 65536, 
         refresh: bool = True, 
         request: None | Callable = None, 
         async_request: None | Callable = None, 
@@ -4265,6 +4267,5 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     rm = remove
 
 # TODO: 移除 get_version，添加 refresh: bool 参数，默认值 True，并且在 iterdir 和 attr 里面添加属性 refresh: None | bool = None
-# TODO: attr_cache 改名成 cache，可能还要改
 # TODO: 增加一个get_+， space 和 space_summury 方法和属性，用来获取剩余空间、已用空间和总空间数
 # TODO: 上传和下载都返回一个 Future 对象，可以获取信息和完成情况，以及可以重试等操作
