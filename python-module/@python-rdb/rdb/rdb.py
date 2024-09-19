@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "Connection", "FieldDescription", 
+    "Connection", "FieldDescription", "make_uri", 
     "cm_connection", "cm_async_connection", "cm_cursor", "cm_async_cursor", 
     "execute", "async_execute", "cursor_description", "cursor_fields", 
     "cursor_iter", "cursor_tuple_iter", "cursor_dict_iter", "cursor_dataclass_iter", 
@@ -72,6 +72,60 @@ class FieldDescription(NamedTuple):
         return type(self).TYPE_MAP.get(self.type_code)
 
 
+# TODO: 需要对 user, password, host, path 进行一些 quote 处理
+# TODO: 得到的结果，需要能被 urllib.parse.urlsplit 正确解析出来作为验证
+def make_uri(
+    scheme: str = "", 
+    user: str = "", 
+    password: str = "", 
+    host: str = "", 
+    port: int | str = "", 
+    path: str = "", 
+    query = "", 
+    fragment: str = "", 
+) -> str:
+    """See: [rfc3986](https://www.rfc-editor.org/rfc/rfc3986)"""
+    url_part_list: list[str] = []
+    add = url_part_list.append
+    has_authority = user or password or host or port
+    scheme = scheme.rstrip(":/")
+    if scheme:
+        add(scheme)
+        if has_authority:
+            add("://")
+        else:
+            add(":")
+    if has_authority:
+        if user or password:
+            if user:
+                add(user)
+            if password:
+                add(":")
+                add(password)
+            add("@")
+        if host:
+            add(host)
+        if port:
+            add(":")
+            add(str(port))
+    path = path.lstrip("/")
+    if path:
+        if has_authority:
+            add("/")
+        add(path)
+    if not isinstance(query, str):
+        query = urlencode(query)
+    if query:
+        if not query.startswith("?"):
+            add("?")
+        add(query)
+    if fragment:
+        if not fragment.startswith("#"):
+            add("#")
+        add(fragment)
+    return "".join(url_part_list)
+
+
 def identity_row(fields: tuple[str, ...], val: T, /) -> T:
     return val
 
@@ -90,16 +144,19 @@ def cm_connection(
     connect: Connection | Callable[..., Connection], 
     /, 
     connect_args: tuple | dict | Args = (), 
+    do_tsac: bool = True, 
 ) -> Connection:
     is_manual_con = not isinstance(connect, Connection)
     con = Args.call(connect, connect_args) if is_manual_con else connect
-    not_autocommit = not getattr(con, "autocommit", False)
+    autocommit = getattr(con, "autocommit", False)
+    if autocommit == 1:
+        do_tsac = False
     try:
         yield con
-        if not not_autocommit:
+        if do_tsac:
             con.commit()
     except BaseException:
-        if not not_autocommit:
+        if do_tsac:
             con.rollback()
         raise
     finally:
@@ -112,16 +169,19 @@ async def cm_async_connection(
     connect: Connection | Callable[..., Connection], 
     /, 
     connect_args: tuple | dict | Args = (), 
+    do_tsac: bool = True, 
 ) -> Connection:
     is_manual_con = not isinstance(connect, Connection)
     con = Args.call(connect, connect_args) if is_manual_con else connect
-    not_autocommit = not getattr(con, "autocommit", False)
+    autocommit = getattr(con, "autocommit", False)
+    if autocommit == 1:
+        do_tsac = False
     try:
         yield con
-        if not not_autocommit:
+        if do_tsac:
             await con.commit()
     except BaseException:
-        if not not_autocommit:
+        if do_tsac:
             await con.rollback()
         raise
     finally:
@@ -135,8 +195,9 @@ def cm_cursor(
     /, 
     connect_args: tuple | dict | Args = (), 
     cursor_args: tuple | dict | Args = (), 
+    do_tsac: bool = True, 
 ):
-    with cm_connection(connect, connect_args) as con:
+    with cm_connection(connect, connect_args, do_tsac=do_tsac) as con:
         cursor = Args.call(con.cursor, cursor_args)
         try:
             yield cursor
@@ -150,8 +211,9 @@ async def cm_async_cursor(
     /, 
     connect_args: tuple | dict | Args = (), 
     cursor_args: tuple | dict | Args = (), 
+    do_tsac: bool = True, 
 ):
-    async with cm_async_connection(connect, connect_args) as con:
+    async with cm_async_connection(connect, connect_args, do_tsac=do_tsac) as con:
         cursor = Args.call(con.cursor, cursor_args)
         try:
             yield cursor
@@ -237,6 +299,7 @@ def cursor_iter(
     cursor: AsyncIterable[T], 
     /, 
     factory: Callable[[tuple[str, ...], T], R] = identity_row, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[R]:
     ...
 @overload
@@ -244,16 +307,19 @@ def cursor_iter(
     cursor: Iterable[T], 
     /, 
     factory: Callable[[tuple[str, ...], T], R] = identity_row, 
+    fields: tuple[str, ...] = (), 
 ) -> Iterable[tuple]:
     ...
 def cursor_iter(
     cursor: AsyncIterable[T] | Iterable[T], 
     /, 
     factory: Callable[[tuple[str, ...], T], R] = identity_row, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[R] | Iterable[R]:
     if factory is identity_row:
         return cursor
-    fields = cursor_fields(cursor)
+    if not fields:
+        fields = cursor_fields(cursor)
     if isinstance(cursor, AsyncIterable):
         return (factory(fields, row) async for row in cursor)
     else:
@@ -265,6 +331,7 @@ def cursor_tuple_iter(
     cursor: AsyncIterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[tuple]:
     ...
 @overload
@@ -272,15 +339,18 @@ def cursor_tuple_iter(
     cursor: Iterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> Iterable[tuple]:
     ...
 def cursor_tuple_iter(
     cursor: AsyncIterable | Iterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[tuple] | Iterable[tuple]:
-    fields = cursor_fields(cursor)
-    field_to_index = {k: i for i, k in enumerate(fields)}
+    if not fields:
+        fields = cursor_fields(cursor)
+    field_to_index = {k.lower(): i for i, k in enumerate(fields)}
     class Row(tuple):
         __fields__ = fields
         __slots__ = ()
@@ -291,12 +361,12 @@ def cursor_tuple_iter(
                 raise AttributeError(attr) from e
         def __getitem__(self, key, /):
             if isinstance(key, str):
-                key = field_to_index[key]
+                key = field_to_index[key.lower()]
             return super().__getitem__(key)
         def asdict(self, /) -> AttrDict:
             return AttrDict(zip(fields, self))
     match_args = []
-    for i, f in enumerate(fields):
+    for f, i in field_to_index.items():
         if f.isidentifier() and not iskeyword(f):
             setattr(Row, f, property(itemgetter(i)))
             match_args.append(f)
@@ -312,6 +382,7 @@ def cursor_dict_iter(
     cursor: AsyncIterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[AttrDict]:
     ...
 @overload
@@ -319,14 +390,17 @@ def cursor_dict_iter(
     cursor: Iterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> Iterable[AttrDict]:
     ...
 def cursor_dict_iter(
     cursor: AsyncIterable | Iterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[AttrDict] | Iterable[AttrDict]:
-    fields = cursor_fields(cursor)
+    if not fields:
+        fields = cursor_fields(cursor)
     if isinstance(cursor, AsyncIterable):
         return (AttrDict(zip(fields, map_parse(parse, row, fields))) async for row in cursor)
     else:
@@ -338,6 +412,7 @@ def cursor_dataclass_iter(
     cursor: AsyncIterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[DataclassType]:
     ...
 @overload
@@ -345,14 +420,17 @@ def cursor_dataclass_iter(
     cursor: Iterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> Iterable[DataclassType]:
     ...
 def cursor_dataclass_iter(
     cursor: AsyncIterable | Iterable, 
     /, 
     parse: None | Callable | Mapping[int | str, Callable] = None, 
+    fields: tuple[str, ...] = (), 
 ) -> AsyncIterable[DataclassType] | Iterable[DataclassType]:
-    fields = cursor_fields(cursor)
+    if not fields:
+        fields = cursor_fields(cursor)
     Row = dataclass(
         type("Row", (), {"__annotations__": {f: Any for f in fields}}), 
         unsafe_hash=True, 

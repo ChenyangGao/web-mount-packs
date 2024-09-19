@@ -8,11 +8,11 @@ __all__ = ["P115Path", "P115FileSystem"]
 
 import errno
 
-from collections import deque
+from asyncio import Lock as AsyncLock
+from collections import deque, UserString
 from collections.abc import (
     AsyncIterator, Callable, Coroutine, ItemsView, Iterable, Iterator, Mapping, MutableMapping, Sequence, 
 )
-from copy import deepcopy
 from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper
 from itertools import accumulate, islice
@@ -25,6 +25,7 @@ from pathlib import Path
 from posixpath import join as joinpath, splitext
 from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
+from threading import Lock
 from time import time
 from typing import cast, overload, Any, Literal, Self
 from uuid import uuid4
@@ -47,7 +48,7 @@ from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
     attr: AttrDict[str, Any] = AttrDict()
-    is_directory = attr["is_dir"] = attr["is_directory"] = "fid" not in info
+    is_directory = attr["is_directory"] = "fid" not in info
     if is_directory:
         attr["id"] = int(info["cid"])
         attr["parent_id"] = int(info["pid"])
@@ -73,7 +74,6 @@ def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
     attr["mtime"] = attr["user_utime"] = int(info["te"])
     attr["ctime"] = attr["user_ptime"] = int(info["tp"])
     attr["atime"] = attr["user_otime"] =int(info["to"])
-    attr["time"] = int(info["t"])
     return attr
 
 
@@ -119,7 +119,7 @@ class LRUDict(dict):
         self.clean()
 
 
-class Ancestor(dict):
+class Ancestor(dict[str, int | str]):
 
     def __init__(
         self, 
@@ -128,7 +128,7 @@ class Ancestor(dict):
         name: str, 
         parent_id: int = 0, 
         is_directory: bool = True, 
-        prev: None | Self = None, 
+        parent: None | Self = None, 
     ):
         super().__init__(
             id=id, 
@@ -136,30 +136,80 @@ class Ancestor(dict):
             parent_id=parent_id, 
             is_directory=is_directory, 
         )
-        self.prev = prev
+        self.parent = parent
 
-    def __hash__(self, /) -> int:
-        return id(self)
+    def __bool__(self, /) -> bool:
+        return True
 
     def __eq__(self, value, /) -> bool:
         return self is value or super().__eq__(value)
 
+    def __getitem__(self, key, /):
+        if isinstance(key, int):
+            if key < 0:
+                ancestor = self
+                for _ in range(key, -1):
+                    ancestor = ancestor.parent # type: ignore
+                    if ancestor is None:
+                        raise IndexError(key)
+                return ancestor
+            return self.ancestors[key]
+        elif isinstance(key, slice):
+            return self.ancestors[key]
+        return super().__getitem__(key)
+
+    def __getattr__(self, attr, /):
+        try:
+            return self[attr]
+        except KeyError as e:
+            raise AttributeError(attr) from e
+
+    def __hash__(self, /) -> int: # type: ignore
+        return id(self)
+
+    def __str__(self, /) -> str:
+        return self.path
+
     @property
     def ancestors(self, /) -> list[Self]:
-        if prev := self.prev:
-            ancestors = prev.ancestors
-        else:
-            ancestors = []
+        if self["id"] == 0:
+            return [self]
+        ancestors = self.parent.ancestors # type: ignore
         ancestors.append(self)
         return ancestors
 
+    @cached_property
+    def ancestor_path(self, /) -> P115AncestorPath:
+        return P115AncestorPath(self)
+
     @property
     def path(self, /) -> str:
+        if self["id"] == 0:
+            return "/"
         return joins(self.patht)
 
     @property
     def patht(self, /) -> list[str]:
+        if self["id"] == 0:
+            return [""]
         return [a["name"] for a in self.ancestors]
+
+
+class P115AncestorPath(UserString):
+    __slots__ = "self",
+
+    def __init__(self, _self: Ancestor, /):
+        self.self = _self
+
+    def __hash__(self, /) -> int:
+        return id(self)
+
+    def __getattr__(self, attr, /):
+        return getattr(self.self, attr)
+
+    @property
+    def data(self, /) -> str: # type: ignore
+        return self.self.path
 
 
 class P115Path(P115PathBase):
@@ -635,10 +685,9 @@ class P115Path(P115PathBase):
 
 
 class P115FileSystem(P115FileSystemBase[P115Path]):
-    password: str = ""
+    id_to_attr: WeakValueDictionary[int, AttrDict]
+    id_to_ancestor: WeakValueDictionary[int, Ancestor]
     id_to_readdir: None | dict[int, dict[int, AttrDict]] = None
-    id_to_attr: None | WeakValueDictionary[int, AttrDict] = None
-    id_to_ancestor: None | WeakValueDictionary[int, AttrDict] = None
     path_to_id: None | dict[str, int] = None
     refresh: bool = True
     path_class = P115Path
@@ -665,20 +714,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             else:
                 return LRUDict(cache_size)
 
-        id_to_readdir = make_cache(cache_id_to_readdir)
-        if id_to_readdir is None:
-            id_to_attr = id_to_ancestor = None
-        else:
-            id_to_attr = WeakValueDictionary()
-            id_to_ancestor = WeakValueDictionary()
-
+        self._iterdir_locks: WeakValueDictionary[int, AttrDict] = WeakValueDictionary()
         self.__dict__.update(
             id = 0, 
             path = "/", 
             password = password, 
-            id_to_readdir = id_to_readdir, 
-            id_to_attr = id_to_attr, 
-            id_to_ancestor = id_to_ancestor, 
+            id_to_attr = WeakValueDictionary(), 
+            id_to_ancestor = WeakValueDictionary(), 
+            id_to_readdir = make_cache(cache_id_to_readdir), 
             path_to_id = make_cache(cache_path_to_id), 
             refresh = refresh, 
         )
@@ -753,7 +796,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_copy(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         pid: int = 0, 
         *, 
@@ -763,7 +806,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_copy(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         pid: int = 0, 
         *, 
@@ -772,7 +815,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ...
     def fs_copy(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         pid: int = 0, 
         *, 
@@ -788,7 +831,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_delete(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -796,14 +839,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_delete(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_delete(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -816,7 +859,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_move(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         pid: int = 0, 
         *, 
@@ -826,7 +869,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_move(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         pid: int = 0, 
         *, 
@@ -835,7 +878,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ...
     def fs_move(
         self, 
-        id: int, 
+        id: int | Iterable[int], 
         /, 
         pid: int = 0, 
         *, 
@@ -851,8 +894,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_rename(
         self, 
-        id: int, 
-        name: str, 
+        pair: tuple[int, str] | Iterable[tuple[int, str]], 
         /, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -860,148 +902,19 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def fs_rename(
         self, 
-        id: int, 
-        name: str, 
+        pair: tuple[int, str] | Iterable[tuple[int, str]], 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def fs_rename(
         self, 
-        id: int, 
-        name: str, 
+        pair: tuple[int, str] | Iterable[tuple[int, str]], 
         /, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         return check_response(self.client.fs_rename( # type: ignore
-            id, 
-            name, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-        ))
-
-    @overload
-    def fs_batch_copy(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        pid: int = 0, 
-        *, 
-        async_: Literal[False] = False, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_batch_copy(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        pid: int = 0, 
-        *, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_batch_copy(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        pid: int = 0, 
-        *, 
-        async_: Literal[False, True] = False, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.fs_batch_copy(  # type: ignore
-            payload, 
-            pid=pid, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-        ))
-
-    @overload
-    def fs_batch_delete(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        async_: Literal[False] = False, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_batch_delete(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_batch_delete(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        async_: Literal[False, True] = False, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.fs_batch_delete( # type: ignore
-            payload, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-        ))
-
-    @overload
-    def fs_batch_move(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        pid: int = 0, 
-        *, 
-        async_: Literal[False] = False, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_batch_move(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        pid: int = 0, 
-        *, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_batch_move(
-        self, 
-        payload: dict | Iterable[int | str], 
-        /, 
-        pid: int = 0, 
-        *, 
-        async_: Literal[False, True] = False, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.fs_batch_move( # type: ignore
-            payload, 
-            pid=pid, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-        ))
-
-    @overload
-    def fs_batch_rename(
-        self, 
-        payload: dict | Iterable[tuple[int | str, str]], 
-        /, 
-        async_: Literal[False] = False, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_batch_rename(
-        self, 
-        payload: dict | Iterable[tuple[int | str, str]], 
-        /, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_batch_rename(
-        self, 
-        payload: dict | Iterable[tuple[int | str, str]], 
-        /, 
-        async_: Literal[False, True] = False, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        return check_response(self.client.fs_batch_rename( # type: ignore
-            payload, 
+            pair, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
@@ -1260,109 +1173,35 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             async_=async_, 
         ))
 
-    def _clear_cache(self, attr: dict, /):
-        attr_cache = self.attr_cache
-        if attr_cache is None:
-            return
-        id = attr["id"]
-        pid = attr["parent_id"]
-        if id:
+    def _clear_cache(self, attr: int | dict, /):
+        if isinstance(attr, int):
             try:
-                attr_cache[pid]["children"].pop(id, None)
-            except:
-                pass
-        if attr["is_directory"]:
-            path_to_id = self.path_to_id
-            if path_to_id:
-                def pop_path(path):
-                    try:
-                        del path_to_id[path]
-                    except:
-                        pass
-            startswith = str.startswith
-            dq = deque((id,))
-            get, put = dq.popleft, dq.append
-            while dq:
-                id = get()
+                attr = cast(dict, self.id_to_attr[attr])
+            except KeyError:
+                return
+        is_directory = attr["is_directory"]
+        if id_to_readdir := self.id_to_readdir:
+            if id := attr["id"]:
                 try:
-                    cache = attr_cache[id]
-                    del attr_cache[id]
+                    id_to_readdir[attr["parent_id"]].pop(id, None)
                 except KeyError:
                     pass
-                else:
-                    for subid, subattr in cache["children"].items():
-                        is_directory = subattr["is_directory"]
-                        if path_to_id:
-                            pop_path(subattr["path"] + "/"[:is_directory])
-                        if is_directory:
-                            put(subid)
-            if path_to_id:
-                dirname = attr["path"] + "/"
-                pop_path(dirname)
-                for k in tuple(k for k in path_to_id if startswith(k, dirname)):
-                    pop_path(k)
-
-    def _update_cache_path(
-        self, 
-        attr: dict, 
-        new_attr: dict, 
-        /, 
-    ):
-        attr_cache = self.attr_cache
-        if attr_cache is None:
-            return
-        id = attr["id"]
-        opid = attr["parent_id"]
-        npid = new_attr["parent_id"]
-        if id and opid != npid:
-            try:
-                attr_cache[opid]["children"].pop(id, None)
-            except:
-                pass
-            try:
-                attr_cache[npid]["children"][id] = new_attr
-            except:
-                pass
-        if attr["is_directory"]:
-            path_to_id = self.path_to_id
-            if path_to_id:
-                def pop_path(path):
-                    try:
-                        del path_to_id[path]
-                    except:
-                        pass
-            startswith = str.startswith
-            old_path = attr["path"] + "/"
-            new_path = new_attr["path"] + "/"
-            if path_to_id:
-                pop_path(old_path)
-            if path_to_id is not None:
-                path_to_id[new_path] = id
-            len_old_path = len(old_path)
-            dq = deque((id,))
-            get, put = dq.popleft, dq.append
-            while dq:
-                id = get()
-                try:
-                    cache = attr_cache[id]
-                    del attr_cache[id]
-                except KeyError:
-                    pass
-                else:
-                    for subid, subattr in cache["children"].items():
-                        is_directory = subattr["is_directory"]
-                        subpath = subattr["path"]
-                        if startswith(subpath, old_path):
-                            new_subpath = subattr["path"] = new_path + subpath[len_old_path:]
-                            if path_to_id:
-                                pop_path(subpath + "/"[:is_directory])
-                            if path_to_id is not None:
-                                path_to_id[new_subpath + "/"[:is_directory]] = subid
-                        if subattr["is_directory"]:
-                            put(subid)
-            if path_to_id:
-                for k in tuple(k for k in path_to_id if startswith(k, old_path)):
-                    pop_path(k)
+            if is_directory:
+                dq = deque((id,))
+                get, put = dq.popleft, dq.append
+                while dq:
+                    if children := id_to_readdir.pop(get(), None):
+                        for subid, subattr in children.items():
+                            if subattr["is_directory"]:
+                                put(subid)
+        if path_to_id := self.path_to_id:
+            if is_directory:
+                startswith = str.startswith
+                dirname = str(attr["path"]) + "/"
+                for p in tuple(p for p in path_to_id if startswith(p, dirname)):
+                    path_to_id.pop(p, None)
+            else:
+                path_to_id.pop(str(attr["path"]), None)
 
     @overload
     def _attr(
@@ -1370,6 +1209,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int = 0, 
         /, 
         refresh: None | bool = None, 
+        *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
         ...
@@ -1379,6 +1219,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int = 0, 
         /, 
         refresh: None | bool = None, 
+        *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, AttrDict]:
         ...
@@ -1387,6 +1228,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         id: int = 0, 
         /, 
         refresh: None | bool = None, 
+        *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
@@ -1411,8 +1253,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     mtime = 0
                 else:
                     mtime = int(resp["data"][0]["te"])
-                attr = AttrDict(
-                    is_dir=True, 
+                attr: AttrDict = AttrDict(
                     is_directory=True, 
                     id=0, 
                     parent_id=0, 
@@ -1429,64 +1270,46 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     atime=now, 
                     user_otime=now, 
                     time=now, 
-                    path="/", 
-                    ancestors=[self.root_ancestor], 
+                    path=self.root_ancestor.ancestor_path, 
                 )
             else:
                 try:
                     resp = yield self.fs_info(id, async_=async_)
                 except FileNotFoundError as e:
-                    # TODO: 如果缓存存在，则要进行移除，如果是目录，需要移除所有 pid 等于此的数据
-                    # attr = cache[id]
-                    # pid = attr["parent_id"]
-                    # id_to_attr.pop(pid, None)
-                    # id_to_attr[pid].pop(id, None)
-                    # 以及其它一系列的清理，例如 path_to_id
+                    self._clear_cache(id)
                     raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
                 attr = normalize_attr(resp["data"][0])
-                ancestors = attr["ancestors"] = yield self._get_ancestors(attr, async_=async_)
-                attr["path"] = ancestors[-1].path
-
-            # 只要以下两者之一发生变动，则此id就是发生变动的，任何涉及此id的path和ancestors都要进行更新
-            # id 为目录时，才需要全扫描，否则只有我自己
-            # id -> name
-            # id -> pid
-
-
-            pid = attr["parent_id"]
-
-            if cache is None:
-                attr_old: None | AttrDict = None
-            else:
-                if attr_old := cache.get(id):
-                    attr_old.update(attr)
-                else:
-                    cache[id] = attr
+                yield self._get_ancestors(attr, async_=async_)
 
             id_to_readdir = self.id_to_readdir
-            if id_to_readdir is not None:
-                if id == 0:
-                    self.__dict__["root"] = attr
-                else:
-                    siblings: dict[int, AttrDict]
+            pid = attr["parent_id"]
+            attr_old: None | AttrDict = id_to_attr.get(id)
+            if attr_old:
+                path_old = str(attr_old["path"])
+                if id_to_readdir and attr_old["parent_id"] != attr["parent_id"]:
                     try:
-                        siblings = id_to_readdir[pid]
+                        id_to_readdir[attr_old["parent_id"]].pop(id, None)
                     except KeyError:
-                        siblings = id_to_readdir[pid] = {}
-                    siblings[id] = attr
+                        pass
+                attr_old.update(attr)
+            else:
+                path_old = ""
+                id_to_attr[id] = attr
 
-            path_to_id = self.path_to_id
-            if path_to_id is not None:
-                path = attr["path"]
-                is_directory = attr["is_directory"]
-                path_to_id[path + "/"[:is_directory]] = id
-                if attr_old:
-                    path_old = attr_old["path"]
-                    if path_old != path:
-                        try:
-                            del path_to_id[path_old + "/"[:is_directory]]
-                        except KeyError:
-                            pass
+            if id_to_readdir is not None:
+                if id:
+                    id_to_readdir.setdefault(pid, {})[id] = attr
+                else:
+                    self.__dict__["root"] = attr
+
+            if id:
+                path_to_id = self.path_to_id
+                if path_to_id is not None:
+                    path = str(attr["path"])
+                    is_directory = attr["is_directory"]
+                    path_to_id[path + "/"[:is_directory]] = id
+                    if path_old and path_old != path:
+                        path_to_id.pop(path_old + "/"[:is_directory], None)
 
             return attr
         return run_gen_step(gen_step, async_=async_)
@@ -1494,10 +1317,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def _attr_path(
         self, 
-        path: str | PathLike[str] | Sequence[str], 
+        path: str | UserString | PathLike[str] | Sequence[str] = "/", 
         /, 
         pid: None | int = None, 
-        ensure_dir: bool = False, 
+        ensure_dir: None | bool = None, 
         *, 
         async_: Literal[False] = False, 
     ) -> AttrDict:
@@ -1505,45 +1328,48 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     @overload
     def _attr_path(
         self, 
-        path: str | PathLike[str] | Sequence[str], 
+        path: str | UserString | PathLike[str] | Sequence[str] = "/", 
         /, 
         pid: None | int = None, 
-        ensure_dir: bool = False, 
+        ensure_dir: None | bool = None, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, AttrDict]:
         ...
     def _attr_path(
         self, 
-        path: str | PathLike[str] | Sequence[str], 
+        path: str | UserString | PathLike[str] | Sequence[str] = "/", 
         /, 
         pid: None | int = None, 
-        ensure_dir: bool = False, 
+        ensure_dir: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             nonlocal path, pid, ensure_dir
 
+            get_attr_by_id = self._attr
+
             if pid is None:
                 pid = self.id
             if isinstance(path, PathLike):
                 path = fspath(path)
             if not path or path == ".":
-                return (yield partial(self._attr, pid, async_=async_))
+                return (yield get_attr_by_id(pid, async_=async_))
             parents = 0
-            if isinstance(path, str):
-                if not ensure_dir:
+            if isinstance(path, (str, UserString)):
+                path = str(path)
+                if ensure_dir is None:
                     ensure_dir = path_is_dir_form(path)
                 patht, parents = splits(path)
                 if not (patht or parents):
-                    return (yield partial(self._attr, pid, async_=async_))
+                    return (yield get_attr_by_id(pid, async_=async_))
             else:
-                if not ensure_dir:
+                if ensure_dir is None:
                     ensure_dir = path[-1] == ""
                 patht = [path[0], *(p for p in path[1:] if p)]
             if patht == [""]:
-                return self._attr(0)
+                return get_attr_by_id(0)
             elif patht and patht[0] == "":
                 pid = 0
 
@@ -1552,7 +1378,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if patht[0] != "":
                     patht.insert(0, "")
             else:
-                ancestors = yield partial(self._get_ancestors, pid, async_=async_)
+                ancestors = yield self._get_ancestors(pid, async_=async_)
                 if parents:
                     if parents >= len(ancestors):
                         pid = 0
@@ -1562,7 +1388,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 else:
                     ancestor_patht = ["", *(a["name"] for a in ancestors[1:])]
             if not patht:
-                return (yield partial(self._attr, pid, async_=async_))
+                return (yield get_attr_by_id(pid, async_=async_))
 
             if pid == 0:
                 dirname = ""
@@ -1583,8 +1409,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 fullpath = ancestors_paths[-1]
                 if not ensure_dir and (id := path_to_id.get(fullpath)):
                     try:
-                        attr = yield partial(self._attr, id, async_=async_)
-                        if attr["path"] == fullpath:
+                        attr = yield get_attr_by_id(id, async_=async_)
+                        if str(attr["path"]) == fullpath:
                             return attr
                         else:
                             del path_to_id[fullpath]
@@ -1592,15 +1418,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         pass
                 if (id := path_to_id.get(fullpath + "/")):
                     try:
-                        attr = yield partial(self._attr, id, async_=async_)
-                        if attr["path"] == fullpath:
+                        attr = yield get_attr_by_id(id, async_=async_)
+                        if str(attr["path"]) == fullpath:
                             return attr
                         else:
                             del path_to_id[fullpath + "/"]
                     except FileNotFoundError:
                         pass
 
-            def get_dir_id(path: str):
+            def get_dir_id(path: str, /):
                 result = check_response((yield self.client.fs_files_getid(
                     path, 
                     request=self.async_request if async_ else self.request, 
@@ -1615,8 +1441,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
             if not ancestors_with_slashes[-1]:
                 try:
-                    id = yield from get_dir_id(ancestors_paths2[-1])
-                    return (yield partial(self._attr, id, async_=async_))
+                    id = cast(int, (yield from get_dir_id(ancestors_paths2[-1])))
+                    return (yield get_attr_by_id(id, async_=async_))
                 except FileNotFoundError:
                     if ensure_dir:
                         raise
@@ -1625,8 +1451,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             for i in reversed(range(len(ancestors_paths)-1)):
                 if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
                     try:
-                        parent = cast(AttrDict, (yield partial(self._attr, id, async_=async_)))
-                        if parent["path"] == dirname:
+                        parent = cast(AttrDict, (yield get_attr_by_id(id, async_=async_)))
+                        if str(parent["path"]) == dirname:
                             i += 1
                             break
                         else:
@@ -1634,7 +1460,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     except FileNotFoundError:
                         pass
                 elif not ancestors_with_slashes[i]:
-                    parent = yield from get_dir_id(ancestors_paths2[i])
+                    parent = cast(int, (yield from get_dir_id(ancestors_paths2[i])))
                     i += 1
                     break
             else:
@@ -1685,11 +1511,65 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return attr
         return run_gen_step(gen_step, async_=async_)
 
+    def _get_ancestors_from_response(
+        self, 
+        resp: None | dict = None, 
+        /, 
+        attr: None | dict = None, 
+    ) -> list[Ancestor]:
+        id_to_ancestor = self.id_to_ancestor
+        parent = self.root_ancestor
+        ancestors: list[Ancestor] = [parent]
+        if resp:
+            for p in resp["path"][1:]:
+                cid = int(p["cid"])
+                try:
+                    ancestor = id_to_ancestor[cid]
+                except KeyError:
+                    ancestor = id_to_ancestor[cid] = Ancestor(
+                        id=cid, 
+                        parent_id=int(p["pid"]), 
+                        name=p["name"], 
+                        parent=parent, 
+                    )
+                else:
+                    ancestor.update(parent_id=int(p["pid"]), name=p["name"])
+                    ancestor.parent = parent
+                ancestors.append(ancestor)
+                parent = ancestor
+        if attr:
+            cid = attr["id"]
+            if not cid:
+                return ancestors
+            try:
+                ancestor = id_to_ancestor[cid]
+            except KeyError:
+                ancestor = id_to_ancestor[cid] = Ancestor(
+                    id=cid, 
+                    parent_id=attr["parent_id"], 
+                    name=attr["name"], 
+                    is_directory=attr["is_directory"], 
+                    parent=parent, 
+                )
+            else:
+                ancestor.update(parent_id=attr["parent_id"], name=attr["name"])
+                ancestor.parent = parent
+            ancestors.append(ancestor)
+            attr["path"] = ancestor.ancestor_path
+        path_to_id = self.path_to_id
+        if path_to_id is not None:
+            path = "/"
+            for ancestor in ancestors[1:]:
+                path += ancestor["name"] + "/"[:ancestor["is_directory"]]
+                path_to_id[path] = ancestor["id"]
+        return ancestors
+
     @overload
     def _get_ancestors(
         self, 
         id_or_attr: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[False] = False, 
     ) -> list[Ancestor]:
         ...
@@ -1698,6 +1578,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_attr: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, list[Ancestor]]:
         ...
@@ -1705,12 +1586,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_attr: int | dict = 0, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
     ) -> list[Ancestor] | Coroutine[Any, Any, list[Ancestor]]:
         def gen_step():
-            id_to_ancestor = self.id_to_ancestor
-            ancestor = self.root_ancestor
-            ancestors = [ancestor]
             if isinstance(id_or_attr, int):
                 id = id_or_attr
                 attr = None
@@ -1719,57 +1598,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 id = attr["parent_id"]
             if id:
                 resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
-                for p in resp["path"][1:]:
-                    cid = int(p["cid"])
-                    if id_to_ancestor is None:
-                        ancestor = Ancestor(
-                            id=cid, 
-                            parent_id=int(p["pid"]), 
-                            name=p["name"], 
-                            prev=ancestor, 
-                        )
-                    else:
-                        prev = ancestor
-                        try:
-                            ancestor = id_to_ancestor[cid]
-                        except KeyError:
-                            ancestor = id_to_ancestor[cid] = Ancestor(
-                                id=cid, 
-                                parent_id=int(p["pid"]), 
-                                name=p["name"], 
-                                prev=prev, 
-                            )
-                        else:
-                            ancestor.update(parent_id=int(p["pid"]), name=p["name"])
-                            ancestor.prev = prev
-                    ancestors.append(ancestor)
-            if attr:
-                cid = attr["id"]
-                if id_to_ancestor is None:
-                    ancestor = Ancestor(
-                        id=cid, 
-                        parent_id=attr["parent_id"], 
-                        name=attr["name"], 
-                        is_directory=attr["is_directory"], 
-                        prev=ancestor, 
-                    )
-                else:
-                    prev = ancestor
-                    try:
-                        ancestor = id_to_ancestor[cid]
-                    except KeyError:
-                        ancestor = id_to_ancestor[cid] = Ancestor(
-                            id=cid, 
-                            parent_id=attr["parent_id"], 
-                            name=attr["name"], 
-                            is_directory=attr["is_directory"], 
-                            prev=prev, 
-                        )
-                    else:
-                        ancestor.update(parent_id=attr["parent_id"], name=attr["name"])
-                        ancestor.prev = prev
-                ancestors.append(ancestor)
-            return ancestors
+                return self._get_ancestors_from_response(resp, attr)
+            else:
+                return self._get_ancestors_from_response(None, attr)
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -1835,8 +1666,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             return attr
         return run_gen_step(gen_step, async_=async_)
 
-    # TODO: 当不进行缓存时，可以安排自定义排序
-    # TODO: 当进行缓存时，需要根据id，为同步加多线程锁，异步加异步锁，一次把数据取回来后，再执行各种处理，一些查询参数自动忽略
     @overload
     def iterdir(
         self, 
@@ -1846,10 +1675,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
-        refresh: bool = False, 
+        order: Literal["", "file_name", "file_size", "file_type", "user_utime", "user_ptime", "user_otime"] = "file_name", 
+        asc: bool = True, 
+        fc_mix: bool = False, 
+        refresh: None | bool = None, 
         *, 
         async_: Literal[False] = False, 
-        **payload, 
+        **kwargs, 
     ) -> Iterator[AttrDict]:
         ...
     @overload
@@ -1861,10 +1693,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
-        refresh: bool = False, 
+        order: Literal["", "file_name", "file_size", "file_type", "user_utime", "user_ptime", "user_otime"] = "file_name", 
+        asc: bool = True, 
+        fc_mix: bool = False, 
+        refresh: None | bool = None, 
         *, 
         async_: Literal[True], 
-        **payload, 
+        **kwargs, 
     ) -> AsyncIterator[AttrDict]:
         ...
     def iterdir(
@@ -1875,126 +1710,101 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
-        refresh: bool = False, 
+        order: Literal["", "file_name", "file_size", "file_type", "user_utime", "user_ptime", "user_otime"] = "file_name", 
+        asc: bool = True, 
+        fc_mix: bool = False, 
+        refresh: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
-        **payload, 
+        **kwargs, 
     ) -> Iterator[AttrDict] | AsyncIterator[AttrDict]:
         """迭代获取目录内直属的文件或目录的信息
-        payload:
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - code: int | str = <default>
-            - count_folders: 0 | 1 = 1
-            - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
-            - format: str = "json"
-            - is_q: 0 | 1 = <default>
-            - is_share: 0 | 1 = <default>
-            - natsort: 0 | 1 = <default>
-            - o: str = <default>
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
-            - record_open_time: 0 | 1 = 1
-            - scid: int | str = <default>
-            - show_dir: 0 | 1 = 1
-            - snap: 0 | 1 = <default>
-            - source: str = <default>
-            - star: 0 | 1 = <default> # 是否星标文件
-            - suffix: str = <default> # 后缀名
-            - type: int | str = <default>
-                # 文件类型：
-                # - 所有: 0
-                # - 文档: 1
-                # - 图片: 2
-                # - 音频: 3
-                # - 视频: 4
-                # - 压缩包: 5
-                # - 应用: 6
-                # - 书籍: 7
+
+        :param id_or_path: id 或 路径
+        :param pid: `id_or_path`是相对路径时，所在的目录 id
+        :param start: 开始索引
+        :param stop: 结束索引（不含）
+        :param page_size: 每一次迭代，预读的数据条数
+        :param order: 排序
+            - "":           不排序（按照默认排序）
+            - "file_name":  文件名
+            - "file_size":  文件大小
+            - "file_type":  文件种类
+            - "user_utime": 修改时间
+            - "user_ptime": 创建时间
+            - "user_otime": 上次打开时间
+        :param asc: 是否升序排列
+        :param fc_mix: 是否目录和文件混合，如果为 False 则目录在前
+        :param refresh: 是否刷新，如果为 True，则会从网上获取，而不是直接返回已缓存的数据
+        :param async_: 是否异步执行
+
+        :return: 如果`async_`为 True，返回异步迭代器，如果为 False，返回迭代器
         """
-        path_to_id = self.path_to_id
-        attr_cache = self.attr_cache
-        get_version = self.get_version
         if page_size <= 0:
             page_size = 1_000
+        if refresh is None:
+            refresh = self.refresh
         seen: set[int] = set()
         seen_add = seen.add
+        payload: dict = {"custom_order": 1, "o": order, "asc": int(asc), "fc_mix": int(fc_mix)}
 
-        def normalize_attr2(attr, ancestors, dirname, /, **extra):
+        id_to_attr = self.id_to_attr
+        id_to_readdir = self.id_to_readdir
+        path_to_id = self.path_to_id
+
+        def normalize_attr2(attr, ancestor, /):
             attr = normalize_attr(attr)
-            if (fid := attr["id"]) in seen:
+            if (cid := attr["id"]) in seen:
                 raise RuntimeError(f"{attr['parent_id']} detected count changes during iteration")
-            seen_add(fid)
+            seen_add(cid)
             is_directory = attr["is_directory"]
-            attr["ancestors"] = [*ancestors, {
-                "id": attr["id"], 
-                "parent_id": attr["parent_id"], 
-                "name": attr["name"], 
-                "is_directory": attr["is_directory"], 
-            }]
-            path = attr["path"] = dirname + escape(attr["name"])
+            attr["path"] = Ancestor(
+                id=cid, 
+                parent_id=attr["parent_id"], 
+                name=attr["name"], 
+                is_directory=is_directory, 
+                parent=ancestor, 
+            ).ancestor_path
+            path = str(attr["path"])
             if path_to_id is not None:
-                path_to_id[path + "/"[:is_directory]] = attr["id"]
-            if attr_cache is not None:
-                try:
-                    id_attrs = attr_cache[attr["id"]]
-                except LookupError:
-                    attr_cache[attr["id"]] = {"attr": attr}
-                else:
+                path_to_id[path + "/"[:is_directory]] = cid
+            try:
+                attr_old = id_to_attr[cid]
+            except KeyError:
+                id_to_attr[cid] = attr
+            else:
+                if id_to_readdir and attr_old["parent_id"] != attr["parent_id"]:
                     try:
-                        old_attr = id_attrs["attr"]
-                    except LookupError:
-                        id_attrs["attr"] = attr
-                    else:
-                        if path_to_id and path != old_attr["path"]:
-                            try:
-                                del path_to_id[old_attr["path"] + "/"[:is_directory]]
-                            except LookupError:
-                                pass
-                        old_attr.update(attr)
+                        id_to_readdir[attr_old["parent_id"]].pop(cid, None)
+                    except KeyError:
+                        pass
+                if path_to_id and path != (path_old := attr_old["path"]):
+                    path_to_id.pop(str(path_old) + "/"[:is_directory], None)
+                attr_old.update(attr)
             return attr
 
         def gen_step():
             nonlocal start, stop
             if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
                 return
-            version = None
-            if attr_cache is None and isinstance(id_or_path, int):
+
+            if isinstance(id_or_path, int):
                 id = id_or_path
             else:
-                attr = yield self.attr(id_or_path, pid=pid, ensure_dir=True, async_=async_)
-                id = attr["id"]
-                if attr_cache is not None and get_version is not None:
-                    version = get_version(attr)
+                id = yield self.get_id(id_or_path, pid=pid, ensure_dir=True, async_=async_)
+ 
             payload["cid"] = id
             payload["limit"] = page_size
             offset = int(payload.setdefault("offset", 0))
             if offset < 0:
                 offset = payload["offset"] = 0
-            if attr_cache is None:
-                pid_attrs = None
-            else:
-                pid_attrs = attr_cache.get(id)
-            if (
-                refresh or 
-                pid_attrs is None or 
-                "version" not in pid_attrs or
-                version != pid_attrs["version"]
-            ):
-                # TODO: 这个函数具备单独能力，如果需要排序，手动执行
-                # TODO: 再做一个函数，用来实现筛选
-                # TODO: 如果下一次迭代得到的 ancestors 不同，也报错
-                def iterdir(fetch_all: bool = True):
-                    nonlocal start, stop
-                    get_files = self.fs_files
-                    if fetch_all:
-                        payload["offset"] = 0
-                    else:
+
+            if refresh or not id_to_readdir or id not in id_to_readdir:
+                get_files = self.fs_files
+                get_ancestors = self._get_ancestors_from_response
+                if id_to_readdir is None:
+                    def iterdir():
+                        nonlocal start, stop
                         count = -1
                         if start < 0:
                             count = yield self.dirlen(id, async_=async_)
@@ -2014,55 +1824,114 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                 return
                             total = stop - start
                         payload["offset"] = start
-                        if stop is not None:
-                            if total < page_size:
-                                payload["limit"] = total
-                    resp = yield get_files(payload, async_=async_)
-                    ancestors = [{"id": 0, "parent_id": 0, "name": "", "is_directory": True}]
-                    ancestors.extend(
-                        {
-                            "id": int(p["cid"]), 
-                            "parent_id": int(p["pid"]), 
-                            "name": p["name"], 
-                            "is_directory": True, 
-                        } for p in resp["path"][1:]
-                    )
-                    if len(ancestors) == 1:
-                        dirname = "/"
-                    else:
-                        dirname = joins([cast(str, a["name"]) for a in ancestors]) + "/"
-                    if path_to_id is not None:
-                        path_to_id[dirname] = id
-                    count = resp["count"]
-                    if fetch_all:
-                        total = count
-                    elif start >= count:
-                        return
-                    elif stop is None or stop > count:
-                        total = count - start
-                    for attr in resp["data"]:
-                        yield Yield(normalize_attr2(attr, ancestors, dirname), identity=True)
-                    if total <= page_size:
-                        return
-                    for _ in range((total - 1) // page_size):
-                        payload["offset"] += page_size
+                        if stop is not None and total < page_size:
+                            payload["limit"] = total
                         resp = yield get_files(payload, async_=async_)
-                        if resp["count"] != count:
-                            raise RuntimeError(f"{id} detected count changes during iteration")
+                        ancestor = get_ancestors(resp)[-1]
+                        count = resp["count"]
+                        if start >= count:
+                            return
+                        elif stop is None or stop > count:
+                            total = count - start
                         for attr in resp["data"]:
-                            yield Yield(normalize_attr2(attr, ancestors, dirname), identity=True)
-                if attr_cache is None:
-                    return YieldFrom(run_gen_step_iter(iterdir(False), async_=async_), identity=True)
+                            yield Yield(normalize_attr2(attr, ancestor), identity=True)
+                        if total <= page_size:
+                            return
+                        for _ in range((total - 1) // page_size):
+                            payload["offset"] += len(resp["data"])
+                            resp = yield get_files(payload, async_=async_)
+                            ancestor = get_ancestors(resp)[-1]
+                            if resp["count"] != count:
+                                raise RuntimeError(f"{id} detected count changes during iteration")
+                            for attr in resp["data"]:
+                                yield Yield(normalize_attr2(attr, ancestor), identity=True)
+                    return YieldFrom(run_gen_step_iter(iterdir(), async_=async_), identity=True)
                 else:
+                    def iterdir():
+                        children = id_to_readdir.get(id)
+                        if children:
+                            children = dict(children)
+                        payload.update({"custom_order": 1, "o": "user_utime", "asc": 0, "fc_mix": 1, "offset": 0})
+                        done = False
+                        if children:
+                            can_merge = True
+                            payload["limit"] = 1
+                            mtime_groups: dict[int, set[int]] = {}
+                            for cid, item in sorted(children.items(), key=lambda t: t[1]["mtime"], reverse=True):
+                                try:
+                                    mtime_groups[item["mtime"]].add(cid)
+                                except KeyError:
+                                    mtime_groups[item["mtime"]] = {cid}
+                            n = len(children)
+                            it = iter(mtime_groups.items())
+                            his_mtime, his_ids = next(it)
+                        else:
+                            can_merge = False
+                            payload["limit"] = page_size
+
+                        class Break(Exception):
+                            pass
+
+                        def process(resp, /):
+                            nonlocal can_merge, done, his_mtime, his_ids, n 
+                            attr: AttrDict
+                            for info in resp["data"]:
+                                attr = normalize_attr2(info, ancestor)
+                                if can_merge:
+                                    cur_mtime = attr["mtime"]
+                                    try:
+                                        while his_mtime > cur_mtime:
+                                            n -= len(his_ids)
+                                            if not n:
+                                                can_merge = False
+                                                raise Break
+                                            his_mtime, his_ids = next(it)
+                                        if his_mtime == cur_mtime:
+                                            cur_id = attr["id"]
+                                            if cur_id in his_ids:
+                                                n -= 1
+                                                if count - len(seen) == n:
+                                                    yield Yield(attr, identity=True)
+                                                    for attr in cast(dict[int, AttrDict], children).values():
+                                                        if attr["id"] not in seen:
+                                                            yield Yield(attr, identity=True)
+                                                    done = True
+                                                    return
+                                                his_ids.remove(cur_id)
+                                    except Break:
+                                        pass
+                                yield Yield(attr, identity=True)
+
+                        resp = yield get_files(payload, async_=async_)
+                        count = resp["count"]
+                        ancestor = get_ancestors(resp)[-1]
+                        yield from process(resp)
+                        payload["limit"] = page_size
+                        for _ in range((count - len(resp["data"]) - 1) // page_size + 1):
+                            if done:
+                                return
+                            payload["offset"] += len(resp["data"])
+                            resp = yield get_files(payload, async_=async_)
+                            if resp["count"] != count:
+                                raise RuntimeError(f"{id} detected count changes during iteration")
+                            ancestor = get_ancestors(resp)[-1]
+                            yield from process(resp)
+
                     if async_:
                         async def request():
-                            return {a["id"]: a async for a in run_gen_step_iter(iterdir, async_=True)}
+                            d: AttrDict = AttrDict(lock=Lock(), alock=AsyncLock())
+                            async with self._iterdir_locks.setdefault(id, d)["alock"]:
+                                return {a["id"]: a async for a in run_gen_step_iter(iterdir, async_=True)}
                         children = yield request
                     else:
-                        children = {a["id"]: a for a in run_gen_step_iter(iterdir, async_=False)}
-                    attrs = attr_cache[id] = {"version": version, "attr": attr, "children": children}
+                        d: AttrDict = AttrDict(lock=Lock(), alock=AsyncLock())
+                        with self._iterdir_locks.setdefault(id, d)["lock"]:
+                            children = {a["id"]: a for a in run_gen_step_iter(iterdir, async_=False)}
+                    id_to_readdir[id] = children
             else:
-                children = pid_attrs["children"]
+                children = id_to_readdir[id]
+            if fc_mix and not order:
+                return islice(children.values(), start, stop)
             count = len(children)
             if start is None:
                 start = 0
@@ -2076,29 +1945,25 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 stop += count
             if start >= stop or stop <= 0 or start >= count:
                 return
-            match payload.get("o"):
-                case "file_name":
-                    key = lambda attr: attr["name"]
-                case "file_size":
-                    key = lambda attr: attr.get("size") or 0
-                case "file_type":
-                    key = lambda attr: attr.get("ico", "")
-                case "user_utime":
-                    key = lambda attr: attr["utime"]
-                case "user_ptime":
-                    key = lambda attr: attr["ptime"]
-                case "user_otime":
-                    key = lambda attr: attr["open_time"]
-                case _:
-                    return YieldFrom(islice(children.values(), start, stop), identity=True)
-            return YieldFrom(
-                sorted(
-                    children.values(), 
-                    key=key, 
-                    reverse=payload.get("asc", True), 
-                )[start:stop], 
-                identity=True, 
-            )
+            values = list(children.values())
+            if order:
+                match order:
+                    case "file_name":
+                        key = lambda attr: attr["name"]
+                    case "file_size":
+                        key = lambda attr: attr.get("size") or 0
+                    case "file_type":
+                        key = lambda attr: (True, "") if attr["is_directory"] else (False, splitext(attr["name"])[-1])
+                    case "user_utime":
+                        key = lambda attr: attr["user_utime"]
+                    case "user_ptime":
+                        key = lambda attr: attr["user_ptime"]
+                    case "user_otime":
+                        key = lambda attr: attr["user_otime"]
+                values.sort(key=key, reverse=not asc)
+            if not fc_mix:
+                values.sort(key=lambda attr: not attr["is_directory"], reverse=not asc)
+            return YieldFrom(values[start:stop], identity=True)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -2146,7 +2011,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             nonlocal src_path, dst_path
             try:
                 src_attr = yield partial(self.attr, src_path, pid=pid, async_=async_)
-                src_path = cast(str, src_attr["path"])
+                src_path = str(src_attr["path"])
                 if src_attr["is_directory"]:
                     if recursive:
                         return (yield partial(
@@ -2247,7 +2112,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             pid=tempdir_id, 
                             async_=async_
                         ))["id"]
-                        resp = yield partial(self.fs_rename, dst_id, dst_name, async_=async_)
+                        resp = yield partial(self.fs_rename, (dst_id, dst_name), async_=async_)
                         if resp["data"]:
                             dst_name = resp["data"][str(dst_id)]
                         yield partial(self.fs_move, dst_id, pid=dst_pid, async_=async_)
@@ -2320,7 +2185,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     ))
 
                 src_id = src_attr["id"]
-                src_path = src_attr["path"]
+                src_path = str(src_attr["path"])
                 src_name = src_attr["name"]
                 try:
                     dst_attr = yield partial(self.attr, dst_path, pid=pid, async_=async_)
@@ -2366,7 +2231,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     dst_id = dst_parent["id"]
                     dst_attrs_map = {}
                 else:
-                    dst_path = dst_attr["path"]
+                    dst_path = str(dst_attr["path"])
                     if not dst_attr["is_directory"]:
                         raise NotADirectoryError(
                             errno.ENOTDIR, 
@@ -2375,7 +2240,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     dst_id = dst_attr["id"]
                     if src_id == dst_id:
                         raise SameFileError(src_path)
-                    elif any(a["id"] == src_id for a in dst_attr["ancestors"]):
+                    elif any(a["id"] == src_id for a in dst_attr["path"].ancestors):
                         raise PermissionError(
                             errno.EPERM, 
                             f"copy a directory as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
@@ -2413,7 +2278,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             if src_files:
                 for i in range(0, len(src_files), 50_000):
                     yield partial(
-                        self.fs_batch_copy, 
+                        self.fs_copy, 
                         src_files[i:i+50_000], 
                         pid=dst_id, 
                         async_=async_, 
@@ -2456,12 +2321,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         :param desc: 如果为 None，返回描述文本；否则，设置文本
         """
         def gen_step():
-            fid = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
+            fid = yield self.get_id(id_or_path, pid=pid, async_=async_)
             if fid == 0:
                 return ""
             if desc is None:
-                return check_response((yield partial(
-                    self.client.fs_desc, 
+                return check_response((yield self.client.fs_desc(
                     fid, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
@@ -2505,9 +2369,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> int | Coroutine[Any, Any, int]:
         "文件夹中的项目数（直属的文件和目录计数）"
         def gen_step():
-            id = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
-            resp = yield partial(
-                self.fs_files, 
+            id = yield self.get_id(id_or_path, pid=pid, async_=async_)
+            resp = yield self.fs_files(
                 {"cid": id, "limit": 1}, 
                 async_=async_, 
             )
@@ -2545,7 +2408,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         "获取各个上级目录的少量信息（从根目录到当前目录）"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
-            return deepcopy(attr["ancestors"])
+            return attr["path"].ancestors
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -2638,6 +2501,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
+        **kwargs, 
     ) -> str:
         ...
     @overload
@@ -2648,6 +2512,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
+        **kwargs, 
     ) -> Coroutine[Any, Any, str]:
         ...
     def get_path(
@@ -2657,8 +2522,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
+        **kwargs, 
     ) -> str | Coroutine[Any, Any, str]:
-        if isinstance(id_or_path, int) and (attr_cache := self.attr_cache) is None:
+        if isinstance(id_or_path, int) and self.id_to_readdir is None:
             def gen_step():
                 patht = yield self.get_patht(id_or_path, async_=async_)
                 return joins(patht)
@@ -2673,6 +2539,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
+        **kwargs, 
     ) -> list[str]:
         ...
     @overload
@@ -2683,6 +2550,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
+        **kwargs, 
     ) -> Coroutine[Any, Any, list[str]]:
         ...
     def get_patht(
@@ -2692,8 +2560,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
+        **kwargs, 
     ) -> list[str] | Coroutine[Any, Any, list[str]]:
-        if isinstance(id_or_path, int) and (attr_cache := self.attr_cache) is None:
+        if isinstance(id_or_path, int) and self.id_to_readdir is None:
             def gen_step():
                 id = id_or_path
                 ls = [""]
@@ -2871,15 +2740,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         "把路径隐藏或显示（如果隐藏，只能在隐藏模式中看到）"
         def gen_step():
             if show is None:
-                attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+                attr = yield self.attr(id_or_path, pid=pid, async_=async_)
                 return attr["hidden"]
             else:
-                fid = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
+                fid = yield self.get_id(id_or_path, pid=pid, async_=async_)
                 if fid == 0:
                     return False
                 hidden = not show
-                resp = yield partial(
-                    self.client.fs_files_hidden, 
+                resp = yield self.client.fs_files_hidden(
                     {"hidden": int(hidden), "fid[0]": fid}, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
@@ -3136,7 +3004,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 )
             path_class = type(self).path_class
             if isinstance(path, (AttrDict, path_class)):
-                path = path["path"]
+                path = str(path["path"])
             path = cast(str | PathLike | Sequence[str], path)
             if isinstance(path, (str, PathLike)):
                 patht, parents = splits(fspath(path))
@@ -3222,7 +3090,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 )
             path_class = type(self).path_class
             if isinstance(path, (AttrDict, path_class)):
-                path = path["path"]
+                path = str(path["path"])
             path = cast(str | PathLike | Sequence[str], path)
             if isinstance(path, (str, PathLike)):
                 patht, parents = splits(fspath(path))
@@ -3310,9 +3178,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             dst_id = dst_attr["id"]
             if src_id == dst_id or src_attr["parent_id"] == dst_id:
                 return src_attr
-            src_path = src_attr["path"]
-            dst_path = dst_attr["path"]
-            if any(a["id"] == src_id for a in dst_attr["ancestors"]):
+            src_path = str(src_attr["path"])
+            dst_path = str(dst_attr["path"])
+            if any(a["id"] == src_id for a in dst_attr["path"].ancestors):
                 raise PermissionError(
                     errno.EPERM, 
                     f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}"
@@ -3484,7 +3352,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             nonlocal src_path, dst_path
             src_attr = yield partial(self.attr, src_path, pid=pid, async_=async_)
             src_id = src_attr["id"]
-            src_path = cast(str, src_attr["path"])
+            src_path = str(src_attr["path"])
             src_patht = splits(src_path)[0]
             try:
                 dst_attr = yield self.attr(dst_path, pid=pid, async_=async_)
@@ -3532,7 +3400,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         f"destination already exists: {src_path!r} -> {dst_path!r}", 
                     )
                 dst_pid = dst_attr["parent_id"]
-                dst_path = cast(str, dst_attr["path"])
+                dst_path = str(dst_attr["path"])
                 dst_patht = splits(dst_path)[0]
 
             *src_dirt, src_name = src_patht
@@ -3541,25 +3409,25 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             dst_ext = splitext(dst_name)[1]
 
             if src_dirt == dst_dirt and (src_attr["is_directory"] or src_ext == dst_ext):
-                yield partial(self.fs_rename, src_id, dst_name, async_=async_)
+                yield partial(self.fs_rename, (src_id, dst_name), async_=async_)
             elif src_name == dst_name:
                 yield partial(self.fs_move, src_id, dst_pid, async_=async_)
             elif src_attr["is_directory"]:
-                yield partial(self.fs_rename, src_id, str(uuid4()), async_=async_)
+                yield partial(self.fs_rename, (src_id, str(uuid4())), async_=async_)
                 try:
                     yield partial(self.fs_move, src_id, dst_pid, async_=async_)
                     try:
-                        yield partial(self.fs_rename, src_id, dst_name, async_=async_)
+                        yield partial(self.fs_rename, (src_id, dst_name), async_=async_)
                     except:
-                        yield partial(self.fs_move, src_id, src_attr["parent_id"], async_=async_)
+                        yield partial(self.fs_move, (src_id, src_attr["parent_id"]), async_=async_)
                         raise
                 except:
-                    yield partial(self.fs_rename, src_id, src_name, async_=async_)
+                    yield partial(self.fs_rename, (src_id, src_name), async_=async_)
                     raise
             elif src_ext == dst_ext:
                 yield partial(self.fs_move, src_id, dst_pid, async_=async_)
                 try:
-                    yield partial(self.fs_rename, src_id, dst_name, async_=async_)
+                    yield partial(self.fs_rename, (src_id, dst_name), async_=async_)
                 except:
                     yield partial(self.fs_move, src_id, src_attr["parent_id"], async_=async_)
                     raise
@@ -3802,10 +3670,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         """
         def gen_step():
             if score is None:
-                attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+                attr = yield self.attr(id_or_path, pid=pid, async_=async_)
                 return attr.get("score", 0)
             else:
-                fid = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
+                fid = yield self.get_id(id_or_path, pid=pid, async_=async_)
                 if fid == 0:
                     return 0
                 yield self.client.fs_score_set(
@@ -3856,7 +3724,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             - asc: 0 | 1 = <default> # 是否升序排列
             - count_folders: 0 | 1 = <default>
             - date: str = <default> # 筛选日期
-            - fc_mix: 0 | 1 = <default> # 是否目录置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - file_label: int | str = <default> # 标签 id
             - format: str = "json" # 输出格式（不用管）
             - o: str = <default>
@@ -3948,10 +3816,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         """
         def gen_step():
             if star is None:
-                attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+                attr = yield self.attr(id_or_path, pid=pid, async_=async_)
                 return attr.get("star", False)
             else:
-                fid = yield partial(self.get_id, id_or_path, pid=pid, async_=async_)
+                fid = yield self.get_id(id_or_path, pid=pid, async_=async_)
                 if fid == 0:
                     return False
                 check_response((yield self.client.fs_star_set(
@@ -4396,7 +4264,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     mv = move
     rm = remove
 
-# TODO: ip 报错也抛出 loginerror
-# TODO: 关于改文件扩展名，先找出原来的文件，再秒传到新文件名，成功后再用id删除原来的文件
 # TODO: 移除 get_version，添加 refresh: bool 参数，默认值 True，并且在 iterdir 和 attr 里面添加属性 refresh: None | bool = None
-# TODO: attr_cache 改名成 cache
+# TODO: attr_cache 改名成 cache，可能还要改
+# TODO: 增加一个get_+， space 和 space_summury 方法和属性，用来获取剩余空间、已用空间和总空间数
+# TODO: 上传和下载都返回一个 Future 对象，可以获取信息和完成情况，以及可以重试等操作

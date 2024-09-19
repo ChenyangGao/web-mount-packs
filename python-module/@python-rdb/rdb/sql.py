@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "AsStr", "make_url", "register_convert", "encode", "enclose", 
+    "AsStr", "register_convert", "encode", "enclose", 
     "select_sql", "insert_sql", "update_sql", "delete_sql", 
 ]
 
@@ -25,47 +25,6 @@ class AsStr:
 
     def __str__(self, /) -> str:
         return str(self.value)
-
-
-def make_url(
-    protocol: Any = "sqlite3", 
-    user: Any = "", 
-    password: Any = "", 
-    host: Any = "", 
-    port: Any = "", 
-    path: Any = "", 
-    query_params: str | list | dict = "", 
-) -> str:
-    protocol_, user_, password_, host_, port_, path_ = \
-        map(str, (protocol, user, password, host, port, path))
-    url_part_list: list[str] = []
-    add = url_part_list.append
-    if not protocol_:
-        raise ValueError(f"Bad <protocol>: can't be empty")
-    add(protocol_)
-    add("://")
-    if user_ or password_:
-        if user_:
-            add(user_)
-        if password_:
-            add(":")
-            add(password_)
-        add("@")
-    if host_:
-        add(host_)
-    if port_:
-        add(":")
-        add(port_)
-    if not path_.startswith("/"):
-        add("/")
-    if path_:
-        add(path_)
-    if query_params:
-        if not isinstance(query_params, str):
-            query_params = urlencode(query_params)
-        add("?")
-        add(query_params)
-    return "".join(url_part_list)
 
 
 def register_convert(dest, source: Any = None, /):
@@ -373,8 +332,20 @@ def delete_sql(
     returning: bool = False, 
 ) -> str:
     table = enclose(table)
+    if not fields:
+        raise ValueError("delete need fields")
+    fields_str = encode_tuple(fields, enclose)
     # 使用 IN 语句实现批量查询，但是如果任意一条里面存在 NULL，则退化为使用 OR AND
-    sql = f"DELETE FROM {table} WHERE (k1, k2) IN ((v1, v2))"
+    # 所以先要尝试进行拆分，凡是字段不够或者encode以后为 NULL 的，就要单独挑出来
+    # where_parts = []
+    # where_parts.append("{fields_str} IN (values_str)")
+    # where_parts.extend(" AND ".join(for ) for)
+    # where_str = " OR ".join(where_parts)
+    if not where_str:
+        raise ValueError("")
+    sql = f"""\
+DELETE FROM {table}
+WHERE {where_str}"""
     if returning:
         sql += "\nRETURNING *"
     return sql

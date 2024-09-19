@@ -180,6 +180,9 @@ def check_response(resp: dict | Coroutine[Any, Any, dict], /) -> dict | Awaitabl
                 # {"state": false, "errno": 20009, "error": "父目录不存在。", "errtype": "war"}
                 case 20009:
                     raise FileNotFoundError(errno.ENOENT, resp)
+                # {"state": false, "errno": 90008, "error": "文件（夹）不存在或已经删除。", "errtype": "war"}
+                case 90008:
+                    raise FileNotFoundError(errno.ENOENT, resp)
                 # {"state": false, "errno": 91002, "error": "不能将文件复制到自身或其子目录下。", "errtype": "war"}
                 case 91002:
                     raise OSError(errno.ENOTSUP, resp)
@@ -189,12 +192,12 @@ def check_response(resp: dict | Coroutine[Any, Any, dict], /) -> dict | Awaitabl
                 # {"state": false, "errno": 91005, "error": "空间不足，复制失败。", "errtype": "war"}
                 case 91005:
                     raise OSError(errno.ENOSPC, resp)
-                # {"state": false, "errno": 90008, "error": "文件（夹）不存在或已经删除。", "errtype": "war"}
-                case 90008:
-                    raise FileNotFoundError(errno.ENOENT, resp)
-                # {"state": false,  "errno": 231011, "error": "文件已删除，请勿重复操作","errtype": "war"}
+                # {"state": false, "errno": 231011, "error": "文件已删除，请勿重复操作","errtype": "war"}
                 case 231011:
                     raise FileNotFoundError(errno.ENOENT, resp)
+                # {"state": false, "error": "404 Not Found", "errno": 980006, "request": "<api>", "data": []}
+                case 980006:
+                    raise OSError(errno.ENOSYS, resp)
                 # {"state": false, "errno": 990009, "error": "删除[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
                 # {"state": false, "errno": 990009, "error": "还原[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
                 # {"state": false, "errno": 990009, "error": "复制[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
@@ -204,15 +207,22 @@ def check_response(resp: dict | Coroutine[Any, Any, dict], /) -> dict | Awaitabl
                 # {"state": false, "errno": 990023, "error": "操作的文件(夹)数量超过5万个", "errtype": ""}
                 case 990023:
                     raise OSError(errno.ENOTSUP, resp)
-                # {"state": 0, "errno": 40100000, "code": 40100000, "data": {}, "message": "参数错误！", "error": "参数错误！"}
+                # {"state": 0, "errno": 40100000, "code": 40100000, "error": "参数错误！", "message": "参数错误！", "data": {}}
                 case 40100000:
                     raise OSError(errno.EINVAL, resp)
+                # {"state": 0, "errno": 40101004, "code": 40101004, "error": "IP登录异常,请稍候再登录！", "message": "IP登录异常,请稍候再登录！"}
+                case 40101004:
+                    raise LoginError(resp)
                 # {"state": 0, "errno": 40101032, "code": 40101032, "data": {}, "message": "请重新登录", "error": "请重新登录"}
                 case 40101032:
                     raise AuthenticationError(resp)
         elif "errNo" in resp:
             match resp["errNo"]:
                 case 990001:
+                    raise AuthenticationError(resp)
+        elif "errcode" in resp:
+            match resp["errcode"]:
+                case 911:
                     raise AuthenticationError(resp)
         elif "code" in resp:
             match resp["code"]:
@@ -321,16 +331,12 @@ class P115Client:
             }), 
             cookies = Cookies(), 
         )
+        if isinstance(cookies, PurePath) and hasattr(cookies, "open"):
+            self.cookies_path = cookies
+            cookies = self._read_cookies_from_path()
         if cookies is None:
             resp = self.login_with_qrcode(app, console_qrcode=console_qrcode)
             cookies = resp["data"]["cookie"]
-        elif isinstance(cookies, PurePath) and hasattr(cookies, "open"):
-            setattr(self, "cookies_path", cookies)
-            setattr(self, "cookies_mtime", 0)
-            try:
-                cookies = str(cookies.open("rb").read(), "utf-8")
-            except OSError:
-                cookies = ""
         if cookies:
             setattr(self, "cookies", cookies)
         if check_for_relogin is True:
@@ -389,16 +395,11 @@ class P115Client:
         """更新 cookies
         """
         ns = self.__dict__
-        cookies_path: Any = ns.get("cookies_path", None)
         old_cookies = self.cookies
         if cookies is None:
             self.cookiejar.clear()
-            if cookies_path is not None and old_cookies:
-                try:
-                    cookies_path.open("wb").close()
-                    setattr(self, "cookies_mtime", cookies_path.stat().st_mtime)
-                except (OSError, AttributeError):
-                    setattr(self, "cookies_mtime", 0)
+            if old_cookies:
+                self._write_cookies_to_path("")
             return
         elif isinstance(cookies, str):
             cookies = cookies.strip()
@@ -417,15 +418,10 @@ class P115Client:
             for cookie in cookies:
                 set_cookie(create_cookie("", cookie))
         cookies = self.cookies
-        if cookies_path is not None and cookies != old_cookies:
-            try:
-                with cookies_path.open("wb") as f:
-                    f.write(bytes(cookies, "utf-8"))
-                setattr(self, "cookies_mtime", cookies_path.stat().st_mtime)
-            except OSError:
-                setattr(self, "cookies_mtime", 0)
+        if cookies != old_cookies:
             ns.pop("user_id", None)
             ns.pop("user_key", None)
+            self._write_cookies_to_path(cookies)
 
     @property
     def cookies_all(self, /) -> str:
@@ -448,6 +444,40 @@ class P115Client:
         default_headers.clear()
         default_headers.update(headers)
 
+    def _read_cookies_from_path(
+        self, 
+        /, 
+        encoding: str = "latin-1", 
+    ) -> None | str:
+        cookies_path = getattr(self, "cookies_path", None)
+        if not cookies_path:
+            return None
+        try:
+            self.cookies_mtime = cookies_path.stat().st_mtime
+        except OSError:
+            self.cookies_mtime = 0
+        try:
+            with cookies_path.open("rb") as f:
+                return str(f.read(), encoding)
+        except OSError:
+            return None
+
+    def _write_cookies_to_path(
+        self, 
+        cookies: str, 
+        /, 
+        encoding: str = "latin-1", 
+    ):
+        cookies_path = getattr(self, "cookies_path", None)
+        if not cookies_path:
+            return
+        with cookies_path.open("wb") as f:
+            f.write(bytes(cookies, encoding))
+        try:
+            self.cookies_mtime = cookies_path.stat().st_mtime
+        except OSError:
+            self.cookies_mtime = 0
+
     def close(self, /) -> None:
         """删除 session 和 async_session，如果它们未被引用，则会被自动清理
         """
@@ -467,7 +497,6 @@ class P115Client:
         """帮助函数：可执行同步和异步的网络请求
         """
         check_for_relogin = getattr(self, "check_for_relogin", None)
-        cookies_path: Any = getattr(self, "cookies_path", None)
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -510,7 +539,7 @@ class P115Client:
                                     if not cookies_mtime_new or cookies_mtime == cookies_mtime_new:
                                         await self.login_another_app(replace=True, async_=True)
                                     else:
-                                        self.cookies = str(cookies_path.open("rb").read(), "utf-8")
+                                        setattr(self, "cookies", self._read_cookies_from_path())
                 return wrap()
             else:
                 while True:
@@ -530,7 +559,7 @@ class P115Client:
                                 if not cookies_mtime_new or cookies_mtime == cookies_mtime_new:
                                     self.login_another_app(replace=True)
                                 else:
-                                    self.cookies = str(cookies_path.open("rb").read(), "utf-8")
+                                    setattr(self, "cookies", self._read_cookies_from_path())
         else:
             return do_request()
 
@@ -1943,9 +1972,9 @@ class P115Client:
         return self.request(url=api, method="POST", async_=async_, **request_kwargs)
 
     @overload
-    def fs_batch_copy(
+    def fs_copy(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         pid: int,
         async_: Literal[False] = False, 
@@ -1953,18 +1982,18 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_batch_copy(
+    def fs_copy(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_batch_copy(
+    def fs_copy(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         pid: int = 0,
         async_: Literal[False, True] = False, 
@@ -1973,13 +2002,15 @@ class P115Client:
         """复制文件或文件夹
         POST https://webapi.115.com/files/copy
         payload:
-            - pid: int | str
             - fid[0]: int | str
             - fid[1]: int | str
             - ...
+            - pid: int | str = 0
         """
         api = "https://webapi.115.com/files/copy"
-        if isinstance(payload, dict):
+        if isinstance(payload, (int, str)):
+            payload = {"pid": pid, "fid[0]": payload}
+        elif isinstance(payload, dict):
             payload = {"pid": pid, **payload}
         else:
             payload = {f"fid[{fid}]": fid for i, fid in enumerate(payload)}
@@ -1989,26 +2020,26 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_batch_delete(
+    def fs_delete(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_batch_delete(
+    def fs_delete(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_batch_delete(
+    def fs_delete(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2021,16 +2052,18 @@ class P115Client:
             - ...
         """
         api = "https://webapi.115.com/rb/delete"
-        if not isinstance(payload, dict):
+        if isinstance(payload, (int, str)):
+            payload = {"fid[0]": payload}
+        elif not isinstance(payload, dict):
             payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
         if not payload:
             return {"state": False, "message": "no op"}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_batch_move(
+    def fs_move(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         pid: int,
         async_: Literal[False] = False, 
@@ -2038,18 +2071,18 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_batch_move(
+    def fs_move(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         pid: int,
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_batch_move(
+    def fs_move(
         self, 
-        payload: dict | Iterable[int | str], 
+        payload: int | str | dict | Iterable[int | str], 
         /, 
         pid: int = 0,
         async_: Literal[False, True] = False, 
@@ -2064,7 +2097,9 @@ class P115Client:
             - ...
         """
         api = "https://webapi.115.com/files/move"
-        if isinstance(payload, dict):
+        if isinstance(payload, (int, str)):
+            payload = {"pid": pid, "fid[0]": payload}
+        elif isinstance(payload, dict):
             payload = {"pid": pid, **payload}
         else:
             payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
@@ -2074,26 +2109,26 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_batch_rename(
+    def fs_rename(
         self, 
-        payload: dict | Iterable[tuple[int | str, str]], 
+        payload: tuple[int | str, str] | dict | Iterable[tuple[int | str, str]], 
         /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_batch_rename(
+    def fs_rename(
         self, 
-        payload: dict | Iterable[tuple[int | str, str]], 
+        payload: tuple[int | str, str] | dict | Iterable[tuple[int | str, str]], 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_batch_rename(
+    def fs_rename(
         self, 
-        payload: dict | Iterable[tuple[int | str, str]], 
+        payload: tuple[int | str, str] | dict | Iterable[tuple[int | str, str]], 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2104,80 +2139,13 @@ class P115Client:
             - files_new_name[{file_id}]: str # 值为新的文件名（basename）
         """
         api = "https://webapi.115.com/files/batch_rename"
-        if not isinstance(payload, dict):
+        if isinstance(payload, tuple) and len(payload) == 2 and isinstance(payload[0], (int, str)):
+            payload = {f"files_new_name[{payload[0]}]": payload[1]}
+        elif not isinstance(payload, dict):
             payload = {f"files_new_name[{fid}]": name for fid, name in payload}
         if not payload:
             return {"state": False, "message": "no op"}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_copy(
-        self, 
-        id: int | str, 
-        /, 
-        pid: int,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_copy(
-        self, 
-        id: int | str, 
-        /, 
-        pid: int,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_copy(
-        self, 
-        id: int | str, 
-        /, 
-        pid: int = 0,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """复制文件或文件夹，此接口是对 `fs_batch_copy` 的封装
-        """
-        return self.fs_batch_copy(
-            {"fid[0]": id, "pid": pid}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def fs_delete(
-        self, 
-        id: int | str, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_delete(
-        self, 
-        id: int | str, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_delete(
-        self, 
-        id: int | str, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除文件或文件夹，此接口是对 `fs_batch_delete` 的封装
-        """
-        return self.fs_batch_delete(
-            {"fid[0]": id}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
 
     @overload
     def fs_file(
@@ -2254,7 +2222,7 @@ class P115Client:
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
@@ -2340,7 +2308,7 @@ class P115Client:
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
@@ -2426,7 +2394,7 @@ class P115Client:
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
             - custom_order: int | str = <default>
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
@@ -3020,7 +2988,7 @@ class P115Client:
                 # - 上次打开时间："user_otime"
             - file_id: int | str = 0 # 目录 id
             - user_asc: 0 | 1 = <default> # 是否升序排列
-            - fc_mix: 0 | 1 = <default>   # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default>   # 是否目录和文件混合，如果为 0 则目录在前
         """
         api = "https://webapi.115.com/files/order"
         if isinstance(payload, str):
@@ -3443,78 +3411,6 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_move(
-        self, 
-        id: int | str, 
-        /, 
-        pid: int,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_move(
-        self, 
-        id: int | str, 
-        /, 
-        pid: int,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_move(
-        self, 
-        id: int | str, 
-        /, 
-        pid: int = 0,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """移动文件或文件夹，此接口是对 `fs_batch_move` 的封装
-        """
-        return self.fs_batch_move(
-            {"fid[0]": id, "pid": pid}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def fs_rename(
-        self, 
-        id: int, 
-        name: str, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_rename(
-        self, 
-        id: int, 
-        name: str, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_rename(
-        self, 
-        id: int, 
-        name: str, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """重命名文件或文件夹，此接口是对 `fs_batch_rename` 的封装
-        """
-        return self.fs_batch_rename(
-            {f"files_new_name[{id}]": name}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
     def fs_search(
         self, 
         payload: str | dict, 
@@ -3547,7 +3443,7 @@ class P115Client:
             - cid: int | str = 0 # 文件夹 id
             - count_folders: 0 | 1 = <default>
             - date: str = <default> # 筛选日期
-            - fc_mix: 0 | 1 = <default> # 是否文件夹置顶，0 为置顶
+            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - file_label: int | str = <default> # 标签 id
             - format: str = "json" # 输出格式（不用管）
             - limit: int = 32 # 一页大小，意思就是 page_size
@@ -9459,3 +9355,7 @@ from .offline import P115Offline
 from .recyclebin import P115Recyclebin
 from .sharing import P115Sharing
 
+# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数
+# TODO: qrcode_login 的返回值，是一个 Future 对象，包含登录必要凭证、二维码链接、登录状态、返回值或报错信息等数据，并且可以被等待完成，也可以把二维码输出到命令行、浏览器、图片查看器等
+# TODO: 参考 sqlite 的 Error 体系，构建一个 exception.py 模块
+# TODO: 尽量减少各种所谓包装和v2的接口，都合并到一个中

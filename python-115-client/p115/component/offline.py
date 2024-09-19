@@ -13,15 +13,29 @@ from functools import partial
 from hashlib import sha1
 from time import time
 from types import MappingProxyType
-from typing import overload, Any, Literal, Self
+from typing import overload, Any, Final, Literal, Self
 
 from asynctools import async_any, to_list
+from dictattr import AttrDict
 from iterutils import run_gen_step
 from magnet2torrent import Magnet2Torrent # type: ignore
 from undefined import undefined
 
 from .client import check_response, P115Client
 from .fs import P115Path
+
+
+STATUS_MAP: Final[dict[int, str]] = {
+    1: "running", 
+    2: "success", 
+    -1: "failed", 
+}
+
+
+def normalize_attr(attr: dict, /) -> AttrDict:
+    attr = AttrDict(attr)
+    attr["status_message"] = STATUS_MAP.get(attr["status"], "undefined")
+    return attr
 
 
 class P115OfflineClearEnum(Enum):
@@ -64,13 +78,13 @@ class P115Offline:
         self.request = request
         self.async_request = async_request
 
-    def __contains__(self, hash: str, /) -> bool:
+    def __contains__(self, hash: str | dict, /) -> bool:
         return self.has(hash)
 
-    def __delitem__(self, hash: str, /):
+    def __delitem__(self, hash: str | dict, /):
         return self.remove(hash)
 
-    def __getitem__(self, hash: str, /) -> dict:
+    def __getitem__(self, hash: str | dict, /) -> dict:
         return self.get(hash, default=undefined)
 
     def __aiter__(self, /) -> AsyncIterator[dict]:
@@ -305,13 +319,15 @@ class P115Offline:
 
     def get(
         self, 
-        hash: str, 
+        hash: str | dict, 
         /, 
         default=None, 
         *, 
         async_: Literal[False, True] = False, 
     ):
         "用 infohash 查询离线任务"
+        if isinstance(hash, dict):
+            hash = hash["info_hash"]
         def gen_step():
             sentinel = object()
             if async_:
@@ -323,7 +339,7 @@ class P115Offline:
             else:
                 ret = next((item for item in self.iter() if item["info_hash"] == hash), sentinel)
             if ret is not sentinel:
-                return ret
+                return normalize_attr(ret)
             if default is undefined:
                 raise LookupError(f"no such hash: {hash!r}")
             return default
@@ -562,7 +578,7 @@ class P115Offline:
     def has(
         self, 
         /, 
-        hash: str, 
+        hash: str | dict, 
         async_: Literal[False] = False, 
     ) -> bool:
         ...
@@ -570,18 +586,20 @@ class P115Offline:
     def has(
         self, 
         /, 
-        hash: str, 
+        hash: str | dict, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, bool]:
         ...
     def has(
         self, 
         /, 
-        hash: str, 
+        hash: str | dict, 
         async_: Literal[False, True] = False, 
     ) -> bool | Coroutine[Any, Any, bool]:
         """用 infohash 查询任务是否存在
         """
+        if isinstance(hash, dict):
+            hash = hash["info_hash"]
         if async_:
             return async_any(item["info_hash"] == hash async for item in self.iter(async_=True))
         else:
@@ -594,7 +612,7 @@ class P115Offline:
         start_page: int = 1, 
         *, 
         async_: Literal[False] = False, 
-    ) -> Iterator[dict]:
+    ) -> Iterator[AttrDict]:
         ...
     @overload
     def iter(
@@ -603,7 +621,7 @@ class P115Offline:
         start_page: int = 1, 
         *, 
         async_: Literal[True], 
-    ) -> AsyncIterator[dict]:
+    ) -> AsyncIterator[AttrDict]:
         ...
     def iter(
         self, 
@@ -611,7 +629,7 @@ class P115Offline:
         start_page: int = 1, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[dict] | AsyncIterator[dict]:
+    ) -> Iterator[AttrDict] | AsyncIterator[AttrDict]:
         """迭代获取离线任务
         :start_page: 开始页数，从 1 开始计数，迭代从这个页数开始，到最大页数结束
         """
@@ -637,7 +655,7 @@ class P115Offline:
                     if not resp["tasks"]:
                         return
                     for attr in resp["tasks"]:
-                        yield attr
+                        yield normalize_attr(attr)
                     if page >= resp["page_count"]:
                         return
                     page += 1
@@ -653,7 +671,8 @@ class P115Offline:
                         raise RuntimeError("detected count changes during iteration")
                     if not resp["tasks"]:
                         return
-                    yield from resp["tasks"]
+                    for attr in resp["tasks"]:
+                        yield normalize_attr(attr)
                     if page >= resp["page_count"]:
                         return
                     page += 1
@@ -666,7 +685,7 @@ class P115Offline:
         page: int = 0, 
         *, 
         async_: Literal[False] = False, 
-    ) -> list[dict]:
+    ) -> list[AttrDict]:
         ...
     @overload
     def list(
@@ -675,7 +694,7 @@ class P115Offline:
         page: int = 0, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, list[dict]]:
+    ) -> Coroutine[Any, Any, list[AttrDict]]:
         ...
     def list(
         self, 
@@ -683,7 +702,7 @@ class P115Offline:
         page: int = 0, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
+    ) -> list[AttrDict] | Coroutine[Any, Any, list[AttrDict]]:
         """获取离线任务列表
         :param page: 获取第 `page` 页的数据，从 1 开始计数，如果小于等于 0 则返回全部
         """
@@ -699,13 +718,13 @@ class P115Offline:
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
-            return check_response(resp)["tasks"]
+            return list(map(normalize_attr, check_response(resp)["tasks"]))
         return run_gen_step(gen_step, async_=async_)
 
     @overload
     def remove(
         self, 
-        hashes: str | Iterable[str], 
+        hashes: str | dict | Iterable[str | dict], 
         /, 
         remove_files: bool = False, 
         *, 
@@ -715,7 +734,7 @@ class P115Offline:
     @overload
     def remove(
         self, 
-        hashes: str | Iterable[str], 
+        hashes: str | dict | Iterable[str | dict], 
         /, 
         remove_files: bool = False, 
         *, 
@@ -724,7 +743,7 @@ class P115Offline:
         ...
     def remove(
         self, 
-        hashes: str | Iterable[str], 
+        hashes: str | dict | Iterable[str | dict], 
         /, 
         remove_files: bool = False, 
         *, 
@@ -734,10 +753,11 @@ class P115Offline:
         :param hashes: （1 个或若干个）离线任务的 infohash
         :param remove_files: 移除任务时是否也删除已转存的文件
         """
-        if isinstance(hashes, str):
-            payload = {"hash[0]": hashes}
+        get_hash = lambda h: h["info_hash"] if isinstance(h, dict) else h
+        if isinstance(hashes, (str, dict)):
+            payload = {"hash[0]": get_hash(hashes)}
         else:
-            payload = {f"hash[{i}]": h for i, h in enumerate(hashes)}
+            payload = {f"hash[{i}]": get_hash(h) for i, h in enumerate(hashes)}
             if not payload:
                 raise ValueError("no `hash` specified")
         if remove_files:

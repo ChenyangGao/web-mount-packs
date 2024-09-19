@@ -221,6 +221,7 @@ def diff_dir(con, client: P115Client, id: int = 0, /):
             delete_list.extend(his_ids - seen)
             n -= len(his_ids)
             if not n:
+                replace_list.append(tuple(attr.values()))
                 replace_list.extend(tuple(attr.values()) for attr in data_it)
                 return ancestors, replace_list, delete_list
             his_mtime, his_ids = next(it)
@@ -228,9 +229,9 @@ def diff_dir(con, client: P115Client, id: int = 0, /):
             cur_id = attr["id"]
             if cur_id in his_ids:
                 n -= 1
-                his_ids.remove(cur_id)
                 if count - len(seen) == n:
                     return ancestors, replace_list, delete_list
+                his_ids.remove(cur_id)
         else:
             replace_list.append(tuple(attr.values()))
     for _, his_ids in it:

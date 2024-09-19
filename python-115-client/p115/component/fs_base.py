@@ -1620,6 +1620,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
+        **kwargs, 
     ) -> P115PathType:
         ...
     @overload
@@ -1631,6 +1632,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[True], 
+        **kwargs, 
     ) -> Coroutine[Any, Any, P115PathType]:
         ...
     def as_path(
@@ -1641,6 +1643,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         ensure_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
+        **kwargs, 
     ) -> P115PathType | Coroutine[Any, Any, P115PathType]:
         path_class = type(self).path_class
         def gen_step():
@@ -1656,6 +1659,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     pid=pid, 
                     ensure_dir=ensure_dir, 
                     async_=async_, 
+                    **kwargs, 
                 )
             attr["fs"] = self
             return path_class(attr)
@@ -2280,6 +2284,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
+        **kwargs, 
     ) -> int:
         ...
     @overload
@@ -2290,6 +2295,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
+        **kwargs, 
     ) -> Coroutine[Any, Any, int]:
         ...
     def get_id(
@@ -2299,6 +2305,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
+        **kwargs, 
     ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             path_class = type(self).path_class
@@ -2312,7 +2319,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 return pid
             if id_or_path == "/":
                 return 0
-            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
+            attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_, **kwargs)
             return attr["id"]
         return run_gen_step(gen_step, async_=async_)
 
@@ -2324,6 +2331,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
+        **kwargs, 
     ) -> str:
         ...
     @overload
@@ -2334,6 +2342,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
+        **kwargs, 
     ) -> Coroutine[Any, Any, str]:
         ...
     def get_path(
@@ -2343,6 +2352,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
+        **kwargs, 
     ) -> str | Coroutine[Any, Any, str]:
         def gen_step():
             path_class = type(self).path_class
@@ -2352,7 +2362,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 id = id_or_path
                 if id == 0:
                     return "/"
-                attr = yield partial(self.attr, id, pid=pid, async_=async_)
+                attr = yield partial(self.attr, id, pid=pid, async_=async_, **kwargs)
                 return attr["path"]
             if isinstance(id_or_path, (str, PathLike)):
                 patht, parent = splits(fspath(id_or_path))
@@ -2367,7 +2377,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             if pid is None:
                 ppath = self.path
             else:
-                attr = yield partial(self.attr, pid, async_=async_)
+                attr = yield partial(self.attr, pid, async_=async_, **kwargs)
                 ppath = attr["path"]
             if not (patht or parent):
                 return ppath
@@ -2385,6 +2395,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
+        **kwargs, 
     ) -> list[str]:
         ...
     @overload
@@ -2395,6 +2406,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
+        **kwargs, 
     ) -> Coroutine[Any, Any, list[str]]:
         ...
     def get_patht(
@@ -2404,6 +2416,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
+        **kwargs, 
     ) -> list[str] | Coroutine[Any, Any, list[str]]:
         def gen_step():
             path_class = type(self).path_class
@@ -2413,7 +2426,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 id = id_or_path
                 if id == 0:
                     return [""]
-                attr = yield partial(self.attr, id, pid=pid, async_=async_)
+                attr = yield partial(self.attr, id, pid=pid, async_=async_, **kwargs)
                 return splits(attr["path"])[0]
             if isinstance(id_or_path, (str, PathLike)):
                 patht, parent = splits(fspath(id_or_path))
@@ -2428,7 +2441,7 @@ class P115FileSystemBase(Generic[P115PathType]):
             if pid is None:
                 ppatht = splits(self.path)[0]
             else:
-                attr = yield partial(self.attr, pid, async_=async_)
+                attr = yield partial(self.attr, pid, async_=async_, **kwargs)
                 ppatht = splits(attr["path"])[0]
             if not (patht or parent):
                 return ppatht
