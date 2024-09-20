@@ -44,7 +44,7 @@ from collections.abc import Iterator, Iterable
 from errno import EBUSY, ENOENT, ENOTDIR
 from sqlite3 import (
     connect, register_adapter, register_converter, Connection, Cursor, 
-    Row, PARSE_DECLTYPES, 
+    Row, PARSE_COLNAMES, PARSE_DECLTYPES
 )
 from typing import cast
 
@@ -166,12 +166,16 @@ CREATE INDEX IF NOT EXISTS idx_data_parent_id ON data(parent_id);
 CREATE INDEX IF NOT EXISTS idx_data_path ON data(path);
 
 CREATE VIEW IF NOT EXISTS "id_to_relpath" AS
-WITH RECURSIVE ancestors(id, relpath) AS (
+WITH RECURSIVE ancestors(id, relpath, relative_ancestors) AS (
     SELECT
         d1.id, 
+        CASE
+            WHEN d1.name IN ('.', '..') THEN '\' || d1.name
+            ELSE REPLACE(REPLACE(d1.name, '\', '\\'), '/', '\/')
+        END, 
         JSON_ARRAY(JSON(CONCAT('{"id": ', d1.id,', "name": ', JSON_QUOTE(d1.name), '}')))
     FROM
-        data d1 LEFT JOIN data d2 ON d1.parent_id = d2.id
+        data d1 LEFT JOIN data d2 ON (d2.mtime != 0 AND d1.parent_id = d2.id)
     WHERE
         d1.mtime != 0
         AND d2.id IS NULL
@@ -180,15 +184,17 @@ WITH RECURSIVE ancestors(id, relpath) AS (
 
     SELECT 
         data.id, 
+        ancestors.relpath || '/' || CASE
+            WHEN data.name IN ('.', '..') THEN '\' || data.name
+            ELSE REPLACE(REPLACE(data.name, '\', '\\'), '/', '\/')
+        END, 
         JSON_INSERT(
-            ancestors.relpath, 
+            ancestors.relative_ancestors, 
             '$[#]', 
             JSON(CONCAT('{"id": ', data.id,', "name": ', JSON_QUOTE(data.name), '}'))
         )
     FROM 
-        data JOIN ancestors ON data.parent_id = ancestors.id
-    WHERE
-        data.mtime != 0
+        data JOIN ancestors ON (data.parent_id = ancestors.id)
 )
 SELECT * FROM ancestors;
 """)
@@ -373,7 +379,7 @@ WHERE parent_id=?;
         return con.execute(sql, (ancestors, dirname, parent_id))
 
 
-def clean(
+def cleandb(
     con: Connection | Cursor, 
     top_ids: int | Iterable[int] = 0, 
     /, 
@@ -388,7 +394,7 @@ WITH RECURSIVE ancestors(id) AS (
     SELECT
         d1.id
     FROM
-        data d1 LEFT JOIN data d2 ON d1.parent_id = d2.id
+        data d1 LEFT JOIN data d2 ON (d2.mtime != 0 AND d1.parent_id = d2.id)
     WHERE
         d1.mtime != 0
         AND d2.id IS NULL
@@ -399,9 +405,7 @@ WITH RECURSIVE ancestors(id) AS (
     SELECT
         data.id
     FROM
-        data JOIN ancestors ON data.parent_id = ancestors.id
-    WHERE
-        data.mtime != 0
+        data JOIN ancestors ON (data.parent_id = ancestors.id)
 )
 DELETE FROM data WHERE id IN (SELECT id FROM ancestors);
 """
@@ -558,7 +562,7 @@ def updatedb_one(
     else:
         with connect(
             dbfile, 
-            detect_types=PARSE_DECLTYPES, 
+            detect_types=PARSE_DECLTYPES|PARSE_COLNAMES, 
             uri=dbfile.startswith("file:"), 
         ) as con:
             initdb(con)
@@ -569,6 +573,7 @@ def updatedb(
     client: str | P115Client, 
     dbfile: None | str | Connection | Cursor = None, 
     top_ids: int | tuple[int, ...] = 0, 
+    clean: bool = True, 
 ):
     if isinstance(client, str):
         client = P115Client(client, check_for_relogin=True)
@@ -604,12 +609,12 @@ def updatedb(
                 else:
                     seen_add(id)
                     dq.extend(r[0] for r in select_subdir_ids(con, id))
-        if all_top_ids:
-            clean(con, all_top_ids)
+        if clean and all_top_ids:
+            cleandb(con, all_top_ids)
     else:
         with connect(
             dbfile, 
-            detect_types=PARSE_DECLTYPES, 
+            detect_types=PARSE_DECLTYPES|PARSE_COLNAMES, 
             uri=dbfile.startswith("file:"), 
         ) as con:
             initdb(con)
