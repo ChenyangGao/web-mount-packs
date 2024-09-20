@@ -170,8 +170,8 @@ WITH RECURSIVE ancestors(id, relpath, relative_ancestors) AS (
     SELECT
         d1.id, 
         CASE
-            WHEN d1.name IN ('.', '..') THEN '\' || d1.name
-            ELSE REPLACE(REPLACE(d1.name, '\', '\\'), '/', '\/')
+            WHEN d1.name IN ('.', '..') THEN '\\' || d1.name
+            ELSE REPLACE(REPLACE(d1.name, '\\', '\\\\'), '/', '\\/')
         END, 
         JSON_ARRAY(JSON(CONCAT('{"id": ', d1.id,', "name": ', JSON_QUOTE(d1.name), '}')))
     FROM
@@ -185,8 +185,8 @@ WITH RECURSIVE ancestors(id, relpath, relative_ancestors) AS (
     SELECT 
         data.id, 
         ancestors.relpath || '/' || CASE
-            WHEN data.name IN ('.', '..') THEN '\' || data.name
-            ELSE REPLACE(REPLACE(data.name, '\', '\\'), '/', '\/')
+            WHEN data.name IN ('.', '..') THEN '\\' || data.name
+            ELSE REPLACE(REPLACE(data.name, '\\', '\\\\'), '/', '\\/')
         END, 
         JSON_INSERT(
             ancestors.relative_ancestors, 
