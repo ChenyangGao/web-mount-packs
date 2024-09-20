@@ -7,13 +7,10 @@
 # TODO: 支持同一个 cookies 并发因子，默认值 1
 # TODO: 使用协程进行并发，而非多线程
 # TODO: 如果请求超时，则需要进行重试
-# TODO: 如何批量更新其它所涉及数据的 path 和 ancestors，首先获取一个目录的 ancestors，然后和数据库里相关数据进行比较，主要是 1) name 2) parent_id
-#       如果需要批量更新，则需要找寻节点，涉及以上两点的，先更新 ancestors，再由它更新 path，上面 1) 比较简单，直接替换即可 2) 需要把最末的相等 id 找出来，进行剪断拼接 
-#       另外如果一个路径被更新，那么所有以原来路径为开头的数据，也要被相应更新（用触发器）
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["updatedb"]
+__version__ = (0, 0, 2)
+__all__ = ["updatedb", "updatedb_one"]
 __doc__ = "遍历 115 网盘的目录信息导出到数据库"
 __requirements__ = ["orjson", "python-115", "posixpatht"]
 
@@ -31,7 +28,7 @@ if __name__ == "__main__":
     1. 当前工作目录
     2. 用户根目录
     3. 此脚本所在目录
-如果都找不到，则默认使用 2. 用户根目录，此时则需要扫码登录""")
+如果都找不到，则默认使用 '2. 用户根目录，此时则需要扫码登录'""")
     parser.add_argument("-f", "--dbfile", default="", help="sqlite 数据库文件路径，默认为在当前工作目录下的 f'115-{user_id}.db'")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
@@ -42,7 +39,7 @@ if __name__ == "__main__":
 
 import logging
 
-from collections import deque
+from collections import deque, ChainMap
 from collections.abc import Iterator, Iterable
 from errno import EBUSY, ENOENT, ENOTDIR
 from sqlite3 import (
@@ -126,23 +123,33 @@ def execute_commit(
         raise
 
 
+def json_array_head_replace(value, repl, stop=None):
+    value = loads(value)
+    repl  = loads(repl)
+    if stop is None:
+        stop = len(repl)
+    value[:stop] = repl
+    return dumps(value)
+
+
 def initdb(con: Connection | Cursor, /) -> Cursor:
     conn = cast(Connection, getattr(con, "connection", con))
     conn.row_factory = Row
     conn.create_function("escape_name", 1, escape)
+    conn.create_function("json_array_head_replace", 3, json_array_head_replace)
     return con.executescript("""\
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS "data" (
     "id" INTEGER NOT NULL PRIMARY KEY,
     "parent_id" INTEGER NOT NULL,
-    "pickcode" TEXT NOT NULL,
+    "pickcode" TEXT NOT NULL DEFAULT '',
     "name" TEXT NOT NULL,
-    "size" INTEGER NOT NULL,
-    "sha1" TEXT NOT NULL,
+    "size" INTEGER NOT NULL DEFAULT 0,
+    "sha1" TEXT NOT NULL DEFAULT '',
     "is_dir" INTEGER NOT NULL CHECK("is_dir" IN (0, 1)),
-    "is_image" INTEGER NOT NULL CHECK("is_image" IN (0, 1)),
-    "mtime" INTEGER NOT NULL,
+    "is_image" INTEGER NOT NULL CHECK("is_image" IN (0, 1)) DEFAULT 0,
+    "mtime" INTEGER NOT NULL DEFAULT 0,
     "path" TEXT NOT NULL DEFAULT '',
     "ancestors" JSON NOT NULL DEFAULT '',
     "updated_at" DATETIME NOT NULL DEFAULT (datetime('now', '+8 hours'))
@@ -165,8 +172,9 @@ WITH RECURSIVE ancestors(id, relpath) AS (
         JSON_ARRAY(JSON(CONCAT('{"id": ', d1.id,', "name": ', JSON_QUOTE(d1.name), '}')))
     FROM
         data d1 LEFT JOIN data d2 ON d1.parent_id = d2.id
-    WHERE 
-        d2.id IS NULL
+    WHERE
+        d1.mtime != 0
+        AND d2.id IS NULL
 
     UNION ALL
 
@@ -179,6 +187,8 @@ WITH RECURSIVE ancestors(id, relpath) AS (
         )
     FROM 
         data JOIN ancestors ON data.parent_id = ancestors.id
+    WHERE
+        data.mtime != 0
 )
 SELECT * FROM ancestors;
 """)
@@ -201,11 +211,101 @@ def select_mtime_groups(
     sql = """\
 SELECT mtime, JSON_GROUP_ARRAY(id) AS "ids [JSON]"
 FROM data
-WHERE parent_id=?
+WHERE parent_id=? AND mtime != 0
 GROUP BY mtime
 ORDER BY mtime DESC;
 """
     return con.execute(sql, (parent_id,))
+
+
+def update_dir_ancestors(
+    con: Connection | Cursor, 
+    ancestors: list[dict], 
+    to_replace: list[dict] = [], 
+    /, 
+    commit: bool = True, 
+) -> Cursor:
+    if isinstance(con, Cursor):
+        cur = con
+        con = cur.connection
+    else:
+        cur = con.cursor()
+    items1: dict[int, dict] = {}
+    items2: dict[int, dict] = {}
+    items = ChainMap(items1, items2)
+    path = ""
+    for i, a in enumerate(ancestors[1:], 2):
+        path += "/" + escape(a["name"])
+        items1[a["id"]] = {
+            "id": a["id"], 
+            "parent_id": a["parent_id"], 
+            "name": a["name"], 
+            "is_dir": 1, 
+            "path": path, 
+            "ancestors": ancestors[:i], 
+        }
+    for a in to_replace:
+        if a["is_dir"]:
+            items2[a["id"]] = {
+                "id": a["id"], 
+                "parent_id": a["parent_id"], 
+                "name": a["name"], 
+                "is_dir": 1, 
+                "path": path + "/" + escape(a["name"]), 
+                "ancestors": [*ancestors, {"id": a["id"], "parent_id": a["parent_id"], "name": a["name"]}], 
+            }
+    if not items:
+        return cur
+    sql = f"""\
+SELECT id, parent_id, name, path, JSON_ARRAY_LENGTH(ancestors) AS ancestors_length
+FROM data
+WHERE id IN {tuple(items)}
+ORDER BY LENGTH(path) DESC;
+"""
+    changed = []
+    for row in cur.execute(sql):
+        cid = row["id"]
+        new = items[cid]
+        if row["name"] != new["name"] or row["parent_id"] != new["parent_id"]:
+            changed.append({
+                "path_old": row["path"], 
+                "path_old_stop": len(row["path"]) + 1, 
+                "path": new["path"], 
+                "ancestors_old_stop": row["ancestors_length"], 
+                "ancestors": new["ancestors"], 
+            })
+    try:
+        if changed:
+            sql = """\
+UPDATE data
+SET
+    path = :path || SUBSTR(path, :path_old_stop), 
+    ancestors = json_array_head_replace(ancestors, :ancestors, :ancestors_old_stop)
+WHERE
+    path LIKE :path_old || '/%'
+"""
+            cur.executemany(sql, changed)
+        sql = """\
+INSERT INTO
+    data(id, parent_id, name, is_dir, path, ancestors)
+VALUES
+    (:id, :parent_id, :name, :is_dir, :path, :ancestors)
+ON CONFLICT(id) DO UPDATE SET
+    parent_id = excluded.parent_id,
+    name      = excluded.name,
+    path      = excluded.path,
+    ancestors = excluded.ancestors
+WHERE
+    path != excluded.path;
+"""
+        cur.executemany(sql, items1.values())
+        if commit:
+            con.commit()
+        return cur
+    except BaseException:
+        if commit:
+            con.rollback()
+        raise
 
 
 def insert_items(
@@ -221,8 +321,11 @@ VALUES
     (:id, :parent_id, :pickcode, :name, :size, :sha1, :is_dir, :is_image, :mtime)
 ON CONFLICT(id) DO UPDATE SET
     parent_id = excluded.parent_id,
+    pickcode  = excluded.pickcode,
     name      = excluded.name,
-    mtime     = excluded.mtime;
+    mtime     = excluded.mtime
+WHERE
+    mtime != excluded.mtime
 """
     if isinstance(items, dict):
         items = items,
@@ -286,16 +389,21 @@ WITH RECURSIVE ancestors(id) AS (
         d1.id
     FROM
         data d1 LEFT JOIN data d2 ON d1.parent_id = d2.id
-    WHERE 
-        d1.parent_id NOT IN {ids} AND d2.id IS NULL
+    WHERE
+        d1.mtime != 0
+        AND d2.id IS NULL
+        AND d1.parent_id NOT IN {ids} 
 
     UNION ALL
 
-    SELECT data.id
-    FROM data
-    JOIN ancestors ON data.parent_id = ancestors.id
+    SELECT
+        data.id
+    FROM
+        data JOIN ancestors ON data.parent_id = ancestors.id
+    WHERE
+        data.mtime != 0
 )
-DELETE FROM data WHERE id in (SELECT id FROM ancestors);
+DELETE FROM data WHERE id IN (SELECT id FROM ancestors);
 """
     if commit:
         return execute_commit(con, sql)
@@ -440,13 +548,13 @@ def updatedb_one(
                 delete_items(con, id)
             raise
         else:
+            update_dir_ancestors(con, ancestors, to_replace, commit=False)
             if to_delete:
                 delete_items(con, to_delete, commit=False)
             if to_replace:
                 insert_items(con, to_replace, commit=False)
                 update_path(con, id, ancestors=ancestors, commit=False)
-            if to_delete or to_replace:
-                do_commit(con)
+            do_commit(con)
     else:
         with connect(
             dbfile, 
