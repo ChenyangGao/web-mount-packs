@@ -31,6 +31,7 @@ def main(args):
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
+    from collections import UserString
     from collections.abc import Callable, Sequence
     from functools import partial
     from os.path import expanduser, dirname, join as joinpath, realpath
@@ -226,17 +227,19 @@ def main(args):
 
     records = ({k: get_key(p, k) for k in keys} for p in path_it)
 
+    def default(obj, /):
+        if isinstance(obj, UserString):
+            return str(obj)
+        return NotImplemented
+
     dumps: Callable[..., bytes]
     if output_type in ("log", "json"):
         try:
-            from orjson import dumps
+            from orjson import dumps as odumps
+            dumps = partial(dumps, default=default)
         except ImportError:
-            odumps: Callable[..., str]
-            try:
-                from ujson import dumps as odumps
-            except ImportError:
-                from json import dumps as odumps
-            dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+            from json import dumps as odumps
+            dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False, default=default), "utf-8")
         if output_file:
             write = file.buffer.write
         else:

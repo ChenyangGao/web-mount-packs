@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-# TODO: 允许传入 cookies 或 路径
+# TODO: 作为模块提供，允许全量更新(updatedb)和增量更新(updatedb_one)，但只允许同时最多一个写入任务
+# TODO: 可以起一个服务，其它的程序，可以发送读写任务过来，数据库可以以 fuse 或 webdav 展示
 # TODO: 支持多个不同登录设备并发
 # TODO: 支持同一个 cookies 并发因子，默认值 1
 # TODO: 使用协程进行并发，而非多线程
 # TODO: 如果请求超时，则需要进行重试
-# TODO: 由于一个文件夹里面的变动不可能太多，所以应该使用递增 limit 的方式去获取列表（有时候可能只变动了几个，但文件夹里面有几千个文件，前 2 次拉取应该以适量为主）
-# TODO: 很多文件的更新时间是一样的，但是它们内部却有排序，如何在sqlite数据库里面，也能保持这种顺序，这样的话，就不需要专门为相同的更新时间来分组了
+# TODO: 如何批量更新其它所涉及数据的 path 和 ancestors，首先获取一个目录的 ancestors，然后和数据库里相关数据进行比较，主要是 1) name 2) parent_id
+#       如果需要批量更新，则需要找寻节点，涉及以上两点的，先更新 ancestors，再由它更新 path，上面 1) 比较简单，直接替换即可 2) 需要把最末的相等 id 找出来，进行剪断拼接 
+#       另外如果一个路径被更新，那么所有以原来路径为开头的数据，也要被相应更新（用触发器）
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 0)
-__all__ = ["run"]
+__all__ = ["updatedb"]
 __doc__ = "遍历 115 网盘的目录信息导出到数据库"
+__requirements__ = ["orjson", "python-115", "posixpatht"]
 
 if __name__ == "__main__":
     from argparse import ArgumentParser, RawTextHelpFormatter
@@ -22,7 +25,14 @@ if __name__ == "__main__":
         description=__doc__, 
     )
     parser.add_argument("top_ids", metavar="dirid", nargs="*", type=int, help="115 目录 id，可以传入多个，如果不传默认为 0")
-    parser.add_argument("-f", "--dbfile", default="115.db", help="sqlite 数据库文件路径，默认为当前工作目录下 115.db")
+    parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
+    parser.add_argument("-cp", "--cookies-path", help="""\
+存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
+    1. 当前工作目录
+    2. 用户根目录
+    3. 此脚本所在目录
+如果都找不到，则默认使用 2. 用户根目录，此时则需要扫码登录""")
+    parser.add_argument("-f", "--dbfile", default="", help="sqlite 数据库文件路径，默认为在当前工作目录下的 f'115-{user_id}.db'")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
     args = parser.parse_args()
@@ -31,14 +41,36 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
 from collections import deque
-from collections.abc import Iterator
-from contextlib import closing
-from json import dumps
-from pathlib import Path
-from sqlite3 import connect
-from types import MappingProxyType
+from collections.abc import Iterator, Iterable
+from errno import EBUSY, ENOENT, ENOTDIR
+from sqlite3 import (
+    connect, register_adapter, register_converter, Connection, Cursor, 
+    Row, PARSE_DECLTYPES, 
+)
+from typing import cast
 
-from p115 import check_response, P115Client
+try:
+    from orjson import dumps, loads
+    from p115 import check_response, P115Client
+    from posixpatht import escape
+except ImportError:
+    from sys import executable
+    from subprocess import run
+    run([executable, "-m", "pip", "install", "-U", *__requirements__], check=True)
+    from orjson import dumps, loads
+    from p115 import check_response, P115Client
+    from posixpatht import escape
+
+
+register_adapter(list, dumps)
+register_adapter(dict, dumps)
+register_converter("JSON", loads)
+
+
+class OSBusyError(OSError):
+
+    def __init__(self, *args):
+        super().__init__(EBUSY, *args)
 
 
 def cut_iter(
@@ -55,216 +87,57 @@ def cut_iter(
         yield start, stop - start
 
 
-def select_subdir_ids(con, parent_id: int = 0, /):
-    sql = '''SELECT id FROM data WHERE parent_id=? AND is_dir=1'''
-    with closing(con.cursor()) as cur:
-        cur.execute(sql, (parent_id,))
-        return [id for id, in cur]
-
-
-def select_grouped_mtime(con, parent_id: int = 0, /):
-    sql = '''\
-SELECT id, mtime
-FROM data
-WHERE parent_id=?
-ORDER BY mtime DESC;'''
-    d: dict[int, set[int]] = {}
-    last_mtime = 0
-    with closing(con.cursor()) as cur:
-        cur.execute(sql, (parent_id,))
-        n = 0
-        for n, (id, mtime) in enumerate(cur, 1):
-            if last_mtime != mtime:
-                s = d[mtime] = set()
-                add = s.add
-            add(id)
-        return n, d
-
-
-def replace_items(con, items, /):
-    sql = '''\
-INSERT OR REPLACE INTO 
-    data(id, parent_id, name, is_dir, size, pickcode, sha1, is_image, mtime) 
-VALUES
-    (?,?,?,?,?,?,?,?,?);'''
+def execute_commit(
+    con: Connection | Cursor, 
+    /, 
+    sql: str, 
+    params = None, 
+    executemany: bool = False, 
+) -> Cursor:
+    conn = cast(Connection, getattr(con, "connection", con))
     try:
-        con.executemany(sql, items)
-        con.commit()
-    except BaseException as e:
-        con.rollback()
-        raise
-
-
-def delete_items(con, ids: int | tuple[int, ...] = 0, /):
-    sql = '''DELETE FROM data WHERE id=?'''
-    if isinstance(ids, int):
-        ids_ = [(ids,)]
-    else:
-        ids_ = [(id,) for id in ids]
-    try:
-        con.executemany(sql, ids_)
-        con.commit()
-    except BaseException as e:
-        con.rollback()
-        raise
-
-
-def update_ancestors(con, parent_id: int = 0, /, ancestors: list[dict] = []):
-    sql = '''\
-UPDATE
-    data
-SET
-    ancestors = JSON_INSERT(?, '$[#]', JSON_OBJECT('id', id, 'name', name))
-WHERE
-    parent_id=?;'''
-    json_str = dumps(ancestors, ensure_ascii=False)
-    try:
-        con.execute(sql, (json_str, parent_id))
-        con.commit()
-    except BaseException as e:
-        con.rollback()
-        raise
-
-
-def clean(con, top_ids: int | tuple[int, ...] = 0, /):
-    if isinstance(top_ids, int):
-        ids = "(%s)" % top_ids
-    else:
-        ids = "(%s)" % (",".join(map(str, top_ids) or "NULL"))
-    sql = f'''\
-WITH RECURSIVE ancestors(id) AS (
-    SELECT
-        d1.id
-    FROM
-        data d1 LEFT JOIN data d2 ON d1.parent_id = d2.id
-    WHERE 
-        d1.parent_id NOT IN {ids} AND d2.id IS NULL
-
-    UNION ALL
-
-    SELECT data.id
-    FROM data
-    JOIN ancestors ON data.parent_id = ancestors.id
-)
-DELETE FROM data WHERE id in (SELECT id FROM ancestors);
-'''
-    try:
-        con.execute(sql)
-        con.commit()
-    except BaseException as e:
-        con.rollback()
-        raise
-
-
-def normalize_attr(info):
-    is_dir = "fid" not in info
-    if is_dir:
-        attr = {"id": int(info["cid"]), "parent_id": int(info["pid"])}
-    else:
-        attr = {"id": int(info["fid"]), "parent_id": int(info["cid"])}    
-    attr["name"] = info["n"]
-    attr["is_dir"] = is_dir
-    attr["size"] = info.get("s")
-    attr["pickcode"] = info.get("pc")
-    attr["sha1"] = info.get("sha")
-    attr["is_image"] = not is_dir and bool(info.get("u"))
-    attr["mtime"] = int(info.get("te", 0))
-    return attr
-
-
-def iterdir(client: P115Client, id: int = 0, /):
-    payload = {"asc": 0, "cid": id, "custom_order": 1, "fc_mix": 1, "limit": 1, "show_dir": 1, "o": "user_utime"}
-    files = check_response(get_files(client, payload))
-    if int(files["path"][-1]["cid"]) != id:
-        raise NotADirectoryError
-    count = files["count"]
-    ancestors = [{"id": 0, "name": ""}]
-    ancestors.extend({"id": int(info["cid"]), "name": info["name"]} for info in files["path"][1:])
-    d = {}
-    def iter():
-        nonlocal files
-        if count:
-            attr = normalize_attr(files["data"][0])
-            subid = attr["id"]
-            d[subid] = attr
-            yield attr
-            for offset, limit in cut_iter(1, count, 1_000):
-                payload["offset"] = offset
-                payload["limit"] = limit
-                files = check_response(get_files(client, payload))
-                if int(files["path"][-1]["cid"]) != id:
-                    raise NotADirectoryError
-                if files["count"] != count:
-                    raise RuntimeError
-                for attr in map(normalize_attr, files["data"]):
-                    subid = attr["id"]
-                    if subid in d:
-                        raise RuntimeError
-                    d[subid] = attr
-                    yield attr
-    return ancestors, count, MappingProxyType(d), iter()
-
-
-def diff_dir(con, client: P115Client, id: int = 0, /):
-    n, saved = select_grouped_mtime(con, id)
-    ancestors, count, collected, data_it = iterdir(client, id)
-    if not n:
-        return ancestors, [tuple(attr.values()) for attr in data_it], []
-    seen = collected.keys()
-    replace_list: list[tuple] = []
-    delete_list: list[int] = []
-    it = iter(saved.items())
-    his_mtime, his_ids = next(it)
-    for attr in data_it:
-        cur_mtime = attr["mtime"]
-        while his_mtime > cur_mtime:
-            delete_list.extend(his_ids - seen)
-            n -= len(his_ids)
-            if not n:
-                replace_list.append(tuple(attr.values()))
-                replace_list.extend(tuple(attr.values()) for attr in data_it)
-                return ancestors, replace_list, delete_list
-            his_mtime, his_ids = next(it)
-        if his_mtime == cur_mtime:
-            cur_id = attr["id"]
-            if cur_id in his_ids:
-                n -= 1
-                if count - len(seen) == n:
-                    return ancestors, replace_list, delete_list
-                his_ids.remove(cur_id)
+        if executemany:
+            cur = con.executemany(sql, params)
+        elif params is None:
+            cur = con.execute(sql)
         else:
-            replace_list.append(tuple(attr.values()))
-    for _, his_ids in it:
-        delete_list.extend(his_ids - seen)
-    return ancestors, replace_list, delete_list
+            cur = con.execute(sql, params)
+        conn.commit()
+        return cur
+    except BaseException:
+        conn.rollback()
+        raise
 
 
-def run(
-    client: P115Client, 
-    dbfile: str = "115.db", 
-    top_ids: int | tuple[int, ...] = 0, 
-):
-    with connect(dbfile) as con:
-        con.execute('PRAGMA journal_mode = WAL;')
-        con.execute('''\
+def initdb(con: Connection | Cursor, /) -> Cursor: 
+    return con.executescript("""\
+PRAGMA journal_mode = WAL;
+
 CREATE TABLE IF NOT EXISTS "data" (
-    "id" INTEGER,
-    "parent_id" INTEGER NOT NULL DEFAULT 0,
-    "name" TEXT,
-    "is_dir" INTEGER CHECK("is_dir" IN (0, 1)),
-    "size" INTEGER,
-    "pickcode" TEXT,
-    "sha1" TEXT,
-    "is_image" INTEGER CHECK("is_image" IN (0, 1)),
-    "mtime" INTEGER,
-    "ancestors" JSON,
-    PRIMARY KEY("id")
-);''')
-        con.execute('''\
-CREATE INDEX IF NOT EXISTS "idx_parent_id" ON "data" (
-    "parent_id"
-);''')
-        con.execute('''\
+    "id" INTEGER NOT NULL PRIMARY KEY,
+    "parent_id" INTEGER NOT NULL,
+    "pickcode" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "size" INTEGER NOT NULL,
+    "sha1" TEXT NOT NULL,
+    "is_dir" INTEGER NOT NULL CHECK("is_dir" IN (0, 1)),
+    "is_image" INTEGER NOT NULL CHECK("is_image" IN (0, 1)),
+    "mtime" INTEGER NOT NULL,
+    "path" TEXT NOT NULL DEFAULT '',
+    "ancestors" JSON NOT NULL DEFAULT '',
+    "updated_at" DATETIME NOT NULL DEFAULT (datetime('now', '+8 hours'))
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_data_updated_at
+AFTER UPDATE ON data 
+FOR EACH ROW
+BEGIN
+    UPDATE data SET updated_at = datetime('now', '+8 hours') WHERE id = NEW.id;
+END;
+
+CREATE INDEX IF NOT EXISTS idx_data_parent_id ON data(parent_id);
+CREATE INDEX IF NOT EXISTS idx_data_path ON data(path);
+
 CREATE VIEW IF NOT EXISTS "id_to_relpath" AS
 WITH RECURSIVE ancestors(id, relpath) AS (
     SELECT
@@ -288,45 +161,320 @@ WITH RECURSIVE ancestors(id, relpath) AS (
         data JOIN ancestors ON data.parent_id = ancestors.id
 )
 SELECT * FROM ancestors;
-''')
-        con.execute('''\
-CREATE VIEW IF NOT EXISTS "data_with_relpath" AS
-SELECT 
-    *
-FROM 
-    data JOIN id_to_relpath USING (id);
-''')
-        dq: deque[int] = deque()
-        if isinstance(top_ids, int):
-            dq.append(top_ids)
+""")
+
+
+def select_subdir_ids(
+    con: Connection | Cursor, 
+    parent_id: int = 0, 
+    /, 
+) -> Cursor:
+    sql = "SELECT id FROM data WHERE parent_id=? AND is_dir=1;"
+    return con.execute(sql, (parent_id,))
+
+
+def select_mtime_groups(
+    con: Connection | Cursor, 
+    parent_id: int = 0, 
+    /, 
+) -> Cursor:
+    sql = """\
+SELECT mtime, JSON_GROUP_ARRAY(id) AS "ids [JSON]"
+FROM data
+WHERE parent_id=?
+GROUP BY mtime
+ORDER BY mtime DESC;
+"""
+    return con.execute(sql, (parent_id,))
+
+
+def insert_items(
+    con: Connection | Cursor, 
+    items: dict | Iterable[dict], 
+    /, 
+    commit: bool = True, 
+) -> Cursor:
+    sql = """\
+INSERT INTO
+    data(id, parent_id, pickcode, name, size, sha1, is_dir, is_image, mtime)
+VALUES
+    (:id, :parent_id, :pickcode, :name, :size, :sha1, :is_dir, :is_image, :mtime)
+ON CONFLICT(id) DO UPDATE SET
+    parent_id = excluded.parent_id,
+    name      = excluded.name,
+    mtime     = excluded.mtime;
+"""
+    if isinstance(items, dict):
+        items = items,
+    if commit:
+        return execute_commit(con, sql, items, executemany=True)
+    else:
+        return con.executemany(sql, items)
+
+
+def delete_items(
+    con: Connection | Cursor, 
+    ids: int | Iterable[int], 
+    /, 
+    commit: bool = True, 
+) -> Cursor:
+    sql = "DELETE FROM data WHERE id=?"
+    if isinstance(ids, int):
+        ls_ids = [(ids,)]
+    else:
+        ls_ids = [(id,) for id in ids]
+    if commit:
+        return execute_commit(con, sql, ls_ids, executemany=True)
+    else:
+        return con.executemany(sql, ls_ids)
+
+
+def update_path(
+    con: Connection | Cursor, 
+    parent_id: int = 0, 
+    /, 
+    ancestors: list[dict] = [], 
+    commit: bool = True, 
+) -> Cursor:
+    sql = """\
+UPDATE data
+SET
+    ancestors = JSON_INSERT(?, '$[#]', JSON_OBJECT('id', id, 'parent_id', parent_id, 'name', name)), 
+    path = ? || escape_name(name)
+WHERE parent_id=?;
+"""
+    dirname = "/".join(a["name"] for a in ancestors) + "/"
+    if commit:
+        return execute_commit(con, sql, (ancestors, dirname, parent_id))
+    else:
+        return con.execute(sql, (ancestors, dirname, parent_id))
+
+
+def clean(
+    con: Connection | Cursor, 
+    top_ids: int | Iterable[int] = 0, 
+    /, 
+    commit: bool = True, 
+) -> Cursor:
+    if isinstance(top_ids, int):
+        ids = "(%s)" % top_ids
+    else:
+        ids = "(%s)" % (",".join(map(str, top_ids) or "NULL"))
+    sql = f"""\
+WITH RECURSIVE ancestors(id) AS (
+    SELECT
+        d1.id
+    FROM
+        data d1 LEFT JOIN data d2 ON d1.parent_id = d2.id
+    WHERE 
+        d1.parent_id NOT IN {ids} AND d2.id IS NULL
+
+    UNION ALL
+
+    SELECT data.id
+    FROM data
+    JOIN ancestors ON data.parent_id = ancestors.id
+)
+DELETE FROM data WHERE id in (SELECT id FROM ancestors);
+"""
+    if commit:
+        return execute_commit(con, sql)
+    else:
+        return con.execute(sql)
+
+
+def normalize_attr(info: dict, /) -> dict:
+    is_dir = "fid" not in info
+    if is_dir:
+        attr: dict = {"id": int(info["cid"]), "parent_id": int(info["pid"])}
+    else:
+        attr = {"id": int(info["fid"]), "parent_id": int(info["cid"])}
+    attr["pickcode"] = info["pc"]
+    attr["name"] = info["n"]
+    attr["size"] = info.get("s") or 0
+    attr["sha1"] = info.get("sha") or ""
+    attr["is_dir"] = is_dir
+    attr["is_image"] = not is_dir and bool(info.get("u"))
+    attr["mtime"] = int(info.get("te", 0))
+    return attr
+
+
+def iterdir(
+    client: P115Client, 
+    id: int = 0, 
+    /, 
+    page_size: int = 1024, 
+) -> tuple[int, list[dict], Iterator[dict]]:
+    if page_size <= 0:
+        page_size = 1024
+    payload = {
+        "asc": 0, "cid": id, "custom_order": 1, "fc_mix": 1, "limit": min(16, page_size), 
+        "show_dir": 1, "o": "user_utime", "offset": 0, 
+    }
+    fs_files = client.fs_files
+    count = -1
+    ancestors = [{"id": 0, "parent_id": 0, "name": ""}]
+
+    def get_files():
+        nonlocal count
+        resp = check_response(fs_files(payload))
+        if int(resp["path"][-1]["cid"]) != id:
+            if count < 0:
+                raise NotADirectoryError(ENOTDIR, f"not a dir or deleted: {id}")
+            else:
+                raise FileNotFoundError(ENOENT, f"no such dir: {id}")
+        ancestors[1:] = (
+            {"id": int(info["cid"]), "parent_id": int(info["pid"]), "name": info["name"]} 
+            for info in resp["path"][1:]
+        )
+        if count < 0:
+            count = resp["count"]
+        elif count != resp["count"]:
+            raise OSBusyError(f"detected count changes during iteration: {id}")
+        return resp
+
+    resp = get_files()
+
+    def iter():
+        nonlocal resp
+        offset = 0
+        payload["limit"] = page_size
+        while True:
+            yield from map(normalize_attr, resp["data"])
+            offset += len(resp["data"])
+            if offset >= count:
+                break
+            payload["offset"] = offset
+            resp = get_files()
+
+    return count, ancestors, iter()
+
+
+def diff_dir(
+    con: Connection | Cursor, 
+    client: P115Client, 
+    id: int = 0, 
+    /, 
+):
+    n = 0
+    saved: dict[int, set[int]] = {}
+    for mtime, ls in select_mtime_groups(con, id):
+        saved[mtime] = set(ls)
+        n += len(ls)
+
+    replace_list: list[dict] = []
+    delete_list: list[int] = []
+    count, ancestors, data_it = iterdir(client, id)
+    if not n:
+        replace_list.extend(data_it)
+        return ancestors, delete_list, replace_list
+
+    seen: set[int] = set()
+    seen_add = seen.add
+    it = iter(saved.items())
+    his_mtime, his_ids = next(it)
+    for attr in data_it:
+        cur_id = attr["id"]
+        if cur_id in seen:
+            raise OSBusyError(f"duplicate id found: {cur_id}")
+        seen_add(cur_id)
+        cur_mtime = attr["mtime"]
+        while his_mtime > cur_mtime:
+            delete_list.extend(his_ids - seen)
+            n -= len(his_ids)
+            if not n:
+                replace_list.append(attr)
+                replace_list.extend(data_it)
+                return ancestors, delete_list, replace_list
+            his_mtime, his_ids = next(it)
+        if his_mtime == cur_mtime:
+            if cur_id in his_ids:
+                n -= 1
+                if count - len(seen) == n:
+                    return ancestors, delete_list, replace_list
+                his_ids.remove(cur_id)
         else:
-            dq.extend(top_ids)
-        while dq:
-            id = dq.popleft()
-            print("[\x1b[1;32mGOOD\x1b[0m]", id)
-            try:
-                ancestors, to_replace, to_delete = diff_dir(con, client, id)
-            except NotADirectoryError:
-                delete_items(con, id)
-                print("[\x1b[1;31mFAIL\x1b[0m]", id)
+            replace_list.append(attr)
+    for _, his_ids in it:
+        delete_list.extend(his_ids - seen)
+    return ancestors, delete_list, replace_list
+
+
+def updatedb(
+    client: str | P115Client, 
+    dbfile: None | str = None, 
+    top_ids: int | tuple[int, ...] = 0, 
+):
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if not dbfile:
+        dbfile = f"115-{client.user_id}.db"
+    with connect(
+        dbfile, 
+        detect_types=PARSE_DECLTYPES, 
+        uri=dbfile.startswith("file:"), 
+    ) as con:
+        initdb(con)
+        con.row_factory = Row
+        con.create_function("escape_name", 1, escape)
+        seen: set[int] = set()
+        seen_add = seen.add
+        dq: deque[int] = deque()
+        push, pop = dq.append, dq.popleft
+        if isinstance(top_ids, int):
+            top_ids = top_ids,
+        all_top_ids: set[int] = set()
+        for top_id in top_ids:
+            if top_id in all_top_ids:
                 continue
-            except RuntimeError:
-                dq.appendleft(id)
-                print("[\x1b[1;33mREDO\x1b[0m]", id)
-                continue
-            if to_replace:
-                replace_items(con, to_replace)
-            if to_delete:
-                delete_items(con, to_delete)
-            update_ancestors(con, id, ancestors=ancestors)
-            dq.extend(select_subdir_ids(con, id))
-        clean(con, top_ids)
-        con.execute('PRAGMA wal_checkpoint;')
-        con.execute('VACUUM;')
+            else:
+                all_top_ids.add(top_id)
+            push(top_id)
+            while dq:
+                id = pop()
+                if id in seen:
+                    print("[\x1b[1;33mSKIP\x1b[0m]", id)
+                    continue
+                try:
+                    ancestors, to_delete, to_replace = diff_dir(con, client, id)
+                    print("[\x1b[1;32mGOOD\x1b[0m]", id)
+                except (FileNotFoundError, NotADirectoryError):
+                    delete_items(con, id)
+                    print("[\x1b[1;31mFAIL\x1b[0m]", id)
+                except OSBusyError:
+                    push(id)
+                    print("[\x1b[1;34mREDO\x1b[0m]", id)
+                else:
+                    if to_delete:
+                        delete_items(con, to_delete)
+                    if to_replace:
+                        insert_items(con, to_replace)
+                    update_path(con, id, ancestors=ancestors)
+                    seen_add(id)
+                    dq.extend(r[0] for r in select_subdir_ids(con, id))
+        clean(con, all_top_ids)
+        con.execute("PRAGMA wal_checkpoint;")
+        con.execute("VACUUM;")
 
 
 if __name__ == "__main__":
-    get_files = P115Client.fs_files
-    client = P115Client(Path("~/115-cookies.txt").expanduser(), check_for_relogin=True)
-    run(client, dbfile=args.dbfile, top_ids=args.top_ids or 0)
+    if args.cookies:
+        cookies = args.cookies
+    else:
+        from pathlib import Path
+
+        if args.cookies_path:
+            cookies = Path(args.cookies_path).absolute()
+        else:
+            for path in (
+                Path("./115-cookies.txt").absolute(), 
+                Path("~/115-cookies.txt").expanduser(), 
+                Path(__file__).parent / "115-cookies.txt", 
+            ):
+                if path.is_file():
+                    cookies = path
+            else:
+                cookies = Path("~/115-cookies.txt").expanduser()
+    client = P115Client(cookies, check_for_relogin=True)
+    updatedb(client, dbfile=args.dbfile, top_ids=args.top_ids or 0)
 

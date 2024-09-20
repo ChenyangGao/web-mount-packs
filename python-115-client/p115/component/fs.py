@@ -1857,7 +1857,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         done = False
                         if children:
                             can_merge = True
-                            payload["limit"] = 1
+                            payload["limit"] = min(16, page_size)
                             mtime_groups: dict[int, set[int]] = {}
                             for cid, item in sorted(children.items(), key=lambda t: t[1]["mtime"], reverse=True):
                                 try:
@@ -1883,6 +1883,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                     cur_mtime = attr["mtime"]
                                     try:
                                         while his_mtime > cur_mtime:
+                                            for id in his_ids:
+                                                children.pop(id, None)
                                             n -= len(his_ids)
                                             if not n:
                                                 can_merge = False
