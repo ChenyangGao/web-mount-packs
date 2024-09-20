@@ -12,7 +12,7 @@
 #       另外如果一个路径被更新，那么所有以原来路径为开头的数据，也要被相应更新（用触发器）
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 0)
+__version__ = (0, 0, 1)
 __all__ = ["updatedb"]
 __doc__ = "遍历 115 网盘的目录信息导出到数据库"
 __requirements__ = ["orjson", "python-115", "posixpatht"]
@@ -40,6 +40,8 @@ if __name__ == "__main__":
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
 
+import logging
+
 from collections import deque
 from collections.abc import Iterator, Iterable
 from errno import EBUSY, ENOENT, ENOTDIR
@@ -65,6 +67,14 @@ except ImportError:
 register_adapter(list, dumps)
 register_adapter(dict, dumps)
 register_converter("JSON", loads)
+
+logger = logging.Logger("115-updatedb", level=logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter(
+    "[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) "
+    "\x1b[0m\x1b[1;35m%(name)s\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s"
+))
+logger.addHandler(handler)
 
 
 class OSBusyError(OSError):
@@ -109,7 +119,10 @@ def execute_commit(
         raise
 
 
-def initdb(con: Connection | Cursor, /) -> Cursor: 
+def initdb(con: Connection | Cursor, /) -> Cursor:
+    conn = cast(Connection, getattr(con, "connection", con))
+    conn.row_factory = Row
+    conn.create_function("escape_name", 1, escape)
     return con.executescript("""\
 PRAGMA journal_mode = WAL;
 
@@ -400,23 +413,52 @@ def diff_dir(
     return ancestors, delete_list, replace_list
 
 
+def updatedb_one(
+    client: str | P115Client, 
+    dbfile: None | str | Connection | Cursor = None, 
+    id: int = 0, 
+):
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if not dbfile:
+        dbfile = f"115-{client.user_id}.db"
+    if isinstance(dbfile, (Connection, Cursor)):
+        con = dbfile
+        try:
+            ancestors, to_delete, to_replace = diff_dir(con, client, id)
+            logger.info("[\x1b[1;32mGOOD\x1b[0m] %s", id)
+        except BaseException as e:
+            logger.exception("[\x1b[1;31mFAIL\x1b[0m] %s", id)
+            if isinstance(e, (FileNotFoundError, NotADirectoryError)):
+                delete_items(con, id)
+            raise
+        else:
+            if to_delete:
+                delete_items(con, to_delete)
+            if to_replace:
+                insert_items(con, to_replace)
+            update_path(con, id, ancestors=ancestors)
+    else:
+        with connect(
+            dbfile, 
+            detect_types=PARSE_DECLTYPES, 
+            uri=dbfile.startswith("file:"), 
+        ) as con:
+            initdb(con)
+            updatedb_one(client, con, id)
+
+
 def updatedb(
     client: str | P115Client, 
-    dbfile: None | str = None, 
+    dbfile: None | str | Connection | Cursor = None, 
     top_ids: int | tuple[int, ...] = 0, 
 ):
     if isinstance(client, str):
         client = P115Client(client, check_for_relogin=True)
     if not dbfile:
         dbfile = f"115-{client.user_id}.db"
-    with connect(
-        dbfile, 
-        detect_types=PARSE_DECLTYPES, 
-        uri=dbfile.startswith("file:"), 
-    ) as con:
-        initdb(con)
-        con.row_factory = Row
-        con.create_function("escape_name", 1, escape)
+    if isinstance(dbfile, (Connection, Cursor)):
+        con = dbfile
         seen: set[int] = set()
         seen_add = seen.add
         dq: deque[int] = deque()
@@ -436,25 +478,27 @@ def updatedb(
                     print("[\x1b[1;33mSKIP\x1b[0m]", id)
                     continue
                 try:
-                    ancestors, to_delete, to_replace = diff_dir(con, client, id)
-                    print("[\x1b[1;32mGOOD\x1b[0m]", id)
+                    updatedb_one(client, con, id)
                 except (FileNotFoundError, NotADirectoryError):
-                    delete_items(con, id)
-                    print("[\x1b[1;31mFAIL\x1b[0m]", id)
+                    pass
                 except OSBusyError:
+                    logger.warning("[\x1b[1;34mREDO\x1b[0m] %s", id)
                     push(id)
-                    print("[\x1b[1;34mREDO\x1b[0m]", id)
                 else:
-                    if to_delete:
-                        delete_items(con, to_delete)
-                    if to_replace:
-                        insert_items(con, to_replace)
-                    update_path(con, id, ancestors=ancestors)
                     seen_add(id)
                     dq.extend(r[0] for r in select_subdir_ids(con, id))
-        clean(con, all_top_ids)
-        con.execute("PRAGMA wal_checkpoint;")
-        con.execute("VACUUM;")
+        if all_top_ids:
+            clean(con, all_top_ids)
+    else:
+        with connect(
+            dbfile, 
+            detect_types=PARSE_DECLTYPES, 
+            uri=dbfile.startswith("file:"), 
+        ) as con:
+            initdb(con)
+            updatedb(client, con, top_ids)
+            con.execute("PRAGMA wal_checkpoint;")
+            con.execute("VACUUM;")
 
 
 if __name__ == "__main__":
