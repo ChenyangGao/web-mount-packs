@@ -97,6 +97,13 @@ def cut_iter(
         yield start, stop - start
 
 
+def do_commit(
+    con: Connection | Cursor, 
+):
+    conn = cast(Connection, getattr(con, "connection", con))
+    conn.commit()
+
+
 def execute_commit(
     con: Connection | Cursor, 
     /, 
@@ -434,10 +441,12 @@ def updatedb_one(
             raise
         else:
             if to_delete:
-                delete_items(con, to_delete)
+                delete_items(con, to_delete, commit=False)
             if to_replace:
-                insert_items(con, to_replace)
-            update_path(con, id, ancestors=ancestors)
+                insert_items(con, to_replace, commit=False)
+                update_path(con, id, ancestors=ancestors, commit=False)
+            if to_delete or to_replace:
+                do_commit(con)
     else:
         with connect(
             dbfile, 
