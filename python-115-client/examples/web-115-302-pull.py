@@ -683,7 +683,7 @@ def pull(
                     for i in range(0, len(pending_to_remove), 1_000):
                         part_ids = pending_to_remove[i:i+1_000]
                         try:
-                            resp = relogin_wrap(fs.fs_batch_delete, part_ids)
+                            resp = relogin_wrap(fs.fs_delete, part_ids)
                             if debug: logger.debug("""\
 {emoji} {prompt}: in {dst_pid}
     ├ ids({ids_cnt}) = {part_ids}

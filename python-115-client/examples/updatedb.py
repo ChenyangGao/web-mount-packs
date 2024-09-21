@@ -7,6 +7,7 @@
 # TODO: 支持同一个 cookies 并发因子，默认值 1
 # TODO: 使用协程进行并发，而非多线程
 # TODO: 如果请求超时，则需要进行重试
+# TODO: 使用 urllib3 替代 httpx，增加稳定性
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 2)
@@ -152,14 +153,14 @@ CREATE TABLE IF NOT EXISTS "data" (
     "mtime" INTEGER NOT NULL DEFAULT 0,
     "path" TEXT NOT NULL DEFAULT '',
     "ancestors" JSON NOT NULL DEFAULT '',
-    "updated_at" DATETIME NOT NULL DEFAULT (datetime('now', '+8 hours'))
+    "updated_at" DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%S.%f+08:00', 'now', '+8 hours'))
 );
 
 CREATE TRIGGER IF NOT EXISTS trg_data_updated_at
 AFTER UPDATE ON data 
 FOR EACH ROW
 BEGIN
-    UPDATE data SET updated_at = datetime('now', '+8 hours') WHERE id = NEW.id;
+    UPDATE data SET updated_at = strftime('%Y-%m-%dT%H:%M:%S.%f+08:00', 'now', '+8 hours') WHERE id = NEW.id;
 END;
 
 CREATE INDEX IF NOT EXISTS idx_data_parent_id ON data(parent_id);
@@ -356,6 +357,23 @@ def delete_items(
         return execute_commit(con, sql, ls_ids, executemany=True)
     else:
         return con.executemany(sql, ls_ids)
+
+
+def update_files_time(
+    con: Connection | Cursor, 
+    parent_id: int = 0, 
+    /, 
+    commit: bool = True, 
+) -> Cursor:
+    sql = """\
+UPDATE data
+SET updated_at = strftime('%Y-%m-%dT%H:%M:%S.%f+08:00', 'now', '+8 hours')
+WHERE parent_id = ?;
+"""
+    if commit:
+        return execute_commit(con, sql, (parent_id,))
+    else:
+        return con.execute(sql, (parent_id,))
 
 
 def update_path(
@@ -558,6 +576,7 @@ def updatedb_one(
             if to_replace:
                 insert_items(con, to_replace, commit=False)
                 update_path(con, id, ancestors=ancestors, commit=False)
+            update_files_time(con, id, commit=False)
             do_commit(con)
     else:
         with connect(

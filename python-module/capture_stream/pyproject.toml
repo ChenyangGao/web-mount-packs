@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "capture_stream"
-version = "0.0.1.4"
+version = "0.0.1.5"
 description = "Capture video stream, save as screenshots."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

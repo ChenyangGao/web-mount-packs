@@ -397,7 +397,10 @@ def main(args):
                         (attr["name"], attr["is_directory"]): attr 
                         for attr in relogin_wrap(fs.listdir_attr, dst_id)
                     }
-                subattrs = list(map(get_path_attr, scandir(src_path)))
+                subattrs = [
+                    a for a in map(get_path_attr, scandir(src_path))
+                    if a["name"] not in (".DS_Store", "Thumbs.db") and not a["name"].startswith("._")
+                ]
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -437,7 +440,7 @@ def main(args):
                     for i in range(0, len(pending_to_remove), 1_000):
                         part_ids = pending_to_remove[i:i+1_000]
                         try:
-                            resp = relogin_wrap(fs.fs_batch_delete, part_ids)
+                            resp = relogin_wrap(fs.fs_delete, part_ids)
                             console_print(f"""\
 [bold green][DELETE][/bold green] 📝 删除文件列表
     ├ ids({len(part_ids)}) = {part_ids}
