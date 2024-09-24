@@ -5,7 +5,7 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 2, 5)
-__requirements__ = ["cachetools", "flask", "Flask-Compress", "python-115", "urllib3_request", "werkzeug", "wsgidav"]
+__requirements__ = ["cachetools", "flask", "Flask-Compress", "orjson", "python-115", "urllib3_request", "werkzeug", "wsgidav"]
 __doc__ = """\
     🕸️ 获取你的 115 网盘账号上文件信息和下载链接 🕷️
 
@@ -171,6 +171,7 @@ try:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
+    from orjson import dumps, loads
     from p115 import P115Client, P115FileSystem, P115Path, P115Url, AuthenticationError
     from posixpatht import escape as escape_name
     from urllib3.poolmanager import PoolManager
@@ -188,6 +189,7 @@ except ImportError:
     from cachetools import LRUCache, TTLCache
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
+    from orjson import dumps, loads
     from p115 import P115Client, P115FileSystem, P115Path, P115Url, AuthenticationError
     from posixpatht import escape as escape_name
     from urllib3.poolmanager import PoolManager
@@ -250,15 +252,6 @@ def default(obj, /):
     if isinstance(obj, UserString):
         return str(obj)
     return NotImplemented
-
-dumps: Callable[..., bytes]
-loads: Callable
-try:
-    from orjson import dumps as odumps, loads
-    dumps = partial(odumps, default=default)
-except ImportError:
-    from json import dumps as odumps, loads
-    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False, default=default), "utf-8")
 
 if not cookies:
     if cookies_path:
@@ -877,7 +870,7 @@ def query(path: str):
                 if root != 0 and not any(info["id"] == root for info in attr["path"].ancestors):
                     raise PermissionError(errno.EACCES, "out of root range")
             update_attr(attr)
-            json_str = dumps({k: attr.get(k) for k in KEYS})
+            json_str = dumps({k: attr.get(k) for k in KEYS}, default=default)
             return Response(json_str, content_type="application/json; charset=utf-8")
         case "list":
             if not root_dir:
@@ -895,7 +888,7 @@ def query(path: str):
             json_str = dumps([
                 {k: attr.get(k) for k in KEYS} 
                 for attr in map(update_attr, children)
-            ])
+            ], default=default)
             return Response(json_str, content_type="application/json; charset=utf-8")
         case "desc":
             if not root_dir:

@@ -2221,11 +2221,15 @@ class P115Client:
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
+            - cur: 0 | 1 = <default> # 是否只搜素当前目录
             - custom_order: int | str = <default>
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
+            - fields: str = <default>
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
+            - min_size: int = 0 # 最小的文件大小
+            - max_size: int = 0 # 最大的文件大小
             - natsort: 0 | 1 = <default>
             - o: str = <default>
                 # 用某字段排序：
@@ -2235,12 +2239,14 @@ class P115Client:
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
+            - r_all: 0 | 1 = <default>
             - record_open_time: 0 | 1 = 1
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
+            - stdir: 0 | 1 = <default>
             - suffix: str = <default> # 后缀名
             - type: int = <default>
                 # 文件类型：
@@ -2307,11 +2313,15 @@ class P115Client:
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
+            - cur: 0 | 1 = <default> # 是否只搜素当前目录
             - custom_order: int | str = <default>
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
+            - fields: str = <default>
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
+            - min_size: int = 0 # 最小的文件大小
+            - max_size: int = 0 # 最大的文件大小
             - natsort: 0 | 1 = <default>
             - o: str = <default>
                 # 用某字段排序：
@@ -2321,12 +2331,14 @@ class P115Client:
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
+            - r_all: 0 | 1 = <default>
             - record_open_time: 0 | 1 = 1
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
+            - stdir: 0 | 1 = <default>
             - suffix: str = <default> # 后缀名
             - type: int = <default>
                 # 文件类型：
@@ -2393,11 +2405,15 @@ class P115Client:
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
+            - cur: 0 | 1 = <default> # 是否只搜素当前目录
             - custom_order: int | str = <default>
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
+            - fields: str = <default>
             - format: str = "json"
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
+            - min_size: int = 0 # 最小的文件大小
+            - max_size: int = 0 # 最大的文件大小
             - natsort: 0 | 1 = <default>
             - o: str = <default>
                 # 用某字段排序：
@@ -2407,12 +2423,14 @@ class P115Client:
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
+            - r_all: 0 | 1 = <default>
             - record_open_time: 0 | 1 = 1
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
+            - stdir: 0 | 1 = <default>
             - suffix: str = <default> # 后缀名
             - type: int = <default>
                 # 文件类型：

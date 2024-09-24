@@ -57,23 +57,25 @@ def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
         attr["parent_id"] = int(info["cid"])
     attr["pickcode"] = info["pc"]
     attr["name"] = info["n"]
-    attr["size"] = info.get("s")
+    attr["size"] = int(info.get("s") or 0)
     attr["sha1"] = info.get("sha")
     attr["labels"] = info["fl"]
-    attr["score"] = info["score"]
-    attr["star"] = info.get("m", 0) == 1
-    attr["shortcut"] = info.get("issct", 0) == 1
-    attr["hidden"] = info.get("hdf", 0) == 1
-    attr["described"] = info.get("fdes", 0) == 1
-    attr["violated"] = info.get("c", 0) == 1
+    attr["score"] = int(info.get("score") or 0)
+    attr["star"] = int(info.get("m") or 0) == 1
+    attr["shortcut"] = int(info.get("issct") or 0) == 1
+    attr["hidden"] = int(info.get("hdf") or 0) == 1
+    attr["described"] = int(info.get("fdes") or 0) == 1
+    attr["violated"] = int(info.get("c") or 0) == 1
     attr["thumb"] = info.get("u")
     attr["class"] = info.get("class")
     attr["play_long"] = info.get("play_long")
     attr["ico"] = info.get("ico", "folder" if is_directory else "")
-    attr["utime"] = int(info["tu"])
     attr["mtime"] = attr["user_utime"] = int(info["te"])
     attr["ctime"] = attr["user_ptime"] = int(info["tp"])
-    attr["atime"] = attr["user_otime"] =int(info["to"])
+    if "to" in info:
+        attr["atime"] = attr["user_otime"] =int(info["to"])
+    if "tu" in info:
+        attr["utime"] = int(info["tu"])
     return attr
 
 
@@ -1520,9 +1522,13 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         attr: None | dict = None, 
     ) -> list[Ancestor]:
         id_to_ancestor = self.id_to_ancestor
+        path_to_id = self.path_to_id
         parent = self.root_ancestor
         ancestors: list[Ancestor] = [parent]
         if resp:
+            # TODO: 检查一下 ancestors 列表，和目前已经保存的是否有差别，如果有差别，就要执行批量更新 path_to_id
+            #       更新顺序应该是从路径的长到短（后往前），判断依据 1) name 2) parent_id
+            #       如果已经存在错误的，就进行删除，已经存在正确的就跳过，而更新其实就是替换
             for p in resp["path"][1:]:
                 cid = int(p["cid"])
                 try:
@@ -1558,7 +1564,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 ancestor.parent = parent
             ancestors.append(ancestor)
             attr["path"] = ancestor.ancestor_path
-        path_to_id = self.path_to_id
         if path_to_id is not None:
             path = "/"
             for ancestor in ancestors[1:]:
@@ -1598,7 +1603,18 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             else:
                 attr = id_or_attr
                 id = attr["parent_id"]
-            if id:
+            if ancestor := self.id_to_ancestor.get(id):
+                if attr is None:
+                    return ancestor
+                else:
+                    return Ancestor(
+                        id=id, 
+                        parent_id=attr["parent_id"], 
+                        name=attr["name"], 
+                        is_directory=attr["is_directory"], 
+                        parent=ancestor, 
+                    )
+            elif id:
                 resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
                 return self._get_ancestors_from_response(resp, attr)
             else:
@@ -1883,8 +1899,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                     cur_mtime = attr["mtime"]
                                     try:
                                         while his_mtime > cur_mtime:
-                                            for id in his_ids:
-                                                children.pop(id, None)
+                                            if children:
+                                                for id in his_ids:
+                                                    children.pop(id, None)
                                             n -= len(his_ids)
                                             if not n:
                                                 can_merge = False
@@ -4268,6 +4285,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     mv = move
     rm = remove
 
-# TODO: 移除 get_version，添加 refresh: bool 参数，默认值 True，并且在 iterdir 和 attr 里面添加属性 refresh: None | bool = None
-# TODO: 增加一个get_+， space 和 space_summury 方法和属性，用来获取剩余空间、已用空间和总空间数
 # TODO: 上传和下载都返回一个 Future 对象，可以获取信息和完成情况，以及可以重试等操作
+# TODO: 为 path_to_id 的更新，设计更完备的算法
+# TODO: 基于 fs_search 实现 search，但可用的参数更少，另外其实 如果 fs_files 指定 type、suffix 这类的，那么相当于是 search

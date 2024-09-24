@@ -234,12 +234,8 @@ def main(args):
 
     dumps: Callable[..., bytes]
     if output_type in ("log", "json"):
-        try:
-            from orjson import dumps as odumps
-            dumps = partial(dumps, default=default)
-        except ImportError:
-            from json import dumps as odumps
-            dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False, default=default), "utf-8")
+        from orjson import dumps as odumps
+        dumps = partial(odumps, default=default)
         if output_file:
             write = file.buffer.write
         else:
