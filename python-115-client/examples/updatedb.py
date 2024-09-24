@@ -230,7 +230,7 @@ WITH top_dir_ids(id) AS (
     WHERE
         d1.is_dir
         AND d1.mtime
-        AND d2.mtime
+        AND (d2.mtime OR d2.id IS NULL)
     GROUP BY
         d1.id
     HAVING
