@@ -10,7 +10,7 @@
 # TODO: 使用 urllib3 替代 httpx，增加稳定性
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["updatedb", "updatedb_one"]
 __doc__ = "遍历 115 网盘的目录信息导出到数据库"
 __requirements__ = ["orjson", "python-115", "posixpatht"]
@@ -31,6 +31,11 @@ if __name__ == "__main__":
     3. 此脚本所在目录
 如果都找不到，则默认使用 '2. 用户根目录，此时则需要扫码登录'""")
     parser.add_argument("-f", "--dbfile", default="", help="sqlite 数据库文件路径，默认为在当前工作目录下的 f'115-{user_id}.db'")
+    parser.add_argument("-r", "--resume", action="store_true", help="""中断重试，判断依据（满足如下条件之一）：
+    1. 顶层目录未被采集：命令行所指定的某个 dir_id 的文件列表未被采集
+    2. 目录未被采集：某个目录内的文件列表为空（可能为空，也可能未被采集）
+    3. 目录更新至此：某个目录的文件信息的更新时间大于它里面的文件信息列表中更新时间最大的那一条
+""")
     parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
     args = parser.parse_args()
@@ -201,6 +206,43 @@ SELECT * FROM ancestors;
 """)
 
 
+def select_ids_to_update(
+    con: Connection | Cursor, 
+    top_ids: int | Iterable[int] = 0, 
+    /, 
+) -> Cursor:
+    if isinstance(top_ids, int):
+        ids = "(%d)" % top_ids
+    else:
+        ids = ",".join(map("(%d)".__mod__, top_ids))
+        if not ids:
+            raise ValueError("no top_ids specified")
+    sql = f"""\
+WITH top_dir_ids(id) AS (
+    VALUES {ids}
+), ids_to_update AS (
+    SELECT
+        d1.id, 
+        d1.updated_at, 
+        MAX(d2.updated_at) AS max_sub_updated_at
+    FROM
+        data d1 LEFT JOIN data d2 ON (d1.id=d2.parent_id)
+    WHERE
+        d1.is_dir
+        AND d1.mtime
+        AND d2.mtime
+    GROUP BY
+        d1.id
+    HAVING
+        max_sub_updated_at IS NULL OR d1.updated_at > max_sub_updated_at
+)
+SELECT top.id FROM top_dir_ids AS top WHERE NOT EXISTS(SELECT 1 FROM data WHERE parent_id = top.id AND mtime)
+UNION ALL
+SELECT id FROM ids_to_update;
+"""
+    return con.execute(sql)
+
+
 def select_subdir_ids(
     con: Connection | Cursor, 
     parent_id: int = 0, 
@@ -266,7 +308,7 @@ def update_dir_ancestors(
     sql = f"""\
 SELECT id, parent_id, name, path, JSON_ARRAY_LENGTH(ancestors) AS ancestors_length
 FROM data
-WHERE id IN {tuple(items)}
+WHERE id IN ({','.join(map(str, items))})
 ORDER BY LENGTH(path) DESC;
 """
     changed = []
@@ -592,6 +634,7 @@ def updatedb(
     client: str | P115Client, 
     dbfile: None | str | Connection | Cursor = None, 
     top_ids: int | tuple[int, ...] = 0, 
+    resume: bool = False, 
     clean: bool = True, 
 ):
     if isinstance(client, str):
@@ -606,30 +649,31 @@ def updatedb(
         push, pop = dq.append, dq.popleft
         if isinstance(top_ids, int):
             top_ids = top_ids,
-        all_top_ids: set[int] = set()
-        for top_id in top_ids:
-            if top_id in all_top_ids:
+        else:
+            top_ids = tuple(dict.fromkeys(top_ids))
+            if not top_ids:
+                top_ids = 0,
+        if resume:
+            dq.extend(r[0] for r in select_ids_to_update(con, top_ids))
+        else:
+            dq.extend(top_ids)
+        while dq:
+            id = pop()
+            if id in seen:
+                logger.warning("[\x1b[1;33mSKIP\x1b[0m]", id)
                 continue
+            try:
+                updatedb_one(client, con, id)
+            except (FileNotFoundError, NotADirectoryError):
+                pass
+            except OSBusyError:
+                logger.warning("[\x1b[1;34mREDO\x1b[0m] %s", id)
+                push(id)
             else:
-                all_top_ids.add(top_id)
-            push(top_id)
-            while dq:
-                id = pop()
-                if id in seen:
-                    print("[\x1b[1;33mSKIP\x1b[0m]", id)
-                    continue
-                try:
-                    updatedb_one(client, con, id)
-                except (FileNotFoundError, NotADirectoryError):
-                    pass
-                except OSBusyError:
-                    logger.warning("[\x1b[1;34mREDO\x1b[0m] %s", id)
-                    push(id)
-                else:
-                    seen_add(id)
-                    dq.extend(r[0] for r in select_subdir_ids(con, id))
-        if clean and all_top_ids:
-            cleandb(con, all_top_ids)
+                seen_add(id)
+                dq.extend(r[0] for r in select_subdir_ids(con, id))
+        if clean and top_ids:
+            cleandb(con, top_ids)
     else:
         with connect(
             dbfile, 
@@ -637,7 +681,13 @@ def updatedb(
             uri=dbfile.startswith("file:"), 
         ) as con:
             initdb(con)
-            updatedb(client, con, top_ids)
+            updatedb(
+                client, 
+                con, 
+                top_ids=top_ids, 
+                resume=resume, 
+                clean=clean, 
+            )
             con.execute("PRAGMA wal_checkpoint;")
             con.execute("VACUUM;")
 
@@ -661,5 +711,5 @@ if __name__ == "__main__":
             else:
                 cookies = Path("~/115-cookies.txt").expanduser()
     client = P115Client(cookies, check_for_relogin=True)
-    updatedb(client, dbfile=args.dbfile, top_ids=args.top_ids or 0)
+    updatedb(client, dbfile=args.dbfile, resume=args.resume, top_ids=args.top_ids or 0)
 
