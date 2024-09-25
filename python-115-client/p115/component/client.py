@@ -2256,8 +2256,8 @@ class P115Client:
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
-            - cur: 0 | 1 = <default> # 是否只搜素当前目录
-            - custom_order: int | str = <default>
+            - cur: 0 | 1 = <default> # 是否只搜索当前目录
+            - custom_order: 0 | 1 = <default>
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
@@ -2287,7 +2287,7 @@ class P115Client:
             - suffix: str = <default> # 后缀名
             - type: int = <default>
                 # 文件类型：
-                # - 所有: 0
+                # - 全部: 0
                 # - 文档: 1
                 # - 图片: 2
                 # - 音频: 3
@@ -2295,6 +2295,7 @@ class P115Client:
                 # - 压缩包: 5
                 # - 应用: 6
                 # - 书籍: 7
+                # - 仅文件: 99
         """
         api = "https://webapi.115.com/files"
         if isinstance(payload, int):
@@ -2350,8 +2351,8 @@ class P115Client:
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
-            - cur: 0 | 1 = <default> # 是否只搜素当前目录
-            - custom_order: int | str = <default>
+            - cur: 0 | 1 = <default> # 是否只搜索当前目录
+            - custom_order: 0 | 1 = <default>
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
@@ -2381,7 +2382,7 @@ class P115Client:
             - suffix: str = <default> # 后缀名
             - type: int = <default>
                 # 文件类型：
-                # - 所有: 0
+                # - 全部: 0
                 # - 文档: 1
                 # - 图片: 2
                 # - 音频: 3
@@ -2389,6 +2390,7 @@ class P115Client:
                 # - 压缩包: 5
                 # - 应用: 6
                 # - 书籍: 7
+                # - 仅文件: 99
         """
         api = "https://proapi.115.com/android/2.0/ufile/files"
         if isinstance(payload, int):
@@ -2444,8 +2446,8 @@ class P115Client:
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
             - count_folders: 0 | 1 = 1
-            - cur: 0 | 1 = <default> # 是否只搜素当前目录
-            - custom_order: int | str = <default>
+            - cur: 0 | 1 = <default> # 是否只搜索当前目录
+            - custom_order: 0 | 1 = <default>
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
@@ -2475,7 +2477,7 @@ class P115Client:
             - suffix: str = <default> # 后缀名
             - type: int = <default>
                 # 文件类型：
-                # - 所有: 0
+                # - 全部: 0
                 # - 文档: 1
                 # - 图片: 2
                 # - 音频: 3
@@ -2483,6 +2485,7 @@ class P115Client:
                 # - 压缩包: 5
                 # - 应用: 6
                 # - 书籍: 7
+                # - 仅文件: 99
         """
         api = "https://aps.115.com/natsort/files.php"
         if isinstance(payload, int):
@@ -3032,7 +3035,7 @@ class P115Client:
             - played_end: 0 | 1 = <default>
             - type: int = <default>
                 # 类型：
-                # - 所有: 0
+                # - 全部: 0
                 # - ？？: 1
                 # - ？？: 2
                 # - 播放视频: 3
@@ -3134,7 +3137,7 @@ class P115Client:
                 # - 压缩包: 5
                 # - 应用: 6
                 # - 书籍: 7
-            - file_label: int | str = <default>
+            - file_label: int | str = <default> # 标签 id，如果有多个则用逗号 "," 隔开
         """
         api = "https://webapi.115.com/files/get_second_type"
         if isinstance(payload, int):
@@ -3564,7 +3567,7 @@ class P115Client:
             - suffix: str = <default>
             - type: int = <default>
                 # 文件类型：
-                # - 所有: 0
+                # - 全部: 0
                 # - 文档: 1
                 # - 图片: 2
                 # - 音频: 3
