@@ -430,7 +430,7 @@ class FileResource(DavPathBase, DAVNonCollection):
         name = attr["name"].translate({0x23: "%23", 0x2F: "%2F", 0x3F: "%3F"})
         url = joinpath(
             self.origin, 
-            f"{name}?pickcode={attr['pickcode']}&password={password}", 
+            f"{name}?pickcode={attr['pickcode']}&id={attr['id']}&sha1={attr['sha1']}&password={password}", 
         )
         if attr.get("class") == "PIC" or attr.get("thumb"):
             url += "&image=true"

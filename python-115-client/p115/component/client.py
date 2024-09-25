@@ -2210,7 +2210,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取文件夹的中的文件列表和基本信息
+        """获取文件夹的中的文件列表和基本信息（指定 star=1, suffix, type 中任一，则默认 cur=0，可遍历搜索所在目录树）
         GET https://webapi.115.com/files
         payload:
             - cid: int | str = 0 # 文件夹 id
@@ -2226,6 +2226,7 @@ class P115Client:
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
+            - hide_data: str = <default>
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - min_size: int = 0 # 最小的文件大小
@@ -2240,11 +2241,12 @@ class P115Client:
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
             - r_all: 0 | 1 = <default>
-            - record_open_time: 0 | 1 = 1
+            - record_open_time: 0 | 1 = 1 # 是否要记录文件夹的打开时间
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
+            - sys_dir: int | str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - stdir: 0 | 1 = <default>
             - suffix: str = <default> # 后缀名
@@ -2318,6 +2320,7 @@ class P115Client:
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
+            - hide_data: str = <default>
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - min_size: int = 0 # 最小的文件大小
@@ -2332,11 +2335,12 @@ class P115Client:
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
             - r_all: 0 | 1 = <default>
-            - record_open_time: 0 | 1 = 1
+            - record_open_time: 0 | 1 = 1 # 是否要记录文件夹的打开时间
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
+            - sys_dir: int | str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - stdir: 0 | 1 = <default>
             - suffix: str = <default> # 后缀名
@@ -2410,6 +2414,7 @@ class P115Client:
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
+            - hide_data: str = <default>
             - is_q: 0 | 1 = <default>
             - is_share: 0 | 1 = <default>
             - min_size: int = 0 # 最小的文件大小
@@ -2424,11 +2429,12 @@ class P115Client:
                 # - 创建时间："user_ptime"
                 # - 上次打开时间："user_otime"
             - r_all: 0 | 1 = <default>
-            - record_open_time: 0 | 1 = 1
+            - record_open_time: 0 | 1 = 1 # 是否要记录文件夹的打开时间
             - scid: int | str = <default>
             - show_dir: 0 | 1 = 1
             - snap: 0 | 1 = <default>
             - source: str = <default>
+            - sys_dir: int | str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - stdir: 0 | 1 = <default>
             - suffix: str = <default> # 后缀名
@@ -2580,6 +2586,44 @@ class P115Client:
             payload = {"limit": 32, "offset": 0, "aid": 1, "cid": payload}
         else:
             payload = {"limit": 32, "offset": 0, "aid": 1, "cid": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_files_shasearch(
+        self, 
+        payload: str | dict, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_shasearch(
+        self, 
+        payload: str | dict, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_files_shasearch(
+        self, 
+        payload: str | dict, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """通过 sha1 搜索文件
+        GET https://webapi.115.com/files/shasearch
+        payload:
+            - sha1: str
+        """
+        api = "https://webapi.115.com/files/shasearch"
+        if isinstance(payload, str):
+            payload = {"sha1": payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3088,7 +3132,7 @@ class P115Client:
         """设置文件或文件夹（备注、标签等）
         POST https://webapi.115.com/files/edit
         payload:
-            # 如果是单个文件或文件夹
+            # 如果是单个文件或文件夹，也可以是多个但用逗号 "," 隔开
             - fid: int | str
             # 如果是多个文件或文件夹
             - fid[]: int | str
@@ -3098,6 +3142,7 @@ class P115Client:
             - file_desc: str = <default> # 可以用 html
             - file_label: int | str = <default> # 标签 id，如果有多个，用逗号 "," 隔开
             - fid_cover: int | str = <default> # 封面图片的文件 id，如果有多个，用逗号 "," 隔开，如果要删除，值设为 0 即可
+            - show_play_long: 0 | 1 = <default> # 是否统计播放时长
         """
         api = "https://webapi.115.com/files/edit"
         if (headers := request_kwargs.get("headers")):

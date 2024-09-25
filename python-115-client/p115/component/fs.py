@@ -68,6 +68,7 @@ def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
     attr["violated"] = int(info.get("c") or 0) == 1
     attr["thumb"] = info.get("u")
     attr["class"] = info.get("class")
+    attr["video_type"] = info.get("vdi")
     attr["play_long"] = info.get("play_long")
     attr["ico"] = info.get("ico", "folder" if is_directory else "")
     attr["mtime"] = attr["user_utime"] = int(info["te"])
