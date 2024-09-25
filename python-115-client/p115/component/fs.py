@@ -53,30 +53,49 @@ def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
         attr["id"] = int(info["cid"])
         attr["parent_id"] = int(info["pid"])
     else:
-        attr["id"] = int(info["fid"])
-        attr["parent_id"] = int(info["cid"])
+        attr["id"] = int(info["fid"]) # fid => file_id
+        attr["parent_id"] = int(info["cid"]) # cid => category_id
+    #attr["area_id"] = int(attr["aid"])
     attr["pickcode"] = info["pc"]
+    #attr["pick_time"] = int(info["pt"])
+    #attr["pick_expire"] = info["e"]
     attr["name"] = info["n"]
     attr["size"] = int(info.get("s") or 0)
     attr["sha1"] = info.get("sha")
     attr["labels"] = info["fl"]
     attr["score"] = int(info.get("score") or 0)
-    attr["star"] = int(info.get("m") or 0) == 1
-    attr["shortcut"] = int(info.get("issct") or 0) == 1
-    attr["hidden"] = int(info.get("hdf") or 0) == 1
-    attr["described"] = int(info.get("fdes") or 0) == 1
-    attr["violated"] = int(info.get("c") or 0) == 1
-    attr["thumb"] = info.get("u")
-    attr["class"] = info.get("class")
-    attr["video_type"] = info.get("vdi")
-    attr["play_long"] = info.get("play_long")
     attr["ico"] = info.get("ico", "folder" if is_directory else "")
     attr["mtime"] = attr["user_utime"] = int(info["te"])
     attr["ctime"] = attr["user_ptime"] = int(info["tp"])
     if "to" in info:
-        attr["atime"] = attr["user_otime"] =int(info["to"])
+        attr["atime"] = attr["user_otime"] = int(info["to"])
     if "tu" in info:
         attr["utime"] = int(info["tu"])
+    for key, name in (
+        ("m", "star"), 
+        ("issct", "shortcut"), 
+        ("hdf", "hidden"), 
+        ("fdes", "described"), 
+        ("c", "violated"), 
+        #("sh", "shared"), 
+        #("d", "has_desc"), 
+        #("p", "has_pass"), 
+    ):
+        if key in info:
+            attr[name] = int(info[key] or 0) == 1
+    for key, name in (
+        #("dp", "dir_path"), 
+        ("sta", "status"), 
+        ("class", "class"), 
+        ("u", "thumb"), 
+        ("vdi", "video_type"), 
+        ("play_long", "play_long"), 
+        ("current_time", "current_time"), 
+        ("last_time", "last_time"), 
+        ("played_end", "played_end"), 
+    ):
+        if key in info:
+            attr[name] = info[key]
     return attr
 
 
@@ -1549,6 +1568,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         if attr:
             cid = attr["id"]
             if not cid:
+                attr["path"] = parent.ancestor_path
                 return ancestors
             try:
                 ancestor = id_to_ancestor[cid]
@@ -1608,13 +1628,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if attr is None:
                     return ancestor
                 else:
-                    return Ancestor(
+                    ancestor = Ancestor(
                         id=id, 
                         parent_id=attr["parent_id"], 
                         name=attr["name"], 
                         is_directory=attr["is_directory"], 
                         parent=ancestor, 
                     )
+                    attr["path"] = ancestor.ancestor_path
+                    return ancestor
             elif id:
                 resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
                 return self._get_ancestors_from_response(resp, attr)

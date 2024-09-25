@@ -1879,6 +1879,34 @@ class P115Client:
         }
         return self.request(url=api, method="POST", async_=async_, **request_kwargs)
 
+    @overload
+    def user_fingerprint(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_fingerprint(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_fingerprint(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取截图时嵌入的水印
+        GET https://webapi.115.com/user/fingerprint
+        """
+        api = "https://webapi.115.com/user/fingerprint"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
     ########## App API ##########
 
     @overload
@@ -1976,7 +2004,8 @@ class P115Client:
         self, 
         payload: int | str | dict | Iterable[int | str], 
         /, 
-        pid: int,
+        pid: int = 0, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1986,7 +2015,8 @@ class P115Client:
         self, 
         payload: int | str | dict | Iterable[int | str], 
         /, 
-        pid: int,
+        pid: int = 0, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -1995,7 +2025,8 @@ class P115Client:
         self, 
         payload: int | str | dict | Iterable[int | str], 
         /, 
-        pid: int = 0,
+        pid: int = 0, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2009,14 +2040,14 @@ class P115Client:
         """
         api = "https://webapi.115.com/files/copy"
         if isinstance(payload, (int, str)):
-            payload = {"pid": pid, "fid[0]": payload}
+            payload = {"fid[0]": payload}
         elif isinstance(payload, dict):
-            payload = {"pid": pid, **payload}
+            payload = dict(payload)
         else:
-            payload = {f"fid[{fid}]": fid for i, fid in enumerate(payload)}
+            payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
             if not payload:
                 return {"state": False, "message": "no op"}
-            payload["pid"] = pid
+        payload.setdefault("pid", pid)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2065,7 +2096,8 @@ class P115Client:
         self, 
         payload: int | str | dict | Iterable[int | str], 
         /, 
-        pid: int,
+        pid: int = 0, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2075,7 +2107,8 @@ class P115Client:
         self, 
         payload: int | str | dict | Iterable[int | str], 
         /, 
-        pid: int,
+        pid: int = 0, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2084,7 +2117,8 @@ class P115Client:
         self, 
         payload: int | str | dict | Iterable[int | str], 
         /, 
-        pid: int = 0,
+        pid: int = 0, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2095,17 +2129,18 @@ class P115Client:
             - fid[0]: int | str
             - fid[1]: int | str
             - ...
+            - move_proid: str = <default> # 任务 id
         """
         api = "https://webapi.115.com/files/move"
         if isinstance(payload, (int, str)):
-            payload = {"pid": pid, "fid[0]": payload}
+            payload = {"fid[0]": payload}
         elif isinstance(payload, dict):
-            payload = {"pid": pid, **payload}
+            payload = dict(payload)
         else:
             payload = {f"fid[{i}]": fid for i, fid in enumerate(payload)}
             if not payload:
                 return {"state": False, "message": "no op"}
-            payload["pid"] = pid
+        payload.setdefault("pid", pid)
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2990,22 +3025,24 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取历史记录列表
-        GET https://proapi.115.com/android/history/list
+        GET https://webapi.115.com/history/list
         payload:
             - offset: int = 0
             - limit: int = 32
             - played_end: 0 | 1 = <default>
             - type: int = <default>
-                # 文件类型：
-                # - 文档: 1
-                # - 图片: 2
-                # - 音频: 3
-                # - 视频: 4
-                # - 压缩包: 5
-                # - 应用: 6
-                # - 书籍: 7
+                # 类型：
+                # - 所有: 0
+                # - ？？: 1
+                # - ？？: 2
+                # - 播放视频: 3
+                # - 上传: 4
+                # - ？？: 5
+                # - ？？: 6
+                # - ？？: 7
+                # - ？？: 8
         """
-        api = "https://proapi.115.com/android/history/list"
+        api = "https://webapi.115.com/history/list"
         if payload:
             payload = {"offset": 0, "limit": 32, **payload}
         else:
@@ -3687,37 +3724,6 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
-    def fs_shortcut2(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_shortcut2(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_shortcut2(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """罗列所有的快捷入口
-        GET https://proapi.115.com/pc/category/shortcut
-        """
-        api = f"https://proapi.115.com/pc/category/shortcut"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
     def fs_shortcut_set(
         self, 
         payload: int | str | dict, 
@@ -3746,45 +3752,13 @@ class P115Client:
         POST https://webapi.115.com/category/shortcut
         payload:
             file_id: int | str # 有多个时，用逗号 "," 隔开
-            op: "add" | "delete" = "add"
+            op: "add" | "delete" | "top" = "add"
+                # 操作代码
+                # - add: 添加
+                # - delete: 删除
+                # - top: 置顶
         """
         api = "https://webapi.115.com/category/shortcut"
-        if isinstance(payload, (int, str)):
-            payload = {"file_id": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_shortcut_set2(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_shortcut_set2(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_shortcut_set2(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """把一个目录设置或取消为快捷入口（快捷入口需要是目录）
-        POST https://proapi.115.com/pc/category/shortcut
-        payload:
-            file_id: int | str # 有多个时，用逗号 "," 隔开
-            op: "add" | "delete" = "add"
-        """
-        api = "https://proapi.115.com/pc/category/shortcut"
         if isinstance(payload, (int, str)):
             payload = {"file_id": payload}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
