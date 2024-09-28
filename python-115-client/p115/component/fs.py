@@ -248,7 +248,7 @@ class P115Path(P115PathBase):
             return self["path"].ancestors
         except KeyError:
             ancestors = self.fs.get_ancestors(self.id)
-            self.__dict__["attr"]["path"] = ancestors[-1].ancestor_path
+            self.attr["path"] = ancestors[-1].ancestor_path
             return ancestors
 
     @property
@@ -1704,7 +1704,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__["attr"]
+                attr = id_or_path.attr
                 if refresh:
                     attr = yield partial(self._attr, attr["id"], async_=async_)
             elif isinstance(id_or_path, AttrDict):
@@ -4041,7 +4041,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             elif isinstance(path, AttrDict):
                 attr = path
             elif isinstance(path, path_class):
-                attr = path.__dict__["attr"]
+                attr = path.attr
             elif isinstance(path, (str, PathLike)):
                 path = normpath(fspath(path))
                 if path == "/":

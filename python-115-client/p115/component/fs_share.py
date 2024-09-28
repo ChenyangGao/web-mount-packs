@@ -35,11 +35,7 @@ CRE_SHARE_LINK_search1 = re_compile(r"(?:/s/|share\.115\.com/)(?P<share_code>[a-
 CRE_SHARE_LINK_search2 = re_compile(r"(?P<share_code>[a-z0-9]+)-(?P<receive_code>[a-z0-9]{4})").search
 
 
-def normalize_info(
-    info: Mapping, 
-    keep_raw: bool = False, 
-    **extra_data, 
-) -> AttrDict[str, Any]:
+def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
     if "fid" in info:
         fid = info["fid"]
         parent_id = info["cid"]
@@ -48,7 +44,7 @@ def normalize_info(
         fid = info["cid"]
         parent_id = info["pid"]
         is_directory = True
-    info2: AttrDict[str, Any] = AttrDict({
+    attr: AttrDict[str, Any] = AttrDict({
         "name": info["n"], 
         "is_directory": is_directory, 
         "size": info.get("s"), 
@@ -56,24 +52,20 @@ def normalize_info(
         "parent_id": int(parent_id), 
         "sha1": info.get("sha"), 
     })
-    timestamp = info2["timestamp"] = int(info["t"])
-    info2["time"] = datetime.fromtimestamp(timestamp)
+    timestamp = attr["timestamp"] = int(info["t"])
+    attr["time"] = datetime.fromtimestamp(timestamp)
     if "pc" in info:
-        info2["pickcode"] = info["pc"]
+        attr["pickcode"] = info["pc"]
     if "fl" in info:
-        info2["labels"] = info["fl"]
+        attr["labels"] = info["fl"]
     if "c" in info:
-        info2["violated"] = bool(info["c"])
+        attr["violated"] = bool(info["c"])
     if "u" in info:
-        info2["thumb"] = info["u"]
+        attr["thumb"] = info["u"]
     if "play_long" in info:
-        info2["play_long"] = info["play_long"]
-    info2["ico"] = info.get("ico", "folder" if is_directory else "")
-    if keep_raw:
-        info2["raw"] = info
-    if extra_data:
-        info2.update(extra_data)
-    return info2
+        attr["play_long"] = info["play_long"]
+    attr["ico"] = info.get("ico", "folder" if is_directory else "")
+    return attr
 
 
 class P115SharePath(P115PathBase):
@@ -328,7 +320,6 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     "time": self.create_time, 
                     "timestamp": int(self.create_time.timestamp()), 
                     "ico": "folder", 
-                    "fs": self, 
                     "ancestors": [{"id": 0, "name": ""}], 
                 })
                 return attr
@@ -531,7 +522,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__["attr"]
+                attr = id_or_path.attr
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, int):
@@ -746,7 +737,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__["attr"]
+                attr = id_or_path.attr
             else:
                 attr = yield partial(
                     self._attr_path, 
@@ -780,8 +771,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 add = ls.append
                 resp = yield partial(get_files, payload, async_=async_)
                 data = resp["data"]
-                for attr in map(normalize_info, data["list"]):
-                    attr["fs"] = self
+                for attr in map(normalize_attr, data["list"]):
                     attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                     path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
@@ -790,8 +780,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     payload["offset"] += page_size
                     resp = yield partial(get_files, payload, async_=async_)
                     data = resp["data"]
-                    for attr in map(normalize_info, data["list"]):
-                        attr["fs"] = self
+                    for attr in map(normalize_attr, data["list"]):
                         attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
                         path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]

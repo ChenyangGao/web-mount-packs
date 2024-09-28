@@ -29,10 +29,7 @@ from .client import check_response, P115Client, ExtractProgress, P115Url
 from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
-def normalize_info(
-    info: Mapping, 
-    **extra_data, 
-) -> AttrDict[str, Any]:
+def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
     timestamp = info.get("time") or 0
     is_directory = info["file_category"] == 0
     return AttrDict({
@@ -43,7 +40,6 @@ def normalize_info(
         "ico": info.get("ico", "folder" if is_directory else ""), 
         "time": datetime.fromtimestamp(timestamp), 
         "timestamp": timestamp, 
-        **extra_data, 
     })
 
 
@@ -187,7 +183,6 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     "timestamp": int(self.create_time.timestamp()), 
                     "file_category": 0, 
                     "ico": "folder", 
-                    "fs": self, 
                     "ancestors": [{"id": 0, "name": ""}], 
                 })
                 return attr
@@ -399,7 +394,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__["attr"]
+                attr = id_or_path.attr
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, int):
@@ -574,7 +569,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__["attr"]
+                attr = id_or_path.attr
             else:
                 attr = yield partial(
                     self._attr_path, 
@@ -607,7 +602,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                 )
                 data = resp["data"]
                 for info in data["list"]:
-                    attr = normalize_info(info, fs=self)
+                    attr = normalize_attr(info)
                     path = joinpath(dirname, escape(attr["name"]))
                     attr.update(id=nextid(), parent_id=id, path=path)
                     attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
@@ -624,7 +619,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     )
                     data = resp["data"]
                     for info in data["list"]:
-                        attr = normalize_info(info, fs=self)
+                        attr = normalize_attr(info)
                         path = joinpath(dirname, escape(attr["name"]))
                         attr.update(id=nextid(), parent_id=id, path=path)
                         attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]

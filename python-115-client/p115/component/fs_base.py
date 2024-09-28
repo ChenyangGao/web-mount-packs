@@ -56,10 +56,10 @@ CRE_115URL_EXPIRE_TS_search = re_compile("(?<=\?t=)[0-9]+").search
 
 
 class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
-    fs: P115FSType
 
     def __init__(self, /, fs: P115FSType, attr: AttrDict):
-        self.__dict__.update(fs=fs, attr=attr)
+        self.fs = fs
+        self.attr = attr
 
     def __and__(self, path: str | PathLike[str], /) -> Self:
         attr = self.fs.attr(commonpath((self.path, self.fs.abspath(path))))
@@ -93,7 +93,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return run_gen_step(gen_step, async_=async_)
 
     def __contains__(self, key, /) -> bool:
-        return key in self.__dict__["attr"]
+        return key in self.attr
 
     def __eq__(self, path, /) -> bool:
         return type(self) is type(path) and self.fs.client == path.fs.client and self.id == path.id
@@ -106,8 +106,14 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             return False
         return self.id >= self.id
 
+    def __getattr__(self, attr, /):
+        try:
+            return self.attr[attr]
+        except KeyError as e:
+            raise AttributeError(attr) from e
+
     def __getitem__(self, key, /):
-        return self.__dict__["attr"][key]
+        return self.attr[key]
 
     def __gt__(self, path, /) -> bool:
         if type(self) is not type(path) or self.fs.client != path.fs.client:
@@ -121,7 +127,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.id
 
     def __iter__(self, /) -> Iterator[str]:
-        return iter(self.__dict__["attr"])
+        return iter(self.attr)
 
     def __le__(self, path, /) -> bool:
         if type(self) is not type(path) or self.fs.client != path.fs.client:
@@ -129,7 +135,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.id <= self.id
 
     def __len__(self, /) -> int:
-        return len(self.__dict__["attr"])
+        return len(self.attr)
 
     def __lt__(self, path, /) -> bool:
         if type(self) is not type(path) or self.fs.client != path.fs.client:
@@ -142,10 +148,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         name = cls.__qualname__
         if module != "__main__":
             name = module + "." + name
-        return f"{name}(fs={self.fs!r}, attr={self.__dict__['attr']!r})"
-
-    def __setattr__(self, attr, val, /) -> Never:
-        raise TypeError("can't set attributes")
+        return f"{name}(fs={self.fs!r}, attr={self.attr!r})"
 
     def __str__(self, /) -> str:
         return self.path
@@ -154,16 +157,16 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         return self.joinpath(path)
 
     def get(self, /, key, default=None):
-        return self.__dict__["attr"].get(key, default)
+        return self.attr.get(key, default)
 
     def keys(self, /) -> KeysView:
-        return self.__dict__["attr"].keys()
+        return self.attr.keys()
 
     def values(self, /) -> ValuesView:
-        return self.__dict__["attr"].values()
+        return self.attr.values()
 
     def items(self, /) -> ItemsView:
-        return self.__dict__["attr"].items()
+        return self.attr.items()
 
     @property
     def anchor(self, /) -> str:
@@ -171,10 +174,6 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     def as_uri(self, /) -> str:
         return self.url
-
-    @property
-    def attr(self, /) -> MappingProxyType:
-        return MappingProxyType(self.__dict__["attr"])
 
     @overload
     def dictdir(
@@ -385,8 +384,8 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
         def gen_step():
             attr = yield self.fs.attr(self["id"], async_=async_)
-            if attr is not self.__dict__["attr"]:
-                self.__dict__["attr"] = attr
+            if attr is not self.attr:
+                self.attr = attr
             return attr
         return run_gen_step(gen_step, async_=async_)
 
@@ -1760,7 +1759,6 @@ class P115FileSystemBase(Generic[P115PathType]):
                     async_=async_, 
                     **kwargs, 
                 )
-            attr["fs"] = self
             return path_class(self, attr)
         return run_gen_step(gen_step, async_=async_)
 
