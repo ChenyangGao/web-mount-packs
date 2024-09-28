@@ -423,7 +423,6 @@ class P115Offline:
     ) -> list[P115Path] | Coroutine[Any, Any, list[P115Path]]:
         "离线下载的目录列表"
         as_path = self.client.get_fs(
-            self.client, 
             request=self.request, 
             async_request=self.async_request, 
         ).as_path
@@ -563,7 +562,6 @@ class P115Offline:
                 async_=async_, 
             )
             as_path = client.get_fs(
-                self.client, 
                 request=self.request, 
                 async_request=self.async_request, 
             ).as_path

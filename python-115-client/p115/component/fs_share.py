@@ -531,7 +531,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__
+                attr = id_or_path.__dict__["attr"]
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, int):
@@ -746,7 +746,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__
+                attr = id_or_path.__dict__["attr"]
             else:
                 attr = yield partial(
                     self._attr_path, 

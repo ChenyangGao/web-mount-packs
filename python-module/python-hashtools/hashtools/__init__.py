@@ -2,16 +2,17 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
-__all__ = ["file_digest", "file_mdigest", "file_digest_async", "file_mdigest_async"]
+__version__ = (0, 0, 3)
+__all__ = [
+    "HashObj", "make_accumulator", "file_digest", "file_mdigest", 
+    "file_digest_async", "file_mdigest_async", 
+]
 
-from _hashlib import HASH # type: ignore
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from hashlib import new as hash_new
-from inspect import isawaitable
-from io import TextIOWrapper
+from inspect import isasyncgenfunction, isawaitable
 from os import fstat
-from typing import Any
+from typing import overload, runtime_checkable, Any, Literal, Protocol, TypeVar
 
 from asynctools import ensure_async, ensure_aiter
 from filewrap import (
@@ -24,99 +25,172 @@ from filewrap import (
 )
 
 
+T = TypeVar("T")
+
+
+@runtime_checkable
+class HashObj(Protocol):
+    def update(self, /, data: bytes):
+        pass
+    def digest(self, /) -> bytes:
+        pass
+    def hexdigest(self, /) -> str:
+        pass
+
+
+@overload
+def make_accumulator(
+    func: Callable[[Buffer, T], T], 
+    /, 
+    initial_value: T, 
+    async_: Literal[False] = False, 
+) -> Callable[[Buffer], T]:
+    ...
+@overload
+def make_accumulator(
+    func: Callable[[Buffer, T], T], 
+    /, 
+    initial_value: T, 
+    async_: Literal[True], 
+) -> Callable[[Buffer], Awaitable[T]]:
+    ...
+def make_accumulator(
+    func: Callable[[Buffer, T], T], 
+    /, 
+    initial_value: T, 
+    async_: bool = False, 
+) -> Callable[[Buffer], T] | Callable[[Buffer], Awaitable[T]]:
+    update: Callable[[Buffer], T] | Callable[[Buffer], Awaitable[T]]
+    last_value = initial_value
+    if isasyncgenfunction(func):
+        async def update(value: Buffer, /) -> T:
+            nonlocal last_value
+            return (last_value := await func(value, last_value)) # type: ignore
+    elif async_:
+        async def update(value: Buffer, /) -> T:
+            nonlocal last_value
+            ret = func(value, last_value)
+            if isawaitable(ret):
+                last_value = await ret
+            else:
+                last_value = ret
+            return last_value
+    else:
+        def update(value: Buffer, /) -> T:
+            nonlocal last_value
+            return (last_value := func(value, last_value))
+    return update
+
+
 def file_digest(
     file: Buffer | SupportsRead[Buffer] | SupportsReadinto | Iterable[Buffer], 
-    digest: str | Callable[[], HASH] = "md5", 
+    digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] = "md5", 
     /, 
     start: int = 0, 
     stop: None | int = None, 
-    bufsize: int = 1 << 16, 
+    chunksize: int = 1 << 16, 
     callback: None | Callable[[int], Any] = None, 
-) -> tuple[int, HASH]:
-    total, (digestobj,) = file_mdigest(
+) -> tuple[int, HashObj | T]:
+    total, (result,) = file_mdigest(
         file, 
         digest, 
         start=start, 
         stop=stop, 
-        bufsize=bufsize, 
+        chunksize=chunksize, 
         callback=callback, 
     )
-    return total, digestobj
+    return total, result
 
 
 def file_mdigest(
     file: Buffer | SupportsRead[Buffer] | SupportsReadinto | Iterable[Buffer], 
-    digest: str | Callable[[], HASH] = "md5", 
+    digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] = "md5", 
     /, 
-    *digests: str | Callable[[], HASH], 
+    *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]], 
     start: int = 0, 
     stop: None | int = None, 
-    bufsize: int = 1 << 16, 
+    chunksize: int = 1 << 16, 
     callback: None | Callable[[int], Any] = None, 
-) -> tuple[int, tuple[HASH, ...]]:
+) -> tuple[int, list[HashObj | T]]:
+    def get_digest(alg, /) -> Callable[[bytes], Any]:
+        hashobj: HashObj
+        if isinstance(alg, str):
+            hashobj = hash_new(alg)
+        elif isinstance(alg, HashObj):
+            hashobj = alg
+        else:
+            hashfunc = alg()
+            if isinstance(hashfunc, HashObj):
+                hashobj = hashfunc
+            else:
+                initial_value = hashfunc(b"")
+                results.append(initial_value)
+                _update = make_accumulator(
+                    hashfunc, 
+                    initial_value=initial_value, 
+                )
+                i = len(results) - 1
+                def update(value: bytes, /):
+                    ret = results[i] = _update(value)
+                    return ret
+                return update
+        results.append(hashobj)
+        return hashobj.update
+    results: list = []
     if digests:
-        digestobjs = tuple(hash_new(d) if isinstance(d, str) else d() for d in (digest, *digests))
-        def update(b, t=tuple(d.update for d in digestobjs), /):
-            for update in t:
-                update(b)
+        funcs: list[Callable[[bytes], Any]] = []
+        funcs.append(get_digest(digest))
+        funcs.extend(map(get_digest, digests))
+        def update(value: bytes, /):
+            for func in funcs:
+                func(value)
     else:
-        digestobj = hash_new(digest) if isinstance(digest, str) else digest()
-        digestobjs = digestobj,
-        update = digestobj.update
+        update = get_digest(digest)
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
     b_it: Iterator[Buffer]
     if isinstance(file, Buffer):
         file = memoryview(file)[start:stop]
         if not file:
-            return 0, digestobjs
+            return 0, results
         if callback is not None:
             callback(start)
-        b_it = bytes_to_chunk_iter(file)
+        b_it = bytes_to_chunk_iter(file, chunksize=chunksize)
     elif isinstance(file, (SupportsRead, SupportsReadinto)):
-        try:
-            fileno = getattr(file, "fileno")()
-            length = fstat(fileno).st_size
-        except (AttributeError, OSError):
-            try:
-                length = len(file) # type: ignore
-            except TypeError:
-                length = -1
-        if length == 0:
-            return 0, digestobjs
-        elif length > 0:
-            if start < 0:
-                start += length
-            if start < 0:
-                start = 0
-            elif start >= length:
-                return 0, digestobjs
-            if stop is not None:
-                if stop < 0:
-                    stop += length
-                if stop <= 0 or start >= stop:
-                    return 0, digestobjs
-                elif stop >= length:
-                    stop = None
-        elif start < 0:
-            raise ValueError("can't use negative start index on a file with unknown length")
-        elif stop is not None:
+        length = -1
+        def get_length() -> int:
+            nonlocal length
+            if length < 0:
+                try:
+                    fileno = getattr(file, "fileno")()
+                    length = fstat(fileno).st_size
+                except (AttributeError, OSError):
+                    try:
+                        length = len(file) # type: ignore
+                    except TypeError:
+                        raise ValueError(f"can't get file size: {file!r}")
+            return length
+        if start < 0:
+            start += get_length()
+        if start < 0:
+            start = 0
+        if stop is not None:
             if stop < 0:
-                raise ValueError("can't use negative stop index on a file with unknown length")
+                stop += get_length()
             if stop <= 0 or start >= stop:
-                return 0, digestobjs
+                return 0, results
         if start:
             for _ in bio_skip_iter(file, start, callback=callback):
                 pass
         if stop:
-            b_it = bio_chunk_iter(file, stop - start, can_buffer=True)
+            b_it = bio_chunk_iter(file, stop - start, chunksize=chunksize, can_buffer=True)
         else:
-            b_it = bio_chunk_iter(file, can_buffer=True)
+            b_it = bio_chunk_iter(file, chunksize=chunksize, can_buffer=True)
     else:
         if start < 0 or stop and stop < 0:
             raise ValueError("negative indices should not be used when using `Iterable[Buffer]`")
         elif stop and start >= stop:
-            return 0, digestobjs
+            return 0, results
         b_it = file
         if start:
             b_it = bytes_iter_skip(b_it, start, callback=callback)
@@ -125,118 +199,139 @@ def file_mdigest(
     length = 0
     for chunk in b_it:
         update(chunk)
-        length += (chunksize := len(chunk))
+        length += (size := len(chunk))
         if callback is not None:
-            callback(chunksize)
-    return length, digestobjs
+            callback(size)
+    return length, results
 
 
 async def file_digest_async(
     file: Buffer | SupportsRead[Buffer] | SupportsReadinto | Iterable[Buffer] | AsyncIterable[Buffer], 
-    digest: str | Callable[[], HASH] = "md5", 
+    digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
     /, 
     start: int = 0, 
     stop: None | int = None, 
-    bufsize: int = 1 << 16, 
+    chunksize: int = 1 << 16, 
     callback: None | Callable[[int], Any] = None, 
-) -> tuple[int, HASH]:
-    total, (digestobj,) = await file_mdigest_async(
+) -> tuple[int, HashObj | T]:
+    total, (result,) = await file_mdigest_async(
         file, 
         digest, 
         start=start, 
         stop=stop, 
-        bufsize=bufsize, 
+        chunksize=chunksize, 
         callback=callback, 
     )
-    return total, digestobj
+    return total, result
 
 
 async def file_mdigest_async(
     file: Buffer | SupportsRead[Buffer] | SupportsReadinto | Iterable[Buffer] | AsyncIterable[Buffer], 
-    digest: str | Callable[[], HASH] = "md5", 
+    digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
     /, 
-    *digests: str | Callable[[], HASH], 
+    *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]], 
     start: int = 0, 
     stop: None | int = None, 
-    bufsize: int = 1 << 16, 
+    chunksize: int = 1 << 16, 
     callback: None | Callable[[int], Any] = None, 
-    threaded: bool = False, 
-) -> tuple[int, tuple[HASH, ...]]:
+) -> tuple[int, list[HashObj | T]]:
+    async def get_digest(alg, /) -> Callable[[bytes], Any]:
+        hashobj: HashObj
+        if isinstance(alg, str):
+            hashobj = hash_new(alg)
+        elif isinstance(alg, HashObj):
+            hashobj = alg
+        else:
+            hashfunc = alg()
+            if isinstance(hashfunc, HashObj):
+                hashobj = hashfunc
+            else:
+                ret = hashfunc(b"")
+                if isawaitable(ret):
+                    initial_value = await ret
+                else:
+                    initial_value = ret
+                results.append(initial_value)
+                _update = make_accumulator(
+                    hashfunc, 
+                    initial_value=initial_value, 
+                    async_=True, 
+                )
+                i = len(results) - 1
+                async def update(value: bytes, /):
+                    ret = results[i] = await _update(value)
+                    return ret
+                return update
+        results.append(hashobj)
+        return ensure_async(hashobj.update)
+    results: list = []
     if digests:
-        digestobjs = tuple(hash_new(d) if isinstance(d, str) else d() for d in (digest, *digests))
-        def update(b, t=tuple(d.update for d in digestobjs), /):
-            for update in t:
-                update(b)
+        funcs: list[Callable[[bytes], Any]] = []
+        funcs.append(await get_digest(digest))
+        for digest in digests:
+            funcs.append(await get_digest(digest))
+        async def update(value: bytes, /):
+            for func in funcs:
+                await func(value)
     else:
-        digestobj = hash_new(digest) if isinstance(digest, str) else digest()
-        digestobjs = digestobj,
-        update = digestobj.update
+        update = await get_digest(digest)
     if callback is not None:
-        callback = ensure_async(callback, threaded=threaded)
+        callback = ensure_async(callback)
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
     b_it: AsyncIterator[Buffer]
     if isinstance(file, Buffer):
         file = memoryview(file)[start:stop]
         if not file:
-            return 0, digestobjs
+            return 0, results
         if callback is not None:
             await callback(start)
-        b_it = bytes_to_chunk_async_iter(file)
+        b_it = bytes_to_chunk_async_iter(file, chunksize=chunksize)
     elif isinstance(file, (SupportsRead, SupportsReadinto)):
-        try:
-            fileno = getattr(file, "fileno")()
-            length = fstat(fileno).st_size
-        except (AttributeError, OSError):
-            try:
-                length = len(file) # type: ignore
-            except TypeError:
-                length = -1
-        if length == 0:
-            return 0, digestobjs
-        elif length > 0:
-            if start < 0:
-                start += length
-            if start < 0:
-                start = 0
-            elif start >= length:
-                return 0, digestobjs
-            if stop is not None:
-                if stop < 0:
-                    stop += length
-                if stop <= 0 or start >= stop:
-                    return 0, digestobjs
-                elif stop >= length:
-                    stop = None
-        elif start < 0:
-            raise ValueError("can't use negative start index on a file with unknown length")
-        elif stop is not None:
+        length = -1
+        def get_length() -> int:
+            nonlocal length
+            if length < 0:
+                try:
+                    fileno = getattr(file, "fileno")()
+                    length = fstat(fileno).st_size
+                except (AttributeError, OSError):
+                    try:
+                        length = len(file) # type: ignore
+                    except TypeError:
+                        raise ValueError(f"can't get file size: {file!r}")
+            return length
+        if start < 0:
+            start += get_length()
+        if start < 0:
+            start = 0
+        if stop is not None:
             if stop < 0:
-                raise ValueError("can't use negative stop index on a file with unknown length")
+                stop += get_length()
             if stop <= 0 or start >= stop:
-                return 0, digestobjs
+                return 0, results
         if start:
             async for _ in bio_skip_async_iter(file, start, callback=callback):
                 pass
         if stop:
-            b_it = bio_chunk_async_iter(file, stop - start, can_buffer=True)
+            b_it = bio_chunk_async_iter(file, stop - start, chunksize=chunksize, can_buffer=True)
         else:
-            b_it = bio_chunk_async_iter(file, can_buffer=True)
+            b_it = bio_chunk_async_iter(file, chunksize=chunksize, can_buffer=True)
     else:
         if start < 0 or stop and stop < 0:
             raise ValueError("negative indices should not be used when using `Iterable[Buffer]`")
         elif stop and start >= stop:
-            return 0, digestobjs
-        b_it = ensure_aiter(file, threaded=threaded)
+            return 0, results
+        b_it = ensure_aiter(file)
         if start:
-            b_it = await bytes_async_iter_skip(b_it, start, callback=callback, threaded=threaded)
+            b_it = await bytes_async_iter_skip(b_it, start, callback=callback)
         if stop:
-            b_it = bytes_async_iter(b_it, stop - start, threaded=threaded)
+            b_it = bytes_async_iter(b_it, stop - start)
     length = 0
     async for chunk in b_it:
-        update(chunk)
-        length += (chunksize := len(chunk))
+        await update(chunk)
+        length += (size := len(chunk))
         if callback is not None:
-            await callback(chunksize)
-    return length, digestobjs
+            await callback(size)
+    return length, results
 

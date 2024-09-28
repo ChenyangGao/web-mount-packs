@@ -186,8 +186,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
     def file(self, /) -> BinaryIO:
         return self.response
 
-    @funcproperty
-    def fileno(self, /):
+    def fileno(self, /) -> int:
         return self.file.fileno()
 
     def flush(self, /):

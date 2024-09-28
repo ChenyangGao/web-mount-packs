@@ -284,7 +284,6 @@ class P115Sharing:
         async_: Literal[False, True] = False, 
     ) -> P115Path | Coroutine[Any, Any, P115Path]:
         return self.client.get_fs(
-            self.client, 
             request=self.request, 
             async_request=self.async_request, 
         ).as_path("/我的接收", async_=async_)

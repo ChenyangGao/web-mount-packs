@@ -12,8 +12,8 @@ if __name__ == "__main__":
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
     parser.add_argument(
         "app", nargs="?", default="qandroid", 
-        choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
-                 "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+        choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+                 "windows", "mac", "linux", "wechatmini", "alipaymini", "harmony"), 
         help="选择一个 app 进行登录，默认为 'qandroid'，注意：这会把已经登录的相同 app 踢下线", 
     )
     parser.add_argument("-H", "--host", default="localhost", help="ip 或 hostname，默认值 'localhost'")
@@ -30,8 +30,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from urllib.request import urlopen, Request
 
 
-APPS = ["web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
-        "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"]
+APPS = ["web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+        "windows", "mac", "linux", "wechatmini", "alipaymini", "harmony"]
 
 
 class QrcodeScanHandler(BaseHTTPRequestHandler):

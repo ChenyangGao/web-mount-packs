@@ -399,7 +399,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__
+                attr = id_or_path.__dict__["attr"]
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, int):
@@ -574,7 +574,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__
+                attr = id_or_path.__dict__["attr"]
             else:
                 attr = yield partial(
                     self._attr_path, 

@@ -146,7 +146,7 @@ def login_scan_cookie(
     replace: bool = False, 
 ) -> str:
     """扫码登录 115 网盘，获取绑定到特定 app 的 cookies
-    app 至少有 23 个可用值，目前找出 13 个：
+    app 至少有 24 个可用值，目前找出 14 个：
         - web
         - ios
         - 115ios
@@ -160,6 +160,7 @@ def login_scan_cookie(
         - linux
         - wechatmini
         - alipaymini
+        - harmony
     还有几个备选：
         - bios
         - bandroid
@@ -192,6 +193,7 @@ def login_scan_cookie(
     |     21 | P3      | linux      | 115生活(Linux端)       |
     |     22 | R1      | wechatmini | 115生活(微信小程序)    |
     |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+    |     24 | S1      | harmony    | 115(Harmony端)         |
     """
     if not isinstance(client, P115Client):
         client = P115Client(client)
@@ -427,7 +429,7 @@ def parse_export_dir_as_dict_iter(
                 "name":       str, # 名字
             }
     """
-    if isinstance(file, (bytes | str | PathLike)):
+    if isinstance(file, (bytes, str, PathLike)):
         file = open(file, encoding=encoding)
     elif not isinstance(file, TextIOBase):
         file = TextIOWrapper(file, encoding=encoding)
@@ -462,7 +464,7 @@ def parse_export_dir_as_path_iter(
 
     :return: 把每一行解析为一个相对路径（虽然左边第 1 个符号是 "/"），迭代返回
     """
-    if isinstance(file, (bytes | str | PathLike)):
+    if isinstance(file, (bytes, str, PathLike)):
         file = open(file, encoding=encoding)
     elif not isinstance(file, TextIOBase):
         file = TextIOWrapper(file, encoding=encoding)

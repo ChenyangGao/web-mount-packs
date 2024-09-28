@@ -2,72 +2,87 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__: list[str] = []
+__all__ = ["main"]
 __doc__ = "遍历并导出 115 目录信息"
 
-KEYS = (
-    "id", "parent_id", "name", "path", "relpath", "size", "sha1", "pickcode", 
-    "is_directory", "ctime", "mtime", "atime", "hidden", "violated", "play_long", 
-    "thumb", "star", "score", "labels", "description", 
-)
+from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
+from collections import UserString
+from collections.abc import Callable
+from functools import partial
+from hashlib import algorithms_available
+from pathlib import Path
+from sys import path, stderr, stdout
+from typing import Final
 
 if __name__ == "__main__":
-    from argparse import ArgumentParser, RawTextHelpFormatter
-    from pathlib import Path
-    from sys import path
-
     path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
-    from argparse import RawTextHelpFormatter
     from .init import subparsers
 
     parser = subparsers.add_parser("iterdir", description=__doc__, formatter_class=RawTextHelpFormatter)
 
+from p115 import AVAILABLE_APPS
+from posixpatht import joins
 
-def main(args):
+
+BASE_KEYS: Final = (
+    "is_directory", "id", "parent_id", "pickcode", "name", "size", "sha1", "labels", 
+    "score", "ico", "mtime", "user_utime", "ctime", "user_ptime", "atime", "user_otime", 
+    "utime", "star", "shortcut", "hidden", "described", "violated", "status", "class", 
+    "thumb", "video_type", "play_long", "current_time", "last_time", "played_end", "path", 
+)
+EXTRA_KEYS: Final = (
+    "ancestors", "relpath", "desc", "url", # "hashes", 
+)
+
+
+def default(obj, /):
+    if isinstance(obj, UserString):
+        return str(obj)
+    return NotImplemented
+
+
+def parse_args(
+    argv: None | list[str] = None, 
+) -> Namespace:
+    args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
+    return args
 
-    from collections import UserString
-    from collections.abc import Callable, Sequence
-    from functools import partial
-    from os.path import expanduser, dirname, join as joinpath, realpath
-    from pathlib import Path
-    from sys import stdout
 
+def main(argv: None | list[str] = None):
+    args = parse_args(argv)
+
+    from orjson import dumps
     from p115 import P115Client, P115Path
 
+    path: None | Path = None
+    client: None | P115Client = None
     cookies = args.cookies
     cookies_path = args.cookies_path
-    if not cookies:
-        if cookies_path:
-            try:
-                cookies = open(cookies_path).read()
-            except FileNotFoundError:
-                pass
-        else:
-            seen = set()
-            for dir_ in (".", expanduser("~"), dirname(__file__)):
-                dir_ = realpath(dir_)
-                if dir_ in seen:
-                    continue
-                seen.add(dir_)
-                try:
-                    cookies = open(joinpath(dir_, "115-cookies.txt")).read()
-                    if cookies:
-                        cookies_path = joinpath(dir_, "115-cookies.txt")
-                        break
-                except FileNotFoundError:
-                    pass
-
-    client = P115Client(cookies, app=args.app, check_for_relogin=True)
-    if cookies_path:
-        if cookies != client.cookies:
-            open(cookies_path, "w").write(client.cookies)
-        client.__dict__["cookies_path"] = Path(cookies_path)
+    if cookies:
+        client = P115Client(cookies, check_for_relogin=True)
+    elif cookies_path:
+        path = Path(cookies_path).absolute()
+        client = P115Client(path, app=args.app, check_for_relogin=True)
+    else:
+        for path_ in (
+            Path("./115-cookies.txt").absolute(), 
+            Path("~/115-cookies.txt").expanduser(), 
+            Path(__file__).parent / "115-cookies.txt", 
+        ):
+            if path_.is_file():
+                path = path_
+                client = P115Client(path, app=args.app, check_for_relogin=True)
+                break
+    if not (client and client.login_status()):
+        client = P115Client(app=args.app, check_for_relogin=True)
+        if path:
+            client.__dict__["cookies_path"] = path
 
     do_request: None | Callable
     match args.use_request:
@@ -107,25 +122,35 @@ def main(args):
     if args.password and not fs.hidden_mode:
         fs.hidden_switch(True, password=args.password)
 
-    keys: Sequence[str]
+    has_base_keys: bool = False
+    keys: list[str] = args.keys or []
     if args.kind_keys:
-        keys = ["id", "parent_id", "name", "path", "relpath", "size", "sha1", "pickcode", "is_directory"]
-        if args.keys:
-            for k in args.keys:
-                if k not in keys:
-                    keys.append(k)
+        if keys:
+            if "*" in keys:
+                has_base_keys = True
+                keys.remove("*")
+            else:
+                for k in ("id", "parent_id", "pickcode", "name", "path", "size", "sha1", "is_directory"):
+                    if k not in keys:
+                        keys.append(k)
+        else:
+            keys = ["id", "parent_id", "pickcode", "name", "path", "size", "sha1", "is_directory"]
+    elif keys:
+        if "*" in keys:
+            has_base_keys = True
+            keys.remove("*")
     else:
-        keys = args.keys or KEYS
-    output_type = args.output_type
+        has_base_keys = True
 
-    path = args.path
-    if path.isdecimal():
-        fid = int(path)
+    hash_types = args.hash_types
+    output_type = args.output_type
+    fpath = args.path
+    if fpath == "0" or not fpath.startswith("0") and fpath.isdecimal():
+        fid = int(fpath)
         attr = fs.attr(fid)
     else:
-        attr = fs.attr(path)
+        attr = fs.attr(fpath)
         fid = attr["id"]
-    top_start = len(attr["path"]) + 1
 
     select = args.select
     if select:
@@ -185,7 +210,7 @@ def main(args):
             cur_t = perf_counter()
             speed = total / (cur_t - start_t)
             write(f"\r\x1b[K🗂️  {total} = 📂 {ndirs} + 📝 {nfiles} | 🕙 {format_time(cur_t-start_t)} | 🚀 {speed:.3f} it/s".encode())
-        file = open(output_file, "w")
+        file = open(output_file, "w", newline="")
         path_it = iter(progress(path_it))
     else:
         file = stdout # type: ignore
@@ -205,8 +230,8 @@ def main(args):
             write = file.buffer.write
         else:
             write = file.buffer.raw.write # type: ignore
-        for path in path_it:
-            result = dump(path)
+        for fpath in path_it:
+            result = dump(fpath)
             if not (result is None or isinstance(result, bytes)):
                 result = bytes(str(result), "utf-8")
             if result:
@@ -214,28 +239,53 @@ def main(args):
                 write(b"\n")
         return
 
-    def get_key(path: P115Path, key: str):
-        if key == "description":
-            if path.get('described'):
-                return path.desc
-            else:
-                return ""
-        elif key == "relpath":
-            return path["path"][top_start:]
+    def convert_hash(h, /):
+        if isinstance(h, int):
+            return h
+        elif isinstance(h, bytes):
+            return h.hex()
         else:
-            return path.get(key)
+            return h.hexdigest()
 
-    records = ({k: get_key(p, k) for k in keys} for p in path_it)
+    def get_keys(path: P115Path):
+        d = {}
+        if has_base_keys:
+            for k in BASE_KEYS:
+                try:
+                    d[k] = path[k]
+                except KeyError:
+                    pass
+        for k in keys:
+            if k in d:
+                continue
+            match k:
+                case "ancestors":
+                    d[k] = path["path"].ancestors
+                case "relpath":
+                    if fid == 0:
+                        d[k] = path.path[1:]
+                    else:
+                        ancestors = path["path"].ancestors
+                        for i, a in enumerate(ancestors):
+                            if a["id"] == fid:
+                                break
+                        d[k] = joins([a["name"] for a in ancestors[i+1:]])
+                case "desc":
+                    d[k] = path.desc if path.get("described") else ""
+                case "url":
+                    d[k] = None if path.is_dir() else path.url
+                case _:
+                    d[k] = path.get(k)
+        if hash_types:
+            if path.is_dir():
+                d["hashes"] = None
+            else:
+                d["hashes"] = {k: convert_hash(h) for k, h in zip(hash_types, path.hashes(*hash_types)[1])}
+        return d
 
-    def default(obj, /):
-        if isinstance(obj, UserString):
-            return str(obj)
-        return NotImplemented
+    records = map(get_keys, path_it)
 
-    dumps: Callable[..., bytes]
     if output_type in ("log", "json"):
-        from orjson import dumps as odumps
-        dumps = partial(odumps, default=default)
         if output_file:
             write = file.buffer.write
         else:
@@ -247,11 +297,11 @@ def main(args):
             for i, record in enumerate(records):
                 if i:
                     write(b", ")
-                write(dumps(record))
+                write(dumps(record, default=default))
             write(b"]")
         elif output_type == "log":
             for record in records:
-                write(dumps(record))
+                write(dumps(record, default=default))
                 write(b"\n")
         else:
             from csv import DictWriter
@@ -263,13 +313,10 @@ def main(args):
     except KeyboardInterrupt:
         pass
     except BrokenPipeError:
-        from sys import stderr
         stderr.close()
     finally:
         file.close()
 
-
-from p115 import AVAILABLE_APPS
 
 parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
@@ -278,14 +325,19 @@ parser.add_argument("-cp", "--cookies-path", help="""\
     1. 当前工作目录
     2. 用户根目录
     3. 此脚本所在目录""")
-parser.add_argument(
-    "-a", "--app", default="qandroid", 
-    choices=AVAILABLE_APPS, 
-    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument("-a", "--app", default="qandroid", choices=AVAILABLE_APPS, 
+                    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
 parser.add_argument("-p", "--password", help="密码，用于进入隐藏模式，罗列隐藏文件")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 p115.P115Path），用于对路径进行筛选")
-parser.add_argument("-k", "--keys", nargs="*", choices=KEYS, help=f"选择输出的 key，默认输出所有可选值")
-parser.add_argument("-kk", "--kind-keys", action="store_true", help="帮你选好的一组 key，相当于：-k id parent_id name path size sha1 pickcode is_directory")
+parser.add_argument("-k", "--keys", metavar="key", nargs="*", choices=("*", *BASE_KEYS, *EXTRA_KEYS), help=f"""\
+选择输出的 key。默认为 '*'，会输出 [基本 keys] 并忽略其中未能获得的 key。如果自行选择 key，则被选中的每个 key 的默认值是 None
+- 基本 keys: {BASE_KEYS}
+- 扩展 keys: {EXTRA_KEYS}
+""")
+parser.add_argument("-kk", "--kind-keys", action="store_true", 
+                    help="帮你选好的一组 key，相当于：-k id parent_id pickcode name path size sha1 is_directory")
+parser.add_argument("-hs", "--hash-types", metavar="hashalg", nargs="*", choices=("crc32", "ed2k", *algorithms_available), 
+                    help="选择哈希算法进行计算，会增加一个扩展 key 'hashes'，值为一个字典，key 是算法名，值是计算出的十六进制值")
 parser.add_argument("-t", "--output-type", choices=("log", "json", "csv"), default="log", help="""\
 输出类型，默认为 log
     - log   每行输出一条数据，每条数据输出为一个 json 的 object
@@ -297,7 +349,8 @@ parser.add_argument("-d", "--dump", default="", help="""\
     - None，跳过
     - bytes，输出
     - 其它，先调用 `bytes(str(result), 'utf-8')`，再输出""")
-parser.add_argument("-de", "--dump-exec", action="store_true", help="对 dump 代码进行 exec 解析（必须生成一个变量 dump，用于调用），否则用 eval 解析（会注入一个变量 path，类型是 p115.P115Path）")
+parser.add_argument("-de", "--dump-exec", action="store_true", 
+                    help="对 dump 代码进行 exec 解析（必须生成一个变量 dump，用于调用），否则用 eval 解析（会注入一个变量 path，类型是 p115.P115Path）")
 parser.add_argument("-o", "--output-file", help="保存到文件，此时命令行会输出进度条")
 parser.add_argument("-m", "--min-depth", default=0, type=int, help="最小深度，默认值 0，小于或等于 0 时不限")
 parser.add_argument("-M", "--max-depth", default=-1, type=int, help="最大深度，默认值 -1，小于 0 时不限")
@@ -308,6 +361,5 @@ parser.set_defaults(func=main)
 
 
 if __name__ == "__main__":
-    args = parser.parse_args()
-    main(args)
+    main()
 

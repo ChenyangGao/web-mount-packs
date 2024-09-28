@@ -22,8 +22,8 @@ if __name__ == "__main__":
 """, formatter_class=RawTextHelpFormatter)
     parser.add_argument(
         "app", nargs="?", default="qandroid", 
-        choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
-                 "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+        choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+                 "windows", "mac", "linux", "wechatmini", "alipaymini", "harmony"), 
         help="选择一个 app 进行登录，默认为 'qandroid'，注意：这会把已经登录的相同 app 踢下线", 
     )
     parser.add_argument("-o", "--open-qrcode", action="store_true", help="打开二维码图片，而不是在命令行输出")
@@ -53,6 +53,7 @@ AppEnum = Enum("AppEnum", {
     "linux": 21, 
     "wechatmini": 22, 
     "alipaymini": 23, 
+    "harmony": 24, 
 })
 
 
@@ -94,7 +95,7 @@ def post_qrcode_result(uid, app="web"):
     POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
     :param uid: 二维码的 uid，取自 `login_qrcode_token` 接口响应
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 至少有 23 个可用值，目前找出 13 个：
+        app 至少有 24 个可用值，目前找出 14 个：
             - 'web',         1, AppEnum.web
             - 'ios',         6, AppEnum.ios
             - '115ios',      8, AppEnum['115ios']
@@ -108,6 +109,7 @@ def post_qrcode_result(uid, app="web"):
             - 'linux',      21, AppEnum.linux
             - 'wechatmini', 22, AppEnum.wechatmini
             - 'alipaymini', 23, AppEnum.alipaymini
+            - 'harmony',    24, AppEnum.harmony
         还有几个备选：
             - bios
             - bandroid
@@ -140,6 +142,7 @@ def post_qrcode_result(uid, app="web"):
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
     :return: dict，包含 cookie
     """
     app = get_enum_name(app, AppEnum)
@@ -159,7 +162,7 @@ def get_qrcode(uid):
 def login_with_qrcode(app="web", scan_in_console=True):
     """用二维码登录
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 至少有 23 个可用值，目前找出 13 个：
+        app 至少有 24 个可用值，目前找出 14 个：
             - 'web',         1, AppEnum.web
             - 'ios',         6, AppEnum.ios
             - '115ios',      8, AppEnum['115ios']
@@ -173,6 +176,7 @@ def login_with_qrcode(app="web", scan_in_console=True):
             - 'linux',      21, AppEnum.linux
             - 'wechatmini', 22, AppEnum.wechatmini
             - 'alipaymini', 23, AppEnum.alipaymini
+            - 'harmony',    24, AppEnum.harmony
         还有几个备选：
             - bios
             - bandroid
@@ -205,6 +209,7 @@ def login_with_qrcode(app="web", scan_in_console=True):
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
     :return: dict，扫码登录结果
     """
     qrcode_token = get_qrcode_token()["data"]

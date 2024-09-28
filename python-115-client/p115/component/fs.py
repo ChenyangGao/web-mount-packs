@@ -50,11 +50,11 @@ def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
     attr: AttrDict[str, Any] = AttrDict()
     is_directory = attr["is_directory"] = "fid" not in info
     if is_directory:
-        attr["id"] = int(info["cid"])
-        attr["parent_id"] = int(info["pid"])
+        attr["id"] = int(info["cid"])        # cid => category_id
+        attr["parent_id"] = int(info["pid"]) # pid => parent_id
     else:
-        attr["id"] = int(info["fid"]) # fid => file_id
-        attr["parent_id"] = int(info["cid"]) # cid => category_id
+        attr["id"] = int(info["fid"])        # fid => file_id
+        attr["parent_id"] = int(info["cid"])
     #attr["area_id"] = int(attr["aid"])
     attr["pickcode"] = info["pc"]
     #attr["pick_time"] = int(info["pt"])
@@ -85,6 +85,9 @@ def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
             attr[name] = int(info[key] or 0) == 1
     for key, name in (
         #("dp", "dir_path"), 
+        #("style", "style"), 
+        #("ns", "name_show"), 
+        #("cc", "category_cover"), 
         ("sta", "status"), 
         ("class", "class"), 
         ("u", "thumb"), 
@@ -191,7 +194,7 @@ class Ancestor(dict[str, int | str]):
         return id(self)
 
     def __str__(self, /) -> str:
-        return self.path
+        return str(self.path)
 
     @property
     def ancestors(self, /) -> list[Self]:
@@ -240,13 +243,20 @@ class P115Path(P115PathBase):
     fs: P115FileSystem
 
     @cached_property
-    def ancestors(self, /) -> list[dict]:
-        return self.fs.get_ancestors(self.id)
+    def ancestors(self, /) -> list[Ancestor]:
+        try:
+            return self["path"].ancestors
+        except KeyError:
+            ancestors = self.fs.get_ancestors(self.id)
+            self.__dict__["attr"]["path"] = ancestors[-1].ancestor_path
+            return ancestors
 
-    # TODO: 可能需要使用 python 3.12 的 @override
-    @cached_property # type: ignore
+    @property
     def path(self, /) -> str:
-        return joins([a["name"] for a in self.ancestors])
+        try:
+            return str(self["path"])
+        except KeyError:
+            return self.ancestors[-1].path
 
     @property
     def length(self, /):
@@ -324,7 +334,7 @@ class P115Path(P115PathBase):
             )
             if attr is None:
                 return None
-            return type(self)(attr)
+            return type(self)(self.fs, attr)
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -353,11 +363,14 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield self.fs.makedirs(
-                self, 
-                exist_ok=exist_ok, 
-                async_=async_, 
-            )))
+            return type(self)(
+                self.fs, 
+                (yield self.fs.makedirs(
+                    self, 
+                    exist_ok=exist_ok, 
+                    async_=async_, 
+                )), 
+            )
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -620,11 +633,14 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield partial(
-                self.fs.touch, 
-                self, 
-                async_=async_, 
-            )))
+            return type(self)(
+                self.fs, 
+                (yield partial(
+                    self.fs.touch, 
+                    self, 
+                    async_=async_, 
+                )), 
+            )
         return run_gen_step(gen_step, async_=async_)
 
     unlink = remove
@@ -655,11 +671,14 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield self.fs.write_bytes(
-                self, 
-                data, 
-                async_=async_, 
-            )))
+            return type(self)(
+                self.fs, 
+                (yield self.fs.write_bytes(
+                    self, 
+                    data, 
+                    async_=async_, 
+                )), 
+            )
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -697,14 +716,17 @@ class P115Path(P115PathBase):
         async_: Literal[False, True] = False, 
     ) -> Self | Coroutine[Any, Any, Self]:
         def gen_step():
-            return type(self)((yield self.fs.write_text(
-                self, 
-                text, 
-                encoding=encoding, 
-                errors=errors, 
-                newline=newline, 
-                async_=async_, 
-            )))
+            return type(self)(
+                self.fs, 
+                (yield self.fs.write_text(
+                    self, 
+                    text, 
+                    encoding=encoding, 
+                    errors=errors, 
+                    newline=newline, 
+                    async_=async_, 
+                )), 
+            )
         return run_gen_step(gen_step, async_=async_)
 
 
@@ -722,8 +744,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         /, 
         client: str | P115Client, 
         password: str = "", 
-        cache_id_to_readdir: bool | int = 1024, 
-        cache_path_to_id: bool | int = 65536, 
+        cache_id_to_readdir: bool | int = False, 
+        cache_path_to_id: bool | int = False, 
         refresh: bool = True, 
         request: None | Callable = None, 
         async_request: None | Callable = None, 
@@ -1682,7 +1704,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         def gen_step():
             path_class = type(self).path_class
             if isinstance(id_or_path, path_class):
-                attr = id_or_path.__dict__
+                attr = id_or_path.__dict__["attr"]
                 if refresh:
                     attr = yield partial(self._attr, attr["id"], async_=async_)
             elif isinstance(id_or_path, AttrDict):
@@ -2429,7 +2451,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> list[dict]:
+    ) -> list[Ancestor]:
         ...
     @overload
     def get_ancestors(
@@ -2439,7 +2461,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, list[dict]]:
+    ) -> Coroutine[Any, Any, list[Ancestor]]:
         ...
     def get_ancestors(
         self, 
@@ -2448,7 +2470,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
+    ) -> list[Ancestor] | Coroutine[Any, Any, list[Ancestor]]:
         "获取各个上级目录的少量信息（从根目录到当前目录）"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -3818,7 +3840,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     return
                 for attr in resp["data"]:
                     attr = normalize_attr(attr)
-                    yield Yield(P115Path(attr), identity=True)
+                    yield Yield(P115Path(self, attr), identity=True)
                 offset = payload["offset"] = offset + resp["page_size"]
                 if offset >= resp["count"]:
                     break
@@ -4019,7 +4041,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             elif isinstance(path, AttrDict):
                 attr = path
             elif isinstance(path, path_class):
-                attr = path.__dict__
+                attr = path.__dict__["attr"]
             elif isinstance(path, (str, PathLike)):
                 path = normpath(fspath(path))
                 if path == "/":

@@ -49,6 +49,7 @@ AppEnum = Enum("AppEnum", {
     "linux": 21, 
     "wechatmini": 22, 
     "alipaymini": 23, 
+    "harmony": 24, 
 })
 
 
@@ -94,7 +95,7 @@ def post_qrcode_result(uid: str, app: str = "web") -> dict:
 
     :param uid: 二维码的 uid，取自 `login_qrcode_token` 接口响应
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 至少有 23 个可用值，目前找出 13 个：
+        app 至少有 24 个可用值，目前找出 14 个：
             - 'web',         1, AppEnum.web
             - 'ios',         6, AppEnum.ios
             - '115ios',      8, AppEnum['115ios']
@@ -108,6 +109,7 @@ def post_qrcode_result(uid: str, app: str = "web") -> dict:
             - 'linux',      21, AppEnum.linux
             - 'wechatmini', 22, AppEnum.wechatmini
             - 'alipaymini', 23, AppEnum.alipaymini
+            - 'harmony',    24, AppEnum.harmony
         还有几个备选：
             - bios
             - bandroid
@@ -136,7 +138,7 @@ def login_with_qrcode(
     """用二维码登录
 
     :param app: 扫码绑定的设备，可以是 int、str 或者 AppEnum
-        app 至少有 23 个可用值，目前找出 13 个：
+        app 至少有 24 个可用值，目前找出 14 个：
             - 'web',         1, AppEnum.web
             - 'ios',         6, AppEnum.ios
             - '115ios',      8, AppEnum['115ios']
@@ -274,8 +276,8 @@ def main(args):
 parser.add_argument(
     "app", 
     nargs="?", 
-    choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", 
-             "qandroid", "windows", "mac", "linux", "wechatmini", "alipaymini"), 
+    choices=("web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+             "windows", "mac", "linux", "wechatmini", "alipaymini", "harmony"), 
     default="qandroid", 
     help="选择一个 app 进行登录，默认为 'qandroid'，注意：这会把已经登录的相同 app 踢下线", 
 )

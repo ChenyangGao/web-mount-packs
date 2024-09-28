@@ -14,7 +14,7 @@ import posixpath
 
 from asyncio import create_task, to_thread, Lock as AsyncLock
 from base64 import b64encode
-from binascii import b2a_hex
+from binascii import b2a_hex, crc32
 from collections.abc import (
     AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, 
     Generator, ItemsView, Iterable, Iterator, Mapping, Sequence, 
@@ -39,7 +39,7 @@ from _thread import start_new_thread
 from threading import Condition, Lock, Thread
 from time import sleep, strftime, strptime, time
 from typing import (
-    cast, overload, Any, Final, Literal, NotRequired, Self, TypedDict, 
+    cast, overload, Any, Final, Literal, NotRequired, Self, TypedDict, TypeVar, 
 )
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
@@ -59,7 +59,7 @@ from filewrap import (
     bytes_to_chunk_iter, bytes_to_chunk_async_iter, 
     progress_bytes_iter, progress_bytes_async_iter, 
 )
-from hashtools import file_digest, file_digest_async
+from hashtools import HashObj, file_digest, file_mdigest, file_digest_async, file_mdigest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_chunked, is_range_request
 from httpfile import HTTPFileReader
@@ -102,11 +102,14 @@ AVAILABLE_APPMAP: Final[dict[str, str]] = {
     "linux": "P3", 
     "wechatmini": "R1", 
     "alipaymini": "R2", 
+    "harmony": "S1", 
 }
 
+T = TypeVar("T")
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 CRE_SET_COOKIE = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*")
 APP_VERSION: Final = "99.99.99.99"
+MD4_EMPTY_HASH = b"1\xd6\xcf\xe0\xd1j\xe91\xb7<Y\xd7\xe0\xc0\x89\xc0"
 
 parse_json = lambda _, content: loads(content)
 httpx_request = partial(request, timeout=(5, 60, 60, 5))
@@ -118,12 +121,60 @@ def to_base64(s: bytes | str, /) -> str:
     return str(b64encode(s), "ascii")
 
 
+def convert_digest(digest, /):
+    if isinstance(digest, str):
+        if digest == "crc32":
+            digest = lambda: crc32
+        elif digest == "ed2k":
+            digest = Ed2kHash()
+    return digest
+
+
+class Ed2kHash:
+
+    def __init__(self, b: Buffer = b"", /):
+        self.block_hashes = bytearray()
+        self._last_hashobj: MD4Hash = MD4Hash()
+        self._remainder = 0
+        self.update(b)
+
+    def update(self, b: Buffer, /):
+        size = len(b)
+        if not size:
+            return
+        block_size = 1024 * 9500
+        block_hashes = self.block_hashes
+        remainder = self._remainder
+        last_hashobj = self._last_hashobj
+        m = memoryview(b)
+        start = 0
+        if remainder:
+            start = block_size - remainder
+            last_hashobj.update(m[:start])
+            block_hashes[-16:] = last_hashobj.digest()
+        if start < size: 
+            for start in range(start, size, block_size):
+                last_hashobj = MD4Hash(m[start:start+block_size])
+                block_hashes += last_hashobj.digest()
+        self._remainder = (size - start) % block_size
+        self._last_hashobj = last_hashobj
+
+    def digest(self, /) -> bytes:
+        block_hashes: Buffer = self.block_hashes
+        if not self._remainder:
+            block_hashes = block_hashes + MD4_EMPTY_HASH
+        return MD4Hash(block_hashes).digest()
+
+    def hexdigest(self, /) -> str:
+        return self.digest().hex()
+
+
 def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
     block_size = 1024 * 9500
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
     if isinstance(file, Buffer):
-        chunk_iter = bytes_to_chunk_iter(block_size, chunksize=block_size)
+        chunk_iter = bytes_to_chunk_iter(file, chunksize=block_size)
     else:
         chunk_iter = bio_chunk_iter(file, chunksize=block_size, can_buffer=True)
     block_hashes = bytearray()
@@ -132,7 +183,7 @@ def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
         block_hashes += MD4Hash(chunk).digest()
         filesize += len(chunk)
     if not filesize % block_size:
-        block_hashes += MD4Hash().digest()
+        block_hashes += MD4_EMPTY_HASH
     return filesize, MD4Hash(block_hashes).hexdigest()
 
 
@@ -141,7 +192,7 @@ async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
     if isinstance(file, Buffer):
-        chunk_iter = bytes_to_chunk_async_iter(block_size, chunksize=block_size)
+        chunk_iter = bytes_to_chunk_async_iter(file, chunksize=block_size)
     else:
         chunk_iter = bio_chunk_async_iter(file, chunksize=block_size, can_buffer=True)
     block_hashes = bytearray()
@@ -150,7 +201,7 @@ async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]
         block_hashes += MD4Hash(chunk).digest()
         filesize += len(chunk)
     if not filesize % block_size:
-        block_hashes += MD4Hash().digest()
+        block_hashes += MD4_EMPTY_HASH
     return filesize, MD4Hash(block_hashes).hexdigest()
 
 
@@ -313,6 +364,7 @@ class P115Client:
     |     21 | P3      | linux      | 115生活(Linux端)       |
     |     22 | R1      | wechatmini | 115生活(微信小程序)    |
     |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+    |     24 | S1      | harmony    | 115(Harmony端)         |
     """
     def __init__(
         self, 
@@ -853,7 +905,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Self | Coroutine[Any, Any, Self]:
         """扫码二维码登录，如果已登录则忽略
-        app 至少有 23 个可用值，目前找出 13 个：
+        app 至少有 24 个可用值，目前找出 14 个：
             - web
             - ios
             - 115ios
@@ -867,6 +919,7 @@ class P115Client:
             - linux
             - wechatmini
             - alipaymini
+            - harmony
         还有几个备选（暂不可用）：
             - bios
             - bandroid
@@ -901,6 +954,7 @@ class P115Client:
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
         """
         def gen_step():
             status = yield partial(
@@ -951,7 +1005,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """扫码二维码登录，获取响应（如果需要更新此 client 的 cookies，请直接用 login 方法）
-        app 至少有 23 个可用值，目前找出 13 个：
+        app 至少有 24 个可用值，目前找出 14 个：
             - web
             - ios
             - 115ios
@@ -965,6 +1019,7 @@ class P115Client:
             - linux
             - wechatmini
             - alipaymini
+            - harmony
         还有几个备选（暂不可用）：
             - bios
             - bandroid
@@ -999,6 +1054,7 @@ class P115Client:
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
         """
         def gen_step():
             resp = yield cls.login_qrcode_token(
@@ -1109,6 +1165,7 @@ class P115Client:
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
         """
         def gen_step():
             nonlocal app
@@ -1502,6 +1559,7 @@ class P115Client:
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
         """
         if app is None:
             app = self.login_app()
@@ -1575,6 +1633,7 @@ class P115Client:
         |     21 | P3      | linux      | 115生活(Linux端)       |
         |     22 | R1      | wechatmini | 115生活(微信小程序)    |
         |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
+        |     24 | S1      | harmony    | 115(Harmony端)         |
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/mange"
         if payload is None:
@@ -2245,19 +2304,20 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取文件夹的中的文件列表和基本信息（指定 star=1, suffix, type 中任一，则默认 cur=0，可遍历搜索所在目录树）
+        """获取文件夹的中的文件列表和基本信息（指定 1) cid=0 且 star=1, 2) suffix, 3) type 中任一，则默认 cur=0，可遍历搜索所在目录树）
         GET https://webapi.115.com/files
         payload:
             - cid: int | str = 0 # 文件夹 id
             - limit: int = 32    # 一页大小，意思就是 page_size
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
-            - aid: int | str = 1
+            - aid: int | str = 1 # area_id，不知道的话，设置为 1
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
-            - count_folders: 0 | 1 = 1
+            - count_folders: 0 | 1 = 1 # 统计文件数和文件夹数
             - cur: 0 | 1 = <default> # 是否只搜索当前目录
-            - custom_order: 0 | 1 = <default>
+            - custom_order: 0 | 1 = <default> # 启用自定义排序，如果指定了 "asc", "fc_mix", "o" 其一，则此参数要设置为 1 （我实现了自动设置）
+            - date: str = <default> # 筛选日期
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
@@ -2274,7 +2334,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
             - r_all: 0 | 1 = <default>
             - record_open_time: 0 | 1 = 1 # 是否要记录文件夹的打开时间
             - scid: int | str = <default>
@@ -2347,12 +2407,13 @@ class P115Client:
             - limit: int = 32    # 一页大小，意思就是 page_size
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
-            - aid: int | str = 1
+            - aid: int | str = 1 # area_id，不知道的话，设置为 1
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
-            - count_folders: 0 | 1 = 1
+            - count_folders: 0 | 1 = 1 # 统计文件数和文件夹数
             - cur: 0 | 1 = <default> # 是否只搜索当前目录
-            - custom_order: 0 | 1 = <default>
+            - custom_order: 0 | 1 = <default> # 启用自定义排序，如果指定了 "asc", "fc_mix", "o" 其一，则此参数要设置为 1 （我实现了自动设置）
+            - date: str = <default> # 筛选日期
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
@@ -2369,7 +2430,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
             - r_all: 0 | 1 = <default>
             - record_open_time: 0 | 1 = 1 # 是否要记录文件夹的打开时间
             - scid: int | str = <default>
@@ -2442,12 +2503,13 @@ class P115Client:
             - limit: int = 32    # 一页大小，意思就是 page_size
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
-            - aid: int | str = 1
+            - aid: int | str = 1 # area_id，不知道的话，设置为 1
             - asc: 0 | 1 = <default> # 是否升序排列
             - code: int | str = <default>
-            - count_folders: 0 | 1 = 1
+            - count_folders: 0 | 1 = 1 # 统计文件数和文件夹数
             - cur: 0 | 1 = <default> # 是否只搜索当前目录
-            - custom_order: 0 | 1 = <default>
+            - custom_order: 0 | 1 = <default> # 启用自定义排序，如果指定了 "asc", "fc_mix", "o" 其一，则此参数要设置为 1 （我实现了自动设置）
+            - date: str = <default> # 筛选日期
             - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
             - fields: str = <default>
             - format: str = "json"
@@ -2464,7 +2526,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
             - r_all: 0 | 1 = <default>
             - record_open_time: 0 | 1 = 1 # 是否要记录文件夹的打开时间
             - scid: int | str = <default>
@@ -2607,7 +2669,7 @@ class P115Client:
             - limit: int = 32    # 一页大小，建议控制在 <= 9000，不然会报错
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
-            - aid: int | str = 1
+            - aid: int | str = 1 # area_id，不知道的话，设置为 1
             - asc: 0 | 1 = <default> # 是否升序排列
             - cur: 0 | 1 = <default> # 只罗列当前文件夹
             - o: str = <default>
@@ -2617,7 +2679,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
         """
         api = "https://proapi.115.com/android/files/imglist"
         if isinstance(payload, (int, str)):
@@ -3087,7 +3149,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
             - file_id: int | str = 0 # 目录 id
             - user_asc: 0 | 1 = <default> # 是否升序排列
             - fc_mix: 0 | 1 = <default>   # 是否目录和文件混合，如果为 0 则目录在前
@@ -3541,7 +3603,7 @@ class P115Client:
         """搜索文件或文件夹（提示：好像最多只能罗列前 10,000 条数据，也就是 limit + offset <= 10_000）
         GET https://webapi.115.com/files/search
         payload:
-            - aid: int | str = 1
+            - aid: int | str = 1 # area_id，不知道的话，设置为 1
             - asc: 0 | 1 = <default> # 是否升序排列
             - cid: int | str = 0 # 文件夹 id
             - count_folders: 0 | 1 = <default>
@@ -3557,7 +3619,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
             - offset: int = 0  # 索引偏移，索引从 0 开始计算
             - pick_code: str = <default>
             - search_value: str = <default>
@@ -4443,7 +4505,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
             - ignore_warn: 0 | 1 = 1 # 忽略信息提示，传 1 就行了
             - user_id: int | str = <default>
         """
@@ -4608,7 +4670,7 @@ class P115Client:
                 # - 文件种类："file_type"
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
+                # - 上一次打开时间："user_otime"
         """
         api = "https://webapi.115.com/share/snap"
         payload = {"cid": 0, "limit": 32, "offset": 0, **payload}
@@ -8989,6 +9051,122 @@ class P115Client:
             return f"ed2k://|file|{(name or file.name).translate(trantab)}|{length}|{ed2k}|/"
 
     @overload
+    def hash(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] = "md5", 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> tuple[int, HashObj | T]:
+        ...
+    @overload
+    def hash(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, tuple[int, HashObj | T]]:
+        ...
+    def hash(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> tuple[int, HashObj | T] | Coroutine[Any, Any, tuple[int, HashObj | T]]:
+        digest = convert_digest(digest)
+        if async_:
+            async def request():
+                nonlocal stop
+                async with self.open(url, start=start, headers=headers, async_=True) as file: # type: ignore
+                    if stop is None:
+                        return await file_digest_async(file, digest)
+                    else:
+                        if stop < 0:
+                            stop += file.length
+                        return await file_digest_async(file, digest, stop=max(0, cast(int, stop)-start))
+            return request()
+        else:
+            with self.open(url, start=start, headers=headers) as file:
+                if stop is None:
+                    return file_digest(file, digest) # type: ignore
+                else:
+                    if stop < 0:
+                        stop = stop + file.length
+                    return file_digest(file, digest, stop=max(0, stop-start)) # type: ignore
+
+    @overload
+    def hashes(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] = "md5", 
+        *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]], 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        async_: Literal[False] = False, 
+    ) -> tuple[int, list[HashObj | T]]:
+        ...
+    @overload
+    def hashes(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]], 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, tuple[int, list[HashObj | T]]]:
+        ...
+    def hashes(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]], 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        async_: Literal[False, True] = False, 
+    ) -> tuple[int, list[HashObj | T]] | Coroutine[Any, Any, tuple[int, list[HashObj | T]]]:
+        digests = (convert_digest(digest), *map(convert_digest, digests))
+        if async_:
+            async def request():
+                nonlocal stop
+                async with self.open(url, start=start, headers=headers, async_=True) as file: # type: ignore
+                    if stop is None:
+                        return await file_mdigest_async(file, *digests)
+                    else:
+                        if stop < 0:
+                            stop += file.length
+                        return await file_mdigest_async(file *digests, stop=max(0, stop-start)) # type: ignore
+            return request()
+        else:
+            with self.open(url, start=start, headers=headers) as file:
+                if stop is None:
+                    return file_mdigest(file, *digests) # type: ignore
+                else:
+                    if stop < 0:
+                        stop = stop + file.length
+                    return file_mdigest(file, *digests, stop=max(0, stop-start)) # type: ignore
+
+    @overload
     def read_bytes(
         self, 
         /, 
@@ -9179,10 +9357,27 @@ class P115Client:
         """
         return P115FileSystem(self)
 
-    def get_fs(self, /, *args, **kwargs) -> P115FileSystem:
+    def get_fs(
+        self, 
+        /, 
+        password: str = "", 
+        cache_id_to_readdir: bool | int = False, 
+        cache_path_to_id: bool | int = False, 
+        refresh: bool = True, 
+        request: None | Callable = None, 
+        async_request: None | Callable = None, 
+    ) -> P115FileSystem:
         """新建你的网盘的文件列表的封装对象
         """
-        return P115FileSystem(self, *args, **kwargs)
+        return P115FileSystem(
+            self, 
+            password=password, 
+            cache_id_to_readdir=cache_id_to_readdir, 
+            cache_path_to_id=cache_path_to_id, 
+            refresh=refresh, 
+            request=request, 
+            async_request=async_request, 
+        )
 
     def get_share_fs(self, share_link: str, /, *args, **kwargs) -> P115ShareFileSystem:
         """新建一个分享链接的文件列表的封装对象
