@@ -376,9 +376,7 @@ class DavPathBase:
 
     @cached_property
     def mtime(self, /) -> float:
-        if (mtime := self.attr.get("mtime")) is None:
-            mtime = self.attr["etime"].timestamp()
-        return mtime
+        return self.attr["mtime"]
 
     def get_creation_date(self, /) -> float:
         return self.ctime
@@ -1134,7 +1132,7 @@ def query(path: str):
             <a href="{{ url }}&m3u8=true&password={{ password }}&definition=4">UD(高清)</a>
         </td>
         {%- endif %}
-        <td>{{ attr["etime"] }}</td>
+        <td>{{ attr["mtime"] }}</td>
       </tr>
       {%- endfor %}
     </tbody>

@@ -9097,7 +9097,7 @@ class P115Client:
                     else:
                         if stop < 0:
                             stop += file.length
-                        return await file_digest_async(file, digest, stop=max(0, cast(int, stop)-start))
+                        return await file_digest_async(file, digest, stop=max(0, stop-start)) # type: ignore
             return request()
         else:
             with self.open(url, start=start, headers=headers) as file:
