@@ -5,27 +5,32 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "relogin_wrap_maker", "login_scan_cookie", "crack_captcha", "remove_receive_dir", 
     "wish_make", "wish_answer", "wish_list", "wish_aid_list", "wish_adopt", 
-    "parse_export_dir_as_dict_iter", "parse_export_dir_as_path_iter", 
-    "export_dir", "export_dir_parse_iter", 
+    "parse_export_dir_as_dict_iter", "parse_export_dir_as_path_iter", "export_dir", 
+    "export_dir_parse_iter", "iterdir", "traverse_files", "iterate_over_files", 
+    "traverse_stared_dirs", "dict_traverse_files", 
 ]
 
 from asyncio import Lock as AsyncLock
-from collections import defaultdict, ChainMap
-from collections.abc import Callable, Iterable, Iterator
+from collections import defaultdict, deque, ChainMap
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Set
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from inspect import isawaitable
 from io import TextIOBase, TextIOWrapper
+from itertools import takewhile
 from os import PathLike
 from re import compile as re_compile
 from sys import _getframe
 from threading import Lock
 from time import sleep, time
 from typing import cast, Any, IO
+from warnings import warn
 from weakref import WeakKeyDictionary
 
 from concurrenttools import thread_pool_batch
-from httpx import HTTPStatusError
+from dictattr import AttrDict
+from httpx import HTTPStatusError, ReadTimeout
 from p115.component.client import check_response, ExportDirStatus, P115Client
+from p115.component.fs import normalize_attr
 from posixpatht import escape
 
 
@@ -534,3 +539,282 @@ def export_dir_parse_iter(
     finally:
         client.fs_delete(result["file_id"])
 
+
+def iterdir(
+    client: str | P115Client, 
+    cid: int = 0, 
+    page_size: int = 10_000, 
+) -> Iterator[AttrDict]:
+    """迭代目录，获取文件信息
+
+    :param client: 115 客户端或 cookies
+    :param cid: 目录 id
+    :param page_size: 分页大小
+
+    :return: 迭代器，返回此目录内的文件信息（文件和目录）
+    """
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if page_size <= 0:
+        page_size = 10_000
+    offset = 0
+    payload = {"asc": 1, "cid": cid, "limit": page_size, "o": "user_ptime", "offset": offset}
+    count = 0
+    while True:
+        resp = check_response(client.fs_files(payload))
+        if int(resp["path"][-1]["cid"]) != cid:
+            raise FileNotFoundError(2, cid)
+        if count == 0:
+            count = resp["count"]
+        elif count != resp["count"]:
+            raise RuntimeError(f"{cid} detected count changes during iteration")
+        yield from map(normalize_attr, resp["data"])
+        offset += len(resp["data"])
+        if offset >= count:
+            break
+        payload["offset"] = offset
+
+
+def traverse_files(
+    client: str | P115Client, 
+    cid: int = 0, 
+    page_size: int = 10_000, 
+) -> Iterator[AttrDict]:
+    """遍历目录树，获取文件信息
+
+    :param client: 115 客户端或 cookies
+    :param cid: 目录 id
+    :param page_size: 分页大小
+
+    :return: 迭代器，返回此目录内的（仅文件）文件信息
+    """
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if page_size <= 0:
+        page_size = 10_000
+    offset = 0
+    payload = {"asc": 1, "cid": cid, "cur": 0, "limit": page_size, "o": "user_ptime", "offset": offset, "type": 99}
+    count = 0
+    while True:
+        resp = check_response(client.fs_files(payload))
+        if int(resp["path"][-1]["cid"]) != cid:
+            raise FileNotFoundError(2, cid)
+        if count == 0:
+            count = resp["count"]
+        elif count != resp["count"]:
+            warn(f"{cid} detected count changes during traversing: {count} => {resp['count']}")
+            count = resp["count"]
+        if offset != resp["offset"]:
+            break
+        yield from map(normalize_attr, resp["data"])
+        offset += len(resp["data"])
+        if offset >= count:
+            break
+        payload["offset"] = offset
+
+
+def iterate_over_files(
+    client: str | P115Client, 
+    cid: int = 0, 
+    page_size: int = 10_000, 
+) -> Iterator[AttrDict]:
+    """遍历目录树，获取文件信息（会根据统计信息，分解任务）
+
+    :param client: 115 客户端或 cookies
+    :param cid: 目录 id
+    :param page_size: 分页大小
+
+    :return: 迭代器，返回此目录内的（仅文件）文件信息
+    """
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if page_size <= 0:
+        page_size = 10_000
+    dq: deque[int] = deque()
+    get, put = dq.pop, dq.appendleft
+    put(cid)
+    while dq:
+        if cid := get():
+            try:
+                stats = client.fs_statistic(cid, timeout=5)
+            except ReadTimeout:
+                file_count = float("inf")
+            else:
+                if not stats:
+                    warn(f"{cid} does not exist")
+                    continue
+                file_count = int(stats["count"])
+            if file_count < 150_000:
+                yield from traverse_files(client, cid, page_size)
+                continue
+        for attr in iterdir(client, cid, page_size):
+            if attr["is_directory"]:
+                put(attr["id"])
+            else:
+                yield attr
+
+
+def traverse_stared_dirs(
+    client: str | P115Client, 
+    page_size: int = 10_000, 
+    find_ids: None | Iterable[int] = None, 
+) -> Iterator[AttrDict]:
+    """遍历以迭代获得所有被打上星标的目录信息
+
+    :param client: 115 客户端或 cookies
+    :param page_size: 分页大小
+    :param find_ids: 需要寻找的 id 集合。如果为 None 或空，则拉取所有打星标的文件夹；否则当找到所有这些 id 时就立即终止，
+                     但如果从网上全部拉取完，还有一些 id 没被看到，则报错 RuntimeError
+
+    :return: 迭代器，被打上星标的目录信息
+    """
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if page_size <= 0:
+        page_size = 10_000
+    offset = 0
+    payload = {
+        "asc": 1, "cid": 0, "count_folders": 1, "cur": 0, "fc_mix": 0, "limit": page_size, 
+        "o": "user_ptime", "offset": offset, "show_dir": 1, "star": 1, 
+    }
+    if find_ids:
+        if not isinstance(find_ids, (Mapping, Set, Sequence)):
+            find_ids = tuple(find_ids)
+        need_to_find = set(find_ids)
+    count = 0
+    while True:
+        resp = check_response(client.fs_files(payload))
+        if count == 0:
+            count = resp.get("folder_count", 0)
+        elif count != resp.get("folder_count", 0):
+            warn(f"detected count changes during traversing stared dirs: {count} => {resp.get('folder_count', 0)}")
+            count = resp.get("folder_count", 0)
+        if not count:
+            break
+        if offset != resp["offset"]:
+            break
+        for attr in map(normalize_attr, takewhile(lambda info: "fid" not in info, resp["data"])):
+            yield attr
+            if find_ids and attr["id"] in need_to_find:
+                need_to_find.remove(attr["id"])
+                if not need_to_find:
+                    return
+        offset += len(resp["data"])
+        if offset >= count:
+            break
+        payload["offset"] = offset
+    if find_ids and need_to_find:
+        raise RuntimeError(f"unable to find these ids: {need_to_find!r}")
+
+
+def dict_traverse_files(
+    client: str | P115Client, 
+    cid: int = 0, 
+    page_size: int = 10_000, 
+    with_path: bool = False, 
+    escape: None | Callable[[str], str] = escape, 
+    type=99, 
+    suffix="", 
+    **payload, 
+) -> dict[int, AttrDict]:
+    """获取一个目录内的所有文件信息
+
+    :param client: 115 客户端或 cookies
+    :param cid: 待被遍历的目录 id，默认为根目录
+    :param page_size: 分页大小
+    :param with_path: 文件信息中是否要包含 路径
+    :param escape: 对文件名进行转义的函数。如果为 None，则不处理；否则，这个函数用来对文件名中某些符号进行转义，例如 "/" 等
+    :param payload: 一些其它的请求参数，只介绍 2 个
+        1. type: 文件类型
+            - 全部: 0 # 注意：为 0 时不能遍历目录树
+            - 文档: 1
+            - 图片: 2
+            - 音频: 3
+            - 视频: 4
+            - 压缩包: 5
+            - 应用: 6
+            - 书籍: 7
+            - 仅文件: 99
+        2. suffix: 后缀名
+
+    :return: 字典，key 是 id，value 是 文件信息
+    """
+    if isinstance(client, str):
+        client = P115Client(client, check_for_relogin=True)
+    if page_size <= 0:
+        page_size = 10_000
+    offset = 0
+    payload.update(cid=cid, limit=page_size, offset=offset, suffix=suffix, type=type)
+    payload.setdefault("cur", 0)
+    id_to_attr: dict[int, AttrDict] = {}
+    count = 0
+    while True:
+        resp = check_response(client.fs_files(payload))
+        if int(resp["path"][-1]["cid"]) != cid:
+            raise FileNotFoundError(2, cid)
+        if count == 0:
+            count = resp["count"]
+        elif count != resp["count"]:
+            warn(f"{cid} detected count changes during traversing: {count} => {resp['count']}")
+            count = resp["count"]
+        if offset != resp["offset"]:
+            break
+        id_to_attr.update((attr["id"], attr) for attr in map(normalize_attr, resp["data"]))
+        offset += len(resp["data"])
+        if offset >= count:
+            break
+        payload["offset"] = offset
+    if with_path:
+        if all(a["parent_id"] == cid for a in id_to_attr.values()):
+            if cid == 0:
+                dirname = "/"
+            elif escape is None:
+                dirname = "/".join(p["name"] for p in resp["path"]) + "/"
+            else:
+                dirname = "/".join(escape(p["name"]) for p in resp["path"]) + "/"
+            for attr in id_to_attr.values():
+                name = attr["name"]
+                if escape is not None:
+                    name = escape(name)
+                attr["path"] = dirname + name
+        else:
+            def get_path(attr, /) -> str:
+                pid = attr["parent_id"]
+                name = attr["name"]
+                if escape is not None:
+                    name = escape(name)
+                if pid == 0:
+                    return "/" + name
+                else:
+                    pattr = id_to_dir[pid]
+                    if "path" in pattr:
+                        dirname = pattr["path"]
+                    else:
+                        dirname = pattr["path"] = get_path(pattr)
+                    return dirname + "/" + name
+            id_to_dir: dict[int, dict] = {}
+            for p in resp["path"][1:]:
+                category_id = int(p["cid"])
+                id_to_dir[category_id] = {
+                    "id": category_id, 
+                    "parent_id": int(p["pid"]), 
+                    "name": p["name"], 
+                }
+            for attr in id_to_attr.values():
+                if attr["is_directory"]:
+                    id_to_dir[category_id] = attr
+            for attr in traverse_stared_dirs(client, page_size):
+                id_to_dir[attr["id"]] = attr
+            pids = {pid for pid in (a["parent_id"] for a in id_to_attr.values()) if pid != cid}
+            while pids:
+                find_ids = pids - id_to_dir.keys()
+                if find_ids:
+                    client.fs_star_set(",".join(map(str, find_ids)))
+                    for attr in traverse_stared_dirs(client, page_size, find_ids):
+                        id_to_dir[attr["id"]] = attr
+                pids = {pid for pid in (id_to_dir[id]["parent_id"] for id in pids) if pid != cid}
+            for attr in id_to_attr.values():
+                attr["path"] = get_path(attr)
+    return id_to_attr
+
+# TODO: 为 imglist 实现 traverse_imglist 和 dict_traverse_imglist 函数

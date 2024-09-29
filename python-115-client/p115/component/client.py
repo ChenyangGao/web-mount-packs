@@ -2689,6 +2689,41 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
+    def fs_files_imagedata(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_imagedata(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_files_imagedata(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取图片的分辨率等信息
+        POST https://imgjump.115.com/getimgdata_url
+        payload:
+            - imgurl: str # 图片的访问链接，以 "http://thumb.115.com" 开头
+        """
+        api = "https://imgjump.115.com/getimgdata_url"
+        if isinstance(payload, str):
+            payload = {"imgurl": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
     def fs_files_shasearch(
         self, 
         payload: str | dict, 
@@ -4079,7 +4114,8 @@ class P115Client:
         self, 
         file_id: int | str, 
         /, 
-        star: bool,
+        star: bool = True, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4089,7 +4125,8 @@ class P115Client:
         self, 
         file_id: int | str, 
         /, 
-        star: bool,
+        star: bool = True, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4098,7 +4135,8 @@ class P115Client:
         self, 
         file_id: int | str, 
         /, 
-        star: bool = True,
+        star: bool = True, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
