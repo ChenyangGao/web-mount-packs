@@ -28,7 +28,7 @@ from os import (
     path as ospath, DirEntry, PathLike, 
 )
 from pathlib import Path
-from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split as splitpath, splitext
+from posixpath import basename, commonpath, dirname, join as joinpath, normpath, relpath, split as splitpath, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError, COPY_BUFSIZE # type: ignore
 from stat import S_IFDIR, S_IFREG
@@ -1010,14 +1010,7 @@ class AlistPath(Mapping, PathLike[str]):
             other = fspath(other)
             if not other.startswith("/"):
                 other = self.fs.abspath(other)
-        path = self["path"]
-        if other == "/":
-            return path[1:]
-        elif path == other:
-            return ""
-        elif path.startswith(other + "/"):
-            return path[len(other)+1:]
-        raise ValueError(f"{path!r} is not a subpath of {other!r}")
+        return relpath(self.path, other)
 
     @cached_property
     def relatives(self, /) -> tuple[str]:

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.9.7.9.1.1"
+version = "0.0.9.7.9.2"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -37,7 +37,7 @@ lz4 = "*"
 magnet2torrent = "*"
 multidict = "*"
 orjson = "*"
-posixpatht = ">=0.0.2.1"
+posixpatht = ">=0.0.3"
 pycryptodome = "*"
 python-asynctools = ">=0.0.4"
 python-concurrenttools = ">=0.0.3"

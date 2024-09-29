@@ -43,7 +43,7 @@ from glob_pattern import translate_iter
 from hashtools import HashObj
 from httpfile import HTTPFileReader
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
-from posixpatht import basename, commonpath, dirname, escape, joins, normpath, splits, unescape
+from posixpatht import basename, commonpath, dirname, escape, joins, normpath, relpath, splits, unescape
 
 from .client import check_response, P115Client, P115Url
 
@@ -995,7 +995,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
 
     @property
     def parts(self, /) -> tuple[str, ...]:
-        return ("/", *splits(self.path, do_unescape=False)[0][1:])
+        return ("/", *splits(self.path, unescape=None)[0][1:])
 
     @property
     def path(self, /) -> str:
@@ -1132,22 +1132,12 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         )
 
     def relative_to(self, other: None | str | Self = None, /) -> str:
+        dirname = str(self.fs.path)
         if other is None:
-            other = str(self.fs.path)
-        elif type(self) is type(other):
-            other = cast(Self, other)
+            other = dirname
+        elif not isinstance(other, str):
             other = other.path
-        elif not cast(str, other).startswith("/"):
-            other = self.fs.abspath(other)
-        other = cast(str, other)
-        path = self.path
-        if other == "/":
-            return path[1:]
-        elif path == other:
-            return ""
-        elif path.startswith(other+"/"):
-            return path[len(other)+1:]
-        raise ValueError(f"{path!r} is not a subpath of {other!r}")
+        return relpath(self.path, other, dirname)
 
     @cached_property
     def relatives(self, /) -> tuple[str]:

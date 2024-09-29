@@ -28,7 +28,7 @@ from inspect import isawaitable
 from io import BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
 from mimetypes import guess_type
 from os import fsdecode, fspath, makedirs, scandir, stat_result, path as ospath, PathLike
-from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split as splitpath, splitext
+from posixpath import basename, commonpath, dirname, join as joinpath, normpath, relpath, split as splitpath, splitext
 from re import compile as re_compile, escape as re_escape
 from shutil import copyfileobj, SameFileError
 from stat import S_IFDIR, S_IFREG
@@ -555,14 +555,7 @@ class CloudDrivePath(Mapping, PathLike[str]):
             other = other.path
         elif not other.startswith("/"):
             other = self.fs.abspath(other)
-        path = self.path
-        if other == "/":
-            return path[1:]
-        elif path == other:
-            return ""
-        elif path.startswith(other + "/"):
-            return path[len(other)+1:]
-        raise ValueError(f"{path!r} is not a subpath of {other!r}")
+        return relpath(self.path, other)
 
     @cached_property
     def relatives(self, /) -> tuple[str]:

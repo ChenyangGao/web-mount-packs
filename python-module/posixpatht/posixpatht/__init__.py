@@ -2,38 +2,43 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
-    "altsep", "curdir", "extsep", "pardir", "pathsep", "sep", "escape", "unescape", 
-    "abspath", "basename", "commonpath", "commonpatht", "commonprefix", "dirname", 
-    "isabs", "join", "joinpath", "joins", "normcase", "normpath", "normpatht", 
-    "split", "splitdrive", "splitext", "splits", "realpath", "relpath", 
-    "path_is_dir_form", 
+    "altsep", "curdir", "extsep", "pardir", "pathsep", "sep", "abspath", "basename", "commonpath", 
+    "commonpatht", "commonprefix", "dirname", "isabs", "iter_split", "join", "joinpath", "joins", 
+    "normcase", "normpath", "normpatht", "split", "splitdrive", "splitext", "splits", "realpath", 
+    "relpath", "escape", "unescape", "path_is_dir_form", 
 ]
 
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from posixpath import altsep, curdir, extsep, pardir, pathsep, sep, commonprefix, normcase, splitdrive
 from re import compile as re_compile, Match
-from typing import cast, Iterable, Sequence
+from typing import cast, Final
 
 
-CRE_DIR_END_search = re_compile(r"(?P<bss>\\*)/\.{0,2}$").search
-CRE_PART_match = re_compile(r"[^\\/]*(?:\\(?s:.)[^\\/]*)*/").match
-CRE_PART = re_compile(r"[^\\/]*(?:\\(?s:.)[^\\/]*)*$")
-
-supports_unicode_filenames = True
+CRE_DIR_END_search: Final = re_compile(r"(?P<bss>\\*)/\.{0,2}$").search
+CRE_PART_finditer: Final = re_compile(r"[^\\/]*(?:\\(?s:.)[^\\/]*)*").finditer
 
 
-def path_is_dir_form(path: str) -> bool:
+def path_is_dir_form(
+    path: str, 
+    /, 
+    slash_escaped: bool = True, 
+) -> bool:
     if path in ("/", "", ".", ".."):
         return True
-    match = CRE_DIR_END_search(path)
-    if match is None:
-        return False
-    return len(match["bss"]) % 2 == 0
+    if slash_escaped:
+        match = CRE_DIR_END_search(path)
+        return match is not None and len(match["bss"]) % 2 == 0
+    else:
+        return path.endswith(("/", "/.", "/.."))
 
 
 def escape(name: str, /) -> str:
-    return "\\" + name if name in (".", "..") else name.replace("\\", r"\\").replace("/", r"\/")
+    if name in (".", ".."):
+        return "\\" + name
+    else:
+        return name.replace("\\", r"\\").replace("/", r"\/")
 
 
 def unescape(name: str, /) -> str:
@@ -42,61 +47,154 @@ def unescape(name: str, /) -> str:
     return name.replace(r"\/", "/").replace(r"\\", "\\")
 
 
-def abspath(path: str, dirname: str = "/") -> str:
+def abspath(
+    path: str, 
+    /, 
+    dirname: str = "/", 
+) -> str:
     return joinpath(dirname, path)
 
 
-def basename(path: str, /) -> str:
-    return split(path)[1]
+def basename(
+    path: str, 
+    /, 
+    unescape: None | Callable[[str], str] = unescape, 
+    parse_dots: bool = True, 
+    slash_escaped: bool = True, 
+) -> str:
+    return split(
+        path, 
+        unescape=unescape, 
+        parse_dots=parse_dots, 
+        slash_escaped=slash_escaped, 
+    )[1]
 
 
-def commonpath(pathit: Iterable[str], /) -> str:
-    ls = tuple(map(splits, pathit))
-    if not ls:
-        return ""
-    m = min(t[1] for t in ls)
-    M = max(t[1] for t in ls)
-    if m:
-        prefix = "/".join(("..",) * m)
+def commonpath(
+    pathit: Iterable[str], 
+    /, 
+    slash_escaped: bool = True, 
+) -> str:
+    if isinstance(pathit, Sequence):
+        paths = pathit
     else:
-        prefix = ""
-    if m != M:
+        paths = tuple(pathit)
+    prefix = commonprefix(paths)
+    if prefix in ("", "/") or prefix.endswith("/") and path_is_dir_form(prefix, slash_escaped):
         return prefix
-    cm = commonpatht((t[0] for t in ls))
-    if not cm:
+    prefix_with_slash = prefix + "/"
+    if all(p == prefix or p.startswith(prefix_with_slash) for p in paths):
         return prefix
-    path = joins(cm)
-    if prefix:
-        path = prefix + "/" + path
-    return path
+    return dirname(prefix, parse_dots=False, slash_escaped=slash_escaped)
 
 
-def commonpatht(pathtit: Iterable[Sequence[str]], /) -> list[str]:
-    ls = []
-    for n1, n2 in zip(*pathtit):
-        if n1 != n2:
+def commonpatht(
+    pathtit: Iterable[Sequence[str]], 
+    /, 
+) -> list[str]:
+    parts: list[str] = []
+    add_part = parts.append
+    for part, *t_part in zip(*pathtit):
+        if any(p != part for p in t_part):
             break
-        ls.append(n1)
-    return ls
+        add_part(part)
+    return parts
 
 
-def dirname(path: str, /) -> str:
-    return split(path)[0]
+def dirname(
+    path: str, 
+    /, 
+    parse_dots: bool = True, 
+    slash_escaped: bool = True, 
+) -> str:
+    return split(
+        path, 
+        unescape=None, 
+        parse_dots=parse_dots, 
+        slash_escaped=slash_escaped, 
+    )[0]
 
 
-def isabs(path: str) -> bool:
+def isabs(path: str, /) -> bool:
     return path.startswith("/")
 
 
-def join(path: str, /, *parts: str) -> str:
+def iter_split(
+    path: str, 
+    /, 
+    unescape: None | Callable[[str], str] = unescape, 
+    parse_dots: bool = True, 
+    slash_escaped: bool = True, 
+) -> Iterator[tuple[str, str]]:
+    skip = 0
+    if slash_escaped:
+        matches = tuple(CRE_PART_finditer(path))
+        for m in reversed(matches):
+            p = m[0]
+            if not p:
+                continue
+            if parse_dots:
+                if p == ".":
+                    continue
+                elif p == "..":
+                    skip += 1
+                    continue
+            if skip:
+                skip -= 1
+                continue
+            if unescape is None:
+                name = p
+            else:
+                name = unescape(p)
+            index = m.start()
+            yield path[:index - 1 if index > 1 else index], name
+    else:
+        rfind = path.rfind
+        stop = len(path)
+        while (index := rfind("/", 0, stop)) > -1:
+            p = path[index+1:stop]
+            if not p:
+                continue
+            if parse_dots:
+                if p == ".":
+                    continue
+                elif p == "..":
+                    skip += 1
+                    continue
+            if skip:
+                skip -= 1
+                continue
+            if unescape is None:
+                name = p
+            else:
+                name = unescape(p)
+            yield path[:index or 1], name
+            stop = index
+
+
+def join(
+    path: str, 
+    /, 
+    *parts: str, 
+    escape: None | Callable[[str], str] = escape, 
+) -> str:
     if not parts:
         return path
     if not path.endswith("/"):
         path += "/"
-    return path + "/".join(map(escape, parts))
+    if escape is None:
+        parts_: Iterable[str] = parts
+    else:
+        parts_ = map(escape, parts)
+    return path + "/".join(p for p in parts_ if p)
 
 
-def joinpath(dirname: str, *paths: str) -> str:
+def joinpath(
+    dirname: str, 
+    /, 
+    *paths: str, 
+    slash_escaped: bool = True, 
+) -> str:
     if not paths:
         return dirname
     path = ""
@@ -108,7 +206,7 @@ def joinpath(dirname: str, *paths: str) -> str:
         elif dirname == "/":
             return dirname + path
         else:
-            if not dirname.endswith("/"):
+            if not (dirname.endswith("/") and path_is_dir_form(dirname, slash_escaped)):
                 dirname += "/"
             path = dirname + path
         if path.startswith("/"):
@@ -116,13 +214,22 @@ def joinpath(dirname: str, *paths: str) -> str:
     return path
 
 
-def joins(patht: Sequence[str], parents: int = 0, /) -> str:
-    assert parents >= 0
+def joins(
+    patht: Sequence[str], 
+    /, 
+    parents: int = 0, 
+    escape: None | Callable[[str], str] = escape, 
+) -> str:
+    if parents < 0:
+        parents = 0
     if not patht:
         if parents:
             return "/".join(("..",) * parents)
         return ""
-    path = "/".join(escape(p) for p in patht if p)
+    if escape is None:
+        path = "/".join(p for p in patht if p)
+    else:
+        path = "/".join(escape(p) for p in patht if p)
     if not patht[0]:
         path = "/" + path
     elif parents:
@@ -130,106 +237,101 @@ def joins(patht: Sequence[str], parents: int = 0, /) -> str:
     return path
 
 
-def normpath(path: str, /) -> str:
-    return joins(*splits(path))
+def normpath(
+    path: str, 
+    /, 
+    parse_dots: bool = True, 
+    slash_escaped: bool = True, 
+) -> str:
+    parts, parents = splits(
+        path, 
+        unescape=None, 
+        parse_dots=parse_dots, 
+        slash_escaped=slash_escaped, 
+    )
+    return joins(parts, parents, escape=None)
 
 
-def normpatht(patht: Sequence[str], /) -> list[str]:
+def normpatht(
+    patht: Sequence[str], 
+    /, 
+) -> list[str]:
     return [patht[0], *filter(None, patht)]
 
 
-def split(path: str, /) -> tuple[str, str]:
-    stop = len(path)
-    if stop <= 1:
-        if path == "/":
-            return "/", ""
-        return "", path
-    parents = 0
-    while True:
-        match = cast(Match, CRE_PART.search(path, 0, stop))
-        idx = match.start()
-        value = path[idx:stop]
-        if value in ("", "."):
-            pass
-        elif value == "..":
-            parents += 1
-        elif parents:
-            parents -= 1
-        else:
-            value = unescape(value)
-            if idx == 0:
-                return "/".join([".."] * parents), value
-            elif idx == 1:
-                return path[:idx], value
-            else:
-                return path[:idx-1], value
-        if idx == 0:
-            if path.startswith("/"):
-                return "/", ""
-            else:
-                return "/".join([".."] * parents), ""
-        stop = idx - 1
+def split(
+    path: str, 
+    /, 
+    unescape: None | Callable[[str], str] = unescape, 
+    parse_dots: bool = True, 
+    slash_escaped: bool = True, 
+) -> tuple[str, str]:
+    if not path:
+        return "", ""
+    elif not path.strip("/"):
+        return "/", ""
+    return next(iter_split(
+        path, 
+        unescape=unescape, 
+        parse_dots=parse_dots, 
+        slash_escaped=slash_escaped, 
+    ))
 
 
-def splitext(path: str) -> str:
-    name = basename(path)
-    try:
-        return name[name.rindex(".", 1):]
-    except ValueError:
-        return ""
+def splitext(
+    path: str, 
+    /, 
+    slash_escaped: bool = True, 
+) -> tuple[str, str]:
+    if path_is_dir_form(path, slash_escaped):
+        return path, ""
+    if slash_escaped:
+        start = 0
+        for m in CRE_PART_finditer(path):
+            if m[0]:
+                start = m.start()
+    else:
+        start = path.rfind("/") + 1
+    if start == len(path):
+        return path, ""
+    index = path.rfind(".", start)
+    if index == -1 or not path[start:index].strip("."):
+        return path, ""
+    return path[:index], path[index:]
 
 
 def splits(
     path: str, 
     /, 
+    unescape: None | Callable[[str], str] = unescape, 
     parse_dots: bool = True, 
-    do_unescape: bool = True, 
+    slash_escaped: bool = True, 
 ) -> tuple[list[str], int]:
     parts: list[str] = []
     add_part = parts.append
-    if path.startswith("/"):
+    is_absolute = path.startswith("/")
+    if is_absolute:
         add_part("")
-        l = 1
-        is_absolute = True
+    if slash_escaped:
+        part_it = (m[0].replace(r"\/", "/") for m in CRE_PART_finditer(path) if m[0])
     else:
-        l = 0
-        is_absolute = False
+        part_it = (p for p in path.split("/") if p)
     parents = 0
-    while (m := CRE_PART_match(path, l)):
-        p = m[0][:-1]
-        if p:
-            if p == "." and parse_dots:
-                pass
-            elif p == ".." and parse_dots:
-                if is_absolute:
-                    if len(parts) > 1:
-                        parts.pop()
-                elif parts:
+    for p in part_it:
+        if p == "." and parse_dots:
+            pass
+        elif p == ".." and parse_dots:
+            if is_absolute:
+                if len(parts) > 1:
                     parts.pop()
-                else:
-                    parents += 1
-            elif do_unescape:
-                add_part(unescape(p))
+            elif parts:
+                parts.pop()
             else:
-                add_part(p)
-        l = m.end()
-    if l < len(path):
-        p = path[l:]
-        if p:
-            if p == "." and parse_dots:
-                pass
-            elif p == ".." and parse_dots:
-                if is_absolute:
-                    if len(parts) > 1:
-                        parts.pop()
-                elif parts:
-                    parts.pop()
-                else:
-                    parents += 1
-            elif do_unescape:
-                add_part(unescape(p))
-            else:
-                add_part(p)
+                parents += 1
+        elif unescape is None:
+            add_part(p)
+        else:
+            add_part(unescape(p))
     return parts, parents
 
 
@@ -238,21 +340,44 @@ realpath = abspath
 
 def relpath(
     path: str, 
+    /, 
     start: None | str = None, 
-    dirname: str = "/"
+    dirname: str = "/", 
+    slash_escaped: bool = True, 
 ) -> str:
     if not start:
         return path
-    patht, _ = splits(joinpath("/", dirname, path))
-    satrt_patht, _ = splits(joinpath("/", dirname, start))
-    len0 = len(satrt_patht)
+    patht, parents = splits(path, unescape=None, slash_escaped=slash_escaped)
+    start_patht, start_parents = splits(start, unescape=None, slash_escaped=slash_escaped)
+    dirname_patht, _ = splits("/" + dirname, unescape=None, slash_escaped=slash_escaped)
+    if path.startswith("/") ^ start.startswith("/"):
+        if path.startswith("/"):
+            start_parents = 0
+            start_patht[:0] = dirname_patht[:-parents] if parents else dirname_patht
+        else:
+            parents = 0
+            patht[:0] = dirname_patht[:-parents] if parents else dirname_patht
+    len0 = len(dirname_patht)
     len1 = len(patht)
-    i = 0
-    for i in range(1, min(len0, len1)):
-        p1, p0 = patht[i], satrt_patht[i]
-        if p1 != p0:
-            break
+    len2 = len(start_patht)
+    if parents:
+        if start_parents:
+            if parents == start_parents:
+                return "."
+            elif parents > start_parents:
+                return ".." + "/.." * (parents - start_parents - 1)
+            else:
+                return "/".join(dirname_patht[max(1, len0 + parents - start_parents):])
+        return ".." + "/.." * (len2 + parents - 1)
+    elif start_parents:
+        return "/".join(dirname_patht[max(1, len0 - start_parents):] + patht)
+    for i, (p1, p2) in enumerate(zip(patht, start_patht)):
+        if p1 != p2:
+            return "../" * (len2 - i) + "/".join(patht[i:])
+    if len1 == len2:
+        return "."
+    elif len1 < len2:
+        return ".." + "/.." * (len2 - len1 - 1)
     else:
-        i += 1
-    return join("/".join(".." for _ in range(len0-i)), *patht[i:])
+        return "/".join(patht[len2:])
 

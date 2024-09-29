@@ -214,6 +214,7 @@ from posixpath import basename, splitext
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
+from time import localtime, strftime
 from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urljoin, urlsplit
@@ -842,6 +843,7 @@ def query(path: str):
             attr["url"] += "&password=" + password
             attr["short_url"] += "&password=" + password
         attr["ancestors"] = attr["path"].ancestors
+        attr["mtime_str"] = strftime("%F %X", localtime(attr["mtime"]))
         return attr
 
     match request.args.get("method"):
@@ -1132,7 +1134,7 @@ def query(path: str):
             <a href="{{ url }}&m3u8=true&password={{ password }}&definition=4">UD(高清)</a>
         </td>
         {%- endif %}
-        <td>{{ attr["mtime"] }}</td>
+        <td>{{ attr["mtime_str"] }}</td>
       </tr>
       {%- endfor %}
     </tbody>
