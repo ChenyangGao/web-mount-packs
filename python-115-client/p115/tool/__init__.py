@@ -778,7 +778,7 @@ def iter_files(
     :param client: 115 客户端或 cookies
     :param cid: 目录 id
     :param page_size: 分页大小
-    :param suffix: 后缀名
+    :param suffix: 后缀名（优先级高于 type）
     :param type: 文件类型
         - 全部: 0
         - 文档: 1
@@ -857,7 +857,7 @@ def dict_files(
     :param client: 115 客户端或 cookies
     :param cid: 待被遍历的目录 id，默认为根目录
     :param page_size: 分页大小
-    :param suffix: 后缀名
+    :param suffix: 后缀名（优先级高于 type）
     :param type: 文件类型
         - 全部: 0
         - 文档: 1
@@ -924,7 +924,7 @@ def traverse_files(
     :param client: 115 客户端或 cookies
     :param cid: 目录 id
     :param page_size: 分页大小
-    :param suffix: 后缀名
+    :param suffix: 后缀名（优先级高于 type）
     :param type: 文件类型
         - 全部: 0
         - 文档: 1
@@ -1010,9 +1010,10 @@ def traverse_files(
                         put(attr["id"])
                     else:
                         ext = splitext(attr["name"])[1].lower()
-                        if suffix and suffix != ext:
-                            continue
-                        if 0 < type <= 7:
+                        if suffix:
+                            if suffix != ext:
+                                continue
+                        elif 0 < type <= 7:
                             class_ = attr.get("class")
                             if class_ not in CLASSES_OF_TYPES[type]:
                                 continue
@@ -1052,7 +1053,7 @@ def iter_dupfiles(
         - 如果为 True，则保留最早入组的那个文件
         - 如果为 False，则保留最晚入组的那个文件
     :param page_size: 分页大小
-    :param suffix: 后缀名
+    :param suffix: 后缀名（优先级高于 type）
     :param type: 文件类型
         - 全部: 0
         - 文档: 1
@@ -1107,7 +1108,7 @@ def dict_dupfiles(
         - 如果为 True，则保留最早入组的那个文件
         - 如果为 False，则保留最晚入组的那个文件
     :param page_size: 分页大小
-    :param suffix: 后缀名
+    :param suffix: 后缀名（优先级高于 type）
     :param type: 文件类型
         - 全部: 0
         - 文档: 1

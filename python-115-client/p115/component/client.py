@@ -2415,7 +2415,7 @@ class P115Client:
             - sys_dir: int | str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - stdir: 0 | 1 = <default>
-            - suffix: str = <default> # 后缀名
+            - suffix: str = <default> # 后缀名（优先级高于 type）
             - type: int = <default>
                 # 文件类型：
                 # - 全部: 0
@@ -2511,7 +2511,7 @@ class P115Client:
             - sys_dir: int | str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - stdir: 0 | 1 = <default>
-            - suffix: str = <default> # 后缀名
+            - suffix: str = <default> # 后缀名（优先级高于 type）
             - type: int = <default>
                 # 文件类型：
                 # - 全部: 0
@@ -2607,7 +2607,7 @@ class P115Client:
             - sys_dir: int | str = <default>
             - star: 0 | 1 = <default> # 是否星标文件
             - stdir: 0 | 1 = <default>
-            - suffix: str = <default> # 后缀名
+            - suffix: str = <default> # 后缀名（优先级高于 type）
             - type: int = <default>
                 # 文件类型：
                 # - 全部: 0
