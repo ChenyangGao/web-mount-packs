@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
     "relogin_wrap_maker", "login_scan_cookie", "crack_captcha", "remove_receive_dir", 
@@ -17,13 +19,13 @@ from collections.abc import Callable, Collection, Hashable, Iterable, Iterator
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from inspect import isawaitable
 from io import TextIOBase, TextIOWrapper
-from itertools import chain, takewhile
+from itertools import chain, islice, takewhile
 from os import PathLike
 from re import compile as re_compile
 from sys import _getframe
 from threading import Lock
 from time import sleep, time
-from typing import cast, Any, IO, TypeVar
+from typing import cast, Any, IO, NamedTuple, TypeVar
 from warnings import warn
 from weakref import WeakKeyDictionary
 
@@ -41,7 +43,12 @@ V = TypeVar("V")
 
 CAPTCHA_CRACK: Callable[[bytes], str]
 CRE_TREE_PREFIX_match = re_compile("^(?:\| )+\|-").match
-ID_TO_DIR_CACHE: dict[int, dict[int, dict]] = defaultdict(dict)
+ID_TO_DIRNODE_CACHE: dict[int, dict[int, DirNode]] = defaultdict(dict)
+
+
+class DirNode(NamedTuple):
+    name: str
+    parent_id: int = 0
 
 
 def _check_for_relogin(e: BaseException) -> bool:
@@ -550,7 +557,7 @@ def give_attr_path(
     client: str | P115Client, 
     attrs: Iterable[dict], 
     page_size: int = 10_000, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
     escape: None | Callable[[str], str] = escape, 
 ) -> Collection[dict]:
     """为一组文件信息添加 "path" 字段，表示文件的路径
@@ -558,7 +565,7 @@ def give_attr_path(
     :param client: 115 客户端或 cookies
     :param attrs: 一组文件信息
     :param page_size: 分页大小
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
     :param escape: 对文件名进行转义的函数。如果为 None，则不处理；否则，这个函数用来对文件名中某些符号进行转义，例如 "/" 等
 
     :return: 返回这一组文件信息
@@ -567,15 +574,18 @@ def give_attr_path(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
-    if id_to_dir is None:
-        id_to_dir = ID_TO_DIR_CACHE[client.user_id]
+    if id_to_dirnode is None:
+        id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     if not isinstance(attrs, Collection):
         attrs = tuple(attrs)
     id_to_path: dict[int, str] = {}
 
-    def get_path(attr: dict, /) -> str:
-        pid = attr["parent_id"]
-        name = attr["name"]
+    def get_path(attr: dict | DirNode, /) -> str:
+        if isinstance(attr, DirNode):
+            name, pid = attr
+        else:
+            pid = attr["parent_id"]
+            name = attr["name"]
         if escape is not None:
             name = escape(name)
         if pid == 0:
@@ -583,26 +593,28 @@ def give_attr_path(
         elif pid in id_to_path:
             return id_to_path[pid] + name
         else:
-            dirname = id_to_path[pid] = get_path(id_to_dir[pid]) + "/"
+            dirname = id_to_path[pid] = get_path(id_to_dirnode[pid]) + "/"
             return dirname + name
 
     pids: set[int] = set()
     for attr in attrs:
         pid = attr["parent_id"]
         if attr.get("is_directory", False):
-            id_to_dir[attr["id"]] = {"parent_id": pid, "name": attr["name"]}
+            id_to_dirnode[attr["id"]] = DirNode(attr["name"], pid)
         if pid != 0:
             pids.add(pid)
     while pids:
-        if find_ids := pids - id_to_dir.keys():
-            if len(find_ids) <= len(id_to_dir) // page_size:
+        if find_ids := pids - id_to_dirnode.keys():
+            if len(find_ids) <= len(id_to_dirnode) // page_size:
                 for pid in find_ids:
-                    next(iterdir(client, pid, page_size=1, id_to_dir=id_to_dir), None)
+                    next(iterdir(client, pid, page_size=1, id_to_dirnode=id_to_dirnode), None)
             else:
-                client.fs_star_set(",".join(map(str, find_ids)))
-                for _ in traverse_stared_dirs(client, page_size, find_ids, id_to_dir=id_to_dir):
+                ids_it = iter(find_ids)
+                while ids := ",".join(map(str, islice(ids_it, 10_000))):
+                    client.fs_star_set(ids)
+                for _ in traverse_stared_dirs(client, page_size, find_ids, id_to_dirnode=id_to_dirnode):
                     pass
-        pids = {ppid for pid in pids if (ppid := id_to_dir[pid]["parent_id"]) != 0}
+        pids = {ppid for pid in pids if (ppid := id_to_dirnode[pid][1]) != 0}
     for attr in attrs:
         attr["path"] = get_path(attr)
     return attrs
@@ -612,14 +624,14 @@ def iterdir(
     client: str | P115Client, 
     cid: int = 0, 
     page_size: int = 10_000, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
 ) -> Iterator[AttrDict]:
     """迭代目录，获取文件信息
 
     :param client: 115 客户端或 cookies
     :param cid: 目录 id
     :param page_size: 分页大小
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
 
     :return: 迭代器，返回此目录内的文件信息（文件和目录）
     """
@@ -627,8 +639,8 @@ def iterdir(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
-    if id_to_dir is None:
-        id_to_dir = ID_TO_DIR_CACHE[client.user_id]
+    if id_to_dirnode is None:
+        id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     offset = 0
     payload = {"asc": 1, "cid": cid, "limit": page_size, "o": "user_ptime", "offset": offset}
     count = 0
@@ -637,14 +649,14 @@ def iterdir(
         if int(resp["path"][-1]["cid"]) != cid:
             raise FileNotFoundError(2, cid)
         for info in resp["path"][1:]:
-            id_to_dir[int(info["cid"])] = {"name": info["name"], "parent_id": int(info["pid"])}
+            id_to_dirnode[int(info["cid"])] = DirNode(info["name"], int(info["pid"]))
         if count == 0:
             count = resp["count"]
         elif count != resp["count"]:
             raise RuntimeError(f"{cid} detected count changes during iteration")
         for attr in map(normalize_attr, resp["data"]):
             if attr.get("is_directory", False):
-                id_to_dir[attr["id"]] = {"name": attr["name"], "parent_id": attr["parent_id"]}
+                id_to_dirnode[attr["id"]] = DirNode(attr["name"], attr["parent_id"])
             yield attr
         offset += len(resp["data"])
         if offset >= count:
@@ -656,14 +668,14 @@ def traverse_files(
     client: str | P115Client, 
     cid: int = 0, 
     page_size: int = 10_000, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
 ) -> Iterator[AttrDict]:
     """遍历目录树，获取文件信息
 
     :param client: 115 客户端或 cookies
     :param cid: 目录 id
     :param page_size: 分页大小
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
 
     :return: 迭代器，返回此目录内的（仅文件）文件信息
     """
@@ -671,8 +683,8 @@ def traverse_files(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
-    if id_to_dir is None:
-        id_to_dir = ID_TO_DIR_CACHE[client.user_id]
+    if id_to_dirnode is None:
+        id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     offset = 0
     payload = {"asc": 1, "cid": cid, "cur": 0, "limit": page_size, "o": "user_ptime", "offset": offset, "type": 99}
     count = 0
@@ -681,7 +693,7 @@ def traverse_files(
         if int(resp["path"][-1]["cid"]) != cid:
             raise FileNotFoundError(2, cid)
         for info in resp["path"][1:]:
-            id_to_dir[int(info["cid"])] = {"name": info["name"], "parent_id": int(info["pid"])}
+            id_to_dirnode[int(info["cid"])] = DirNode(info["name"], int(info["pid"]))
         if count == 0:
             count = resp["count"]
         elif count != resp["count"]:
@@ -700,14 +712,14 @@ def iterate_over_files(
     client: str | P115Client, 
     cid: int = 0, 
     page_size: int = 10_000, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
 ) -> Iterator[AttrDict]:
     """遍历目录树，获取文件信息（会根据统计信息，分解任务）
 
     :param client: 115 客户端或 cookies
     :param cid: 目录 id
     :param page_size: 分页大小
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
 
     :return: 迭代器，返回此目录内的（仅文件）文件信息
     """
@@ -715,8 +727,8 @@ def iterate_over_files(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
-    if id_to_dir is None:
-        id_to_dir = ID_TO_DIR_CACHE[client.user_id]
+    if id_to_dirnode is None:
+        id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     dq: deque[int] = deque()
     get, put = dq.pop, dq.appendleft
     put(cid)
@@ -732,9 +744,9 @@ def iterate_over_files(
                     continue
                 file_count = int(stats["count"])
             if file_count < 150_000:
-                yield from traverse_files(client, cid, page_size=page_size, id_to_dir=id_to_dir)
+                yield from traverse_files(client, cid, page_size=page_size, id_to_dirnode=id_to_dirnode)
                 continue
-        for attr in iterdir(client, cid, page_size=page_size, id_to_dir=id_to_dir):
+        for attr in iterdir(client, cid, page_size=page_size, id_to_dirnode=id_to_dirnode):
             if attr.get("is_directory", False):
                 put(attr["id"])
             else:
@@ -745,7 +757,7 @@ def traverse_stared_dirs(
     client: str | P115Client, 
     page_size: int = 10_000, 
     find_ids: None | Iterable[int] = None, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
 ) -> Iterator[AttrDict]:
     """遍历以迭代获得所有被打上星标的目录信息
 
@@ -753,9 +765,9 @@ def traverse_stared_dirs(
     :param page_size: 分页大小
     :param find_ids: 需要寻找的 id 集合
         如果为 None 或空，则拉取所有打星标的文件夹；否则当找到所有这些 id 时，
-        如果之前的迭代过程中获取到其它 id 都已存在于 id_to_dir 就立即终止，否则就拉取所有打星标的文件夹。
+        如果之前的迭代过程中获取到其它 id 都已存在于 id_to_dirnode 就立即终止，否则就拉取所有打星标的文件夹。
         如果从网上全部拉取完，还有一些在 find_ids 中的 id 没被看到，则报错 RuntimeError。
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
 
     :return: 迭代器，被打上星标的目录信息
     """
@@ -763,8 +775,8 @@ def traverse_stared_dirs(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
-    if id_to_dir is None:
-        id_to_dir = ID_TO_DIR_CACHE[client.user_id]
+    if id_to_dirnode is None:
+        id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     offset = 0
     payload = {
         "asc": 1, "cid": 0, "count_folders": 1, "cur": 0, "fc_mix": 0, "limit": page_size, 
@@ -791,9 +803,9 @@ def traverse_stared_dirs(
             cid = attr["id"]
             if need_to_find and cid in need_to_find:
                 need_to_find.remove(cid)
-            elif cid not in id_to_dir:
+            elif cid not in id_to_dirnode:
                 all_seen = False
-            id_to_dir[cid] = {"name": attr["name"], "parent_id": attr["parent_id"]}
+            id_to_dirnode[cid] = DirNode(attr["name"], attr["parent_id"])
             yield attr
         else:
             if all_seen and not need_to_find:
@@ -811,7 +823,7 @@ def dict_traverse_files(
     cid: int = 0, 
     page_size: int = 10_000, 
     with_path: bool = False, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
     escape: None | Callable[[str], str] = escape, 
     type=99, 
     suffix="", 
@@ -823,7 +835,7 @@ def dict_traverse_files(
     :param cid: 待被遍历的目录 id，默认为根目录
     :param page_size: 分页大小
     :param with_path: 文件信息中是否要包含 路径
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
     :param escape: 对文件名进行转义的函数。如果为 None，则不处理；否则，这个函数用来对文件名中某些符号进行转义，例如 "/" 等
     :param payload: 一些其它的请求参数，只介绍 2 个
         1. type: 文件类型
@@ -846,8 +858,8 @@ def dict_traverse_files(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
-    if id_to_dir is None:
-        id_to_dir = ID_TO_DIR_CACHE[client.user_id]
+    if id_to_dirnode is None:
+        id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     offset = 0
     payload.update(cid=cid, limit=page_size, offset=offset, suffix=suffix, type=type)
     payload.setdefault("cur", 0)
@@ -858,7 +870,7 @@ def dict_traverse_files(
         if int(resp["path"][-1]["cid"]) != cid:
             raise FileNotFoundError(2, cid)
         for info in resp["path"][1:]:
-            id_to_dir[int(info["cid"])] = {"name": info["name"], "parent_id": int(info["pid"])}
+            id_to_dirnode[int(info["cid"])] = DirNode(info["name"], int(info["pid"]))
         if count == 0:
             count = resp["count"]
         elif count != resp["count"]:
@@ -876,7 +888,7 @@ def dict_traverse_files(
             client, 
             id_to_attr.values(), 
             page_size=page_size, 
-            id_to_dir=id_to_dir, 
+            id_to_dirnode=id_to_dirnode, 
             escape=escape, 
         )
     return id_to_attr
@@ -888,7 +900,7 @@ def iter_dupfiles(
     key: Callable[[AttrDict], K] = lambda attr: (attr["sha1"], attr["size"]), # type: ignore
     keep_first: None | bool | Callable[[AttrDict], SupportsLT] = None, 
     page_size: int = 10_000, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
 ) -> Iterator[tuple[K, AttrDict]]:
     """遍历以迭代获得所有重复文件
 
@@ -901,12 +913,12 @@ def iter_dupfiles(
         - 如果为 True，则保留最早入组的那个文件
         - 如果为 False，则保留最晚入组的那个文件
     :param page_size: 分页大小
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
 
     :return: 迭代器，返回 key 和 重复文件信息 的元组
     """
     return iter_keyed_dups(
-        iterate_over_files(client, cid, page_size=page_size, id_to_dir=id_to_dir), 
+        iterate_over_files(client, cid, page_size=page_size, id_to_dirnode=id_to_dirnode), 
         key=key, 
         keep_first=keep_first, 
     )
@@ -919,7 +931,7 @@ def dict_dupfiles(
     keep_first: None | bool | Callable[[AttrDict], SupportsLT] = None, 
     page_size: int = 10_000, 
     with_path: bool = False, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
     escape: None | Callable[[str], str] = escape, 
 ) -> dict[K, list[AttrDict]]:
     """遍历以迭代获得所有重复文件的分组字典
@@ -934,7 +946,7 @@ def dict_dupfiles(
         - 如果为 False，则保留最晚入组的那个文件
     :param page_size: 分页大小
     :param with_path: 文件信息中是否要包含 路径
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
     :param escape: 对文件名进行转义的函数。如果为 None，则不处理；否则，这个函数用来对文件名中某些符号进行转义，例如 "/" 等
 
     :return: 字典，key 是分组的 key，value 是归属这一组的文件信息列表
@@ -945,14 +957,14 @@ def dict_dupfiles(
         key=key, 
         keep_first=keep_first, 
         page_size=page_size, 
-        id_to_dir=id_to_dir, 
+        id_to_dirnode=id_to_dirnode, 
     ))
     if with_path:
         give_attr_path(
             client, 
             chain.from_iterable(dups.values()), 
             page_size=page_size, 
-            id_to_dir=id_to_dir, 
+            id_to_dirnode=id_to_dirnode, 
             escape=escape, 
         )
     return dups
@@ -1008,16 +1020,17 @@ def dict_traverse_imglist(
     cid: int = 0, 
     page_size: int = 5_000, 
     with_path: bool = False, 
-    id_to_dir: None | dict[int, dict] = None, 
+    id_to_dirnode: None | dict[int, DirNode] = None, 
     escape: None | Callable[[str], str] = escape, 
 ) -> dict[int, dict]:
     """获取一个目录内的所有图片文件信息（包含图片的 CDN 链接）
+    TIPS: 这个函数的效果相当于 dict_traverse_files(client, cid, type=2, ...) 所获取的文件列表，只是返回信息有些不同
 
     :param client: 115 客户端或 cookies
     :param cid: 目录 id
     :param page_size: 分页大小
     :param with_path: 文件信息中是否要包含 路径
-    :param id_to_dir: 字典，保存 id 到对应文件的 {"name": ..., "parent_id": ...} 的信息的字典
+    :param id_to_dirnode: 字典，保存 id 到对应文件的 DirNode(name, parent_id) 命名元组的字典
     :param escape: 对文件名进行转义的函数。如果为 None，则不处理；否则，这个函数用来对文件名中某些符号进行转义，例如 "/" 等
 
     :return: 字典，key 是 id，value 是 图片文件信息
@@ -1029,8 +1042,7 @@ def dict_traverse_imglist(
         give_attr_path(
             client, 
             d.values(), 
-            page_size=page_size, 
-            id_to_dir=id_to_dir, 
+            id_to_dirnode=id_to_dirnode, 
             escape=escape, 
         )
     return d
