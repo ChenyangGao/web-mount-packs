@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "iter_collect"
-version = "0.0.2"
+version = "0.0.3"
 description = "iter_collect."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

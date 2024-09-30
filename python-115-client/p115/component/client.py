@@ -2003,6 +2003,34 @@ class P115Client:
     ########## File System API ##########
 
     @overload
+    def fs_storage_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_storage_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_storage_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取使用空间的统计数据（最简略，如需更详细，请用 `fs.fs_space_info()`）
+        GET https://115.com/index.php?ct=ajax&ac=get_storage_info
+        """
+        api = "https://115.com/index.php?ct=ajax&ac=get_storage_info"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
     def fs_space_info(
         self, 
         /, 
@@ -2024,7 +2052,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取使用空间的统计数据（较为简略，更推荐使用 `P115Client.fs_index_info`）
+        """获取使用空间的统计数据（较为简略，如需更详细，请用 `P115Client.fs_index_info()`）
         GET https://proapi.115.com/android/1.0/user/space_info
         """
         api = "https://proapi.115.com/android/1.0/user/space_info"
@@ -2052,11 +2080,49 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取数据报告
+        """获取数据报告（分组聚合）
         POST https://webapi.115.com/user/space_summury
         """
         api = "https://webapi.115.com/user/space_summury"
         return self.request(url=api, method="POST", async_=async_, **request_kwargs)
+
+    @overload
+    def fs_space_report(
+        self, 
+        payload: str | dict, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_space_report(
+        self, 
+        payload: str | dict, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_space_report(
+        self, 
+        payload: str | dict, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取数据报告
+        GET https://webapi.115.com/user/report
+        payload:
+            - month: str # 年月，格式为 YYYYMM
+        """
+        api = "https://webapi.115.com/user/report"
+        if isinstance(payload, str):
+            payload = {"month": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_copy(
@@ -2269,7 +2335,7 @@ class P115Client:
         """获取文件或文件夹的简略信息
         GET https://webapi.115.com/files/file
         payload:
-            - file_id: int | str
+            - file_id: int | str # 文件或目录的 id，如果有多个则用逗号 "," 隔开
         """
         api = "https://webapi.115.com/files/file"
         if isinstance(payload, (int, str)):
@@ -3099,7 +3165,7 @@ class P115Client:
     @overload
     def fs_history_list(
         self, 
-        payload: dict = {}, 
+        payload: int | dict = 0, 
         /, 
         *, 
         async_: Literal[False] = False, 
@@ -3109,7 +3175,7 @@ class P115Client:
     @overload
     def fs_history_list(
         self, 
-        payload: dict = {}, 
+        payload: int | dict = 0, 
         /, 
         *, 
         async_: Literal[True], 
@@ -3118,17 +3184,17 @@ class P115Client:
         ...
     def fs_history_list(
         self, 
-        payload: dict = {}, 
+        payload: int | dict = 0, 
         /, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取历史记录列表
+        """历史记录列表
         GET https://webapi.115.com/history/list
         payload:
             - offset: int = 0
-            - limit: int = 32
+            - limit: int = 1150
             - played_end: 0 | 1 = <default>
             - type: int = <default>
                 # 类型：
@@ -3143,10 +3209,92 @@ class P115Client:
                 # - ？？: 8
         """
         api = "https://webapi.115.com/history/list"
-        if payload:
-            payload = {"offset": 0, "limit": 32, **payload}
+        if isinstance(payload, int):
+            payload = {"limit": 1150, "offset": payload}
         else:
-            payload = {"offset": 0, "limit": 32}
+            payload = {"limit": 1150, "offset": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_history_receive_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_history_receive_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_history_receive_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """接收列表
+        GET https://webapi.115.com/history/receive_list
+        payload:
+            - offset: int = 0
+            - limit: int = 1150
+        """
+        api = "https://webapi.115.com/history/receive_list"
+        if isinstance(payload, int):
+            payload = {"limit": 1150, "offset": payload}
+        else:
+            payload = {"limit": 1150, "offset": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_history_move_target_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_history_move_target_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_history_move_target_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """移动列表
+        GET https://webapi.115.com/history/move_target_list
+        payload:
+            - offset: int = 0
+            - limit: int = 1150
+        """
+        api = "https://webapi.115.com/history/move_target_list"
+        if isinstance(payload, int):
+            payload = {"limit": 1150, "offset": payload}
+        else:
+            payload = {"limit": 1150, "offset": 0, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -3279,7 +3427,7 @@ class P115Client:
             - file_desc: str = <default> # 可以用 html
             - file_label: int | str = <default> # 标签 id，如果有多个，用逗号 "," 隔开
             - fid_cover: int | str = <default> # 封面图片的文件 id，如果有多个，用逗号 "," 隔开，如果要删除，值设为 0 即可
-            - show_play_long: 0 | 1 = <default> # 是否统计播放时长
+            - show_play_long: 0 | 1 = <default> # 文件名称显示时长
         """
         api = "https://webapi.115.com/files/edit"
         if (headers := request_kwargs.get("headers")):
@@ -3321,6 +3469,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """批量设置文件或文件夹（显示时长等）
+        POST https://webapi.115.com/files/batch_edit
         payload:
             - show_play_long[{fid}]: 0 | 1 = 1 # 设置或取消显示时长
         """
@@ -3337,6 +3486,41 @@ class P115Client:
             async_=async_, 
             **request_kwargs, 
         )
+
+    @overload
+    def fs_files_folder_playlong(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files_folder_playlong(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_files_folder_playlong(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取文件夹内文件总的播放时长
+        POST https://aps.115.com/getFolderPlaylong
+        payload:
+            - folder_ids: int | str # 目录 id，如果有多个，用逗号 "," 隔开
+        """
+        api = "https://aps.115.com/getFolderPlaylong"
+        if isinstance(payload, (int, str)):
+            payload = {"folder_ids": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_files_hidden(
@@ -3422,44 +3606,6 @@ class P115Client:
             else:
                 payload = {"valid_type": 1, "show": 0}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_statistic(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_statistic(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_statistic(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取文件或文件夹的统计信息（提示：但得不到根目录的统计信息，所以 cid 为 0 时无意义）
-        GET https://webapi.115.com/category/get
-        payload:
-            cid: int | str
-            aid: int | str = 1
-        """
-        api = "https://webapi.115.com/category/get"
-        if isinstance(payload, (int, str)):
-            payload = {"cid": payload}
-        else:
-            payload = {"cid": 0, **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_get_repeat(
@@ -3796,35 +3942,88 @@ class P115Client:
         return ExportDirStatus(self, resp["data"]["export_id"])
 
     @overload
-    def fs_shortcut(
+    def fs_category_get(
         self, 
+        payload: int | str | dict, 
         /, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_shortcut(
+    def fs_category_get(
         self, 
+        payload: int | str | dict, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_shortcut(
+    def fs_category_get(
         self, 
+        payload: int | str | dict, 
         /, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """罗列所有的快捷入口
-        GET https://webapi.115.com/category/shortcut
+        """获取文件或文件夹的统计信息（提示：但得不到根目录的统计信息，所以 cid 为 0 时无意义）
+        GET https://webapi.115.com/category/get
+        payload:
+            cid: int | str
+            aid: int | str = 1
         """
-        api = "https://webapi.115.com/category/shortcut"
-        return self.request(url=api, async_=async_, **request_kwargs)
+        api = "https://webapi.115.com/category/get"
+        if isinstance(payload, (int, str)):
+            payload = {"cid": payload}
+        else:
+            payload = {"cid": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    fs_statistic = fs_category_get
 
     @overload
-    def fs_shortcut_set(
+    def fs_category_shortcut(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_category_shortcut(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_category_shortcut(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """快捷入口列表（罗列所有的快捷入口）
+        GET https://webapi.115.com/category/shortcut
+        payload:
+            - offset: int = 0
+            - limit: int = 1150
+        """
+        if isinstance(payload, int):
+            payload = {"limit": 1150, "offset": payload}
+        else:
+            payload = {"limit": 1150, "offset": 0, **payload}
+        api = "https://webapi.115.com/category/shortcut"
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_category_shortcut_set(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3833,7 +4032,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_shortcut_set(
+    def fs_category_shortcut_set(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3841,7 +4040,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_shortcut_set(
+    def fs_category_shortcut_set(
         self, 
         payload: int | str | dict, 
         /, 
@@ -4149,6 +4348,48 @@ class P115Client:
         api = "https://webapi.115.com/files/star"
         payload = {"file_id": file_id, "star": int(star)}
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def photo_albumlist(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def photo_albumlist(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def photo_albumlist(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """相册列表
+        GET https://webapi.115.com/photo/albumlist
+        payload:
+            - offset: int = 0
+            - limit: int = 1150
+            - album_type: int = 1
+        """
+        api = "https://webapi.115.com/photo/albumlist"
+        if isinstance(payload, int):
+            payload = {"album_type": 1, "limit": 1150, "offset": payload}
+        else:
+            payload = {"album_type": 1, "limit": 1150, "offset": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
     def label_add(
@@ -4942,6 +5183,48 @@ class P115Client:
             - user_id: int | str = <default>
         """
         api = "https://webapi.115.com/share/downurl"
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def usershare_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def usershare_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def usershare_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """共享列表
+        GET https://webapi.115.com/usershare/list
+        payload:
+            - offset: int = 0
+            - limit: int = 1150
+            - all: 0 | 1 = 1
+        """
+        api = "https://webapi.115.com/usershare/list"
+        if isinstance(payload, int):
+            payload = {"all": 1, "limit": 1150, "offset": payload}
+        else:
+            payload = {"all": 1, "limit": 1150, "offset": 0, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     ########## Download API ##########
@@ -8608,6 +8891,243 @@ class P115Client:
         api = "https://pmsg.115.com/api/1.0/app/1.0/contact/ls"
         payload = {"limit": 115, "skip": 0, "t": 1, **payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    ########## Tools API ##########
+
+    @overload
+    def tool_space(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_space(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_space(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """检验空间
+        GET https://115.com/?ct=tool&ac=space
+
+        1、校验空间需全局进行扫描，请谨慎操作;
+        2、扫描出无父目录的文件将统一放入到"/修复文件"的文件夹中;
+        3、"/修复文件"的文件夹若超过存放文件数量限制，将创建多个文件夹存放，避免无法操作。
+        4、此接口一天只能使用一次
+        """
+        api = "https://115.com/?ct=tool&ac=space"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_clear_empty_folder(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_clear_empty_folder(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_clear_empty_folder(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除空文件夹
+        GET https://115.com/?ct=tool&ac=clear_empty_folder
+        """
+        api = "https://115.com/?ct=tool&ac=clear_empty_folder"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开始一键排重任务
+        POST https://aps.115.com/repeat/repeat.php
+        payload:
+            - folder_id: int | str # 目录 id
+        """
+        api = "https://aps.115.com/repeat/repeat.php"
+        if isinstance(payload, (int, str)):
+            payload = {"folder_id": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_status(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_status(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_status(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """查询一键排重任务进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
+        GET https://aps.115.com/repeat/repeat_status.php
+        """
+        api = "https://aps.115.com/repeat/repeat_status.php"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_list(
+        self, 
+        payload: dict = {"s": 0, "l": 100}, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_list(
+        self, 
+        payload: dict = {"s": 0, "l": 100}, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_list(
+        self, 
+        payload: dict = {"s": 0, "l": 100}, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取重复文件列表
+        GET https://aps.115.com/repeat/repeat_list.php
+        payload:
+            - s: int = 0 # offset，从 0 开始
+            - l: int = 0 # limit
+        """
+        api = "https://aps.115.com/repeat/repeat_list.php"
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_delete(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_delete(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_delete(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除重复文件
+        POST https://aps.115.com/repeat/repeat_delete.php
+        payload:
+            # 这 3 个参数用于批量删除
+            - filter_field: "parents" | "file_name" | "" | "" = <default>
+                # 保留条件
+                # - "file_name": 文件名（按长度）
+                # - "parents": 所在文件夹路径（按长度）
+                # - "user_utime": 操作时间
+                # - "user_ptime": 创建时间
+            - filter_order: "asc" | "desc" = <default>
+                # 排序
+                # - "asc": 升序，从小到大，取最小
+                # - "desc": 降序，从大到小，取最大
+            - batch: 0 | 1 = <default>
+            # 这 1 个参数用于手动指定删除对象
+            - sha1s[{sha1}]: int | str = <default> # 文件 id，多个用逗号 "," 隔开
+        """
+        api = "https://aps.115.com/repeat/repeat_delete.php"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_delete_status(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_delete_status(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_delete_status(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除重复文件进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
+        GET https://aps.115.com/repeat/delete_status.php
+        """
+        api = "https://aps.115.com/repeat/delete_status.php"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
     ########## Activities API ##########
 
