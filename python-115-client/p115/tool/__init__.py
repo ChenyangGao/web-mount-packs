@@ -20,6 +20,7 @@ from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from inspect import isawaitable
 from io import TextIOBase, TextIOWrapper
 from itertools import chain, islice, takewhile
+from operator import itemgetter
 from os import PathLike
 from re import compile as re_compile
 from sys import _getframe
@@ -897,7 +898,7 @@ def dict_traverse_files(
 def iter_dupfiles(
     client: str | P115Client, 
     cid: int = 0, 
-    key: Callable[[AttrDict], K] = lambda attr: (attr["sha1"], attr["size"]), # type: ignore
+    key: Callable[[AttrDict], K] = itemgetter("sha1", "size"), 
     keep_first: None | bool | Callable[[AttrDict], SupportsLT] = None, 
     page_size: int = 10_000, 
     id_to_dirnode: None | dict[int, DirNode] = None, 
@@ -927,7 +928,7 @@ def iter_dupfiles(
 def dict_dupfiles(
     client: str | P115Client, 
     cid: int = 0, 
-    key: Callable[[AttrDict], K] = lambda attr: (attr["sha1"], attr["size"]), # type: ignore
+    key: Callable[[AttrDict], K] = itemgetter("sha1", "size"), 
     keep_first: None | bool | Callable[[AttrDict], SupportsLT] = None, 
     page_size: int = 10_000, 
     with_path: bool = False, 
@@ -973,7 +974,7 @@ def dict_dupfiles(
 def traverse_imglist(
     client: str | P115Client, 
     cid: int = 0, 
-    page_size: int = 5_000, 
+    page_size: int = 8192, 
 ) -> Iterator[dict]:
     """遍历目录树，获取图片文件信息（包含图片的 CDN 链接）
 
@@ -993,7 +994,7 @@ def traverse_imglist(
     if isinstance(client, str):
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
-        page_size = 10_000
+        page_size = 8192
     offset = 0
     payload = {"asc": 1, "cid": cid, "cur": 0, "limit": page_size, "o": "user_ptime", "offset": offset}
     count = 0
@@ -1018,7 +1019,7 @@ def traverse_imglist(
 def dict_traverse_imglist(
     client: str | P115Client, 
     cid: int = 0, 
-    page_size: int = 5_000, 
+    page_size: int = 8192, 
     with_path: bool = False, 
     id_to_dirnode: None | dict[int, DirNode] = None, 
     escape: None | Callable[[str], str] = escape, 
