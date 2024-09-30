@@ -587,6 +587,8 @@ def traverse_stared_dirs(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
+    elif page_size < 16:
+        page_size = 16
     if id_to_dirnode is None:
         id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     offset = 0
@@ -651,6 +653,8 @@ def ensure_attr_path(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
+    elif page_size < 16:
+        page_size = 16
     if id_to_dirnode is None:
         id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     if not isinstance(attrs, Collection):
@@ -805,6 +809,8 @@ def iter_files(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
+    elif page_size < 16:
+        page_size = 16
     if id_to_dirnode is None:
         id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     offset = 0
@@ -955,7 +961,7 @@ def traverse_files(
         ("JG_AVI", "AVI", ""), 
         ("JG_RAR", "RAR", "RAR_EXTRACT"), 
         ("JG_EXE", "EXE", ""), 
-        ("JG_BOOK", "BOOK"), 
+        ("JG_BOOK", "BOOK", ""), 
     )
     suffix = suffix.strip(".")
     if not (type or suffix):
@@ -966,6 +972,8 @@ def traverse_files(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 10_000
+    elif page_size < 16:
+        page_size = 16
     if id_to_dirnode is None:
         id_to_dirnode = ID_TO_DIRNODE_CACHE[client.user_id]
     dq: deque[int] = deque()
@@ -974,9 +982,10 @@ def traverse_files(
     while dq:
         try:
             if cid := get():
+                # TODO: 必要时也可以根据不同的扩展名进行分拆任务，通过 client.fs_files_type({"cid": cid, "type": type}) 获取目录内所有的此种类型的扩展名，并且如果响应为空时，则直接退出
                 try:
                     payload = {
-                        "asc": 1, "cid": cid, "cur": 0, "limit": 1, "o": "user_ptime", "offset": 0, 
+                        "asc": 1, "cid": cid, "cur": 0, "limit": 16, "o": "user_ptime", "offset": 0, 
                         "show_dir": 0, "suffix": suffix, "type": type, 
                     }
                     resp = check_response(client.fs_files(payload, timeout=5))
@@ -1013,6 +1022,8 @@ def traverse_files(
                                 elif type == 4 and "video_type" not in attr:
                                     continue
                                 elif type == 6 and ext not in (".apk",):
+                                    continue
+                                elif type == 7 and ext not in (".azw",):
                                     continue
                         yield attr
         except FileNotFoundError:
@@ -1172,6 +1183,8 @@ def iter_image_files(
         client = P115Client(client, check_for_relogin=True)
     if page_size <= 0:
         page_size = 8192
+    elif page_size < 16:
+        page_size = 16
     offset = 0
     payload = {"asc": asc, "cid": cid, "cur": cur, "limit": page_size, "o": order, "offset": offset}
     count = 0
