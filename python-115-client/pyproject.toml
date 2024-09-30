@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.9.7.9.4.3"
+version = "0.0.9.7.9.5"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
-keywords = ["115", "client"]
+keywords = ["115", "webdisk", "client"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",

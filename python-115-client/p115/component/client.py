@@ -5,7 +5,7 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "AVAILABLE_APPMAP", "check_response", "P115Client", "P115Url", 
+    "AVAILABLE_APPMAP", "CLIENT_API_MAP", "check_response", "P115Client", "P115Url", 
     "ExportDirStatus", "PushExtractProgress", "ExtractProgress", 
 ]
 
@@ -33,7 +33,7 @@ from itertools import chain, count, takewhile
 from os import fsdecode, fspath, fstat, isatty, stat, PathLike
 from os import path as ospath
 from pathlib import PurePath
-from re import compile as re_compile
+from re import compile as re_compile, MULTILINE
 from socket import getdefaulttimeout, setdefaulttimeout
 from _thread import start_new_thread
 from threading import Condition, Lock, Thread
@@ -85,6 +85,7 @@ from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
+# 所有的可用登录设备和对应的 ssoent
 AVAILABLE_APPMAP: Final[dict[str, str]] = {
     "web": "A1", 
     "desktop": "A1", 
@@ -104,10 +105,14 @@ AVAILABLE_APPMAP: Final[dict[str, str]] = {
     "alipaymini": "R2", 
     "harmony": "S1", 
 }
+# 所有已封装的 115 接口以及对应的方法名
+CLIENT_API_MAP: Final[dict[str, str]] = {}
 
 T = TypeVar("T")
 CRE_SHARE_LINK_search = re_compile(r"/s/(?P<share_code>\w+)(\?password=(?P<receive_code>\w+))?").search
 CRE_SET_COOKIE = re_compile(r"[0-9a-f]{32}=[0-9a-f]{32}.*")
+CRE_CLIENT_API_search: Final = re_compile("^ +((?:GET|POST) .*)", MULTILINE).search
+
 APP_VERSION: Final = "99.99.99.99"
 MD4_EMPTY_HASH = b"1\xd6\xcf\xe0\xd1j\xe91\xb7<Y\xd7\xe0\xc0\x89\xc0"
 
@@ -4091,11 +4096,10 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置目录的封面，此接口是对 `fs_files_edit` 的封装
-
+        
         :param fids: 单个或多个文件或文件夹 id
         :param file_label: 图片的 id，如果为 0 则是删除封面
         """
-        api = "https://webapi.115.com/label/delete"
         if isinstance(fids, (int, str)):
             payload = [("fid", fids)]
         else:
@@ -10138,6 +10142,14 @@ class ExtractProgress(Future):
                     return
                 sleep(1)
         Thread(target=update_progress).start()
+
+
+for name, method in P115Client.__dict__.items():
+    if not (callable(method) and method.__doc__):
+        continue
+    match = CRE_CLIENT_API_search(method.__doc__)
+    if match is not None:
+        CLIENT_API_MAP[match[1]] = "P115Client." + name
 
 
 from .fs import P115FileSystem
