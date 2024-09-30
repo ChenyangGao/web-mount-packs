@@ -589,7 +589,7 @@ def give_attr_path(
     pids: set[int] = set()
     for attr in attrs:
         pid = attr["parent_id"]
-        if attr["is_directory"]:
+        if attr.get("is_directory", False):
             id_to_dir[attr["id"]] = {"parent_id": pid, "name": attr["name"]}
         if pid != 0:
             pids.add(pid)
@@ -643,7 +643,7 @@ def iterdir(
         elif count != resp["count"]:
             raise RuntimeError(f"{cid} detected count changes during iteration")
         for attr in map(normalize_attr, resp["data"]):
-            if attr["is_directory"]:
+            if attr.get("is_directory", False):
                 id_to_dir[attr["id"]] = {"name": attr["name"], "parent_id": attr["parent_id"]}
             yield attr
         offset += len(resp["data"])
@@ -735,7 +735,7 @@ def iterate_over_files(
                 yield from traverse_files(client, cid, page_size=page_size, id_to_dir=id_to_dir)
                 continue
         for attr in iterdir(client, cid, page_size=page_size, id_to_dir=id_to_dir):
-            if attr["is_directory"]:
+            if attr.get("is_directory", False):
                 put(attr["id"])
             else:
                 yield attr
