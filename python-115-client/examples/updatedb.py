@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+# NOTE: 以下这些是待实现的设想 👇
 # TODO: 作为模块提供，允许全量更新(updatedb)和增量更新(updatedb_one)，但只允许同时最多一个写入任务
 # TODO: 可以起一个服务，其它的程序，可以发送读写任务过来，数据库可以以 fuse 或 webdav 展示
 # TODO: 支持多个不同登录设备并发
@@ -8,9 +9,11 @@
 # TODO: 使用协程进行并发，而非多线程
 # TODO: 如果请求超时，则需要进行重试
 # TODO: 使用 urllib3 替代 httpx，增加稳定性
+# TODO: 允许只更新一个目录，而不进行深入
+# TODO: 允许使用批量拉取方法，而避免递归
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["updatedb", "updatedb_one"]
 __doc__ = "遍历 115 网盘的目录信息导出到数据库"
 __requirements__ = ["orjson", "python-115", "posixpatht"]
@@ -22,7 +25,13 @@ if __name__ == "__main__":
         formatter_class=RawTextHelpFormatter, 
         description=__doc__, 
     )
-    parser.add_argument("top_ids", metavar="dirid", nargs="*", type=int, help="115 目录 id，可以传入多个，如果不传默认为 0")
+    parser.add_argument("top_dirs", metavar="dir", nargs="*", help="""\
+115 目录，可以传入多个，如果不传默认为 0
+允许 3 种类型的目录
+    1. 整数，视为目录的 id
+    2. 形如 "/名字/名字/..." 的路径，最前面的 "/" 可以省略，本程序会尝试获取对应的 id
+    3. 形如 "根目录 > 名字 > 名字 > ..." 的路径，来自点击文件的【显示属性】，在【位置】这部分看到的路径，本程序会尝试获取对应的 id
+""")
     parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
     parser.add_argument("-cp", "--cookies-path", help="""\
 存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
@@ -31,6 +40,8 @@ if __name__ == "__main__":
     3. 此脚本所在目录
 如果都找不到，则默认使用 '2. 用户根目录，此时则需要扫码登录'""")
     parser.add_argument("-f", "--dbfile", default="", help="sqlite 数据库文件路径，默认为在当前工作目录下的 f'115-{user_id}.db'")
+    parser.add_argument("-cl", "--clean", action="store_true", help="任务完成后清理数据库，以节约空间")
+    parser.add_argument("-nr", "--not-recursive", action="store_true", help="不遍历目录树：只拉取顶层目录，不递归子目录")
     parser.add_argument("-r", "--resume", action="store_true", help="""中断重试，判断依据（满足如下条件之一）：
     1. 顶层目录未被采集：命令行所指定的某个 dir_id 的文件列表未被采集
     2. 目录未被采集：某个目录内的文件列表为空（可能为空，也可能未被采集）
@@ -46,7 +57,7 @@ if __name__ == "__main__":
 import logging
 
 from collections import deque, ChainMap
-from collections.abc import Iterator, Iterable
+from collections.abc import Collection, Iterator, Iterable
 from errno import EBUSY, ENOENT, ENOTDIR
 from sqlite3 import (
     connect, register_adapter, register_converter, Connection, Cursor, 
@@ -57,14 +68,14 @@ from typing import cast
 try:
     from orjson import dumps, loads
     from p115 import check_response, P115Client
-    from posixpatht import escape
+    from posixpatht import escape, joins, normpath
 except ImportError:
     from sys import executable
     from subprocess import run
     run([executable, "-m", "pip", "install", "-U", *__requirements__], check=True)
     from orjson import dumps, loads
     from p115 import check_response, P115Client
-    from posixpatht import escape
+    from posixpatht import escape, joins, normpath
 
 
 register_adapter(list, dumps)
@@ -98,6 +109,20 @@ def cut_iter(
         start = mid
     if start < stop:
         yield start, stop - start
+
+
+def normalize_path(path: str, /):
+    if path in ("0", ".", "..", "/"):
+        return 0
+    if path.isdecimal():
+        return int(path)
+    if path.startswith("根目录 > "):
+        patht = path.split(" > ")
+        patht[0] = ""
+        return joins(patht)
+    if not path.startswith("/"):
+        path = "/" + path
+    return normpath(path)
 
 
 def do_commit(
@@ -155,6 +180,7 @@ CREATE TABLE IF NOT EXISTS "data" (
     "sha1" TEXT NOT NULL DEFAULT '',
     "is_dir" INTEGER NOT NULL CHECK("is_dir" IN (0, 1)),
     "is_image" INTEGER NOT NULL CHECK("is_image" IN (0, 1)) DEFAULT 0,
+    "ctime" INTEGER NOT NULL DEFAULT 0,
     "mtime" INTEGER NOT NULL DEFAULT 0,
     "path" TEXT NOT NULL DEFAULT '',
     "ancestors" JSON NOT NULL DEFAULT '',
@@ -170,53 +196,20 @@ END;
 
 CREATE INDEX IF NOT EXISTS idx_data_parent_id ON data(parent_id);
 CREATE INDEX IF NOT EXISTS idx_data_path ON data(path);
-
-CREATE VIEW IF NOT EXISTS "id_to_relpath" AS
-WITH RECURSIVE ancestors(id, relpath, relative_ancestors) AS (
-    SELECT
-        d1.id, 
-        CASE
-            WHEN d1.name IN ('.', '..') THEN '\\' || d1.name
-            ELSE REPLACE(REPLACE(d1.name, '\\', '\\\\'), '/', '\\/')
-        END, 
-        JSON_ARRAY(JSON(CONCAT('{"id": ', d1.id,', "name": ', JSON_QUOTE(d1.name), '}')))
-    FROM
-        data d1 LEFT JOIN data d2 ON (d2.mtime != 0 AND d1.parent_id = d2.id)
-    WHERE
-        d1.mtime != 0
-        AND d2.id IS NULL
-
-    UNION ALL
-
-    SELECT 
-        data.id, 
-        ancestors.relpath || '/' || CASE
-            WHEN data.name IN ('.', '..') THEN '\\' || data.name
-            ELSE REPLACE(REPLACE(data.name, '\\', '\\\\'), '/', '\\/')
-        END, 
-        JSON_INSERT(
-            ancestors.relative_ancestors, 
-            '$[#]', 
-            JSON(CONCAT('{"id": ', data.id,', "name": ', JSON_QUOTE(data.name), '}'))
-        )
-    FROM 
-        data JOIN ancestors ON (data.parent_id = ancestors.id)
-)
-SELECT * FROM ancestors;
 """)
 
 
 def select_ids_to_update(
     con: Connection | Cursor, 
-    top_ids: int | Iterable[int] = 0, 
+    top_dirs: int | Iterable[int] = 0, 
     /, 
 ) -> Cursor:
-    if isinstance(top_ids, int):
-        ids = "(%d)" % top_ids
+    if isinstance(top_dirs, int):
+        ids = "(%d)" % top_dirs
     else:
-        ids = ",".join(map("(%d)".__mod__, top_ids))
+        ids = ",".join(map("(%d)".__mod__, top_dirs))
         if not ids:
-            raise ValueError("no top_ids specified")
+            raise ValueError("no top_dirs specified")
     sql = f"""\
 WITH top_dir_ids(id) AS (
     VALUES {ids}
@@ -365,13 +358,14 @@ def insert_items(
 ) -> Cursor:
     sql = """\
 INSERT INTO
-    data(id, parent_id, pickcode, name, size, sha1, is_dir, is_image, mtime)
+    data(id, parent_id, pickcode, name, size, sha1, is_dir, is_image, ctime, mtime)
 VALUES
-    (:id, :parent_id, :pickcode, :name, :size, :sha1, :is_dir, :is_image, :mtime)
+    (:id, :parent_id, :pickcode, :name, :size, :sha1, :is_dir, :is_image, :ctime, :mtime)
 ON CONFLICT(id) DO UPDATE SET
     parent_id = excluded.parent_id,
     pickcode  = excluded.pickcode,
     name      = excluded.name,
+    ctime     = excluded.ctime,
     mtime     = excluded.mtime
 WHERE
     mtime != excluded.mtime
@@ -390,15 +384,15 @@ def delete_items(
     /, 
     commit: bool = True, 
 ) -> Cursor:
-    sql = "DELETE FROM data WHERE id=?"
     if isinstance(ids, int):
-        ls_ids = [(ids,)]
+        cond = f"id = {ids:d}"
     else:
-        ls_ids = [(id,) for id in ids]
+        cond = "id IN (%s)" % (",".join(map(str, ids)) or "NULL")
+    sql = f"DELETE FROM data WHERE {cond}"
     if commit:
-        return execute_commit(con, sql, ls_ids, executemany=True)
+        return execute_commit(con, sql)
     else:
-        return con.executemany(sql, ls_ids)
+        return con.execute(sql)
 
 
 def update_files_time(
@@ -439,40 +433,44 @@ WHERE parent_id=?;
         return con.execute(sql, (ancestors, dirname, parent_id))
 
 
+def find_dangling_ids(
+    con: Connection | Cursor, 
+    /, 
+) -> set[int]:
+    d = dict(con.execute("SELECT id, parent_id FROM data;"))
+    temp: list[int] = []
+    ok_ids: set[int] = set()
+    na_ids: set[int] = set()
+    push = temp.append
+    clear = temp.clear
+    update_ok = ok_ids.update
+    update_na = na_ids.update
+    for k, v in d.items():
+        try:
+            push(k)
+            while k := d[k]:
+                if k in ok_ids:
+                    update_ok(temp)
+                    break
+                elif k in na_ids:
+                    update_na(temp)
+                    break
+                push(k)
+            else:
+                update_ok(temp)
+        except KeyError:
+            update_na(temp)
+        finally:
+            clear()
+    return na_ids
+
+
 def cleandb(
     con: Connection | Cursor, 
-    top_ids: int | Iterable[int] = 0, 
     /, 
     commit: bool = True, 
 ) -> Cursor:
-    if isinstance(top_ids, int):
-        ids = "(%s)" % top_ids
-    else:
-        ids = "(%s)" % (",".join(map(str, top_ids) or "NULL"))
-    sql = f"""\
-WITH RECURSIVE ancestors(id) AS (
-    SELECT
-        d1.id
-    FROM
-        data d1 LEFT JOIN data d2 ON (d2.mtime != 0 AND d1.parent_id = d2.id)
-    WHERE
-        d1.mtime != 0
-        AND d2.id IS NULL
-        AND d1.parent_id NOT IN {ids} 
-
-    UNION ALL
-
-    SELECT
-        data.id
-    FROM
-        data JOIN ancestors ON (data.parent_id = ancestors.id)
-)
-DELETE FROM data WHERE id IN (SELECT id FROM ancestors);
-"""
-    if commit:
-        return execute_commit(con, sql)
-    else:
-        return con.execute(sql)
+    return delete_items(con, find_dangling_ids(con), commit=commit)
 
 
 def normalize_attr(info: dict, /) -> dict:
@@ -487,6 +485,7 @@ def normalize_attr(info: dict, /) -> dict:
     attr["sha1"] = info.get("sha") or ""
     attr["is_dir"] = is_dir
     attr["is_image"] = not is_dir and bool(info.get("u"))
+    attr["ctime"] = int(info.get("tp", 0))
     attr["mtime"] = int(info.get("te", 0))
     return attr
 
@@ -633,9 +632,10 @@ def updatedb_one(
 def updatedb(
     client: str | P115Client, 
     dbfile: None | str | Connection | Cursor = None, 
-    top_ids: int | tuple[int, ...] = 0, 
+    top_dirs: int | str | Iterable[int | str] = 0, 
+    recursive: bool = True, 
     resume: bool = False, 
-    clean: bool = True, 
+    clean: bool = False, 
 ):
     if isinstance(client, str):
         client = P115Client(client, check_for_relogin=True)
@@ -647,12 +647,27 @@ def updatedb(
         seen_add = seen.add
         dq: deque[int] = deque()
         push, pop = dq.append, dq.popleft
-        if isinstance(top_ids, int):
-            top_ids = top_ids,
+        if isinstance(top_dirs, int):
+            top_ids: Collection[int] = (top_dirs,)
+        elif isinstance(top_dirs, str):
+            try:
+                top_ids = (client.fs.get_id(normalize_path(top_dirs)),)
+            except:
+                logger.exception("[\x1b[1;31mFAIL\x1b[0m] %s", top_dirs)
+                return
         else:
-            top_ids = tuple(dict.fromkeys(top_ids))
+            top_ids = set()
+            for top_dir in top_dirs:
+                if isinstance(top_dir, int):
+                    top_ids.add(top_dir)
+                else:
+                    try:
+                        top_ids.add(client.fs.get_id(normalize_path(top_dir)))
+                    except:
+                        logger.exception("[\x1b[1;31mFAIL\x1b[0m] %s", top_dir)
+                        continue
             if not top_ids:
-                top_ids = 0,
+                return
         if resume:
             dq.extend(r[0] for r in select_ids_to_update(con, top_ids))
         else:
@@ -671,9 +686,10 @@ def updatedb(
                 push(id)
             else:
                 seen_add(id)
-                dq.extend(r[0] for r in select_subdir_ids(con, id))
+                if recursive:
+                    dq.extend(r[0] for r in select_subdir_ids(con, id))
         if clean and top_ids:
-            cleandb(con, top_ids)
+            cleandb(con)
     else:
         with connect(
             dbfile, 
@@ -684,12 +700,14 @@ def updatedb(
             updatedb(
                 client, 
                 con, 
-                top_ids=top_ids, 
+                top_dirs=top_dirs, 
+                recursive=recursive, 
                 resume=resume, 
                 clean=clean, 
             )
-            con.execute("PRAGMA wal_checkpoint;")
-            con.execute("VACUUM;")
+            if clean:
+                con.execute("PRAGMA wal_checkpoint;")
+                con.execute("VACUUM;")
 
 
 if __name__ == "__main__":
@@ -711,5 +729,12 @@ if __name__ == "__main__":
             else:
                 cookies = Path("~/115-cookies.txt").expanduser()
     client = P115Client(cookies, check_for_relogin=True)
-    updatedb(client, dbfile=args.dbfile, resume=args.resume, top_ids=args.top_ids or 0)
+    updatedb(
+        client, 
+        dbfile=args.dbfile, 
+        recursive=not args.not_recursive, 
+        resume=args.resume, 
+        top_dirs=args.top_dirs or 0, 
+        clean=args.clean, 
+    )
 

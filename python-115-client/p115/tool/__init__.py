@@ -5,12 +5,13 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "relogin_wrap_maker", "login_scan_cookie", "crack_captcha", "remove_receive_dir", 
+    "relogin_wrap_maker", "login_scan_cookies", "crack_captcha", "remove_receive_dir", 
     "wish_make", "wish_answer", "wish_list", "wish_aid_list", "wish_adopt", 
     "parse_export_dir_as_dict_iter", "parse_export_dir_as_path_iter", 
     "export_dir", "export_dir_parse_iter", 
-    "traverse_stared_dirs", "ensure_attr_path", "iterdir", "iter_files", "dict_files", 
-    "traverse_files", "iter_dupfiles", "dict_dupfiles", "iter_image_files", "dict_image_files", 
+    "traverse_stared_dirs", "ensure_attr_path", "iterdir", 
+    "iter_files", "dict_files", "traverse_files", "iter_dupfiles", "dict_dupfiles", 
+    "iter_image_files", "dict_image_files", 
 ]
 
 from asyncio import Lock as AsyncLock
@@ -27,7 +28,8 @@ from re import compile as re_compile
 from sys import _getframe
 from threading import Lock
 from time import sleep, time
-from typing import cast, Any, IO, Literal, NamedTuple, TypeVar
+from types import MappingProxyType
+from typing import cast, Any, Final, IO, Literal, NamedTuple, TypeVar
 from warnings import warn
 from weakref import WeakKeyDictionary
 
@@ -46,6 +48,108 @@ V = TypeVar("V")
 CAPTCHA_CRACK: Callable[[bytes], str]
 CRE_TREE_PREFIX_match = re_compile("^(?:\| )+\|-").match
 ID_TO_DIRNODE_CACHE: dict[int, dict[int, DirNode]] = defaultdict(dict)
+CLASS_TO_TYPE: Final = MappingProxyType({
+    "JG_DOC": 1, 
+    "DOC": 1, 
+    "JG_PIC": 2, 
+    "PIC": 2, 
+    "JG_MUS": 3, 
+    "MUS": 3, 
+    "JG_AVI": 4, 
+    "AVI": 4, 
+    "JG_RAR": 5, 
+    "RAR": 5, 
+    "RAR_EXTRACT": 5, 
+    "JG_EXE": 6, 
+    "EXE": 6, 
+    "JG_BOOK": 7, 
+    "BOOK": 7
+})
+SUFFIX_TO_TYPE: Final[dict[str, int]] = {
+    ".chm": 1, 
+    ".doc": 1, 
+    ".docx": 1, 
+    ".dwg": 1, 
+    ".htm": 1, 
+    ".html": 1, 
+    ".idx": 1, 
+    ".jar": 1, 
+    ".lrc": 1, 
+    ".mdb": 1, 
+    ".mdf": 1, 
+    ".ods": 1, 
+    ".odt": 1, 
+    ".pdf": 1, 
+    ".pot": 1, 
+    ".pps": 1, 
+    ".ppt": 1, 
+    ".pptx": 1, 
+    ".rtf": 1, 
+    ".sub": 1, 
+    ".txt": 1, 
+    ".wps": 1, 
+    ".wri": 1, 
+    ".xls": 1, 
+    ".xlsx": 1, 
+    ".vtt": 1, 
+    ".bmp": 2, 
+    ".gif": 2, 
+    ".jpeg": 2, 
+    ".jpg": 2, 
+    ".png": 2, 
+    ".tif": 2, 
+    ".tiff": 2, 
+    ".webp": 2, 
+    ".aiff": 3, 
+    ".au": 3, 
+    ".flac": 3, 
+    ".m4a": 3, 
+    ".mid": 3, 
+    ".mp3": 3, 
+    ".wav": 3, 
+    ".wma": 3, 
+    ".avi": 4, 
+    ".dat": 4, 
+    ".divx": 4, 
+    ".f4v": 4, 
+    ".flv": 4, 
+    ".iso": 4, 
+    ".m2ts": 4, 
+    ".m4v": 4, 
+    ".mkv": 4, 
+    ".mov": 4, 
+    ".mp4": 4, 
+    ".mpeg": 4, 
+    ".mpg": 4, 
+    ".rm": 4, 
+    ".rmvb": 4, 
+    ".ts": 4, 
+    ".vob": 4, 
+    ".webm": 4, 
+    ".wmv": 4, 
+    ".7z": 5, 
+    ".cab": 5, 
+    ".dmg": 5, 
+    ".msi": 5, 
+    ".rar": 5, 
+    ".tar": 5, 
+    ".xz": 5, 
+    ".z": 5, 
+    ".zip": 5, 
+    ".apk": 6, 
+    ".bat": 6, 
+    ".deb": 6, 
+    ".exe": 6, 
+    ".pkg": 6, 
+    ".azw": 7, 
+    ".azw3": 7, 
+    ".epub": 7, 
+    ".fb2": 7, 
+    ".lit": 7, 
+    ".lrf": 7, 
+    ".mobi": 7, 
+    ".prc": 7, 
+}
 
 
 class DirNode(NamedTuple):
@@ -59,6 +163,21 @@ def _check_for_relogin(e: BaseException) -> bool:
         response = e.response
         status = getattr(response, "status", None) or getattr(response, "code", None) or getattr(response, "status_code", None)
     return status == 405
+
+
+def type_of_attr(attr: AttrDict, /) -> int:
+    if attr["is_directory"]:
+        return 0
+    type: None | int
+    if type := CLASS_TO_TYPE.get(attr.get("class", "")):
+        return type
+    if type := SUFFIX_TO_TYPE.get(splitext(attr["name"])[1].lower()):
+        return type
+    if "video_type" in attr:
+        return 4
+    if attr.get("thumb"):
+        return 2
+    return 99
 
 
 def relogin_wrap_maker(
@@ -160,7 +279,7 @@ def relogin_wrap_maker(
     return wrapper
 
 
-def login_scan_cookie(
+def login_scan_cookies(
     client: str | P115Client, 
     app: str = "", 
     replace: bool = False, 
@@ -475,6 +594,7 @@ def parse_export_dir_as_dict_iter(
 
 def parse_export_dir_as_path_iter(
     file: bytes | str | PathLike | IO, 
+    escape: None | Callable[[str], str] = escape, 
     encoding: str = "utf-16", 
 ) -> Iterator[str]:
     """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
@@ -496,7 +616,10 @@ def parse_export_dir_as_path_iter(
         prefix = match[0]
         prefix_length = len(prefix)
         depth = prefix_length // 2 - 1
-        path = stack[depth-1] + "/" + escape(r.removesuffix("\n")[prefix_length:])
+        name = r.removesuffix("\n")[prefix_length:]
+        if escape is not None:
+            name = escape(name)
+        path = stack[depth-1] + "/" + name
         try:
             stack[depth] = path
         except IndexError:
@@ -953,16 +1076,6 @@ def traverse_files(
         except FileNotFoundError:
             pass
         return
-    CLASSES_OF_TYPES: tuple[tuple[str, ...], ...] = (
-        (), 
-        ("JG_DOC", "DOC"), 
-        ("JG_PIC", "PIC", ""), 
-        ("JG_MUS", "MUS"), 
-        ("JG_AVI", "AVI", ""), 
-        ("JG_RAR", "RAR", "RAR_EXTRACT"), 
-        ("JG_EXE", "EXE", ""), 
-        ("JG_BOOK", "BOOK", ""), 
-    )
     suffix = suffix.strip(".")
     if not (type or suffix):
         raise ValueError("please set the non-zero value of suffix or type")
@@ -982,7 +1095,7 @@ def traverse_files(
     while dq:
         try:
             if cid := get():
-                # TODO: 必要时也可以根据不同的扩展名进行分拆任务，通过 client.fs_files_type({"cid": cid, "type": type}) 获取目录内所有的此种类型的扩展名，并且如果响应为空时，则直接退出
+                # NOTE: 必要时也可以根据不同的扩展名进行分拆任务，通过 client.fs_files_type({"cid": cid, "type": type}) 获取目录内所有的此种类型的扩展名，并且如果响应为空时，则直接退出
                 try:
                     payload = {
                         "asc": 1, "cid": cid, "cur": 0, "limit": 16, "o": "user_ptime", "offset": 0, 
@@ -1013,19 +1126,8 @@ def traverse_files(
                         if suffix:
                             if suffix != ext:
                                 continue
-                        elif 0 < type <= 7:
-                            class_ = attr.get("class")
-                            if class_ not in CLASSES_OF_TYPES[type]:
-                                continue
-                            if not class_:
-                                if type == 2 and not attr.get("thumb"):
-                                    continue
-                                elif type == 4 and "video_type" not in attr:
-                                    continue
-                                elif type == 6 and ext not in (".apk",):
-                                    continue
-                                elif type == 7 and ext not in (".azw",):
-                                    continue
+                        elif 0 < type <= 7 and type_of_attr(attr) != type:
+                            continue
                         yield attr
         except FileNotFoundError:
             pass

@@ -371,9 +371,7 @@ class DavPathBase:
 
     @cached_property
     def ctime(self, /) -> float:
-        if (ctime := self.attr.get("ctime")) is None:
-            ctime = self.attr["ptime"].timestamp()
-        return ctime
+        return self.data["ctime"]
 
     @cached_property
     def mtime(self, /) -> float:
@@ -529,7 +527,7 @@ class FolderResource(DavPathBase, DAVCollection):
             return True
         return super().get_property_value(name)
 
-    def support_etag(self):
+    def support_etag(self, /):
         return True
 
 
