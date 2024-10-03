@@ -2,11 +2,30 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["funcproperty", "lazyproperty", "cacheproperty", "final_cacheproperty"]
+__version__ = (0, 0, 2)
+__all__ = ["staticproperty", "funcproperty", "lazyproperty", "cacheproperty", "final_cacheproperty"]
 
 from collections.abc import Callable
 from typing import Any
+
+
+class staticproperty:
+
+    def __init__(self, func: Callable, /):
+        self.__func__ = func
+        self.__name__ = getattr(func, "__name__", None)
+        self.__doc__  = getattr(func, "__doc__", None)
+
+    def __repr__(self, /):
+        return f"{type(self).__qualname__}({self.__func__!r})"
+
+    def __set_name__(self, cls, name: str, /):
+        self.__name__ = name
+
+    def __get__(self, instance, cls, /):
+        if instance is None:
+            return self
+        return self.__func__()
 
 
 class funcproperty:

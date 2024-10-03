@@ -11,13 +11,15 @@ from os.path import isfile
 from iterdir import iterdir
 
 
+parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
+parser.add_argument("paths", metavar="path", nargs="*", help="file path(s) to be downloaded, if omitted, read from stdin (one path per line)")
+parser.add_argument("-hs", "--hashs", metavar="hash", nargs="*", default=["md5"], choices=algorithms_available, help="hash algorithms, default to 'md5'")
+parser.add_argument("-s", "--start", default=0, type=int, help="start from file offset, default to 0 (start of file)")
+parser.add_argument("-t", "--stop", type=int, help="stop until file offset, default to None (end of file)")
+parser.add_argument("-v", "--version", action="store_true", help="print the current version")
+
+
 def parse_args(argv=None):
-    parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-    parser.add_argument("paths", metavar="path", nargs="*", help="file path(s) to be downloaded, if omitted, read from stdin (one path per line)")
-    parser.add_argument("-hs", "--hashs", metavar="hash", nargs="*", default=["md5"], choices=algorithms_available, help="hash algorithms, default to 'md5'")
-    parser.add_argument("-s", "--start", default=0, type=int, help="start from file offset, default to 0 (start of file)")
-    parser.add_argument("-t", "--stop", type=int, help="stop until file offset, default to None (end of file)")
-    parser.add_argument("-v", "--version", action="store_true", help="print the current version")
     args = parser.parse_args(argv)
     if args.version:
         from hashtools import __version__

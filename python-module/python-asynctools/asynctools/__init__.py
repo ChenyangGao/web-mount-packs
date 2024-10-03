@@ -2,16 +2,17 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
-    "as_thread", "ensure_async", "ensure_await", "ensure_coroutine", "ensure_aiter", 
-    "async_map", "async_filter", "async_reduce", "async_zip", "async_chain", 
+    "run_async", "as_thread", "ensure_async", "ensure_await", 
+    "ensure_coroutine", "ensure_aiter", "async_map", "async_filter", 
+    "async_reduce", "async_zip", "async_chain", 
     "async_all", "async_any", "call_as_aiter", "to_list", 
 ]
 
-from asyncio import to_thread
+from asyncio import create_task, get_running_loop, run, to_thread
 from collections.abc import Awaitable, AsyncIterable, AsyncIterator, Callable, Coroutine, Iterable, Iterator
-from inspect import isawaitable, iscoroutinefunction, isgenerator
+from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
 from typing import cast, Any, ParamSpec, TypeVar
 
 from decotools import decorated
@@ -20,6 +21,22 @@ from undefined import undefined
 
 Args = ParamSpec("Args")
 T = TypeVar("T")
+
+
+def run_async(obj, /):
+    try:
+        get_running_loop()
+        has_running_loop = True
+    except RuntimeError:
+        has_running_loop = False
+    if has_running_loop:
+        if isawaitable(obj):
+            return create_task(ensure_coroutine(obj))
+        return ensure_coroutine(obj)
+    elif isawaitable(obj):
+        return run(ensure_coroutine(obj))
+    else:
+        return obj
 
 
 @decorated
@@ -76,6 +93,8 @@ def ensure_await(o, /) -> Awaitable:
 
 
 def ensure_coroutine(o, /) -> Coroutine:
+    if iscoroutine(o):
+        return o
     async def wrapper():
         if isawaitable(o):
             return await o

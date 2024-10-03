@@ -8,18 +8,19 @@ from argparse import ArgumentParser, RawTextHelpFormatter
 from collections import deque
 from time import perf_counter
 
-from . import download, __version__
+
+parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
+parser.add_argument("url", nargs="?", help="URL to be downloaded")
+parser.add_argument("-o", "--output-file", help="file path to be downloaded, if omitted, print into stdout")
+parser.add_argument("-r", "--resume", action="store_true", help="skip downloaded data")
+parser.add_argument("-hs", "--headers", help="dictionary of HTTP Headers to send with")
+parser.add_argument("-v", "--version", action="store_true", help="print the current version")
 
 
-def parse_args():
-    parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-    parser.add_argument("url", nargs="?", help="URL to be downloaded")
-    parser.add_argument("-o", "--output-file", help="file path to be downloaded, if omitted, print into stdout")
-    parser.add_argument("-r", "--resume", action="store_true", help="skip downloaded data")
-    parser.add_argument("-hs", "--headers", help="dictionary of HTTP Headers to send with")
-    parser.add_argument("-v", "--version", action="store_true", help="print the current version")
-    args = parser.parse_args()
+def parse_args(argv=None):
+    args = parser.parse_args(argv)
     if args.version:
+        from urlopen import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
     if not args.url:
@@ -34,7 +35,7 @@ def headers_str_to_dict(headers: str, /) -> dict[str, str]:
     )
 
 
-def progress(total=None):
+def progress(total: None | int = None):
     dq: deque[tuple[int, float]] = deque(maxlen=64)
     read_num = 0
     dq.append((read_num, perf_counter()))
@@ -50,8 +51,11 @@ def progress(total=None):
         dq.append((read_num, cur_t))
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
+
+    from urlopen import download
+
     url = args.url
 
     headers = args.headers
@@ -84,5 +88,9 @@ def main():
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+    from sys import path
+
+    path[0] = str(Path(__file__).parents[1])
     main()
 

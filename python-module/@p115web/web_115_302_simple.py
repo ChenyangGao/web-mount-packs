@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 9)
-__requirements__ = ["blacksheep", "cachetools", "orjson", "pycryptodome", "uvicorn"]
+__requirements__ = ["blacksheep", "cachetools", "orjson", "p115cipher", "uvicorn"]
 
 from os.path import dirname, expanduser, join as joinpath, realpath
 
@@ -138,9 +138,8 @@ try:
     from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
     from blacksheep.messages import Request, Response
     from cachetools import LRUCache, TTLCache
-    from Crypto.PublicKey import RSA
-    from Crypto.Cipher import PKCS1_v1_5
     from orjson import dumps, loads
+    from p115cipher import rsa_encode, rsa_decode
 except ImportError:
     from sys import executable
     from subprocess import run
@@ -154,27 +153,12 @@ except ImportError:
     from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
     from blacksheep.messages import Request, Response
     from cachetools import LRUCache, TTLCache
-    from Crypto.PublicKey import RSA
-    from Crypto.Cipher import PKCS1_v1_5
     from orjson import dumps, loads
+    from p115cipher import rsa_encode, rsa_decode
 
 
-G_kts: Final = bytes((
-    0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73, 0xb8, 
-    0xde, 0x8f, 0xe7, 0xc4, 0x45, 0xda, 0x86, 0xc4, 0x9b, 0x64, 0x8b, 0x14, 0x6a, 0xb4, 0xf1, 0xaa, 
-    0x38, 0x01, 0x35, 0x9e, 0x26, 0x69, 0x2c, 0x86, 0x00, 0x6b, 0x4f, 0xa5, 0x36, 0x34, 0x62, 0xa6, 
-    0x2a, 0x96, 0x68, 0x18, 0xf2, 0x4a, 0xfd, 0xbd, 0x6b, 0x97, 0x8f, 0x4d, 0x8f, 0x89, 0x13, 0xb7, 
-    0x6c, 0x8e, 0x93, 0xed, 0x0e, 0x0d, 0x48, 0x3e, 0xd7, 0x2f, 0x88, 0xd8, 0xfe, 0xfe, 0x7e, 0x86, 
-    0x50, 0x95, 0x4f, 0xd1, 0xeb, 0x83, 0x26, 0x34, 0xdb, 0x66, 0x7b, 0x9c, 0x7e, 0x9d, 0x7a, 0x81, 
-    0x32, 0xea, 0xb6, 0x33, 0xde, 0x3a, 0xa9, 0x59, 0x34, 0x66, 0x3b, 0xaa, 0xba, 0x81, 0x60, 0x48, 
-    0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77, 0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e, 
-    0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c, 0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5, 
-))
-RSA_PUBLIC_KEY: Final = RSA.construct((
-    0x8686980c0f5a24c4b9d43020cd2c22703ff3f450756529058b1cf88f09b8602136477198a6e2683149659bd122c33592fdb5ad47944ad1ea4d36c6b172aad6338c3bb6ac6227502d010993ac967d1aef00f0c8e038de2e4d3bc2ec368af2e9f10a6f1eda4f7262f136420c07c331b871bf139f74f3010e3c4fe57df3afb71683, 
-    0x10001, 
-))
-RSA_encrypt: Final = PKCS1_v1_5.new(RSA_PUBLIC_KEY).encrypt
+# TODO: 把各种工具放入函数，不要是全局变量
+# TODO: 这个工具，集成到 p115 中
 
 app = Application()
 logger = getattr(app, "logger")
@@ -204,86 +188,8 @@ if url_range_request_cooldown > 0:
     RANGE_REQUEST_COOLDOWN = TTLCache(8196, ttl=url_range_request_cooldown)
 
 
-to_bytes = partial(int.to_bytes, byteorder="big", signed=False)
-from_bytes = partial(int.from_bytes, byteorder="big", signed=False)
-
-
-def bytes_xor(v1: Buffer, v2: Buffer, /, size: int = 0) -> Buffer:
-    if size:
-        v1 = v1[:size]
-        v2 = v2[:size]
-    else:
-        size = len(v1)
-    return to_bytes(from_bytes(v1) ^ from_bytes(v2), size)
-
-
-def acc_step(
-    start: int, 
-    stop: None | int = None, 
-    step: int = 1, 
-) -> Iterator[tuple[int, int, int]]:
-    if stop is None:
-        start, stop = 0, start
-    for i in range(start + step, stop, step):
-        yield start, (start := i), step
-    if start != stop:
-        yield start, stop, stop - start
-
-
-def xor(src: Buffer, key: Buffer, /) -> bytearray:
-    src = memoryview(src)
-    key = memoryview(key)
-    secret = bytearray()
-    if i := len(src) & 0b11:
-        secret += bytes_xor(src, key, i)
-    for i, j, s in acc_step(i, len(src), len(key)):
-        secret += bytes_xor(src[i:j], key[:s])
-    return secret
-
-
-def gen_key(
-    rand_key: Buffer, 
-    sk_len: int = 4, 
-    /, 
-) -> bytearray:
-    xor_key = bytearray()
-    if rand_key and sk_len > 0:
-        length = sk_len * (sk_len - 1)
-        index = 0
-        for i in range(sk_len):
-            x = (rand_key[i] + G_kts[index]) & 0xff
-            xor_key.append(G_kts[length] ^ x)
-            length -= sk_len
-            index += sk_len
-    return xor_key
-
-
-def rsa_encode(data: Buffer, /) -> bytes:
-    xor_text: Buffer = bytearray(16)
-    tmp = memoryview(xor(data, b"\x8d\xa5\xa5\x8d"))[::-1]
-    xor_text += xor(tmp, b"x\x06\xadL3\x86]\x18L\x01?F")
-    cipher_data = bytearray()
-    xor_text = memoryview(xor_text)
-    for l, r, _ in acc_step(0, len(xor_text), 117):
-        cipher_data += RSA_encrypt(xor_text[l:r])
-    return b64encode(cipher_data)
-
-
-def rsa_decode(cipher_data: Buffer, /) -> bytearray:
-    rsa_e = RSA_PUBLIC_KEY.e
-    rsa_n = RSA_PUBLIC_KEY.n
-    cipher_data = memoryview(b64decode(cipher_data))
-    data = bytearray()
-    for l, r, _ in acc_step(0, len(cipher_data), 128):
-        p = pow(from_bytes(cipher_data[l:r]), rsa_e, rsa_n)
-        b = to_bytes(p, (p.bit_length() + 0b111) >> 3)
-        data += memoryview(b)[b.index(0)+1:]
-    m = memoryview(data)
-    key_l = gen_key(m[:16], 12)
-    tmp = memoryview(xor(m[16:], key_l))[::-1]
-    return xor(tmp, b"\x8d\xa5\xa5\x8d")
-
-
+# TODO: 登录使用单独的模块，另外两个 qrcode_cookie*.py 的文件要被删掉
+# TODO: 实现同步和异步的版本
 AppEnum = Enum("AppEnum", {
     "web": 1, 
     "ios": 6, 
@@ -310,78 +216,6 @@ def get_enum_name(val, cls):
     except KeyError:
         pass
     return cls(val).name
-
-
-class AuthenticationError(OSError):
-    pass
-
-
-def check_response(resp: dict, /) -> dict:
-    """检测 115 的某个接口的响应，如果成功则直接返回，否则根据具体情况抛出一个异常
-    """
-    if resp.get("state", True):
-        return resp
-    message = str(dumps(resp), "utf-8")
-    if "errno" in resp:
-        match resp["errno"]:
-            # {"state": false, "errno": 99, "error": "请重新登录", "request": "/app/uploadinfo", "data": []}
-            case 99:
-                raise AuthenticationError(message)
-            # {"state": false, "errno": 911, "errcode": 911, "error_msg": "请验证账号"}
-            case 911:
-                raise AuthenticationError(message)
-            # {"state": false, "errno": 20004, "error": "该目录名称已存在。", "errtype": "war"}
-            case 20004:
-                raise FileExistsError(errno.EEXIST, message)
-            # {"state": false, "errno": 20009, "error": "父目录不存在。", "errtype": "war"}
-            case 20009:
-                raise FileNotFoundError(errno.ENOENT, message)
-            # {"state": false, "errno": 91002, "error": "不能将文件复制到自身或其子目录下。", "errtype": "war"}
-            case 91002:
-                raise OSError(errno.ENOTSUP, message)
-            # {"state": false, "errno": 91004, "error": "操作的文件(夹)数量超过5万个", "errtype": "war"}
-            case 91004:
-                raise OSError(errno.ENOTSUP, message)
-            # {"state": false, "errno": 91005, "error": "空间不足，复制失败。", "errtype": "war"}
-            case 91005:
-                raise OSError(errno.ENOSPC, message)
-            # {"state": false, "errno": 90008, "error": "文件（夹）不存在或已经删除。", "errtype": "war"}
-            case 90008:
-                raise FileNotFoundError(errno.ENOENT, message)
-            # {"state": false,  "errno": 231011, "error": "文件已删除，请勿重复操作","errtype": "war"}
-            case 231011:
-                raise FileNotFoundError(errno.ENOENT, message)
-            # {"state": false, "errno": 990009, "error": "删除[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
-            # {"state": false, "errno": 990009, "error": "还原[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
-            # {"state": false, "errno": 990009, "error": "复制[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
-            # {"state": false, "errno": 990009, "error": "移动[...]操作尚未执行完成，请稍后再试！", "errtype": "war"}
-            case 990009:
-                raise OSError(errno.EBUSY, message)
-            # {"state": false, "errno": 990023, "error": "操作的文件(夹)数量超过5万个", "errtype": ""}
-            case 990023:
-                raise OSError(errno.ENOTSUP, message)
-            # {"state": 0, "errno": 40100000, "code": 40100000, "data": {}, "message": "参数错误！", "error": "参数错误！"}
-            case 40100000:
-                raise OSError(errno.EINVAL, message)
-            # {"state": 0, "errno": 40101032, "code": 40101032, "data": {}, "message": "请重新登录", "error": "请重新登录"}
-            case 40101032:
-                raise AuthenticationError(message)
-    elif "errNo" in resp:
-        match resp["errNo"]:
-            case 990001:
-                raise AuthenticationError(message)
-    elif "code" in resp:
-        match resp["code"]:
-            # {'state': False, 'code': 20018, 'message': '文件不存在或已删除。'}
-            # {'state': False, 'code': 800001, 'message': '目录不存在。'}
-            case 20018 | 800001:
-                raise FileNotFoundError(errno.ENOENT, message)
-            # {'state': False, 'code': 990002, 'message': '参数错误。'}
-            case 990002:
-                raise OSError(errno.EINVAL, message)
-            case _:
-                raise OSError(errno.EIO, message)
-    raise OSError(errno.EIO, message)
 
 
 def redirect_exception_response(func, /):
@@ -472,6 +306,7 @@ async def request_json(
         return await request_json(client, url, method, content=content, headers=headers, params=params)
 
 
+# TODO: 不需要此接口，直接根据 user_id 的 ssoent 来判断
 async def login_device(client: ClientSession) -> str:
     url = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices"
     resp = await request_json(client, url)
@@ -525,17 +360,29 @@ async def relogin(client: ClientSession) -> dict:
     return resp
 
 
+# TODO: 不需要传入 dir，但有全局的 id_to_dir，可以自动确定路径
 def process_info(info: dict, dir: None | str = None) -> str:
-    fid = cast(str, info["fid"])
-    fn = cast(str, info["n"])
-    pickcode = SHA1_TO_PICKCODE[info["sha"]] = ID_TO_PICKCODE[fid] = info["pc"]
-    if cdn_image and ((thumb := info.get("u", "")) or info.get("class") == "PIC"):
-        IMAGE_URL_CACHE[pickcode] = bytes(reduce_image_url_layers(thumb), "utf-8")
+    if "file_id" in info:
+        file_id = cast(str, info["file_id"])
+        file_name = cast(str, info["file_name"])
+        pick_code = cast(str, info["pick_code"])
+        thumb = info.get("img_url", "")
+        if "sha1" in info:
+            SHA1_TO_PICKCODE[info["sha1"]] = pick_code
+    else:
+        file_id = cast(str, info["fid"])
+        file_name = cast(str, info["n"])
+        pick_code = cast(str, info["pc"])
+        thumb = info.get("u", "")
+        SHA1_TO_PICKCODE[info["sha"]] = pick_code
+    ID_TO_PICKCODE[file_id] = pick_code
+    if cdn_image and thumb:
+        IMAGE_URL_CACHE[pick_code] = bytes(reduce_image_url_layers(thumb), "utf-8")
     if dir:
-        PATH_TO_ID[dir + "/" + fn] = fid
+        PATH_TO_ID[dir + "/" + file_name] = file_id
     elif dir is not None:
-        PATH_TO_ID[fn] = fid
-    return pickcode
+        PATH_TO_ID[file_name] = file_id
+    return pick_code
 
 
 @app.on_middlewares_configuration
@@ -553,6 +400,7 @@ async def register_http_client():
 async def get_dir_patht_by_id(
     client: ClientSession, 
     id: str, 
+    /, 
 ) -> list[tuple[str, str]]:
     json = await request_json(
         client, 
@@ -565,9 +413,16 @@ async def get_dir_patht_by_id(
     return [(info["cid"], info["name"]) for info in json["path"][1:]]
 
 
+async def get_attr(id: int, /):
+    ...
+
+
+
+# TODO: 这个函数需要进行优化
 async def get_pickcode_by_id(
     client: ClientSession, 
     id: str, 
+    /, 
 ) -> str:
     if pickcode := ID_TO_PICKCODE.get(id):
         return pickcode
@@ -578,32 +433,34 @@ async def get_pickcode_by_id(
     )
     info = json["data"][0]
     if "fid" not in info:
-        raise FileNotFoundError(id)
+        raise FileNotFoundError(errno.ENOENT, id)
     return process_info(info)
 
 
 async def get_pickcode_by_sha1(
     client: ClientSession, 
     sha1: str, 
+    /, 
 ) -> str:
     if len(sha1) != 40:
-        raise FileNotFoundError(sha1)
+        raise ValueError(f"invalid sha1 {sha1!r}")
     if pickcode := SHA1_TO_PICKCODE.get(sha1):
         return pickcode
     json = await request_json(
         client, 
-        "https://webapi.115.com/files/search", 
-        params={"search_value": sha1, "limit": "1", "show_dir": "0"}, 
+        "https://webapi.115.com/files/shasearch", 
+        params={"sha1": sha1}, 
     )
-    if not json["count"]:
-        raise FileNotFoundError(sha1)
-    return process_info(json["data"][0])
+    if not json["state"]:
+        raise FileNotFoundError(errno.ENOENT, f"no such sha1 {sha1!r}")
+    return process_info(json["data"])
 
 
 async def get_pickcode_by_path(
     client: ClientSession, 
     path: str, 
     disable_pc: bool = False, 
+    /, 
 ) -> str:
     path = path.strip("/")
     dir_, name = splitpath(path)
@@ -632,7 +489,8 @@ async def get_pickcode_by_path(
             raise FileNotFoundError(path)
     else:
         pid = 0
-    params = {"count_folders": 0, "record_open_time": 0, "show_dir": 1, "cid": pid, "limit": 5000, "offset": 0}
+    # 使用 iterdir 方法
+    params = {"count_folders": 0, "record_open_time": 0, "show_dir": 1, "cid": pid, "limit": 10_000, "offset": 0}
     while True:
         json = await request_json(
             client, 
@@ -661,17 +519,39 @@ def reduce_image_url_layers(url: str) -> str:
     return f"https://imgjump.115.com/?sha1={sha1}&{urlp.query}&size=0"
 
 
+async def iterdir():
+    ...
+
+async def iter_files(
+    client: ClientSession, 
+    cid: str = "0", 
+    /, 
+) -> AsyncIterator[dict]:
+    api = "https://webapi.115.com/files"
+    payload: dict = {
+        "aid": 1, "asc": 1, "cid": cid, "count_folders": 0, "cur": 0, "custom_order": 1, 
+        "limit": 10_000, "o": "user_ptime", "offset": 0, "show_dir": 0, 
+    }
+    ...
+
+
+# TODO: 这个函数的代码不该这么多
 async def warmup_cdn_image(
     client: ClientSession, 
-    id: str = "0", 
+    cid: str = "0", 
+    /, 
     cache: None | dict[str, str] = None, 
 ) -> int:
-    api = "https://proapi.115.com/android/files/imglist"
-    payload: dict = {"cid": id, "limit": 5000, "offset": 0, "o": "user_ptime", "asc": 1, "cur": 0}
+    api = "https://webapi.115.com/files"
+    payload: dict = {
+        "aid": 1, "asc": 1, "cid": cid, "count_folders": 0, "cur": 0, "custom_order": 1, 
+        "limit": 10_000, "o": "user_ptime", "offset": 0, "show_dir": 0, "type": 2, 
+    }
     count = 0
     while True:
         resp = await request_json(client, api, params=payload)
         for item in resp["data"]:
+            # TODO: 使用 process_info，改名为 normalize_info
             file_id = item["file_id"]
             pickcode = item["pick_code"]
             IMAGE_URL_CACHE[pickcode] = bytes(reduce_image_url_layers(item["thumb_url"]), "utf-8")
@@ -698,7 +578,7 @@ async def warmup_cdn_image(
         logger.info("successfully cached %s (finished=%s, total=%s) cdn images in %s", delta, count, total, id)
         if count >= total:
             break
-        payload["offset"] += 5000
+        payload["offset"] += 10_000
     return count
 
 
@@ -732,6 +612,9 @@ if cdn_image and cdn_image_warmup_ids:
         create_task(periodically_warmup_cdn_image(client, cdn_image_warmup_ids))
 
 
+# TODO: 如果需要根据文件 id 获取基本的信息，可以用 fs_file（可以一次查多个），如果可能还需要图片链接，则用fs_info
+# TODO: 可以是 id 也可以是 pickcode（为了加速）
+# 这个接口有多个信息可用（pick_code,file_sha1，但无id）
 async def get_image_url(
     client: ClientSession, 
     pickcode: str, 
@@ -753,6 +636,7 @@ async def get_image_url(
     return url
 
 
+# TODO 这个函数需要大大拆分，进行巨大的简化
 @route("/", methods=["GET", "HEAD"])
 @route("/{path:path2}", methods=["GET", "HEAD"])
 @redirect_exception_response
@@ -798,6 +682,7 @@ async def get_download_url(
                 return redirect(url)
         if cdn_image and (image or pickcode in IMAGE_URL_CACHE):
             return redirect(await get_image_url(client, pickcode))
+        # TODO: 需要单独封装
         json = await request_json(
             client, 
             "https://proapi.115.com/app/chrome/downurl", 
@@ -836,4 +721,20 @@ if __name__ == "__main__":
         proxy_headers=True, 
         forwarded_allow_ips="*", 
     )
+
+# TODO 作为模块提供，返回一个 app 对象，以便和其它模块集成
+# TODO 换个框架 robyn？
+# TODO 同步框架选用 flask，异步框架还要再挑一挑
+# TODO 与 webdav 集成（可以关闭）
+# TODO 应该作为单独模块提供（以便和其它项目集成），提交到 pypi，名字叫 p115302，提供同步和异步的版本，但不依赖于p115
+# TODO 任何接口都要有一个单独的封装函数
+# TODO 各种函数都要简化或者拆分
+# TODO 查询sha1用新的接口
+# TODO 如果图片需要路径，则用批量打星标的办法实现
+# TODO 缓存 id_to_dir
+# TODO 更好的算法，以快速更新 PATH_TO_ID
+# TODO 这个文件可以实现为一个模块
+# TODO 不需要判断 login_device
+# TODO 可以为多种类型的文件预热（例如图片或视频）
+# TODO 允许对链接进行签名：命令行传入token（有token时才做签名），链接里可以包含截止时间（默认为0，即永不失效），然后由 f"302@115-{t}-{value}#{type}-{token}" t 是截止时间，后面的 type 是类型，包括sha1,pickcode,path,id，再计算一下哈希
 

@@ -9,8 +9,8 @@
 # TODO: 使用协程进行并发，而非多线程
 # TODO: 如果请求超时，则需要进行重试
 # TODO: 使用 urllib3 替代 httpx，增加稳定性
-# TODO: 允许只更新一个目录，而不进行深入
 # TODO: 允许使用批量拉取方法，而避免递归
+# TODO: sqlite 的数据库事务和写入会自动加锁，如果有多个程序在并发，则可以等待锁，需要一个超时时间和重试次数
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 4)
@@ -59,6 +59,7 @@ import logging
 from collections import deque, ChainMap
 from collections.abc import Collection, Iterator, Iterable
 from errno import EBUSY, ENOENT, ENOTDIR
+from os.path import splitext
 from sqlite3 import (
     connect, register_adapter, register_converter, Connection, Cursor, 
     Row, PARSE_COLNAMES, PARSE_DECLTYPES
@@ -168,23 +169,37 @@ def initdb(con: Connection | Cursor, /) -> Cursor:
     conn.row_factory = Row
     conn.create_function("escape_name", 1, escape)
     conn.create_function("json_array_head_replace", 3, json_array_head_replace)
+    dbpath = con.execute("SELECT file FROM pragma_database_list() WHERE name='main';").fetchone()[0]
+    file_dbpath = "%s-file%s" % splitext(dbpath)
+    con.execute("ATTACH DATABASE ? AS file;", (file_dbpath,))
+    try:
+        con2 = connect(file_dbpath)
+        con2.execute("PRAGMA journal_mode = WAL;")
+    finally:
+        con2.close()
     return con.executescript("""\
 PRAGMA journal_mode = WAL;
 
-CREATE TABLE IF NOT EXISTS "data" (
-    "id" INTEGER NOT NULL PRIMARY KEY,
-    "parent_id" INTEGER NOT NULL,
-    "pickcode" TEXT NOT NULL DEFAULT '',
-    "name" TEXT NOT NULL,
-    "size" INTEGER NOT NULL DEFAULT 0,
-    "sha1" TEXT NOT NULL DEFAULT '',
-    "is_dir" INTEGER NOT NULL CHECK("is_dir" IN (0, 1)),
-    "is_image" INTEGER NOT NULL CHECK("is_image" IN (0, 1)) DEFAULT 0,
-    "ctime" INTEGER NOT NULL DEFAULT 0,
-    "mtime" INTEGER NOT NULL DEFAULT 0,
-    "path" TEXT NOT NULL DEFAULT '',
-    "ancestors" JSON NOT NULL DEFAULT '',
-    "updated_at" DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%S.%f+08:00', 'now', '+8 hours'))
+CREATE TABLE IF NOT EXISTS data (
+    id INTEGER NOT NULL PRIMARY KEY,
+    parent_id INTEGER NOT NULL,
+    pickcode TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    sha1 TEXT NOT NULL DEFAULT '',
+    is_dir INTEGER NOT NULL CHECK(is_dir IN (0, 1)),
+    is_image INTEGER NOT NULL CHECK(is_image IN (0, 1)) DEFAULT 0,
+    ctime INTEGER NOT NULL DEFAULT 0,
+    mtime INTEGER NOT NULL DEFAULT 0,
+    path TEXT NOT NULL DEFAULT '',
+    ancestors JSON NOT NULL DEFAULT '',
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%S.%f+08:00', 'now', '+8 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS file.data (
+    id INTEGER NOT NULL PRIMARY KEY,
+    data BLOB,
+    temp_path TEXT
 );
 
 CREATE TRIGGER IF NOT EXISTS trg_data_updated_at

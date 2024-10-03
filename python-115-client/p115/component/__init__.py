@@ -8,10 +8,6 @@ from . import exception
 __all__.extend(exception.__all__)
 from .exception import *
 
-from . import cipher
-__all__.extend(cipher.__all__)
-from .cipher import *
-
 from . import client
 __all__.extend(client.__all__)
 from .client import *

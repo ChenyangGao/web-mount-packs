@@ -5,14 +5,14 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "AVAILABLE_APPMAP", "CLIENT_API_MAP", "check_response", "P115Client", "P115Url", 
+    "DEVICE_TO_SSOENT", "CLIENT_API_MAP", "check_response", "P115Client", "P115Url", 
     "ExportDirStatus", "PushExtractProgress", "ExtractProgress", 
 ]
 
 import errno
 import posixpath
 
-from asyncio import create_task, to_thread, Lock as AsyncLock
+from asyncio import create_task, to_thread, Future as AsyncFuture, Lock as AsyncLock
 from base64 import b64encode
 from binascii import b2a_hex, crc32
 from collections.abc import (
@@ -62,7 +62,7 @@ from filewrap import (
 from hashtools import HashObj, file_digest, file_mdigest, file_digest_async, file_mdigest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_chunked, is_range_request
-from httpfile import HTTPFileReader
+from httpfile import HTTPFileReader, AsyncHTTPFileReader
 from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport
 from httpx_request import request
 from iterutils import (
@@ -85,7 +85,7 @@ if getdefaulttimeout() is None:
     setdefaulttimeout(30)
 
 # 所有的可用登录设备和对应的 ssoent
-AVAILABLE_APPMAP: Final[dict[str, str]] = {
+DEVICE_TO_SSOENT: Final[dict[str, str]] = {
     "web": "A1", 
     "desktop": "A1", 
     "ios": "D1", 
@@ -722,7 +722,7 @@ class P115Client:
             ssoent = self.login_ssoent
             if ssoent is None:
                 return None
-            for app, v in AVAILABLE_APPMAP.items():
+            for app, v in DEVICE_TO_SSOENT.items():
                 if v == ssoent:
                     return app
             device = yield self.login_device(async_=async_, **request_kwargs)
@@ -9541,7 +9541,30 @@ class P115Client:
 
     ########## Other Encapsulations ##########
 
-    # TODO 支持异步
+    @overload
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> HTTPFileReader:
+        ...
+    @overload
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncHTTPFileReader:
+        ...
     def open(
         self, 
         /, 
@@ -9551,24 +9574,27 @@ class P115Client:
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> HTTPFileReader:
-        """打开下载链接，可以从网盘、网盘上的压缩包内、分享链接中获取：
-            - P115Client.download_url
-            - P115Client.share_download_url
-            - P115Client.extract_download_url
+    ) -> HTTPFileReader | AsyncHTTPFileReader:
+        """打开下载链接，可以从网盘的文件、网盘的压缩包文件内、分享链接的文件中获取
         """
-        if async_:
-            raise NotImplementedError("asynchronous mode not implemented")
         if headers is None:
             headers = self.headers
         else:
             headers = {**self.headers, **headers}
-        return HTTPFileReader(
-            url, 
-            headers=headers, 
-            start=start, 
-            seek_threshold=seek_threshold, 
-        )
+        if async_:
+            return AsyncHTTPFileReader(
+                url, 
+                headers=headers, 
+                start=start, 
+                seek_threshold=seek_threshold, 
+            )
+        else:
+            return HTTPFileReader(
+                url, 
+                headers=headers, 
+                start=start, 
+                seek_threshold=seek_threshold, 
+            )
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
     def open_upload(self): ...
@@ -9917,91 +9943,9 @@ class P115Client:
             ))
         return run_gen_step(gen_step, async_=async_)
 
-    @cached_property
-    def fs(self, /) -> P115FileSystem:
-        """你的网盘的文件列表的封装对象
-        """
-        return P115FileSystem(self)
-
-    def get_fs(
-        self, 
-        /, 
-        password: str = "", 
-        cache_id_to_readdir: bool | int = False, 
-        cache_path_to_id: bool | int = False, 
-        refresh: bool = True, 
-        request: None | Callable = None, 
-        async_request: None | Callable = None, 
-    ) -> P115FileSystem:
-        """新建你的网盘的文件列表的封装对象
-        """
-        return P115FileSystem(
-            self, 
-            password=password, 
-            cache_id_to_readdir=cache_id_to_readdir, 
-            cache_path_to_id=cache_path_to_id, 
-            refresh=refresh, 
-            request=request, 
-            async_request=async_request, 
-        )
-
-    def get_share_fs(self, share_link: str, /, *args, **kwargs) -> P115ShareFileSystem:
-        """新建一个分享链接的文件列表的封装对象
-        """
-        return P115ShareFileSystem(self, share_link, *args, **kwargs)
-
-    def get_zip_fs(self, id_or_pickcode: int | str, /, *args, **kwargs) -> P115ZipFileSystem:
-        """新建压缩文件（支持 zip、rar、7z）的文件列表的封装对象（这个压缩文件在你的网盘中，且已经被云解压）
-
-        https://vip.115.com/?ct=info&ac=information
-        云解压预览规则：
-        1. 支持rar、zip、7z类型的压缩包云解压，其他类型的压缩包暂不支持；
-        2. 支持云解压20GB以下的压缩包；
-        3. 暂不支持分卷压缩包类型进行云解压，如rar.part等；
-        4. 暂不支持有密码的压缩包进行在线预览。
-        """
-        return P115ZipFileSystem(self, id_or_pickcode, *args, **kwargs)
-
-    @cached_property
-    def label(self, /) -> P115LabelList:
-        """你的标签列表的封装对象（标签是给文件或文件夹做标记的）
-        """
-        return P115LabelList(self)
-
-    @cached_property
-    def offline(self, /) -> P115Offline:
-        """你的离线任务列表的封装对象
-        """
-        return P115Offline(self)
-
-    def get_offline(self, /, *args, **kwargs) -> P115Offline:
-        """新建你的离线任务列表的封装对象
-        """
-        return P115Offline(self, *args, **kwargs)
-
-    @cached_property
-    def recyclebin(self, /) -> P115Recyclebin:
-        """你的回收站的封装对象
-        """
-        return P115Recyclebin(self)
-
-    def get_recyclebin(self, /, *args, **kwargs) -> P115Recyclebin:
-        """新建你的回收站的封装对象
-        """
-        return P115Recyclebin(self, *args, **kwargs)
-
-    @cached_property
-    def sharing(self, /) -> P115Sharing:
-        """你的分享列表的封装对象
-        """
-        return P115Sharing(self)
-
-    def get_sharing(self, /, *args, **kwargs) -> P115Sharing:
-        """新建你的分享列表的封装对象
-        """
-        return P115Sharing(self, *args, **kwargs)
 
 
+# TODO: 为所有的 Status 类设置一个 ABC，确保有相同的接口
 # TODO: 这些类再提供一个 Async 版本
 class ExportDirStatus(Future):
     _condition: Condition
@@ -10153,18 +10097,10 @@ for name, method in P115Client.__dict__.items():
         continue
     match = CRE_CLIENT_API_search(method.__doc__)
     if match is not None:
-        CLIENT_API_MAP[match[1]] = "P115Client." + name
+        CLIENT_API_MAP[match[1]] = name
 
 
-from .fs import P115FileSystem
-from .fs_share import P115ShareFileSystem
-from .fs_zip import P115ZipFileSystem
-from .labellist import P115LabelList
-from .offline import P115Offline
-from .recyclebin import P115Recyclebin
-from .sharing import P115Sharing
-
-# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数
+# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数，来自 p115qrcode 模块（也可以自行传入 request 参数）
 # TODO: qrcode_login 的返回值，是一个 Future 对象，包含登录必要凭证、二维码链接、登录状态、返回值或报错信息等数据，并且可以被等待完成，也可以把二维码输出到命令行、浏览器、图片查看器等
 # TODO: 参考 sqlite 的 Error 体系，构建一个 exception.py 模块
 # TODO: 尽量减少各种所谓包装和v2的接口，都合并到一个中

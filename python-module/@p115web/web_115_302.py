@@ -210,7 +210,7 @@ from html import escape
 from io import BytesIO
 from os import stat
 from os.path import exists, expanduser, dirname, join as joinpath, realpath
-from posixpath import basename, splitext
+from posixpath import splitext
 from socket import getdefaulttimeout, setdefaulttimeout
 from sys import exc_info
 from threading import Lock
@@ -362,20 +362,20 @@ class DavPathBase:
             raise AttributeError(attr) from e
 
     @cached_property
-    def name(self, /) -> str:
-        return basename(self.path)
-
-    @cached_property
     def creationdate(self, /) -> float:
         return self.ctime
 
     @cached_property
     def ctime(self, /) -> float:
-        return self.data["ctime"]
+        return self.attr["ctime"]
 
     @cached_property
     def mtime(self, /) -> float:
         return self.attr["mtime"]
+
+    @cached_property
+    def name(self, /) -> str:
+        return self.attr["name"]
 
     def get_creation_date(self, /) -> float:
         return self.ctime
@@ -383,11 +383,21 @@ class DavPathBase:
     def get_display_name(self, /) -> str:
         return self.name
 
+    def get_etag(self, /) -> str:
+        return "%s-%s-%s" % (
+            self.attr["pickcode"], 
+            self.mtime, 
+            self.size, 
+        )
+
     def get_last_modified(self, /) -> float:
         return self.mtime
 
     def is_link(self, /) -> bool:
         return False
+
+    def support_etag(self, /) -> bool:
+        return True
 
     def support_modified(self, /) -> bool:
         return True
@@ -447,13 +457,6 @@ class FileResource(DavPathBase, DAVNonCollection):
         else:
             return f"/{quote(attr['name'], safe='')}?id={attr['id']}&password={password}"
 
-    def get_etag(self, /) -> str:
-        return "%s-%s-%s" % (
-            self.attr["sha1"], 
-            self.mtime, 
-            self.size, 
-        )
-
     def get_content(self, /):
         if self.path.endswith(".strm"):
             return BytesIO(self.strm_data)
@@ -463,9 +466,6 @@ class FileResource(DavPathBase, DAVNonCollection):
         return self.size
 
     def support_content_length(self, /) -> bool:
-        return True
-
-    def support_etag(self, /) -> bool:
         return True
 
     def support_ranges(self, /) -> bool:
@@ -496,13 +496,6 @@ class FolderResource(DavPathBase, DAVCollection):
             children[name] = attr
         return children
 
-    def get_etag(self, /) -> str:
-        return "%s-%s-%s" % (
-            sha1(bytes(self.path, "utf-8")).hexdigest(), 
-            self.mtime, 
-            0, 
-        )
-
     def get_member(self, /, name: str) -> FileResource | FolderResource:
         if not (attr := self.children.get(name)):
             raise DAVError(404, self.path + "/" + name)
@@ -526,9 +519,6 @@ class FolderResource(DavPathBase, DAVCollection):
         elif name == "{DAV:}iscollection":
             return True
         return super().get_property_value(name)
-
-    def support_etag(self, /):
-        return True
 
 
 class P115FileSystemProvider(DAVProvider):

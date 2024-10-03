@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-httpfile"
-version = "0.0.3"
-description = "Python httpfile."
+name = "p115cipher"
+version = "0.0.1"
+description = "115 cipher module."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-httpfile"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-httpfile"
-keywords = ["http", "file", "wrapper"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115cipher"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115cipher"
+keywords = ["115", "webdisk", "cipher"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,15 +27,14 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-http_response = "*"
-python-asynctools = ">=0.0.5"
-python-filewrap = ">=0.2.1"
-python-property = ">=0.0.2"
-python-urlopen = ">=0.0.7"
+ecdsa = "*"
+lz4 = "*"
+pycryptodome = "*"
+python-iterutils = ">=0.0.7"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "httpfile"
+include = "p115cipher"

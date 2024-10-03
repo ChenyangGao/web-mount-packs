@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = ["urlopen", "request", "download"]
 
 import errno
@@ -19,9 +19,10 @@ from os.path import abspath, dirname, isdir, join as joinpath
 from re import compile as re_compile
 from shutil import COPY_BUFSIZE # type: ignore
 from ssl import SSLContext, _create_unverified_context
+from string import punctuation
 from typing import cast, Any
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, OpenerDirector, Request
 from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
@@ -60,6 +61,12 @@ def decompress_deflate(data, compresslevel=9):
     deflated = compress.compress(data)
     deflated += compress.flush()
     return deflated
+
+
+def ensure_ascii_url(url: str, /):
+    if url.isascii():
+        return url
+    return quote(url, safe=punctuation)
 
 
 def decompress_response(resp: HTTPResponse) -> bytes:
@@ -147,6 +154,7 @@ def urlopen(
         opener.add_handler(HTTPSHandler(context=context))
     if cookies is not None:
         opener.add_handler(HTTPCookieProcessor(cookies))
+    req.full_url = ensure_ascii_url(req.full_url)
     if timeout is None:
         return opener.open(req)
     else:
