@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-httpfile"
-version = "0.0.3"
+version = "0.0.4"
 description = "Python httpfile."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -31,7 +31,7 @@ http_response = "*"
 python-asynctools = ">=0.0.5"
 python-filewrap = ">=0.2.1"
 python-property = ">=0.0.2"
-python-urlopen = ">=0.0.7"
+python-urlopen = ">=0.0.7.1"
 
 [build-system]
 requires = ["poetry-core"]

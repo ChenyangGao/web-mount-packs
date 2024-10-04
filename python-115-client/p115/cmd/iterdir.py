@@ -54,8 +54,11 @@ def parse_args(
     return args
 
 
-def main(argv: None | list[str] = None):
-    args = parse_args(argv)
+def main(argv: None | list[str] | Namespace = None):
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     from orjson import dumps
     from p115 import P115Client, P115Path

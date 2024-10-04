@@ -18,6 +18,7 @@ from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from re import compile as re_compile
 from shutil import COPY_BUFSIZE # type: ignore
+from socket import getdefaulttimeout, setdefaulttimeout
 from ssl import SSLContext, _create_unverified_context
 from string import punctuation
 from typing import cast, Any
@@ -27,10 +28,8 @@ from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, Open
 from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
-from brotli import decompress as decompress_br # type: ignore
 from filewrap import bio_skip_iter, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
-from zstandard import decompress as decompress_zstd
 
 
 if "__del__" not in HTTPResponse.__dict__:
@@ -38,10 +37,14 @@ if "__del__" not in HTTPResponse.__dict__:
 if "__del__" not in OpenerDirector.__dict__:
     setattr(OpenerDirector, "__del__", OpenerDirector.close)
 
+_opener: None | OpenerDirector = None
 CRE_search_charset = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
 
+if getdefaulttimeout() is None:
+    setdefaulttimeout(60)
 
-def decompress_deflate(data, compresslevel=9):
+
+def decompress_deflate(data: bytes, compresslevel: int = 9) -> bytes:
     # Fork from: https://stackoverflow.com/questions/1089662/python-inflate-and-deflate-implementations#answer-1089787
     compress = compressobj(
             compresslevel,  # level: 0-9
@@ -63,7 +66,7 @@ def decompress_deflate(data, compresslevel=9):
     return deflated
 
 
-def ensure_ascii_url(url: str, /):
+def ensure_ascii_url(url: str, /) -> str:
     if url.isascii():
         return url
     return quote(url, safe=punctuation)
@@ -78,8 +81,10 @@ def decompress_response(resp: HTTPResponse) -> bytes:
         case "deflate":
             data = decompress_deflate(data)
         case "br":
+            from brotli import decompress as decompress_br # type: ignore
             data = decompress_br(data)
         case "zstd":
+            from zstandard import decompress as decompress_zstd
             data = decompress_zstd(data)
     return data
 
@@ -95,9 +100,10 @@ def urlopen(
     cookies: None | CookieJar = None, 
     proxy: None | tuple[str, str] = None, 
     context: None | SSLContext = None, 
-    opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context())), 
+    opener: None | OpenerDirector = None, 
     origin: None | str = None, 
 ) -> HTTPResponse:
+    global _opener
     if isinstance(url, str) and not urlsplit(url).scheme:
         if origin:
             if not url.startswith("/"):
@@ -148,12 +154,17 @@ def urlopen(
         req = Request(url, data=data, headers=headers, method=method.upper())
     if proxy:
         req.set_proxy(*proxy)
+    if opener is None:
+        if _opener is None:
+            opener = _opener = build_opener(HTTPSHandler(context=_create_unverified_context()))
+        else:
+            opener = _opener
     if context is not None or cookies is not None:
         opener = copy(opener)
-    if context is not None:
-        opener.add_handler(HTTPSHandler(context=context))
-    if cookies is not None:
-        opener.add_handler(HTTPCookieProcessor(cookies))
+        if context is not None:
+            opener.add_handler(HTTPSHandler(context=context))
+        if cookies is not None:
+            opener.add_handler(HTTPCookieProcessor(cookies))
     req.full_url = ensure_ascii_url(req.full_url)
     if timeout is None:
         return opener.open(req)

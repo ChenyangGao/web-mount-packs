@@ -2,15 +2,15 @@
 
 ## Installation
 
-You can install via [pypi](https://pypi.org/project/cipher115/)
+You can install via [pypi](https://pypi.org/project/p115cipher/)
 
 ```console
-pip install -U cipher115
+pip install -U p115cipher
 ```
 
 ## Usage
 
 ```python
-from cipher115.fast import *
-from cipher115.normal import *
+from p115cipher.fast import *
+from p115cipher.normal import *
 ```

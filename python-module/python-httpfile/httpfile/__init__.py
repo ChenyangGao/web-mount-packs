@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["HTTPFileReader", "AsyncHTTPFileReader"]
 
 import errno
 
 from collections.abc import Awaitable, Callable, Mapping
 from functools import cached_property, partial
-from inspect import isawaitable, signature
+from importlib.util import find_spec
+from inspect import isawaitable
 from io import (
     BufferedReader, RawIOBase, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE, 
 )
@@ -19,7 +20,7 @@ from os import fstat, stat, PathLike
 from shutil import COPY_BUFSIZE # type: ignore
 from sys import exc_info
 from typing import cast, overload, Any, BinaryIO, Literal, Self
-from types import MappingProxyType, MethodType
+from types import MappingProxyType
 from warnings import warn
 
 from asynctools import ensure_async, run_async
@@ -102,7 +103,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         # NOTE: If the offset of the forward seek is not higher than this value, 
         #       it will be directly read and discarded, default to 1 MB
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = urlopen, 
     ):
         if headers:
             headers = {**headers, "Accept-Encoding": "identity"}
@@ -112,6 +113,8 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             headers["Range"] = f"bytes={start}-"
         elif start < 0:
             headers["Range"] = f"bytes={start}"
+        if urlopen is None:
+            urlopen = globals()["urlopen"]
         if callable(url):
             geturl = url
             def url():
@@ -384,7 +387,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = None, 
     ) -> Self | BufferedReader:
         ...
     @overload
@@ -402,7 +405,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = None, 
     ) -> TextIOWrapper:
         ...
     @classmethod
@@ -419,7 +422,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = None, 
     ) -> Self | BufferedReader | TextIOWrapper:
         file = cls(
             url=url, 
@@ -517,9 +520,9 @@ class AsyncHTTPFileReader(HTTPFileReader):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = urlopen, 
     ):
-        run_async(self._init(
+        run_async(self.__ainit__(
             url=url, 
             headers=headers, 
             start=start, 
@@ -542,7 +545,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         else:
             raise StopAsyncIteration
 
-    async def _init(
+    async def __ainit__(
         self, 
         /, 
         url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
@@ -551,8 +554,6 @@ class AsyncHTTPFileReader(HTTPFileReader):
         seek_threshold: int = 1 << 20, 
         urlopen = None, 
     ):
-        if urlopen is None:
-            urlopen = signature(type(self).__init__).parameters["urlopen"].default
         if headers:
             headers = {**headers, "Accept-Encoding": "identity"}
         else:
@@ -561,6 +562,8 @@ class AsyncHTTPFileReader(HTTPFileReader):
             headers["Range"] = f"bytes={start}-"
         elif start < 0:
             headers["Range"] = f"bytes={start}"
+        if urlopen is None:
+            urlopen = globals()["urlopen"]
         if callable(url):
             geturl = url
             async def url() -> str:
@@ -749,7 +752,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         urlopen = None, 
     ) -> Self: # type: ignore
         self = cls.__new__(cls)
-        await self._init(
+        await self.__ainit__(
             url=url, 
             headers=headers, 
             start=start, 
@@ -773,7 +776,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = None, 
     ) -> Self | AsyncBufferedReader:
         ...
     @overload
@@ -791,7 +794,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = None, 
     ) -> AsyncTextIOWrapper:
         ...
     @classmethod
@@ -807,7 +810,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen: Callable = urlopen, 
+        urlopen = None, 
     ) -> Self | AsyncBufferedReader | AsyncTextIOWrapper:
         file = await cls.new(
             url=url, 
@@ -895,10 +898,10 @@ class AsyncHTTPFileReader(HTTPFileReader):
             return buffer
 
 
-try:
+if find_spec("urllib3"):
     from urllib.error import HTTPError
-    from urllib3 import request as urllib3_request
-    from urllib3.poolmanager import PoolManager
+
+    _urllib3_urlopen = None
 
     class Urllib3FileReader(HTTPFileReader):
 
@@ -909,17 +912,28 @@ try:
             headers: None | Mapping = None, 
             start: int = 0, 
             seek_threshold: int = 1 << 20, 
-            urlopen = partial(urllib3_request, "GET"), # type: ignore
+            urlopen = None, 
         ):
+            global _urllib3_urlopen
+            from urllib3 import request
+            from urllib3.poolmanager import PoolManager
+
             if isinstance(urlopen, PoolManager):
                 urlopen = partial(urlopen.request, "GET", preload_content=False)
+            elif urlopen is None:
+                if _urllib3_urlopen is None:
+                    urlopen = _urllib3_urlopen = partial(cast(Callable, request), "GET", preload_content=False)
+                else:
+                    urlopen = _urllib3_urlopen
             else:
                 urlopen = partial(urlopen, preload_content=False)
+
             def urlopen_wrapper(url: str, headers: None | Mapping = headers):
                 resp = urlopen(url, headers=headers)
                 if resp.status >= 400:
                     raise HTTPError(resp.url, resp.status, resp.reason, resp.headers, resp)
                 return resp
+
             super().__init__(
                 url, 
                 headers=headers, 
@@ -929,15 +943,10 @@ try:
             )
 
     __all__.append("Urllib3FileReader")
-except ImportError:
-    pass
 
 
-try:
-    from requests import request as requests_request, Session
-
-    if "__del__" not in Session.__dict__:
-        setattr(Session, "__del__", lambda self, /: self.close())
+if find_spec("requests"):
+    _requests_urlopen = None
 
     class RequestsFileReader(HTTPFileReader):
 
@@ -948,10 +957,19 @@ try:
             headers: None | Mapping = None, 
             start: int = 0, 
             seek_threshold: int = 1 << 20, 
-            urlopen = partial(requests_request, "GET"), 
+            urlopen = None, 
         ):
+            global _requests_urlopen
+            from requests import request, Session
             if isinstance(urlopen, Session):
                 urlopen = partial(urlopen.request, "GET", stream=True)
+            elif urlopen is None:
+                if _requests_urlopen is None:
+                    if "__del__" not in Session.__dict__:
+                        setattr(Session, "__del__", lambda self, /: self.close())
+                    urlopen = _requests_urlopen = partial(request, "GET", stream=True)
+                else:
+                    urlopen = _requests_urlopen
             else:
                 urlopen = partial(urlopen, stream=True)
             def urlopen_wrapper(url: str, headers: None | Mapping = headers):
@@ -971,33 +989,16 @@ try:
             return self.response.raw
 
     __all__.append("RequestsFileReader")
-except ImportError:
-    pass
 
 
-try:
-    from aiohttp import request as aiohttp_request, ClientSession
+if find_spec("aiohttp"):
+    from types import MethodType
+
+    _aiohttp_urlopen = None
 
     class AiohttpFileReader(AsyncHTTPFileReader):
 
-        def __init__(
-            self, 
-            /, 
-            url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
-            headers: None | Mapping = None, 
-            start: int = 0, 
-            seek_threshold: int = 1 << 20, 
-            urlopen = partial(aiohttp_request, "GET"), 
-        ):
-            super().__init__(
-                url=url, 
-                headers=headers, 
-                start=start, 
-                seek_threshold=seek_threshold, 
-                urlopen=urlopen, 
-            )
-
-        async def _init(
+        async def __ainit__(
             self, 
             /, 
             url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
@@ -1006,17 +1007,26 @@ try:
             seek_threshold: int = 1 << 20, 
             urlopen = None, 
         ):
-            if urlopen is None:
-                urlopen = signature(type(self).__init__).parameters["urlopen"].default
+            global _aiohttp_urlopen
+            from aiohttp import request, ClientSession
+
             close_session = True
             if isinstance(urlopen, ClientSession):
                 urlopen = urlopen.get
-                do_not_close_session = False
-            if close_session:
+                close_session = False
+            if urlopen is None:
+                if _aiohttp_urlopen is None:
+                    urlopen = _aiohttp_urlopen = partial(request, "GET")
+                else:
+                    urlopen = _aiohttp_urlopen
+            else:
                 func = urlopen
                 if isinstance(func, partial):
                     func = func.func
-                close_session = not (isinstance(func, MethodType) and isinstance(func.__self__, ClientSession))
+                close_session = not (
+                    isinstance(func, MethodType) and 
+                    isinstance(func.__self__, ClientSession)
+                )
             async def urlopen_wrapper(url: str, headers: None | Mapping = headers):
                 resp = await urlopen(url, headers=headers).__aenter__()
                 async def aclose():
@@ -1029,7 +1039,7 @@ try:
                 resp.aclose = aclose
                 resp.raise_for_status()
                 return resp
-            await super()._init(
+            await super().__ainit__(
                 url=url, 
                 headers=headers, 
                 start=start, 
@@ -1046,60 +1056,13 @@ try:
             return self.response.closed
 
     __all__.append("AiohttpFileReader")
-except ImportError:
-    pass
 
 
-try:
-    from contextlib import asynccontextmanager
+if find_spec("httpx"):
     from filewrap import bytes_iter_to_reader, bytes_iter_to_async_reader
-    from httpx import stream, Client, AsyncClient
 
-    if "__del__" not in Client.__dict__:
-        setattr(Client, "__del__", lambda self: self.close())
-    if "__del__" not in AsyncClient.__dict__:
-        setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
-
-    def async_stream(
-        method, 
-        url, 
-        params = None,
-        content = None,
-        data = None,
-        files = None,
-        json = None,
-        headers = None,
-        cookies = None,
-        auth = None,
-        proxy = None,
-        proxies = None,
-        timeout = 5.0,
-        follow_redirects = False,
-        verify = True,
-        cert = None,
-        trust_env = True,
-    ):
-        client = AsyncClient(
-            cookies=cookies,
-            proxy=proxy,
-            proxies=proxies,
-            cert=cert,
-            verify=verify,
-            timeout=timeout,
-            trust_env=trust_env,
-        )
-        return client.stream(
-            method=method,
-            url=url,
-            content=content,
-            data=data,
-            files=files,
-            json=json,
-            params=params,
-            headers=headers,
-            auth=auth,
-            follow_redirects=follow_redirects,
-        )
+    _httpx_urlopen = None
+    _httpx_urlopen_async = None
 
     class HttpxFileReader(HTTPFileReader):
 
@@ -1110,10 +1073,21 @@ try:
             headers: None | Mapping = None, 
             start: int = 0, 
             seek_threshold: int = 1 << 20, 
-            urlopen = partial(stream, "GET"), 
+            urlopen = None, 
         ):
+            global _httpx_urlopen
+            from httpx import stream, Client
+
             if isinstance(urlopen, Client):
                 urlopen = partial(urlopen.stream, "GET")
+            elif urlopen is None:
+                if _httpx_urlopen is None:
+                    if "__del__" not in Client.__dict__:
+                        setattr(Client, "__del__", lambda self: self.close())
+                    urlopen = _httpx_urlopen = partial(stream, "GET")
+                else:
+                    urlopen = _httpx_urlopen
+
             def urlopen_wrapper(url: str, headers: None | Mapping = headers):
                 context = urlopen(url, headers=headers)
                 resp = context.__enter__()
@@ -1122,6 +1096,7 @@ try:
                 file = bytes_iter_to_reader(resp.iter_raw())
                 self.__dict__["file"] = file
                 return resp
+
             super().__init__(
                 url, 
                 headers=headers, 
@@ -1136,24 +1111,7 @@ try:
 
     class AsyncHttpxFileReader(AsyncHTTPFileReader):
 
-        def __init__(
-            self, 
-            /, 
-            url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
-            headers: None | Mapping = None, 
-            start: int = 0, 
-            seek_threshold: int = 1 << 20, 
-            urlopen = partial(async_stream, "GET"), 
-        ):
-            super().__init__(
-                url=url, 
-                headers=headers, 
-                start=start, 
-                seek_threshold=seek_threshold, 
-                urlopen=urlopen, 
-            )
-
-        async def _init(
+        async def __ainit__(
             self, 
             /, 
             url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
@@ -1162,10 +1120,59 @@ try:
             seek_threshold: int = 1 << 20, 
             urlopen = None, 
         ):
-            if urlopen is None:
-                urlopen = signature(type(self).__init__).parameters["urlopen"].default
+            global _httpx_urlopen_async
+            from httpx import AsyncClient
+
             if isinstance(urlopen, AsyncClient):
                 urlopen = partial(urlopen.stream, "GET")
+            elif urlopen is None:
+                if _httpx_urlopen_async is None:
+                    if "__del__" not in AsyncClient.__dict__:
+                        setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
+                    def async_stream(
+                        method, 
+                        url, 
+                        params = None, 
+                        content = None, 
+                        data = None, 
+                        files = None, 
+                        json = None, 
+                        headers = None, 
+                        cookies = None, 
+                        auth = None, 
+                        proxy = None, 
+                        proxies = None, 
+                        timeout = 5.0, 
+                        follow_redirects = False, 
+                        verify = True, 
+                        cert = None, 
+                        trust_env = True, 
+                    ):
+                        client = AsyncClient(
+                            cookies=cookies,
+                            proxy=proxy,
+                            proxies=proxies,
+                            cert=cert,
+                            verify=verify,
+                            timeout=timeout,
+                            trust_env=trust_env,
+                        )
+                        return client.stream(
+                            method=method,
+                            url=url,
+                            content=content,
+                            data=data,
+                            files=files,
+                            json=json,
+                            params=params,
+                            headers=headers,
+                            auth=auth,
+                            follow_redirects=follow_redirects,
+                        )
+                    urlopen = _httpx_urlopen_async = partial(async_stream, "GET")
+                else:
+                    urlopen = _httpx_urlopen_async
+
             async def urlopen_wrapper(url: str, headers: None | Mapping = headers):
                 context = urlopen(url, headers=headers)
                 resp = await context.__aenter__()
@@ -1174,7 +1181,8 @@ try:
                 file = bytes_iter_to_async_reader(resp.aiter_raw())
                 self.__dict__["file"] = file
                 return resp
-            await super()._init(
+
+            await super().__ainit__(
                 url=url, 
                 headers=headers, 
                 start=start, 
@@ -1188,7 +1196,5 @@ try:
 
     __all__.append("HttpxFileReader")
     __all__.append("AsyncHttpxFileReader")
-except ImportError:
-    pass
 
 # TODO: 设计实现一个 HTTPFileWriter，用于实现上传，关闭后视为上传完成

@@ -5,22 +5,21 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__: list[str] = []
 __doc__ = "115 网盘或分享链接批量下载"
 
+from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import NamedTuple, TypedDict
+
 if __name__ == "__main__":
-    from argparse import ArgumentParser, RawTextHelpFormatter
     from pathlib import Path
     from sys import path
 
     path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
-    from argparse import RawTextHelpFormatter
     from .init import subparsers
 
     parser = subparsers.add_parser("download", description=__doc__, formatter_class=RawTextHelpFormatter)
-
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import NamedTuple, TypedDict
 
 
 @dataclass
@@ -42,11 +41,22 @@ class Result(NamedTuple):
     tasks: Tasks
 
 
-def main(args) -> Result:
+def parse_args(
+    argv: None | list[str] = None, 
+) -> Namespace:
+    args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
+    return args
+
+
+def main(argv: None | list[str] | Namespace = None) -> Result:
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     import errno
 

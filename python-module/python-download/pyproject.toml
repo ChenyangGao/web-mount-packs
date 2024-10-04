@@ -31,7 +31,7 @@ http_response = "*"
 python-asynctools = "*"
 python-concurrenttools = "*"
 python-filewrap = "*"
-python-urlopen = "*"
+python-urlopen = ">=0.0.7.1"
 
 [tool.poetry.scripts]
 python-download = "download.__main__:main"

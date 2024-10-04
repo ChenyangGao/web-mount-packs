@@ -9,18 +9,15 @@ from binascii import crc32
 from itertools import pairwise
 from random import randrange
 
-from lz4.block import decompress as lz4_block_decompress # type: ignore
-from Crypto import Random
-from Crypto.Cipher import AES
-
-from .const import G_key_l, CRC_SALT, RSA_PUBLIC_KEY_e, RSA_PUBLIC_KEY_n, RSA_BLOCK_SIZE, RSA_KEY_SIZE
+from .const import G_key_l, CRC_SALT, RSA_PUBKEY_PAIR
 from .common import Buffer, RSA_encrypt, gen_key, from_bytes, to_bytes, xor, generate_ecdh_pair
 
 
 class P115RSACipher:
 
     def __init__(self, /):
-        self.rand_key: bytes = Random.new().read(RSA_KEY_SIZE)
+        from Crypto import Random
+        self.rand_key: bytes = Random.new().read(16)
         self.key: bytes = gen_key(self.rand_key)
 
     def encode(self, text: bytes | bytearray | str, /) -> bytes:
@@ -28,7 +25,7 @@ class P115RSACipher:
             text = bytes(text, "utf-8")
         tmp = xor(text, self.key)[::-1]
         xor_text = self.rand_key + xor(tmp, G_key_l)
-        block_size = RSA_BLOCK_SIZE - 11
+        block_size = 128 - 11
         cipher_text = bytearray()
         for l, r in pairwise(range(0, len(xor_text) + block_size, block_size)):
             cipher_text += RSA_encrypt(xor_text[l:r])
@@ -37,13 +34,13 @@ class P115RSACipher:
     def decode(self, cipher_text: bytes | bytearray | str, /) -> bytes:
         cipher_text = b64decode(cipher_text)
         text = bytearray()
-        for l, r in pairwise(range(0, len(cipher_text) + RSA_BLOCK_SIZE, RSA_BLOCK_SIZE)):
+        for l, r in pairwise(range(0, len(cipher_text) + 128, 128)):
             n = from_bytes(cipher_text[l:r])
-            m = pow(n, RSA_PUBLIC_KEY_e, RSA_PUBLIC_KEY_n)
+            m = pow(n, *RSA_PUBKEY_PAIR)
             b = to_bytes(m, (m.bit_length() + 0b111) >> 3)
             text += b[b.index(0)+1:]
-        rand_key = text[0:RSA_KEY_SIZE]
-        text = text[RSA_KEY_SIZE:]
+        rand_key = text[0:16]
+        text = text[16:]
         key_l = gen_key(rand_key, 12)
         tmp = xor(text, key_l)[::-1]
         return bytes(xor(tmp, self.key))
@@ -60,6 +57,8 @@ class P115ECDHCipher:
 
     def encode(self, text: bytes | bytearray | str, /) -> bytes:
         "加密数据"
+        from Crypto.Cipher import AES
+
         if isinstance(text, str):
             text = bytes(text, "utf-8")
         pad_size = 16 - (len(text) & 15)
@@ -73,9 +72,12 @@ class P115ECDHCipher:
         decompress: bool = False, 
     ) -> bytes:
         "解密数据"
+        from Crypto.Cipher import AES
+
         data = AES.new(self.aes_key, AES.MODE_CBC, self.aes_iv).decrypt(
             cipher_text[:len(cipher_text) & -16])
         if decompress:
+            from lz4.block import decompress as lz4_block_decompress # type: ignore
             size = data[0] + (data[1] << 8)
             data = lz4_block_decompress(data[2:size+2], 0x2000)
         else:

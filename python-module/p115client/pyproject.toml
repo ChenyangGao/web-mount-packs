@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-115"
-version = "0.0.9.7.9.5.2"
-description = "Python wrapper for 115 webdisk."
+name = "p115client"
+version = "0.0.0.2"
+description = "Python 115 webdisk client."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115client"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115client"
 keywords = ["115", "webdisk", "client"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -27,43 +27,29 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
-cachetools = "*"
-glob_pattern = "*"
 http_response = "*"
 httpx = "*"
 httpx_request = ">=0.0.8.2"
-iter_collect = ">=0.0.3"
-magnet2torrent = "*"
 multidict = "*"
 orjson = "*"
 p115cipher = ">=0.0.2"
-posixpatht = ">=0.0.3"
 pycryptodome = "*"
 python-asynctools = ">=0.0.4"
-python-concurrenttools = ">=0.0.3"
 python-cookietools = ">=0.0.2"
 python-dictattr = ">=0.0.4"
-python-download = ">=0.0.3"
 python-filewrap = ">=0.2"
 python-hashtools = ">=0.0.3.3"
 python-httpfile = ">=0.0.4"
 python-http_request = ">=0.0.6"
 python-iterutils = ">=0.0.7.1"
 python-startfile = ">=0.0.2"
-python-texttools = ">=0.0.2"
 python-urlopen = ">=0.0.6"
-python-undefined = "*"
 qrcode = "*"
-rich = "*"
 yarl = "*"
-
-[tool.poetry.scripts]
-python-115 = "p115.__main__:main"
-p115 = "p115.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "p115"
+include = "p115client"

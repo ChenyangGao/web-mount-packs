@@ -5,26 +5,36 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__: list[str] = []
 __doc__ = "扫码获取 115 cookies"
 
+from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
 
 if __name__ == "__main__":
-    from argparse import ArgumentParser, RawTextHelpFormatter
     from pathlib import Path
     from sys import path
 
     path[0] = str(Path(__file__).parents[2])
     parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 else:
-    from argparse import RawTextHelpFormatter
     from .init import subparsers
 
     parser = subparsers.add_parser("qrcode", description=__doc__, formatter_class=RawTextHelpFormatter)
 
 
-def main(args):
+def parse_args(
+    argv: None | list[str] = None, 
+) -> Namespace:
+    args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
+    return args
+
+
+def main(argv: None | list[str] | Namespace = None):
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     from os.path import expanduser, dirname, join as joinpath, realpath
     from typing import TextIO

@@ -5,16 +5,17 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "DEVICE_TO_SSOENT", "CLIENT_API_MAP", "check_response", "P115Client", "P115Url", 
+    "AVAILABLE_DEVICES", "DEVICE_TO_SSOENT", "CLIENT_API_MAP", 
+    "check_response", "P115Client", "P115Url", 
     "ExportDirStatus", "PushExtractProgress", "ExtractProgress", 
 ]
 
 import errno
 import posixpath
 
-from asyncio import create_task, to_thread, Future as AsyncFuture, Lock as AsyncLock
+from asyncio import create_task, to_thread, Lock as AsyncLock
 from base64 import b64encode
-from binascii import b2a_hex, crc32
+from binascii import crc32
 from collections.abc import (
     AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, 
     Generator, ItemsView, Iterable, Iterator, Mapping, Sequence, 
@@ -24,17 +25,16 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from email.utils import formatdate
 from functools import cached_property, partial
-from hashlib import md5, sha1
+from hashlib import sha1
 from hmac import digest as hmac_digest
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel
-from inspect import isawaitable, iscoroutinefunction
-from itertools import chain, count, takewhile
-from os import fsdecode, fspath, fstat, isatty, stat, PathLike
+from inspect import iscoroutinefunction
+from itertools import count
+from os import fsdecode, fstat, isatty, stat, PathLike
 from os import path as ospath
 from pathlib import PurePath
 from re import compile as re_compile, MULTILINE
-from socket import getdefaulttimeout, setdefaulttimeout
 from _thread import start_new_thread
 from threading import Condition, Lock, Thread
 from time import sleep, strftime, strptime, time
@@ -46,9 +46,8 @@ from uuid import uuid4
 from warnings import warn
 from xml.etree.ElementTree import fromstring
 
-from asynctools import as_thread, async_chain, ensure_aiter, ensure_async
+from asynctools import as_thread, ensure_aiter, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
-from Crypto.Hash.MD4 import MD4Hash
 from dictattr import AttrDict
 from filewrap import (
     Buffer, SupportsRead, 
@@ -62,41 +61,38 @@ from filewrap import (
 from hashtools import HashObj, file_digest, file_mdigest, file_digest_async, file_mdigest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
 from http_response import get_content_length, get_filename, get_total_length, is_chunked, is_range_request
-from httpfile import HTTPFileReader, AsyncHTTPFileReader
-from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTransport
-from httpx_request import request
+from httpfile import HTTPFileReader
 from iterutils import (
-    through, async_through, run_gen_step, run_gen_step_iter, wrap_iter, wrap_aiter, 
-    Yield, YieldFrom, 
+    through, async_through, run_gen_step, run_gen_step_iter, wrap_iter, wrap_aiter, Yield, 
 )
 from multidict import CIMultiDict
 from orjson import dumps, loads
-from qrcode import QRCode # type: ignore
 from startfile import startfile, startfile_async # type: ignore
 from urlopen import urlopen
 from yarl import URL
 
-from p115cipher.fast import rsa_encode, rsa_decode, ecdh_aes_encode, ecdh_aes_decode, ecdh_encode_token
-from p115cipher.const import MD5_SALT
+from p115cipher.fast import rsa_encode, rsa_decode, ecdh_aes_decode, make_upload_payload
 from .exception import AuthenticationError, LoginError, MultipartUploadAbort
 
 
-if getdefaulttimeout() is None:
-    setdefaulttimeout(30)
-
-# 所有的可用登录设备和对应的 ssoent
-DEVICE_TO_SSOENT: Final[dict[str, str]] = {
+# NOTE: 目前可用的登录设备
+AVAILABLE_DEVICES: Final = (
+    "web", "ios", "115ios", "android", "115android", "115ipad", "tv", "qandroid", 
+    "windows", "mac", "linux", "wechatmini", "alipaymini", "harmony", 
+)
+# NOTE: 目前已知的登录设备和对应的 ssoent
+DEVICE_TO_SSOENT: Final = {
     "web": "A1", 
     "desktop": "A1", 
     "ios": "D1", 
     "115ios": "D3", 
     "android": "F1", 
     "115android": "F3", 
-    #"ipad": "H1", 
+    "ipad": "H1", 
     "115ipad": "H3", 
     "tv": "I1", 
     "qandroid": "M1", 
-    #"qios": "N1", 
+    "qios": "N1", 
     "windows": "P1", 
     "mac": "P2", 
     "linux": "P3", 
@@ -104,7 +100,7 @@ DEVICE_TO_SSOENT: Final[dict[str, str]] = {
     "alipaymini": "R2", 
     "harmony": "S1", 
 }
-# 所有已封装的 115 接口以及对应的方法名
+# NOTE: 所有已封装的 115 接口以及对应的方法名
 CLIENT_API_MAP: Final[dict[str, str]] = {}
 
 T = TypeVar("T")
@@ -116,7 +112,15 @@ APP_VERSION: Final = "99.99.99.99"
 MD4_EMPTY_HASH = b"1\xd6\xcf\xe0\xd1j\xe91\xb7<Y\xd7\xe0\xc0\x89\xc0"
 
 parse_json = lambda _, content: loads(content)
-httpx_request = partial(request, timeout=(5, 60, 60, 5))
+
+_httpx_request = None
+
+def get_default_request():
+    global _httpx_request
+    if _httpx_request is None:
+        from httpx_request import request
+        _httpx_request = partial(request, timeout=(5, 60, 60, 5))
+    return _httpx_request
 
 
 def to_base64(s: bytes | str, /) -> str:
@@ -137,6 +141,7 @@ def convert_digest(digest, /):
 class Ed2kHash:
 
     def __init__(self, b: Buffer = b"", /):
+        from Crypto.Hash.MD4 import MD4Hash
         self.block_hashes = bytearray()
         self._last_hashobj: MD4Hash = MD4Hash()
         self._remainder = 0
@@ -157,6 +162,7 @@ class Ed2kHash:
             last_hashobj.update(m[:start])
             block_hashes[-16:] = last_hashobj.digest()
         if start < size: 
+            from Crypto.Hash.MD4 import MD4Hash
             for start in range(start, size, block_size):
                 last_hashobj = MD4Hash(m[start:start+block_size])
                 block_hashes += last_hashobj.digest()
@@ -164,6 +170,7 @@ class Ed2kHash:
         self._last_hashobj = last_hashobj
 
     def digest(self, /) -> bytes:
+        from Crypto.Hash.MD4 import MD4Hash
         block_hashes: Buffer = self.block_hashes
         if not self._remainder:
             block_hashes = block_hashes + MD4_EMPTY_HASH
@@ -174,6 +181,7 @@ class Ed2kHash:
 
 
 def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+    from Crypto.Hash.MD4 import MD4Hash
     block_size = 1024 * 9500
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
@@ -192,6 +200,7 @@ def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
 
 
 async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+    from Crypto.Hash.MD4 import MD4Hash
     block_size = 1024 * 9500
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
@@ -378,11 +387,12 @@ class P115Client:
     def __init__(
         self, 
         /, 
-        cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel] | PurePath = None, 
+        cookies: None | str | Mapping[str, str] | Iterable[Mapping | Cookie | Morsel] | PurePath = None, 
         check_for_relogin: bool | Callable[[BaseException], bool | int] = False, 
         app: str = "web", 
         console_qrcode: bool = True, 
     ):
+        from httpx import Cookies
         self.__dict__.update(
             headers = CIMultiDict({
                 "Accept": "application/json, text/plain, */*", 
@@ -421,9 +431,10 @@ class P115Client:
             return False
 
     @cached_property
-    def session(self, /) -> Client:
+    def session(self, /):
         """同步请求的 session
         """
+        from httpx import Client, HTTPTransport
         ns = self.__dict__
         session = Client(transport=HTTPTransport(retries=5), verify=False)
         session._headers = ns["headers"]
@@ -431,9 +442,10 @@ class P115Client:
         return session
 
     @cached_property
-    def async_session(self, /) -> AsyncClient:
+    def async_session(self, /):
         """异步请求的 session
         """
+        from httpx import AsyncClient, AsyncHTTPTransport
         ns = self.__dict__
         session = AsyncClient(transport=AsyncHTTPTransport(retries=5), verify=False)
         session._headers = ns["headers"]
@@ -452,7 +464,7 @@ class P115Client:
         return "; ".join(f"{key}={val}" for key in ("UID", "CID", "SEID") if (val := cookies.get(key, domain=".115.com")))
 
     @cookies.setter
-    def cookies(self, cookies: None | str | Mapping[str, str] | Cookies | Iterable[Mapping | Cookie | Morsel], /):
+    def cookies(self, cookies: None | str | Mapping[str, str] | Iterable[Mapping | Cookie | Morsel], /):
         """更新 cookies
         """
         ns = self.__dict__
@@ -474,6 +486,7 @@ class P115Client:
             for key, val in ItemsView(cookies):
                 set_cookie(create_cookie(key, val, domain=".115.com"))
         else:
+            from httpx import Cookies
             if isinstance(cookies, Cookies):
                 cookies = cookies.jar
             for cookie in cookies:
@@ -562,7 +575,7 @@ class P115Client:
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
             do_request = partial(
-                httpx_request, 
+                get_default_request(), 
                 url=url, 
                 method=method, 
                 async_=async_, 
@@ -1073,6 +1086,7 @@ class P115Client:
             qrcode_token = resp["data"]
             qrcode = qrcode_token.pop("qrcode")
             if console_qrcode:
+                from qrcode import QRCode # type: ignore
                 qr = QRCode(border=1)
                 qr.add_data(qrcode)
                 qr.print_ascii(tty=isatty(1))
@@ -1322,7 +1336,7 @@ class P115Client:
             payload = {"key": payload, "uid": payload, "client": 0}
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, params=payload, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, params=payload, async_=async_, **request_kwargs)
         else:
             return request(url=api, params=payload, **request_kwargs)
 
@@ -1364,7 +1378,7 @@ class P115Client:
         api = "https://qrcodeapi.115.com/get/status/"
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, params=payload, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, params=payload, async_=async_, **request_kwargs)
         else:
             return request(url=api, params=payload, **request_kwargs)
 
@@ -1413,7 +1427,7 @@ class P115Client:
         api = f"https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/"
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
         else:
             return request(url=api, method="POST", data=payload, **request_kwargs)
 
@@ -1445,7 +1459,7 @@ class P115Client:
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, async_=async_, **request_kwargs)
         else:
             return request(url=api, **request_kwargs)
 
@@ -1483,7 +1497,7 @@ class P115Client:
         request_kwargs["params"] = {"uid": uid}
         request_kwargs["parse"] = False
         if request is None:
-            return httpx_request(url=api, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, async_=async_, **request_kwargs)
         else:
             return request(url=api, **request_kwargs)
 
@@ -1578,7 +1592,7 @@ class P115Client:
         request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Cookie": self.cookies}
         request_kwargs.setdefault("parse", lambda _: None)
         if request is None:
-            return httpx_request(url=api, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, async_=async_, **request_kwargs)
         else:
             return request(url=api, **request_kwargs)
 
@@ -2005,7 +2019,7 @@ class P115Client:
         api = "https://appversion.115.com/1/web/1.0/api/chrome"
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, async_=async_, **request_kwargs)
         else:
             return request(url=api, **request_kwargs)
 
@@ -4963,7 +4977,7 @@ class P115Client:
         payload = {"cid": 0, "limit": 32, "offset": 0, **payload}
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, params=payload, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, params=payload, async_=async_, **request_kwargs)
         else:
             return request(url=api, params=payload, **request_kwargs)
 
@@ -6292,6 +6306,8 @@ class P115Client:
                         try:
                             from aiohttp import request as async_request
                         except ImportError:
+                            # TODO: 需要优化，不能这么复杂
+                            from httpx import AsyncClient
                             async def request():
                                 async with AsyncClient() as client:
                                     async with client.stream("GET", url, headers=headers) as resp:
@@ -6469,7 +6485,7 @@ class P115Client:
         api = "https://uplb.115.com/3.0/gettoken.php"
         request_kwargs.setdefault("parse", parse_json)
         if request is None:
-            return httpx_request(url=api, async_=async_, **request_kwargs)
+            return get_default_request()(url=api, async_=async_, **request_kwargs)
         else:
             return request(url=api, **request_kwargs)
 
@@ -6619,6 +6635,8 @@ class P115Client:
                     except ImportError:
                         async def request():
                             nonlocal file, filesize, filename
+                            # TODO: 需要优化，不能这么复杂
+                            from httpx import AsyncClient
                             async with AsyncClient() as client:
                                 async with client.stream("GET", url) as resp:
                                     if not filename:
@@ -6831,47 +6849,25 @@ class P115Client:
     ) -> dict | Coroutine[Any, Any, dict]:
         """秒传接口，此接口是对 `upload_init` 的封装
         """
-        def gen_sig() -> str:
-            sig_sha1 = sha1()
-            sig_sha1.update(bytes(userkey, "ascii"))
-            sig_sha1.update(b2a_hex(sha1(bytes(f"{userid}{filesha1}{target}0", "ascii")).digest()))
-            sig_sha1.update(b"000000")
-            return sig_sha1.hexdigest().upper()
-        def gen_token() -> str:
-            token_md5 = md5(MD5_SALT)
-            token_md5.update(bytes(f"{filesha1}{filesize}{sign_key}{sign_val}{userid}{t}", "ascii"))
-            token_md5.update(b2a_hex(md5(bytes(userid, "ascii")).digest()))
-            token_md5.update(bytes(APP_VERSION, "ascii"))
-            return token_md5.hexdigest()
-        userid = str(self.user_id)
-        userkey = self.user_key
-        t = int(time())
-        sig = gen_sig()
-        token = gen_token()
-        encoded_token = ecdh_encode_token(t).decode("ascii")
         data = {
             "appid": 0, 
             "appversion": APP_VERSION, 
-            #"behavior_type": 0, 
-            "userid": userid, 
+            "behavior_type": 0, 
+            "fileid": filesha1, 
             "filename": filename, 
             "filesize": filesize, 
-            "fileid": filesha1, 
+            "sign_key": sign_key, 
+            "sign_val": sign_val, 
             "target": target, 
-            "sig": sig, 
-            "t": t, 
-            "token": token, 
+            "userid": self.user_id, 
+            "userkey": self.user_key, 
         }
-        if sign_key and sign_val:
-            data["sign_key"] = sign_key
-            data["sign_val"] = sign_val
+        request_kwargs.update(make_upload_payload(data))
         if (headers := request_kwargs.get("headers")):
             request_kwargs["headers"] = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
         else:
             request_kwargs["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
         request_kwargs["parse"] = lambda resp, content: loads(ecdh_aes_decode(content, decompress=True))
-        request_kwargs["params"] = {"k_ec": encoded_token}
-        request_kwargs["data"] = ecdh_aes_encode(urlencode(sorted(data.items())).encode("latin-1"))
         def gen_step():
             resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
             if resp["status"] == 2 and resp["statuscode"] == 0:
@@ -9541,30 +9537,7 @@ class P115Client:
 
     ########## Other Encapsulations ##########
 
-    @overload
-    def open(
-        self, 
-        /, 
-        url: str | Callable[[], str], 
-        start: int = 0, 
-        seek_threshold: int = 1 << 20, 
-        headers: None | Mapping = None, 
-        *, 
-        async_: Literal[False] = False, 
-    ) -> HTTPFileReader:
-        ...
-    @overload
-    def open(
-        self, 
-        /, 
-        url: str | Callable[[], str], 
-        start: int = 0, 
-        seek_threshold: int = 1 << 20, 
-        headers: None | Mapping = None, 
-        *, 
-        async_: Literal[True], 
-    ) -> AsyncHTTPFileReader:
-        ...
+    # TODO 支持异步
     def open(
         self, 
         /, 
@@ -9574,27 +9547,24 @@ class P115Client:
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> HTTPFileReader | AsyncHTTPFileReader:
-        """打开下载链接，可以从网盘的文件、网盘的压缩包文件内、分享链接的文件中获取
+    ) -> HTTPFileReader:
+        """打开下载链接，可以从网盘、网盘上的压缩包内、分享链接中获取：
+            - P115Client.download_url
+            - P115Client.share_download_url
+            - P115Client.extract_download_url
         """
+        if async_:
+            raise NotImplementedError("asynchronous mode not implemented")
         if headers is None:
             headers = self.headers
         else:
             headers = {**self.headers, **headers}
-        if async_:
-            return AsyncHTTPFileReader(
-                url, 
-                headers=headers, 
-                start=start, 
-                seek_threshold=seek_threshold, 
-            )
-        else:
-            return HTTPFileReader(
-                url, 
-                headers=headers, 
-                start=start, 
-                seek_threshold=seek_threshold, 
-            )
+        return HTTPFileReader(
+            url, 
+            headers=headers, 
+            start=start, 
+            seek_threshold=seek_threshold, 
+        )
 
     # TODO: 返回一个 HTTPFileWriter，随时可以写入一些数据，close 代表上传完成，这个对象会持有一些信息
     def open_upload(self): ...
@@ -9944,8 +9914,7 @@ class P115Client:
         return run_gen_step(gen_step, async_=async_)
 
 
-
-# TODO: 为所有的 Status 类设置一个 ABC，确保有相同的接口
+# TODO: 下面这些类型可能也不需要了，以简化程序
 # TODO: 这些类再提供一个 Async 版本
 class ExportDirStatus(Future):
     _condition: Condition
@@ -10097,10 +10066,15 @@ for name, method in P115Client.__dict__.items():
         continue
     match = CRE_CLIENT_API_search(method.__doc__)
     if match is not None:
-        CLIENT_API_MAP[match[1]] = name
+        CLIENT_API_MAP[match[1]] = "P115Client." + name
 
 
-# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数，来自 p115qrcode 模块（也可以自行传入 request 参数）
+# TODO: 只有把这些 todo 都完成了，才能标记为 0.0.1
+# TODO: 所有的 login_app, app 等，改名成 device
+# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数
 # TODO: qrcode_login 的返回值，是一个 Future 对象，包含登录必要凭证、二维码链接、登录状态、返回值或报错信息等数据，并且可以被等待完成，也可以把二维码输出到命令行、浏览器、图片查看器等
 # TODO: 参考 sqlite 的 Error 体系，构建一个 exception.py 模块
 # TODO: 尽量减少各种所谓包装和v2的接口，都合并到一个中
+# TODO: 增加更多的异常类型，比如 P115OSBusy
+
+
