@@ -305,7 +305,7 @@ def main():
                     payload = {"offset": 0, "limit": 32, "type": behavior_type, "date": date}
                     while True:
                         try:
-                            resp = client.behavior_detail(payload, request=request)
+                            resp = client.life_behavior_detail(payload, request=request)
                         except Exception as e:
                             logger.exception(e)
                             continue

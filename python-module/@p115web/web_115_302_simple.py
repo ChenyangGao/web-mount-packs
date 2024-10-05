@@ -334,7 +334,7 @@ async def login_qrcode_scan_confirm(client: ClientSession, uid: str) -> dict:
     return await request_json(client, url, params={"key": uid, "uid": uid, "client": "0"})
 
 
-async def login_qrcode_result(client: ClientSession, uid: str, app: str = "web") -> dict:
+async def login_qrcode_scan_result(client: ClientSession, uid: str, app: str = "web") -> dict:
     """把扫码结果绑定到设备
     """
     app = get_enum_name(app, AppEnum)
@@ -352,7 +352,7 @@ async def relogin(client: ClientSession) -> dict:
     uid = (await login_qrcode_token(client))["data"]["uid"]
     await login_qrcode_scan(client, uid)
     await login_qrcode_scan_confirm(client, uid)
-    resp = await login_qrcode_result(client, uid, device)
+    resp = await login_qrcode_scan_result(client, uid, device)
     cookies = bytes("; ".join("%s=%s" % e for e in resp["data"]["cookie"].items()), "latin-1")
     if cookies_path:
         open(cookies_path, "wb").write(cookies)
@@ -612,7 +612,7 @@ if cdn_image and cdn_image_warmup_ids:
         create_task(periodically_warmup_cdn_image(client, cdn_image_warmup_ids))
 
 
-# TODO: 如果需要根据文件 id 获取基本的信息，可以用 fs_file（可以一次查多个），如果可能还需要图片链接，则用fs_info
+# TODO: 如果需要根据文件 id 获取基本的信息，可以用 fs_file_skim（可以一次查多个），如果可能还需要图片链接，则用fs_info
 # TODO: 可以是 id 也可以是 pickcode（为了加速）
 # 这个接口有多个信息可用（pick_code,file_sha1，但无id）
 async def get_image_url(

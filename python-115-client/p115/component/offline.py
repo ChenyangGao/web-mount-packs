@@ -802,7 +802,7 @@ class P115Offline:
             if isinstance(torrent_or_magnet_or_sha1_or_fid, int):
                 fid = torrent_or_magnet_or_sha1_or_fid
                 resp = yield partial(
-                    self.client.fs_file, 
+                    self.client.fs_file_skim, 
                     fid, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 

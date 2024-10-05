@@ -42,7 +42,7 @@ from posixpatht import (
 )
 from yarl import URL
 
-from .client import check_response, P115Client, P115Url
+from .client import check_response, P115Client, P115URL
 from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -966,49 +966,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ))
 
     @overload
-    def fs_info(
-        self, 
-        id: int, 
-        /, 
-        async_: Literal[False] = False, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_info(
-        self, 
-        id: int, 
-        /, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_info(
-        self, 
-        id: int, 
-        /, 
-        async_: Literal[False, True] = False, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        def gen_step():
-            resp = yield partial(
-                self.client.fs_info, 
-                {"file_id": id}, 
-                request=self.async_request if async_ else self.request, 
-                async_=async_, 
-            )
-            if resp["state"]:
-                return resp
-            match resp["code"]:
-                # {'state': False, 'code': 20018, 'message': '文件不存在或已删除。'}
-                # {'state': False, 'code': 800001, 'message': '目录不存在。'}
-                case 20018 | 800001:
-                    raise FileNotFoundError(errno.ENOENT, resp)
-                # {'state': False, 'code': 990002, 'message': '参数错误。'}
-                case 990002:
-                    raise OSError(errno.EINVAL, resp)
-                case _:
-                    raise OSError(errno.EIO, resp)
-        return run_gen_step(gen_step, async_=async_)
-
-    @overload
     def fs_file(
         self, 
         id: int, 
@@ -1033,6 +990,49 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         def gen_step():
             resp = yield partial(
                 self.client.fs_file, 
+                {"file_id": id}, 
+                request=self.async_request if async_ else self.request, 
+                async_=async_, 
+            )
+            if resp["state"]:
+                return resp
+            match resp["code"]:
+                # {'state': False, 'code': 20018, 'message': '文件不存在或已删除。'}
+                # {'state': False, 'code': 800001, 'message': '目录不存在。'}
+                case 20018 | 800001:
+                    raise FileNotFoundError(errno.ENOENT, resp)
+                # {'state': False, 'code': 990002, 'message': '参数错误。'}
+                case 990002:
+                    raise OSError(errno.EINVAL, resp)
+                case _:
+                    raise OSError(errno.EIO, resp)
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def fs_file_skim(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_file_skim(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_file_skim(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        def gen_step():
+            resp = yield partial(
+                self.client.fs_file_skim, 
                 id, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -1320,7 +1320,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 )
             else:
                 try:
-                    resp = yield self.fs_info(id, async_=async_)
+                    resp = yield self.fs_file(id, async_=async_)
                 except FileNotFoundError as e:
                     self._clear_cache(id)
                     raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
@@ -1473,7 +1473,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         pass
 
             def get_dir_id(path: str, /):
-                result = check_response((yield self.client.fs_files_getid(
+                result = check_response((yield self.client.fs_dir_getid(
                     path, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
@@ -2637,7 +2637,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     if int(resp["path"][-1]["cid"]) == id:
                         ls.extend(p["name"] for p in resp["path"][1:])
                     else:
-                        resp = yield self.fs_info(id, async_=async_)
+                        resp = yield self.fs_file(id, async_=async_)
                         info = resp["data"][0]
                         pid, name = int(info["cid"]), info["n"]
                         if pid:
@@ -2691,7 +2691,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def get_url(
@@ -2702,7 +2702,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def get_url(
         self, 
@@ -2712,7 +2712,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         "获取下载链接"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -2740,7 +2740,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def get_url_from_pickcode(
@@ -2751,7 +2751,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def get_url_from_pickcode(
         self, 
@@ -2761,7 +2761,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         "由 pickcode 获取下载链接"
         return self.client.download_url(
             pickcode, 
@@ -2813,7 +2813,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if fid == 0:
                     return False
                 hidden = not show
-                resp = yield self.client.fs_files_hidden(
+                resp = yield self.client.fs_hide(
                     {"hidden": int(hidden), "fid[0]": fid}, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
@@ -2938,7 +2938,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 "format": "json", 
             }
             request = partial(
-                self.client.fs_get_repeat, 
+                self.client.fs_repeat_sha1, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )

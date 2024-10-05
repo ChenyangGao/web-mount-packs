@@ -21,7 +21,7 @@ from shutil import COPY_BUFSIZE # type: ignore
 from socket import getdefaulttimeout, setdefaulttimeout
 from ssl import SSLContext, _create_unverified_context
 from string import punctuation
-from typing import cast, Any
+from typing import cast, Any, Literal
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, OpenerDirector, Request
@@ -182,7 +182,7 @@ def get_charset(content_type: str, default="utf-8") -> str:
 def request(
     url: str | Request, 
     method: str = "GET", 
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     raise_for_status: bool = True, 
     timeout: None | float = 60, 
     **request_kwargs, 
@@ -200,6 +200,9 @@ def request(
             raise
         resp = getattr(e, "file")
     if parse is None:
+        return resp
+    elif parse is ...:
+        resp.close()
         return resp
     with resp:
         if isinstance(parse, bool):

@@ -36,7 +36,7 @@ class P115RSACipher:
         text = bytearray()
         for l, r in pairwise(range(0, len(cipher_text) + 128, 128)):
             n = from_bytes(cipher_text[l:r])
-            m = pow(n, *RSA_PUBKEY_PAIR)
+            m = pow(n, RSA_PUBKEY_PAIR[1], RSA_PUBKEY_PAIR[0])
             b = to_bytes(m, (m.bit_length() + 0b111) >> 3)
             text += b[b.index(0)+1:]
         rand_key = text[0:16]

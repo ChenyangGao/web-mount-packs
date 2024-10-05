@@ -172,7 +172,7 @@ try:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress
     from orjson import dumps, loads
-    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AuthenticationError
+    from p115 import P115Client, P115FileSystem, P115Path, P115URL, AuthenticationError
     from posixpatht import escape as escape_name
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
@@ -190,7 +190,7 @@ except ImportError:
     from flask import request, redirect, render_template_string, send_file, Flask, Response
     from flask_compress import Compress # type: ignore
     from orjson import dumps, loads
-    from p115 import P115Client, P115FileSystem, P115Path, P115Url, AuthenticationError
+    from p115 import P115Client, P115FileSystem, P115Path, P115URL, AuthenticationError
     from posixpatht import escape as escape_name
     from urllib3.poolmanager import PoolManager
     from urllib3_request import request as urllib3_request
@@ -336,9 +336,9 @@ id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: sha1 到 pickcode 到映射
 sha1_to_pickcode: MutableMapping[str, str] = LRUCache(65536)
 # NOTE: 链接缓存，如果改成 None，则不缓存，可以自行设定 ttl (time-to-live)
-url_cache: None | MutableMapping[tuple[str, str], P115Url] = TTLCache(1024, ttl=0.3)
+url_cache: None | MutableMapping[tuple[str, str], P115URL] = TTLCache(1024, ttl=0.3)
 # NOTE: 缓存图片的 CDN 直链 1 小时
-image_url_cache: MutableMapping[str, None | P115Url] = TTLCache(65536, ttl=3600)
+image_url_cache: MutableMapping[str, None | P115URL] = TTLCache(65536, ttl=3600)
 # NOTE: 每个 ip 对于某个资源的某个 range 请求，一定时间范围内，分别只放行一个，可以自行设定 ttl (time-to-live)
 range_request_cooldown: MutableMapping[tuple[str, str, str, str], None] = TTLCache(1024, ttl=0.1)
 # NOTE: webdav 的文件对象缓存
@@ -642,7 +642,7 @@ def get_image_url(pickcode: str, user_agent: str = "") -> str:
     if image_url_cache and (url := image_url_cache.get(pickcode)):
         return url
     resp = relogin_wrap(
-        client.fs_files_image, 
+        client.fs_image, 
         pickcode, 
         headers={"User-Agent": user_agent}, 
         request=do_request, 
@@ -653,7 +653,7 @@ def get_image_url(pickcode: str, user_agent: str = "") -> str:
     url = data["origin_url"]
     with urlopen(url, "HEAD", headers={"User-Agent": user_agent}) as resp:
         url = cast(str, resp.url)
-    url = P115Url(url, data=data, size=int(resp.headers["Content-Length"]))
+    url = P115URL(url, data=data, size=int(resp.headers["Content-Length"]))
     if image_url_cache is not None:
         image_url_cache[pickcode] = url
     return url

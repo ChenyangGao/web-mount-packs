@@ -88,7 +88,7 @@ from blacksheep.server.openapi.v3 import OpenAPIHandler
 from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
 from openapidocs.v3 import Info # type: ignore
 from httpx import HTTPStatusError
-from p115 import P115Client, P115Url, AVAILABLE_APPS, AuthenticationError
+from p115 import P115Client, P115URL, AVAILABLE_APPS, AuthenticationError
 
 
 cookies_path_mtime = 0
@@ -144,7 +144,7 @@ fs = client.get_fs(client, path_to_id=LRUCache(65536))
 # NOTE: id 到 pickcode 的映射
 id_to_pickcode: MutableMapping[int, str] = LRUCache(65536)
 # NOTE: 有些播放器，例如 IINA，拖动进度条后，可能会有连续 2 次请求下载链接，而后台请求一次链接大约需要 170-200 ms，因此弄个 0.3 秒的缓存
-url_cache: MutableMapping[tuple[str, str], P115Url] = TTLCache(64, ttl=0.3)
+url_cache: MutableMapping[tuple[str, str], P115URL] = TTLCache(64, ttl=0.3)
 
 
 app = Application()
@@ -320,7 +320,7 @@ async def login_qrcode_token(request: Request):
 @common_status_docs
 @route("/api/login/qrcode/status", methods=["GET"])
 @redirect_exception_response
-async def login_qrcode_status(request: Request, uid: str, time: int, sign: str):
+async def login_qrcode_scan_status(request: Request, uid: str, time: int, sign: str):
     """查询扫码状态
 
     <br />
@@ -339,7 +339,7 @@ async def login_qrcode_status(request: Request, uid: str, time: int, sign: str):
     payload = {"uid": uid, "time": time, "sign": sign}
     while True:
         try:
-            resp = await client.login_qrcode_status(payload, async_=True)
+            resp = await client.login_qrcode_scan_status(payload, async_=True)
         except Exception:
             continue
         else: 
@@ -365,14 +365,14 @@ async def login_qrcode_status(request: Request, uid: str, time: int, sign: str):
 @common_status_docs
 @route("/api/login/qrcode/result", methods=["GET"])
 @redirect_exception_response
-async def login_qrcode_result(request: Request, uid: str, app: str = "qandroid"):
+async def login_qrcode_scan_result(request: Request, uid: str, app: str = "qandroid"):
     """绑定扫码结果
 
     :param uid: 扫码的 uid （由 /api/login/qrcode/token 获取）
     :param app: 绑定到设备，默认值 "qandroid"
     """
     global device
-    resp = await client.login_qrcode_result({"account": uid, "app": app})
+    resp = await client.login_qrcode_scan_result({"account": uid, "app": app})
     if resp["state"]:
         data = resp["data"]
         client.cookies = data["cookie"]
@@ -643,7 +643,7 @@ async def file_subtitle(
     user_agent = (request.get_first_header(b"User-agent") or b"").decode("utf-8")
     if not pickcode:
         pickcode = await call_wrap(fs.get_pickcode, (path or path2) if id < 0 else id)
-    resp = await call_wrap(client.fs_files_video_subtitle, pickcode)
+    resp = await call_wrap(client.fs_video_subtitle, pickcode)
     return resp
 
 

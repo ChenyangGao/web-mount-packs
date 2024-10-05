@@ -1,19 +1,18 @@
 [tool.poetry]
-name = "p115cipher"
-version = "0.0.2.2"
-description = "115 cipher module."
+name = "ed2k"
+version = "0.0.1"
+description = "Python ed2k hash module."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115cipher"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115cipher"
-keywords = ["115", "webdisk", "cipher"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/ed2k"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/ed2k"
+keywords = ["ed2k", "hash"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -27,14 +26,17 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-ecdsa = "*"
-lz4 = "*"
 pycryptodome = "*"
-python-iterutils = ">=0.0.7"
+python-filewrap = ">=0.2"
+python-iterdir = ">=0.0.6"
+
+[tool.poetry.scripts]
+python-ed2k = "ed2k.__main__:main"
+ed2k = "ed2k.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "p115cipher"
+include = "ed2k"

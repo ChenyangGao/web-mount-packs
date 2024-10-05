@@ -7,7 +7,7 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "AVAILABLE_APPMAP", "CLIENT_API_MAP", "check_response", "P115Client", "P115Url", 
+    "AVAILABLE_APPMAP", "CLIENT_API_MAP", "check_response", "P115Client", "P115URL", 
     "ExportDirStatus", "PushExtractProgress", "ExtractProgress", 
 ]
 
@@ -306,7 +306,7 @@ def check_response(resp: dict | Coroutine[Any, Any, dict], /) -> dict | Awaitabl
         return check_await()
 
 
-class P115Url(str):
+class P115URL(str):
 
     def __new__(cls, url="", /, *args, **kwds):
         return super().__new__(cls, url)
@@ -674,7 +674,7 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
-    def login_check(
+    def login_check_sso(
         self, 
         /, 
         async_: Literal[False] = False, 
@@ -682,14 +682,14 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def login_check(
+    def login_check_sso(
         self, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def login_check(
+    def login_check_sso(
         self, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1098,7 +1098,7 @@ class P115Client:
                     startfile(url)
             while True:
                 try:
-                    resp = yield cls.login_qrcode_status(
+                    resp = yield cls.login_qrcode_scan_status(
                         qrcode_token, 
                         async_=async_, 
                         **request_kwargs, 
@@ -1119,7 +1119,7 @@ class P115Client:
                         raise LoginError("[status=-2] qrcode: canceled")
                     case _:
                         raise LoginError(f"qrcode: aborted with {resp!r}")
-            return (yield cls.login_qrcode_result(
+            return (yield cls.login_qrcode_scan_result(
                 {"account": qrcode_token["uid"], "app": app}, 
                 async_=async_, 
                 **request_kwargs, 
@@ -1210,7 +1210,7 @@ class P115Client:
                 async_=async_, 
                 **request_kwargs, 
             )))
-            cookies = check_response((yield self.login_qrcode_result(
+            cookies = check_response((yield self.login_qrcode_scan_result(
                 {"account": uid, "app": app}, 
                 async_=async_, 
                 **request_kwargs, 
@@ -1342,7 +1342,7 @@ class P115Client:
 
     @overload
     @staticmethod
-    def login_qrcode_status(
+    def login_qrcode_scan_status(
         payload: dict, 
         /, 
         async_: Literal[False] = False, 
@@ -1352,7 +1352,7 @@ class P115Client:
         ...
     @overload
     @staticmethod
-    def login_qrcode_status(
+    def login_qrcode_scan_status(
         payload: dict, 
         /, 
         async_: Literal[True], 
@@ -1361,7 +1361,7 @@ class P115Client:
     ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
-    def login_qrcode_status(
+    def login_qrcode_scan_status(
         payload: dict, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1384,7 +1384,7 @@ class P115Client:
 
     @overload
     @staticmethod
-    def login_qrcode_result(
+    def login_qrcode_scan_result(
         payload: int | str | dict, 
         /, 
         async_: Literal[False] = False, 
@@ -1394,7 +1394,7 @@ class P115Client:
         ...
     @overload
     @staticmethod
-    def login_qrcode_result(
+    def login_qrcode_scan_result(
         payload: int | str | dict, 
         /, 
         async_: Literal[True], 
@@ -1403,7 +1403,7 @@ class P115Client:
     ) -> Coroutine[Any, Any, dict]:
         ...
     @staticmethod
-    def login_qrcode_result(
+    def login_qrcode_scan_result(
         payload: int | str | dict, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1668,7 +1668,7 @@ class P115Client:
     ########## Account API ##########
 
     @overload
-    def user_info(
+    def user_my(
         self, 
         /, 
         async_: Literal[False] = False, 
@@ -1676,14 +1676,14 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_info(
+    def user_my(
         self, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_info(
+    def user_my(
         self, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1696,7 +1696,7 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
-    def user_info2(
+    def user_my_info(
         self, 
         /, 
         async_: Literal[False] = False, 
@@ -1704,14 +1704,14 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_info2(
+    def user_my_info(
         self, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_info2(
+    def user_my_info(
         self, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1752,7 +1752,7 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
-    def user_setting_post(
+    def user_setting_set(
         self, 
         payload: dict, 
         /, 
@@ -1761,7 +1761,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_setting_post(
+    def user_setting_set(
         self, 
         payload: dict, 
         /, 
@@ -1769,7 +1769,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_setting_post(
+    def user_setting_set(
         self, 
         payload: dict, 
         /, 
@@ -1783,7 +1783,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def user_setting2(
+    def user_setting_web(
         self, 
         /, 
         async_: Literal[False] = False, 
@@ -1791,14 +1791,14 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_setting2(
+    def user_setting_web(
         self, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_setting2(
+    def user_setting_web(
         self, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1811,7 +1811,7 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
-    def user_setting2_post(
+    def user_setting_web_set(
         self, 
         payload: dict, 
         /, 
@@ -1820,7 +1820,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_setting2_post(
+    def user_setting_web_set(
         self, 
         payload: dict, 
         /, 
@@ -1828,7 +1828,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_setting2_post(
+    def user_setting_web_set(
         self, 
         payload: dict, 
         /, 
@@ -1842,7 +1842,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def user_setting3(
+    def user_setting_app(
         self, 
         /, 
         async_: Literal[False] = False, 
@@ -1850,14 +1850,14 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_setting3(
+    def user_setting_app(
         self, 
         /, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_setting3(
+    def user_setting_app(
         self, 
         /, 
         async_: Literal[False, True] = False, 
@@ -1870,7 +1870,7 @@ class P115Client:
         return self.request(url=api, async_=async_, **request_kwargs)
 
     @overload
-    def user_setting3_post(
+    def user_setting_app_set(
         self, 
         payload: dict, 
         /, 
@@ -1879,7 +1879,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def user_setting3_post(
+    def user_setting_app_set(
         self, 
         payload: dict, 
         /, 
@@ -1887,7 +1887,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def user_setting3_post(
+    def user_setting_app_set(
         self, 
         payload: dict, 
         /, 
@@ -2331,7 +2331,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_file(
+    def fs_file_skim(
         self, 
         payload: int | str | dict, 
         /, 
@@ -2340,7 +2340,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_file(
+    def fs_file_skim(
         self, 
         payload: int | str | dict, 
         /, 
@@ -2348,7 +2348,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_file(
+    def fs_file_skim(
         self, 
         payload: int | str | dict, 
         /, 
@@ -2462,7 +2462,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files2(
+    def fs_files_app(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -2472,7 +2472,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files2(
+    def fs_files_app(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -2481,7 +2481,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files2(
+    def fs_files_app(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -2558,7 +2558,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files3(
+    def fs_files_aps(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -2568,7 +2568,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files3(
+    def fs_files_aps(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -2577,7 +2577,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files3(
+    def fs_files_aps(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -2654,7 +2654,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_getid(
+    def fs_dir_getid(
         self, 
         payload: str | dict, 
         /, 
@@ -2663,7 +2663,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_getid(
+    def fs_dir_getid(
         self, 
         payload: str | dict, 
         /, 
@@ -2671,7 +2671,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_getid(
+    def fs_dir_getid(
         self, 
         payload: str | dict, 
         /, 
@@ -2689,7 +2689,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_image(
+    def fs_image(
         self, 
         payload: str | dict, 
         /, 
@@ -2698,7 +2698,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_image(
+    def fs_image(
         self, 
         payload: str | dict, 
         /, 
@@ -2706,7 +2706,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_image(
+    def fs_image(
         self, 
         payload: str | dict, 
         /, 
@@ -2724,7 +2724,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_imglist(
+    def fs_imglist(
         self, 
         payload: int | str | dict = 0, 
         /, 
@@ -2734,7 +2734,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_imglist(
+    def fs_imglist(
         self, 
         payload: int | str | dict = 0, 
         /, 
@@ -2743,7 +2743,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_imglist(
+    def fs_imglist(
         self, 
         payload: int | str | dict = 0, 
         /, 
@@ -2778,7 +2778,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_imagedata(
+    def fs_imagedata(
         self, 
         payload: str | dict, 
         /, 
@@ -2787,7 +2787,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_imagedata(
+    def fs_imagedata(
         self, 
         payload: str | dict, 
         /, 
@@ -2795,7 +2795,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_imagedata(
+    def fs_imagedata(
         self, 
         payload: str | dict, 
         /, 
@@ -2813,7 +2813,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_shasearch(
+    def fs_shasearch(
         self, 
         payload: str | dict, 
         /, 
@@ -2823,7 +2823,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_shasearch(
+    def fs_shasearch(
         self, 
         payload: str | dict, 
         /, 
@@ -2832,7 +2832,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_shasearch(
+    def fs_shasearch(
         self, 
         payload: str | dict, 
         /, 
@@ -2851,7 +2851,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_video(
+    def fs_video(
         self, 
         payload: str | dict, 
         /, 
@@ -2862,7 +2862,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_video(
+    def fs_video(
         self, 
         payload: str | dict, 
         /, 
@@ -2872,7 +2872,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_video(
+    def fs_video(
         self, 
         payload: str | dict, 
         /, 
@@ -2907,7 +2907,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_video_subtitle(
+    def fs_video_subtitle(
         self, 
         payload: str | dict, 
         /, 
@@ -2918,7 +2918,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_video_subtitle(
+    def fs_video_subtitle(
         self, 
         payload: str | dict, 
         /, 
@@ -2928,7 +2928,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_video_subtitle(
+    def fs_video_subtitle(
         self, 
         payload: str | dict, 
         /, 
@@ -2960,7 +2960,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_video_m3u8(
+    def fs_video_m3u8(
         self, 
         /, 
         pickcode: str, 
@@ -2972,7 +2972,7 @@ class P115Client:
     ) -> bytes:
         ...
     @overload
-    def fs_files_video_m3u8(
+    def fs_video_m3u8(
         self, 
         /, 
         pickcode: str, 
@@ -2983,7 +2983,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, bytes]:
         ...
-    def fs_files_video_m3u8(
+    def fs_video_m3u8(
         self, 
         /, 
         pickcode: str, 
@@ -3086,7 +3086,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_history_post(
+    def fs_history_set(
         self, 
         payload: str | dict, 
         /, 
@@ -3097,7 +3097,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_history_post(
+    def fs_history_set(
         self, 
         payload: str | dict, 
         /, 
@@ -3107,7 +3107,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_history_post(
+    def fs_history_set(
         self, 
         payload: str | dict, 
         /, 
@@ -3148,7 +3148,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_history(
+    def fs_files_history(
         self, 
         payload: str | dict, 
         /, 
@@ -3157,7 +3157,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_history(
+    def fs_files_history(
         self, 
         payload: str | dict, 
         /, 
@@ -3165,7 +3165,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_history(
+    def fs_files_history(
         self, 
         payload: str | dict, 
         /, 
@@ -3321,7 +3321,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_order(
+    def fs_order_set(
         self, 
         payload: str | dict, 
         /, 
@@ -3330,7 +3330,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_order(
+    def fs_order_set(
         self, 
         payload: str | dict, 
         /, 
@@ -3338,7 +3338,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_order(
+    def fs_order_set(
         self, 
         payload: str | dict, 
         /, 
@@ -3368,7 +3368,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_type(
+    def fs_files_second_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict, 
         /, 
@@ -3377,7 +3377,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_type(
+    def fs_files_second_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict, 
         /, 
@@ -3385,7 +3385,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_type(
+    def fs_files_second_type(
         self, 
         payload: Literal[1,2,3,4,5,6,7] | dict = 1, 
         /, 
@@ -3413,7 +3413,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_set(
+    def fs_edit(
         self, 
         payload: list | dict, 
         /, 
@@ -3422,7 +3422,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_set(
+    def fs_edit(
         self, 
         payload: list | dict, 
         /, 
@@ -3430,7 +3430,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_set(
+    def fs_edit(
         self, 
         payload: list | dict, 
         /, 
@@ -3467,7 +3467,7 @@ class P115Client:
         )
 
     @overload
-    def fs_files_batch_set(
+    def fs_batch_edit(
         self, 
         payload: list | dict, 
         /, 
@@ -3476,7 +3476,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_batch_set(
+    def fs_batch_edit(
         self, 
         payload: list | dict, 
         /, 
@@ -3484,7 +3484,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_batch_set(
+    def fs_batch_edit(
         self, 
         payload: list | dict, 
         /, 
@@ -3511,7 +3511,7 @@ class P115Client:
         )
 
     @overload
-    def fs_files_folder_playlong(
+    def fs_folder_playlong(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3520,7 +3520,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_folder_playlong(
+    def fs_folder_playlong(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3528,7 +3528,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_folder_playlong(
+    def fs_folder_playlong(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3546,7 +3546,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_files_hidden(
+    def fs_hide(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
@@ -3555,7 +3555,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_files_hidden(
+    def fs_hide(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
@@ -3563,7 +3563,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_files_hidden(
+    def fs_hide(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
@@ -3631,7 +3631,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_get_repeat(
+    def fs_repeat_sha1(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3640,7 +3640,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_get_repeat(
+    def fs_repeat_sha1(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3648,7 +3648,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_get_repeat(
+    def fs_repeat_sha1(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3707,7 +3707,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_info(
+    def fs_file(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3716,7 +3716,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def fs_info(
+    def fs_file(
         self, 
         payload: int | str | dict, 
         /, 
@@ -3724,7 +3724,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_info(
+    def fs_file(
         self, 
         payload: int | str | dict, 
         /, 
@@ -4113,7 +4113,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """设置目录的封面，此接口是对 `fs_files_edit` 的封装
+        """设置目录的封面，此接口是对 `fs_edit` 的封装
         
         :param fids: 单个或多个文件或文件夹 id
         :param file_label: 图片的 id，如果为 0 则是删除封面
@@ -4125,7 +4125,7 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("fid_cover", fid_cover))
-        return self.fs_files_set(payload, async_=async_, **request_kwargs)
+        return self.fs_edit(payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_desc(
@@ -4195,7 +4195,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """为文件或文件夹设置备注，最多允许 65535 个字节 (64 KB 以内)，此接口是对 `fs_files_edit` 的封装
+        """为文件或文件夹设置备注，最多允许 65535 个字节 (64 KB 以内)，此接口是对 `fs_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
         :param file_desc: 备注信息，可以用 html
@@ -4207,7 +4207,7 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("file_desc", file_desc))
-        return self.fs_files_set(payload, async_=async_, **request_kwargs)
+        return self.fs_edit(payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_label_set(
@@ -4237,7 +4237,7 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """为文件或文件夹设置标签，此接口是对 `fs_files_edit` 的封装
+        """为文件或文件夹设置标签，此接口是对 `fs_edit` 的封装
 
         :param fids: 单个或多个文件或文件夹 id
         :param file_label: 标签 id，如果有多个，用逗号 "," 隔开
@@ -4249,7 +4249,7 @@ class P115Client:
             if not payload:
                 return {"state": False, "message": "no op"}
         payload.append(("file_label", file_label))
-        return self.fs_files_set(payload, async_=async_, **request_kwargs)
+        return self.fs_edit(payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_label_batch(
@@ -4372,7 +4372,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def photo_albumlist(
+    def fs_albumlist(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -4382,7 +4382,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def photo_albumlist(
+    def fs_albumlist(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -4391,7 +4391,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def photo_albumlist(
+    def fs_albumlist(
         self, 
         payload: int | dict = 0, 
         /, 
@@ -4414,7 +4414,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def label_add(
+    def fs_label_add(
         self, 
         /, 
         *lables: str,
@@ -4423,7 +4423,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def label_add(
+    def fs_label_add(
         self, 
         /, 
         *lables: str,
@@ -4431,7 +4431,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def label_add(
+    def fs_label_add(
         self, 
         /, 
         *lables: str,
@@ -4461,7 +4461,7 @@ class P115Client:
         )
 
     @overload
-    def label_del(
+    def fs_label_del(
         self, 
         payload: int | str | dict, 
         /, 
@@ -4470,7 +4470,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def label_del(
+    def fs_label_del(
         self, 
         payload: int | str | dict, 
         /, 
@@ -4478,7 +4478,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def label_del(
+    def fs_label_del(
         self, 
         payload: int | str | dict, 
         /, 
@@ -4496,7 +4496,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def label_edit(
+    def fs_label_edit(
         self, 
         payload: dict, 
         /, 
@@ -4505,7 +4505,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def label_edit(
+    def fs_label_edit(
         self, 
         payload: dict, 
         /, 
@@ -4513,7 +4513,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def label_edit(
+    def fs_label_edit(
         self, 
         payload: dict, 
         /, 
@@ -4532,7 +4532,7 @@ class P115Client:
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
-    def label_list(
+    def fs_label_list(
         self, 
         payload: dict, 
         /, 
@@ -4541,7 +4541,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def label_list(
+    def fs_label_list(
         self, 
         payload: dict, 
         /, 
@@ -4549,7 +4549,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def label_list(
+    def fs_label_list(
         self, 
         payload: dict = {}, 
         /, 
@@ -4636,7 +4636,7 @@ class P115Client:
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def behavior_detail(
+    def life_behavior_detail(
         self, 
         payload: str | dict, 
         /, 
@@ -4645,7 +4645,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def behavior_detail(
+    def life_behavior_detail(
         self, 
         payload: str | dict, 
         /, 
@@ -4653,7 +4653,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def behavior_detail(
+    def life_behavior_detail(
         self, 
         payload: str | dict, 
         /, 
@@ -5064,7 +5064,7 @@ class P115Client:
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def share_download_url(
@@ -5076,7 +5076,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def share_download_url(
         self, 
@@ -5087,7 +5087,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
         POST https://proapi.115.com/app/share/downurl
         payload:
@@ -5100,7 +5100,7 @@ class P115Client:
             resp = self.share_download_url_web(payload, async_=async_, **request_kwargs)
         else:
             resp = self.share_download_url_app(payload, async_=async_, **request_kwargs)
-        def get_url(resp: dict) -> P115Url:
+        def get_url(resp: dict) -> P115URL:
             info = check_response(resp)["data"]
             file_id = payload["file_id"]
             if not info:
@@ -5114,7 +5114,7 @@ class P115Client:
                     errno.EISDIR, 
                     f"{file_id} is a directory, with response {resp}", 
                 )
-            return P115Url(
+            return P115URL(
                 url["url"] if url else "", 
                 id=int(info["fid"]), 
                 file_name=info["fn"], 
@@ -5122,7 +5122,7 @@ class P115Client:
                 is_directory=not url, 
             )
         if async_:
-            async def async_request() -> P115Url:
+            async def async_request() -> P115URL:
                 return get_url(await cast(Coroutine[Any, Any, dict], resp)) 
             return async_request()
         else:
@@ -5261,7 +5261,7 @@ class P115Client:
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def download_url(
@@ -5273,7 +5273,7 @@ class P115Client:
         *, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def download_url(
         self, 
@@ -5284,7 +5284,7 @@ class P115Client:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         """获取文件的下载链接，此接口是对 `download_url_app` 的封装
         """
         if use_web_api:
@@ -5293,7 +5293,7 @@ class P115Client:
                 async_=async_, 
                 **request_kwargs, 
             )
-            def get_url(resp: dict) -> P115Url:
+            def get_url(resp: dict) -> P115URL:
                 if not resp["state"]:
                     resp["pickcode"] = pickcode
                     if resp["msg_code"] == 70005:
@@ -5302,7 +5302,7 @@ class P115Client:
                         raise IsADirectoryError(errno.EISDIR, resp)
                     else:
                         raise OSError(errno.EIO, resp)
-                return P115Url(
+                return P115URL(
                     resp.get("file_url", ""), 
                     id=int(resp["file_id"]), 
                     pickcode=resp["pickcode"], 
@@ -5317,7 +5317,7 @@ class P115Client:
                 async_=async_, 
                 **request_kwargs, 
             )
-            def get_url(resp: dict) -> P115Url:
+            def get_url(resp: dict) -> P115URL:
                 if not resp["state"]:
                     resp["pickcode"] = pickcode
                     if resp["errno"] == 50003:
@@ -5330,7 +5330,7 @@ class P115Client:
                             errno.EISDIR, 
                             f"{fid} is a directory, with response {resp}", 
                         )
-                    return P115Url(
+                    return P115URL(
                         url["url"] if url else "", 
                         id=int(fid), 
                         pickcode=info["pick_code"], 
@@ -5344,7 +5344,7 @@ class P115Client:
                     f"no such pickcode: {pickcode!r}, with response {resp}", 
                 )
         if async_:
-            async def async_request() -> P115Url:
+            async def async_request() -> P115URL:
                 return get_url(await cast(Coroutine[Any, Any, dict], resp)) 
             return async_request()
         else:
@@ -7853,7 +7853,7 @@ class P115Client:
         path: str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def extract_download_url(
@@ -7863,7 +7863,7 @@ class P115Client:
         path: str, 
         async_: Literal[True], 
         **request_kwargs, 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def extract_download_url(
         self, 
@@ -7872,7 +7872,7 @@ class P115Client:
         path: str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         """获取压缩包中文件的下载链接
         GET https://webapi.115.com/files/extract_down_file
         payload:
@@ -7885,17 +7885,17 @@ class P115Client:
             async_=async_, 
             **request_kwargs, 
         )
-        def get_url(resp: dict) -> P115Url:
+        def get_url(resp: dict) -> P115URL:
             data = check_response(resp)["data"]
             url = quote(data["url"], safe=":/?&=%#")
-            return P115Url(
+            return P115URL(
                 url, 
                 file_path=path, 
                 file_name=posixpath.basename(path), 
                 headers=resp["headers"], 
             )
         if async_:
-            async def async_request() -> P115Url:
+            async def async_request() -> P115URL:
                 return get_url(await cast(Coroutine[Any, Any, dict], resp))
             return async_request()
         else:

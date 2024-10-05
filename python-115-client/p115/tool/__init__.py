@@ -46,7 +46,7 @@ K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 
 CAPTCHA_CRACK: Callable[[bytes], str]
-CRE_TREE_PREFIX_match = re_compile("^(?:\| )+\|-").match
+CRE_TREE_PREFIX_match = re_compile("^(?:\| )+\|-(.*)").match
 ID_TO_DIRNODE_CACHE: dict[int, dict[int, DirNode]] = defaultdict(dict)
 CLASS_TO_TYPE: Final = MappingProxyType({
     "JG_DOC": 1, 
@@ -554,12 +554,10 @@ def wish_adopt(
 
 def parse_export_dir_as_dict_iter(
     file: bytes | str | PathLike | IO, 
-    encoding: str = "utf-16", 
 ) -> Iterator[dict]:
     """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
 
     :param file: 文件路径或已经打开的文件
-    :param encoding: 文件编码，默认为 "utf-16"
 
     :return: 把每一行解析为一个字典，迭代返回，格式为
 
@@ -573,62 +571,61 @@ def parse_export_dir_as_dict_iter(
             }
     """
     if isinstance(file, (bytes, str, PathLike)):
-        file = open(file, encoding=encoding)
+        file = open(file, encoding="utf-16", newline="\n")
     elif not isinstance(file, TextIOBase):
-        file = TextIOWrapper(file, encoding=encoding)
+        file = TextIOWrapper(file, encoding="utf-16", newline="\n")
     stack = [0]
-    for i, r in enumerate(file):
-        match = CRE_TREE_PREFIX_match(r)
-        if match is None:
-            continue
-        prefix = match[0]
-        prefix_length = len(prefix)
-        depth = prefix_length // 2 - 1
+    push = stack.append
+    next(file, None)
+    for i, m in enumerate(map(CRE_TREE_PREFIX_match, file)):
+        name = m[1]
+        depth = (len(m.string) - len(name)) // 2 - 1
         yield {
             "key": i, 
             "parent_key": stack[depth-1], 
             "depth": depth, 
-            "name": r.removesuffix("\n")[prefix_length:], 
+            "name": name, 
         }
         try:
             stack[depth] = i
         except IndexError:
-            stack.append(i)
+            push(i)
 
 
 def parse_export_dir_as_path_iter(
     file: bytes | str | PathLike | IO, 
     escape: None | Callable[[str], str] = escape, 
-    encoding: str = "utf-16", 
 ) -> Iterator[str]:
     """解析 115 导出的目录树（可通过 P115Client.fs_export_dir 提交导出任务）
 
     :param file: 文件路径或已经打开的文件
-    :param encoding: 文件编码，默认为 "utf-16"
+    :param escape: 对文件名进行转义的函数。如果为 None，则不处理；否则，这个函数用来对文件名中某些符号进行转义，例如 "/" 等
 
-    :return: 把每一行解析为一个相对路径（虽然左边第 1 个符号是 "/"），迭代返回
+    :return: 把每一行解析为一个路径，并逐次迭代返回
     """
     if isinstance(file, (bytes, str, PathLike)):
-        file = open(file, encoding=encoding)
+        file = open(file, encoding="utf-16", newline="\n")
     elif not isinstance(file, TextIOBase):
-        file = TextIOWrapper(file, encoding=encoding)
-    stack = [""]
-    for r in file:
-        match = CRE_TREE_PREFIX_match(r)
-        if match is None:
-            continue
-        prefix = match[0]
-        prefix_length = len(prefix)
-        depth = prefix_length // 2 - 1
-        name = r.removesuffix("\n")[prefix_length:]
+        file = TextIOWrapper(file, encoding="utf-16", newline="\n")
+    root = next(file)[3:-1]
+    if root == "根目录":
+        stack = [""]
+    else:
+        if escape is not None:
+            root = escape(root)
+        stack = ["/" + root]
+    push = stack.append
+    for m in map(CRE_TREE_PREFIX_match, file):
+        name = m[1]
+        depth = (len(m.string) - len(name)) // 2 - 1
         if escape is not None:
             name = escape(name)
         path = stack[depth-1] + "/" + name
+        yield path
         try:
             stack[depth] = path
         except IndexError:
-            stack.append(path)
-        yield path
+            push(path)
 
 
 def export_dir(
@@ -1099,7 +1096,7 @@ def traverse_files(
     while dq:
         try:
             if cid := get():
-                # NOTE: 必要时也可以根据不同的扩展名进行分拆任务，通过 client.fs_files_type({"cid": cid, "type": type}) 获取目录内所有的此种类型的扩展名，并且如果响应为空时，则直接退出
+                # NOTE: 必要时也可以根据不同的扩展名进行分拆任务，通过 client.fs_files_second_type({"cid": cid, "type": type}) 获取目录内所有的此种类型的扩展名，并且如果响应为空时，则直接退出
                 try:
                     payload = {
                         "asc": 1, "cid": cid, "cur": 0, "limit": 16, "o": "user_ptime", "offset": 0, 
@@ -1296,7 +1293,7 @@ def iter_image_files(
     payload = {"asc": asc, "cid": cid, "cur": cur, "limit": page_size, "o": order, "offset": offset}
     count = 0
     while True:
-        resp = check_response(client.fs_files_imglist(payload))
+        resp = check_response(client.fs_imglist(payload))
         if int(resp["cid"]) != cid:
             raise FileNotFoundError(2, cid)
         if count == 0:

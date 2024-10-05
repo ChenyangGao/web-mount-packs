@@ -57,7 +57,7 @@ def request_sync(
     url: URLTypes, 
     method: str = "GET", 
     # determine how to parse response data
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     # raise for status
     raise_for_status: bool = True, 
     # pass in a custom session instance
@@ -100,6 +100,9 @@ def request_sync(
         resp.raise_for_status()
     if parse is None:
         return resp
+    elif parse is ...:
+        resp.close()
+        return resp
     with closing(resp):
         if parse is False:
             return resp.read()
@@ -125,7 +128,7 @@ async def request_async(
     url: URLTypes, 
     method: str = "GET", 
     # determine how to parse response data
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     # raise for status
     raise_for_status: bool = True, 
     # pass in a custom session instance
@@ -167,6 +170,9 @@ async def request_async(
         resp.raise_for_status()
     if parse is None:
         return resp
+    elif parse is ...:
+        await resp.aclose()
+        return resp
     async with aclosing(resp):
         if parse is False:
             return await resp.aread()
@@ -195,7 +201,7 @@ async def request_async(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
     async_: Literal[False] = False, 
@@ -206,7 +212,7 @@ def request(
 def request(
     url: URLTypes, 
     method: str, 
-    parse: None | bool | Callable, 
+    parse: Literal[None, ...] | bool | Callable, 
     raise_for_status: bool, 
     session: None | AsyncClient, 
     async_: Literal[True], 
@@ -216,7 +222,7 @@ def request(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
     async_: Literal[False, True] = False, 

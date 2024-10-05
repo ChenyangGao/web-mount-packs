@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "aiohttp_client_request"
-version = "0.0.2"
+version = "0.0.2.1"
 description = "aiohttp request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

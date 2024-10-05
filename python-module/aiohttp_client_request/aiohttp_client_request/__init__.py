@@ -9,6 +9,7 @@ from asyncio import get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Callable
 from inspect import isawaitable
 from json import loads
+from typing import Literal
 
 from argtools import argcount
 from aiohttp import ClientSession, ClientResponse
@@ -41,7 +42,7 @@ setattr(ClientResponse, "__del__", _async_response_del)
 async def request(
     url: str, 
     method: str = "GET", 
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | ClientSession = None, 
     **request_kwargs, 
@@ -53,6 +54,9 @@ async def request(
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
+        return resp
+    elif parse is ...:
+        resp.close()
         return resp
     async with resp:
         if parse is False:

@@ -2,13 +2,13 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["request"]
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from json import loads
 from re import compile as re_compile
-from typing import Any
+from typing import Any, Literal
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -34,7 +34,7 @@ def get_charset(content_type: str, default="utf-8") -> str:
 def request(
     url: str, 
     method: str = "GET", 
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
     data: None | bytes | str | Mapping | Sequence[tuple[Any, Any]] | Iterable[bytes] = None, 
     timeout: None | float | Timeout = Timeout(connect=5, read=60), 
@@ -76,6 +76,9 @@ def request(
     if raise_for_status and resp.status >= 400:
         raise HTTPError(resp.url, resp.status, resp.reason, resp.headers, resp)
     if parse is None:
+        return resp
+    elif parse is ...:
+        resp.close()
         return resp
     with resp:
         if isinstance(parse, bool):

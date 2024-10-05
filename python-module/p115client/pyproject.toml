@@ -27,12 +27,13 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
+ed2k = ">=0.0.1"
 http_response = "*"
 httpx = "*"
-httpx_request = ">=0.0.8.2"
+httpx_request = ">=0.0.8.3"
 multidict = "*"
 orjson = "*"
-p115cipher = ">=0.0.2"
+p115cipher = ">=0.0.2.2"
 pycryptodome = "*"
 python-asynctools = ">=0.0.4"
 python-cookietools = ">=0.0.2"

@@ -25,7 +25,7 @@ from dictattr import AttrDict
 from iterutils import run_gen_step
 from posixpatht import escape, joins, splits, path_is_dir_form
 
-from .client import check_response, P115Client, ExtractProgress, P115Url
+from .client import check_response, P115Client, ExtractProgress, P115URL
 from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -475,7 +475,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def get_url(
@@ -486,7 +486,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def get_url(
         self, 
@@ -496,7 +496,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         "获取下载链接"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)

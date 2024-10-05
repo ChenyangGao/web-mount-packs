@@ -7,6 +7,7 @@ __all__ = ["request"]
 
 from collections.abc import Callable
 from json import loads
+from typing import Literal
 
 from argtools import argcount
 from requests import adapters
@@ -25,7 +26,7 @@ adapters.DEFAULT_RETRIES = 5
 def request(
     url: str, 
     method: str = "GET", 
-    parse: None | bool | Callable = None, 
+    parse: Literal[None, ...] | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Session = None, 
     stream: bool = True, 
@@ -44,6 +45,9 @@ def request(
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:
+        return resp
+    elif parse is ...:
+        resp.close()
         return resp
     with resp:
         if parse is False:

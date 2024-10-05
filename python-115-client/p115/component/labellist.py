@@ -92,7 +92,7 @@ class P115LabelList:
         """
         def gen_step():
             resp = yield partial(
-                self.client.label_add, 
+                self.client.fs_label_add, 
                 *labels, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -116,7 +116,7 @@ class P115LabelList:
             else:
                 ids = ",".join(item["id"] for item in self.iter())
             yield partial(
-                self.client.label_del, 
+                self.client.fs_label_del, 
                 ids, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -166,7 +166,7 @@ class P115LabelList:
             else:
                 payload = {**value, "id": id}
             return (yield partial(
-                self.client.label_edit, 
+                self.client.fs_label_edit, 
                 payload, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -238,7 +238,7 @@ class P115LabelList:
     ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
             resp = yield partial(
-                self.client.label_list, 
+                self.client.fs_label_list, 
                 {"limit": 1}, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -273,7 +273,7 @@ class P115LabelList:
         def gen_step():
             if isinstance(id_or_name, int):
                 resp = yield partial(
-                    self.client.label_edit, 
+                    self.client.fs_label_edit, 
                     {"id": id_or_name}, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
@@ -382,12 +382,12 @@ class P115LabelList:
             "sort": sort, 
             "order": order, 
         }
-        label_list = self.client.label_list
+        fs_label_list = self.client.fs_label_list
         if async_:
             async def request():
                 count = 0
                 while True:
-                    resp = await check_response(label_list(
+                    resp = await check_response(fs_label_list(
                         payload, 
                         request=self.async_request, 
                         async_=True, 
@@ -407,7 +407,7 @@ class P115LabelList:
             def request():
                 count = 0
                 while True:
-                    resp = check_response(label_list(
+                    resp = check_response(fs_label_list(
                         payload, 
                         request=self.request, 
                     ))
@@ -567,7 +567,7 @@ class P115LabelList:
                         order=order, 
                     ))
             resp = yield partial(
-                self.client.label_list, 
+                self.client.fs_label_list, 
                 {
                     "offset": offset, 
                     "limit": limit, 
@@ -608,7 +608,7 @@ class P115LabelList:
         def gen_step():
             id = yield partial(self.id_of, id_or_name, async_=async_)
             resp = yield partial(
-                self.client.label_del, 
+                self.client.fs_label_del, 
                 id, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 

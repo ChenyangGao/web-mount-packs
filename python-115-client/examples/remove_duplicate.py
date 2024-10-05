@@ -73,7 +73,7 @@ def remove_repeate_file(args, client, fid, origin_file):
     file_list = []
 
     try:
-        resp = client.fs_get_repeat(fid)
+        resp = client.fs_repeat_sha1(fid)
     except Exception as e:
         return
 

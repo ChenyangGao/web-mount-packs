@@ -36,7 +36,7 @@ def rsa_decode(cipher_data: Buffer, /) -> bytearray:
     cipher_data = memoryview(b64decode(cipher_data))
     data = bytearray()
     for l, r, _ in acc_step(0, len(cipher_data), 128):
-        p = pow(from_bytes(cipher_data[l:r]), *RSA_PUBKEY_PAIR)
+        p = pow(from_bytes(cipher_data[l:r]), RSA_PUBKEY_PAIR[1], RSA_PUBKEY_PAIR[0])
         b = to_bytes(p, (p.bit_length() + 0b111) >> 3)
         data += memoryview(b)[b.index(0)+1:]
     m = memoryview(data)

@@ -45,7 +45,7 @@ from httpfile import HTTPFileReader
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from posixpatht import basename, commonpath, dirname, escape, joins, normpath, relpath, splits, unescape
 
-from .client import check_response, P115Client, P115Url
+from .client import check_response, P115Client, P115URL
 
 
 T = TypeVar("T")
@@ -424,7 +424,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     def get_url(
@@ -433,7 +433,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     def get_url(
         self, 
@@ -441,7 +441,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         return self.fs.get_url(self, headers=headers, async_=async_)
 
     @overload
@@ -1280,7 +1280,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         )
 
     @property
-    def url(self, /) -> P115Url:
+    def url(self, /) -> P115URL:
         ns = self.__dict__
         try:
             url = ns["url"]
@@ -1610,7 +1610,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> P115Url:
+    ) -> P115URL:
         ...
     @overload
     @abstractmethod
@@ -1622,7 +1622,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, P115Url]:
+    ) -> Coroutine[Any, Any, P115URL]:
         ...
     @abstractmethod
     def get_url(
@@ -1633,7 +1633,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         headers: None | Mapping = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> P115Url | Coroutine[Any, Any, P115Url]:
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
         ...
 
     @overload
