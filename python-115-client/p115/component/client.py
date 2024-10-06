@@ -6490,7 +6490,7 @@ class P115Client:
             return request(url=api, **request_kwargs)
 
     @overload
-    def upload_file_sample_init(
+    def upload_sample_init(
         self, 
         /, 
         filename: str, 
@@ -6501,7 +6501,7 @@ class P115Client:
     ) -> dict:
         ...
     @overload
-    def upload_file_sample_init(
+    def upload_sample_init(
         self, 
         /, 
         filename: str, 
@@ -6511,7 +6511,7 @@ class P115Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def upload_file_sample_init(
+    def upload_sample_init(
         self, 
         /, 
         filename: str, 
@@ -6720,7 +6720,7 @@ class P115Client:
             if not filename:
                 filename = str(uuid4())
             resp = yield partial(
-                self.upload_file_sample_init, 
+                self.upload_sample_init, 
                 filename, 
                 pid=pid, 
                 async_=async_, 

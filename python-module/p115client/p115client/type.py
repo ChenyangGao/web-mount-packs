@@ -30,9 +30,11 @@ class RequestKeywords(TypedDict):
 class MultipartResumeData(TypedDict):
     bucket: str
     object: str
-    upload_id: str
+    token: NotRequired[dict]
     callback: dict
+    upload_id: str
     partsize: int
+    parts: NotRequired[list[dict]]
     filesize: NotRequired[int]
 
 

@@ -80,7 +80,7 @@ def bytes_xor_reverse(v1: Buffer, v2: Buffer, /, size: int = 0) -> Buffer:
         v2 = v2[:size]
     else:
         size = len(v1)
-    return to_bytes(from_bytes(v1) ^ from_bytes(v2), size, "little")
+    return to_bytes(from_bytes(v1) ^ from_bytes(v2), size, byteorder="little")
 
 
 def xor(src: Buffer, key: Buffer, /) -> bytearray:

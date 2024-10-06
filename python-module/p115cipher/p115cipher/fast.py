@@ -76,10 +76,11 @@ def ecdh_encode_token(timestamp: int, /) -> bytes:
     "用时间戳生成 token，并包含由 ECDH 生成的公钥"
     token = bytearray()
     token += b"\x1d\x03\x0e\x80\xa1x\xdc\xee\xce\xcd\xa3w\xde\x12\x8d\x00s\x00\x00\x00"
-    token += to_bytes(timestamp, 4, "little")
+    token += to_bytes(timestamp, 4, byteorder="little")
     token += b"\x8e\xd9\xdd\xcfU\xaea\xedF\xea\x12\x1a\x1c\xfc\x81\x00\x01\x00\x00\x00"
-    token += to_bytes(crc32(b"^j>WD3Kr?J2gLFjD4W2y@" + token), 4, "little")
+    token += to_bytes(crc32(b"^j>WD3Kr?J2gLFjD4W2y@" + token), 4, byteorder="little")
     return b64encode(token)
+
 
 def make_upload_payload(payload: dict, /) -> dict:
     """为上传构建 HTTP 请求参数
@@ -91,11 +92,11 @@ def make_upload_payload(payload: dict, /) -> dict:
     payload["sig"] = sig_sha1.hexdigest().upper()
     token_md5 = md5(MD5_SALT)
     token_md5.update(bytes("{fileid}{filesize}{sign_key}{sign_val}{userid}{t}".format_map(payload), "ascii"))
-    token_md5.update(b2a_hex(md5(bytes(payload["userid"], "ascii")).digest()))
+    token_md5.update(b2a_hex(md5(bytes(str(payload["userid"]), "ascii")).digest()))
     token_md5.update(bytes(str(payload["appversion"]), "ascii"))
     payload["token"] = token_md5.hexdigest()
     return {
         "params": {"k_ec": ecdh_encode_token(t).decode("ascii")}, 
-        "data": ecdh_aes_encode(urlencode(sorted(payload.items())).encode("latin-1")), 
+        "data": ecdh_aes_encode(urlencode(sorted((k, v) for k, v in payload.items() if v != "")).encode("latin-1")), 
     }
 

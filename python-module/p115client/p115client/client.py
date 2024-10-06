@@ -7,62 +7,44 @@ __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["check_response", "P115Client"]
 
 import errno
-import posixpath
 
 from asyncio import create_task, to_thread, Lock as AsyncLock
-from base64 import b64encode
-from binascii import crc32
 from collections.abc import (
-    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, 
-    Generator, ItemsView, Iterable, Iterator, Mapping, Sequence, 
+    AsyncGenerator, AsyncIterable, Awaitable, Callable, Coroutine, 
+    Generator, ItemsView, Iterable, Mapping, MutableMapping, Sequence, 
 )
-from concurrent.futures import Future
+#???
 from contextlib import asynccontextmanager
 from datetime import date, datetime
-from email.utils import formatdate
 from functools import cached_property, partial
 from hashlib import sha1
-from hmac import digest as hmac_digest
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel
-from inspect import iscoroutinefunction
-from itertools import count
 from os import fsdecode, fstat, isatty, stat, PathLike, path as ospath
 from pathlib import Path, PurePath
 from re import compile as re_compile, MULTILINE
 from _thread import start_new_thread
-from threading import Condition, Lock, Thread
-from time import sleep, strftime, strptime, time
-from typing import (
-    cast, overload, Any, Final, Literal, NotRequired, Self, TypedDict, 
-    TypeVar, Unpack, 
-)
+from threading import Lock
+from time import time
+from typing import cast, overload, Any, Final, Literal, Self, TypeVar, Unpack
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 from warnings import warn
-from xml.etree.ElementTree import fromstring
 
-from asynctools import as_thread, ensure_aiter, ensure_async
+#???
+from asynctools import as_thread, ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
-from dictattr import AttrDict
 from filewrap import (
     Buffer, SupportsRead, 
-    bio_chunk_iter, bio_chunk_async_iter, 
     bio_skip_iter, bio_skip_async_iter, 
-    bytes_iter_skip, bytes_async_iter_skip, 
-    bytes_iter_to_async_reader, bytes_iter_to_reader, 
-    bytes_to_chunk_iter, bytes_to_chunk_async_iter, 
     progress_bytes_iter, progress_bytes_async_iter, 
 )
 from ed2k import ed2k_hash, ed2k_hash_async, Ed2kHash
 from hashtools import HashObj, file_digest, file_mdigest, file_digest_async, file_mdigest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
-from http_response import get_content_length, get_filename, get_total_length, is_chunked, is_range_request
+from http_response import get_filename, get_total_length, is_range_request
 from httpfile import HTTPFileReader, AsyncHTTPFileReader
-from iterutils import (
-    through, async_through, run_gen_step, run_gen_step_iter, wrap_iter, wrap_aiter, Yield, 
-)
-from multidict import CIMultiDict
+from iterutils import through, async_through, run_gen_step
 from orjson import dumps, loads
 from p115cipher.fast import rsa_encode, rsa_decode, ecdh_aes_decode, make_upload_payload
 from startfile import startfile, startfile_async # type: ignore
@@ -71,10 +53,11 @@ from yarl import URL
 
 from .const import APP_TO_SSOENT, CLIENT_API_MAP
 from .exception import (
-    AuthenticationError, BusyOSError, DataError, LoginError, MultipartUploadAbort, NotSupportedError, 
+    AuthenticationError, BusyOSError, DataError, LoginError, NotSupportedError, 
     P115OSError, OperationalError, 
 )
 from .type import RequestKeywords, MultipartResumeData, P115Cookies, P115URL
+from ._upload import make_dataiter
 
 
 T = TypeVar("T")
@@ -117,6 +100,10 @@ def get_default_request():
     return _httpx_request
 
 
+def parse_upload_init_response(resp, content: bytes, /) -> dict:
+    return json_loads(ecdh_aes_decode(content, decompress=True))
+
+
 def items(m: Mapping, /) -> ItemsView:
     try:
         if isinstance((items := getattr(m, "items")()), ItemsView):
@@ -126,15 +113,10 @@ def items(m: Mapping, /) -> ItemsView:
     return ItemsView(m)
 
 
-def to_base64(s: bytes | str, /) -> str:
-    if isinstance(s, str):
-        s = bytes(s, "utf-8")
-    return str(b64encode(s), "ascii")
-
-
 def convert_digest(digest, /):
     if isinstance(digest, str):
         if digest == "crc32":
+            from binascii import crc32
             digest = lambda: crc32
         elif digest == "ed2k":
             digest = Ed2kHash()
@@ -309,16 +291,6 @@ class P115Client:
         app: str = "qandroid", 
         console_qrcode: bool = True, 
     ):
-        from httpx import Cookies
-        self.__dict__.update(
-            headers = CIMultiDict({
-                "Accept": "application/json, text/plain, */*", 
-                "Accept-Encoding": "gzip, deflate", 
-                "Connection": "keep-alive", 
-                "User-Agent": "Mozilla/5.0 AppleWebKit/600 Safari/600 Chrome/124.0.0.0 115disk/99.99.99.99", 
-            }), 
-            cookies = Cookies(), 
-        )
         if isinstance(cookies, (bytes, PathLike)):
             if isinstance(cookies, PurePath) and hasattr(cookies, "open"):
                 self.cookies_path = cookies
@@ -352,8 +324,8 @@ class P115Client:
         from httpx import Client, HTTPTransport
         ns = self.__dict__
         session = Client(transport=HTTPTransport(retries=5), verify=False)
-        session._headers = ns["headers"]
-        session._cookies = ns["cookies"]
+        session._headers = self.headers # type: ignore
+        session._cookies = self.cookies
         return session
 
     @cached_property
@@ -363,21 +335,20 @@ class P115Client:
         from httpx import AsyncClient, AsyncHTTPTransport
         ns = self.__dict__
         session = AsyncClient(transport=AsyncHTTPTransport(retries=5), verify=False)
-        session._headers = ns["headers"]
-        session._cookies = ns["cookies"]
+        session._headers = self.headers # type: ignore
+        session._cookies = self.cookies
         return session
 
-    @cached_property
-    def cookiejar(self, /) -> CookieJar:
-        """请求所用的 CookieJar 对象（同步和异步共用）
-        """
-        return self.__dict__["cookies"].jar
-
     @property
-    def cookies(self, /) -> P115Cookies:
-        """所有 .115.com 域下的 cookie 值
+    def cookies(self, /):
+        """请求所用的 Cookies 对象（同步和异步共用）
         """
-        return P115Cookies.from_cookiejar(self.cookiejar)
+        try:
+            return self.__dict__["cookies"]
+        except KeyError:
+            from httpx import Cookies
+            cookies = self.__dict__["cookies"] = Cookies()
+            return cookies
 
     @cookies.setter
     def cookies(
@@ -424,22 +395,47 @@ class P115Client:
         ns.pop("user_id", None)
         if self.user_id != user_id:
             ns.pop("user_key", None)
-        self._write_cookies_to_path(self.cookies)
+        self._write_cookies_to_path(self.cookies_str)
 
     @property
-    def headers(self, /) -> CIMultiDict:
+    def cookiejar(self, /) -> CookieJar:
+        """请求所用的 CookieJar 对象（同步和异步共用）
+        """
+        return self.cookies.jar
+
+    @property
+    def cookies_str(self, /) -> P115Cookies:
+        """所有 .115.com 域下的 cookie 值
+        """
+        return P115Cookies.from_cookiejar(self.cookiejar)
+
+    @property
+    def headers(self, /) -> MutableMapping:
         """请求头，无论同步还是异步请求都共用这个请求头
         """
-        return self.__dict__["headers"]
+        try:
+            return self.__dict__["headers"]
+        except KeyError:
+            from multidict import CIMultiDict
+            headers = self.__dict__["headers"] = CIMultiDict({
+                "Accept": "application/json, text/plain, */*", 
+                "Accept-Encoding": "gzip, deflate", 
+                "Connection": "keep-alive", 
+                "User-Agent": "Mozilla/5.0 AppleWebKit/600 Safari/600 Chrome/124.0.0.0 115disk/99.99.99.99", 
+            })
+            return headers
 
-    @headers.setter
-    def headers(self, headers, /):
-        """替换请求头，如果需要更新，请用 <client>.headers.update
-        """
-        headers = CIMultiDict(headers)
-        default_headers = self.headers
-        default_headers.clear()
-        default_headers.update(headers)
+    @cached_property
+    def user_id(self, /) -> int:
+        cookie_uid = self.cookies.get("UID")
+        if cookie_uid:
+            return int(cookie_uid.split("_")[0])
+        else:
+            return 0
+
+    @cached_property
+    def user_key(self, /) -> str:
+        return self.upload_key()["data"]["userkey"]
 
     def _read_cookies_from_path(
         self, 
@@ -923,7 +919,7 @@ class P115Client:
             else:
                 headers = request_kwargs["headers"] = dict(self.headers)
             if "Cookie" not in headers:
-                headers["Cookie"] = self.cookies
+                headers["Cookie"] = self.cookies_str
         if callable(check_for_relogin):
             if async_:
                 async def wrap():
@@ -934,10 +930,10 @@ class P115Client:
                             res = check_for_relogin(e)
                             if not res if isinstance(res, bool) else res != 405:
                                 raise
-                            cookies = self.cookies
+                            cookies = self.cookies_str
                             cookies_mtime = getattr(self, "cookies_mtime", 0)
                             async with self._request_alock:
-                                cookies_new = self.cookies
+                                cookies_new = self.cookies_str
                                 cookies_mtime_new = getattr(self, "cookies_mtime", 0)
                                 if cookies == cookies_new:
                                     warn("relogin to refresh cookies")
@@ -954,10 +950,10 @@ class P115Client:
                         res = check_for_relogin(e)
                         if not res if isinstance(res, bool) else res != 405:
                             raise
-                        cookies = self.cookies
+                        cookies = self.cookies_str
                         cookies_mtime = getattr(self, "cookies_mtime", 0)
                         with self._request_lock:
-                            cookies_new = self.cookies
+                            cookies_new = self.cookies_str
                             cookies_mtime_new = getattr(self, "cookies_mtime", 0)
                             if cookies == cookies_new:
                                 warn("relogin to refresh cookies")
@@ -967,6 +963,408 @@ class P115Client:
                                     setattr(self, "cookies", self._read_cookies_from_path())
         else:
             return request(url=url, method=method, **request_kwargs)
+
+    ########## Activity API ##########
+
+    @overload
+    def act_xys_adopt(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_adopt(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_adopt(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """采纳助愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/adopt
+        payload:
+            - did: str # 许愿的 id
+            - aid: int | str # 助愿的 id
+            - to_cid: int = <default> # 助愿中的分享链接转存到你的网盘中目录的 id
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/adopt"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_aid_desire(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_aid_desire(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_aid_desire(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """创建助愿（如果提供 file_ids，则会创建一个分享链接）
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire
+        payload:
+            - id: str # 许愿 id
+            - content: str # 助愿文本，不少于 5 个字，不超过 500 个字
+            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
+            - file_ids: int | str = <default> # 文件在你的网盘的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_aid_desire_del(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_aid_desire_del(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_aid_desire_del(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除助愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire
+        payload:
+            - ids: int | str # 助愿的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire"
+        if isinstance(payload, (int, str)):
+            payload = {"ids": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_desire_aid_list(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_desire_aid_list(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_desire_aid_list(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取许愿的助愿列表
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list
+        payload:
+            - id: str         # 许愿的 id
+            - start: int = 0  # 开始索引
+            - page: int = 1   # 第几页
+            - limit: int = 10 # 每页大小
+            - sort: int | str = <default>
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list"
+        if isinstance(payload, str):
+            payload = {"start": 0, "page": 1, "limit": 10, "id": payload}
+        else:
+            payload = {"start": 0, "page": 1, "limit": 10, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_get_act_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_get_act_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_get_act_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取许愿树活动的信息
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_get_desire_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_get_desire_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_get_desire_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取的许愿信息
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info
+        payload:
+            - id: str # 许愿的 id
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info"
+        if isinstance(payload, str):
+            payload = {"id": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_home_list(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_home_list(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_home_list(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """首页的许愿树（随机刷新 15 条）
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/home_list
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/home_list"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_my_aid_desire(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_my_aid_desire(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_my_aid_desire(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """我的助愿列表
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire
+        payload:
+            - type: 0 | 1 | 2 = 0
+                # 类型
+                # - 0: 全部
+                # - 1: 进行中
+                # - 2: 已实现
+            - start: int = 0  # 开始索引
+            - page: int = 1   # 第几页
+            - limit: int = 10 # 每页大小
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire"
+        if isinstance(payload, int):
+            payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
+        else:
+            payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_my_desire(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_my_desire(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_my_desire(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """我的许愿列表
+        GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire
+        payload:
+            - type: 0 | 1 | 2 = 0
+                # 类型
+                # - 0: 全部
+                # - 1: 进行中
+                # - 2: 已实现
+            - start: int = 0  # 开始索引
+            - page: int = 1   # 第几页
+            - limit: int = 10 # 每页大小
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire"
+        if isinstance(payload, int):
+            payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
+        else:
+            payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_wish(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_wish(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_wish(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """创建许愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/wish
+        payload:
+            - content: str # 许愿文本，不少于 5 个字，不超过 500 个字
+            - rewardSpace: int = 5 # 奖励容量，单位是 GB
+            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/wish"
+        if isinstance(payload, str):
+            payload = {"rewardSpace": 5, "content": payload}
+        else:
+            payload = {"rewardSpace": 5, **payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def act_xys_wish_del(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def act_xys_wish_del(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def act_xys_wish_del(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除许愿
+        POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish
+        payload:
+            - ids: str # 许愿的 id，多个用逗号 "," 隔开
+        """
+        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish"
+        if isinstance(payload, str):
+            payload = {"ids": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## App API ##########
 
@@ -1001,6 +1399,172 @@ class P115Client:
             return get_default_request()(url=api, async_=async_, **request_kwargs)
         else:
             return request(url=api, **request_kwargs)
+
+    ########## Captcha System API ##########
+
+    @overload
+    def captcha_all(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def captcha_all(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def captcha_all(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        """返回一张包含 10 个汉字的图片，包含验证码中 4 个汉字（有相应的编号，从 0 到 9，计数按照从左到右，从上到下的顺序）
+        GET https://captchaapi.115.com/?ct=index&ac=code&t=all
+        """
+        api = "https://captchaapi.115.com/?ct=index&ac=code&t=all"
+        request_kwargs["parse"] = False
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def captcha_code(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def captcha_code(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def captcha_code(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        """更新验证码，并获取图片数据（含 4 个汉字）
+        GET https://captchaapi.115.com/?ct=index&ac=code
+        """
+        api = "https://captchaapi.115.com/?ct=index&ac=code"
+        request_kwargs["parse"] = False
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def captcha_sign(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def captcha_sign(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def captcha_sign(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取验证码的签名字符串
+        GET https://captchaapi.115.com/?ac=code&t=sign
+        """
+        api = "https://captchaapi.115.com/?ac=code&t=sign"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def captcha_single(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def captcha_single(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def captcha_single(
+        self, 
+        id: int, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        """10 个汉字单独的图片，包含验证码中 4 个汉字，编号从 0 到 9
+        GET https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}
+        """
+        if not 0 <= id <= 9:
+            raise ValueError(f"expected integer between 0 and 9, got {id}")
+        api = f"https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}"
+        request_kwargs["parse"] = False
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def captcha_verify(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def captcha_verify(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def captcha_verify(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """提交验证码
+        POST https://webapi.115.com/user/captcha
+        payload:
+            - code: int | str # 从 0 到 9 中选取 4 个数字的一种排列
+            - sign: str = <default>
+            - ac: str = "security_code" # 默认就行，不要自行决定
+            - type: str = "web"         # 默认就行，不要自行决定
+            - ctype: str = "web"        # 需要和 type 相同
+            - client: str = "web"       # 需要和 type 相同
+        """
+        if isinstance(payload, (int, str)):
+            payload = {"code": payload, "ac": "security_code", "type": "web", "ctype": "web", "client": "web"}
+        else:
+            payload = {"ac": "security_code", "type": "web", "ctype": "web", "client": "web", **payload}
+        if "sign" not in payload:
+            payload["sign"] = self.captcha_sign()["sign"]
+        api = "https://webapi.115.com/user/captcha"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Download API ##########
 
@@ -1211,6 +1775,466 @@ class P115Client:
             json["headers"] = headers
             return json
         request_kwargs.setdefault("parse", parse)
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    ########## Extraction API ##########
+
+    @overload
+    def extract_add_file(
+        self, 
+        payload: list | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_add_file(
+        self, 
+        payload: list | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_add_file(
+        self, 
+        payload: list | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """解压缩到某个目录，推荐直接用封装函数 `extract_file`
+        POST https://webapi.115.com/files/add_extract_file
+        payload:
+            - pick_code: str
+            - extract_file[]: str
+            - extract_file[]: str
+            - ...
+            - to_pid: int | str = 0
+            - paths: str = "文件"
+        """
+        api = "https://webapi.115.com/files/add_extract_file"
+        if (headers := request_kwargs.get("headers")):
+            headers = request_kwargs["headers"] = dict(headers)
+        else:
+            headers = request_kwargs["headers"] = {}
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        return self.request(
+            api, 
+            "POST", 
+            data=urlencode(payload), 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> P115URL:
+        ...
+    @overload
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, P115URL]:
+        ...
+    def extract_download_url(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> P115URL | Coroutine[Any, Any, P115URL]:
+        """获取压缩包中文件的下载链接
+        GET https://webapi.115.com/files/extract_down_file
+        payload:
+            - pick_code: str
+            - full_name: str
+        """
+        path = path.rstrip("/")
+        resp = self.extract_download_url_web(
+            {"pick_code": pickcode, "full_name": path.lstrip("/")}, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+        def get_url(resp: dict) -> P115URL:
+            from posixpath import basename
+            data = check_response(resp)["data"]
+            url = quote(data["url"], safe=":/?&=%#")
+            return P115URL(
+                url, 
+                file_path=path, 
+                file_name=basename(path), 
+                headers=resp["headers"], 
+            )
+        if async_:
+            async def async_request() -> P115URL:
+                return get_url(await cast(Coroutine[Any, Any, dict], resp))
+            return async_request()
+        else:
+            return get_url(cast(dict, resp))
+
+    @overload
+    def extract_download_url_web(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_download_url_web(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_download_url_web(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取压缩包中文件的下载链接
+        GET https://webapi.115.com/files/extract_down_file
+        payload:
+            - pick_code: str
+            - full_name: str
+        """
+        api = "https://webapi.115.com/files/extract_down_file"
+        request_headers = request_kwargs.get("headers")
+        headers = request_kwargs.get("headers")
+        if headers:
+            if isinstance(headers, Mapping):
+                headers = ItemsView(headers)
+            headers = request_kwargs["headers"] = {
+                "User-Agent": next((v for k, v in headers if k.lower() == "user-agent" and v), "")}
+        else:
+            headers = request_kwargs["headers"] = {"User-Agent": ""}
+        def parse(resp, content: bytes):
+            json = json_loads(content)
+            if "Set-Cookie" in resp.headers:
+                if isinstance(resp.headers, Mapping):
+                    match = CRE_SET_COOKIE.search(resp.headers["Set-Cookie"])
+                    if match is not None:
+                        headers["Cookie"] = match[0]
+                else:
+                    for k, v in reversed(resp.headers.items()):
+                        if k == "Set-Cookie" and CRE_SET_COOKIE.match(v) is not None:
+                            headers["Cookie"] = v
+                            break
+            json["headers"] = headers
+            return json
+        request_kwargs["parse"] = parse
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def extract_file(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str], 
+        dirname: str, 
+        to_pid: int | str,
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_file(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str], 
+        dirname: str, 
+        to_pid: int | str,
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_file(
+        self, 
+        /, 
+        pickcode: str, 
+        paths: str | Sequence[str] = "", 
+        dirname: str = "", 
+        to_pid: int | str = 0,
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """解压缩到某个目录，是对 `extract_add_file` 的封装，推荐使用
+        """
+        dirname = dirname.strip("/")
+        dir2 = f"文件/{dirname}" if dirname else "文件"
+        data = [
+            ("pick_code", pickcode), 
+            ("paths", dir2), 
+            ("to_pid", to_pid), 
+        ]
+        if async_:
+            async def async_request():
+                nonlocal async_, paths
+                async_ = cast(Literal[True], async_)
+                if not paths:
+                    resp = await self.extract_list(pickcode, dirname, async_=async_, **request_kwargs)
+                    if not resp["state"]:
+                        return resp
+                    paths = [
+                        p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                        for p in resp["data"]["list"]
+                    ]
+                    while (next_marker := resp["data"].get("next_marker")):
+                        resp = await self.extract_list(
+                            pickcode, dirname, next_marker, async_=async_, **request_kwargs)
+                        paths.extend(
+                            p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                            for p in resp["data"]["list"]
+                        )
+                if isinstance(paths, str):
+                    data.append(
+                        ("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/"))
+                    )
+                else:
+                    data.extend(
+                        ("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) 
+                        for path in paths
+                    )
+                return await self.extract_add_file(data, async_=async_, **request_kwargs)
+            return async_request()
+        else:
+            if not paths:
+                resp = self.extract_list(pickcode, dirname, async_=async_, **request_kwargs)
+                if not resp["state"]:
+                    return resp
+                paths = [
+                    p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                    for p in resp["data"]["list"]
+                ]
+                while (next_marker := resp["data"].get("next_marker")):
+                    resp = self.extract_list(
+                        pickcode, dirname, next_marker, async_=async_, **request_kwargs)
+                    paths.extend(
+                        p["file_name"] if p["file_category"] else p["file_name"]+"/" 
+                        for p in resp["data"]["list"]
+                    )
+            if isinstance(paths, str):
+                data.append(
+                    ("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/"))
+                )
+            else:
+                data.extend(
+                    ("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) 
+                    for path in paths
+                )
+            return self.extract_add_file(data, async_=async_, **request_kwargs)
+
+    @overload
+    def extract_info(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_info(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取压缩文件的文件列表，推荐直接用封装函数 `extract_list`
+        GET https://webapi.115.com/files/extract_info
+        payload:
+            - pick_code: str
+            - file_name: str = ""
+            - next_marker: str = ""
+            - page_count: int | str = 999 # NOTE: 介于 1-999
+            - paths: str = "文件"
+        """
+        api = "https://webapi.115.com/files/extract_info"
+        if isinstance(payload, str):
+            payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", "pick_code": payload}
+        else:
+            payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def extract_list(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        next_marker: str, 
+        page_count: int, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_list(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str, 
+        next_marker: str, 
+        page_count: int, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_list(
+        self, 
+        /, 
+        pickcode: str, 
+        path: str = "", 
+        next_marker: str = "", 
+        page_count: int = 999, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取压缩文件的文件列表，此方法是对 `extract_info` 的封装，推荐使用
+        """
+        if not 1 <= page_count <= 999:
+            page_count = 999
+        payload = {
+            "pick_code": pickcode, 
+            "file_name": path.strip("/"), 
+            "paths": "文件", 
+            "next_marker": next_marker, 
+            "page_count": page_count, 
+        }
+        return self.extract_info(payload, async_=async_, **request_kwargs)
+
+    @overload
+    def extract_progress(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_progress(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_progress(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取 解压缩到目录 任务的进度
+        GET https://webapi.115.com/files/add_extract_file
+        payload:
+            - extract_id: str
+        """
+        api = "https://webapi.115.com/files/add_extract_file"
+        if isinstance(payload, (int, str)):
+            payload = {"extract_id": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def extract_push(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_push(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_push(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
+        POST https://webapi.115.com/files/push_extract
+        payload:
+            - pick_code: str
+            - secret: str = "" # 解压密码
+        """
+        api = "https://webapi.115.com/files/push_extract"
+        if isinstance(payload, str):
+            payload = {"pick_code": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def extract_push_progress(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def extract_push_progress(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def extract_push_progress(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """查询解压缩任务的进度
+        GET https://webapi.115.com/files/push_extract
+        payload:
+            - pick_code: str
+        """
+        api = "https://webapi.115.com/files/push_extract"
+        if isinstance(payload, str):
+            payload = {"pick_code": payload}
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
     ########## File System API ##########
@@ -4468,11 +5492,13 @@ class P115Client:
     def login_ssoent(self, /) -> None | str:
         """获取当前的登录设备 ssoent，如果为 None，说明未能获得（会直接获取 Cookies 中名为 UID 字段的值，所以即使能获取，也不能说明登录未失效）
         """
-        cookie_uid = self.__dict__["cookies"].get("UID")
+        cookie_uid = self.cookies.get("UID")
         if cookie_uid:
             return cookie_uid.split("_")[1]
         else:
             return None
+
+    ########## Logout API ##########
 
     @overload
     def logout_by_app(
@@ -4546,7 +5572,7 @@ class P115Client:
             if app == "desktop":
                 app = "web"
             api = f"https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout"
-            request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Cookie": self.cookies}
+            request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Cookie": self.cookies_str}
             request_kwargs.setdefault("parse", ...)
             if request is None:
                 return (yield get_default_request()(url=api, async_=async_, **request_kwargs))
@@ -4722,6 +5748,601 @@ class P115Client:
         """
         api = "https://msg.115.com/?ct=im&ac=get_websocket_host"
         return self.request(url=api, async_=async_, **request_kwargs)
+
+    ########## Offline Download API ##########
+
+    @overload
+    def offline_add_torrent(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_add_torrent(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_add_torrent(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """添加一个种子作为离线任务
+        POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
+        payload:
+            - info_hash: str
+            - wanted: str
+            - sign: str = <default>
+            - time: int = <default>
+            - savepath: str = <default>
+            - wp_path_id: int | str = <default>
+        """
+        api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_bt"
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_add_url(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_add_url(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_add_url(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """添加一个离线任务
+        POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
+        payload:
+            - url: str
+            - sign: str = <default>
+            - time: int = <default>
+            - savepath: str = <default>
+            - wp_path_id: int | str = <default>
+        """
+        api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_url"
+        if isinstance(payload, str):
+            payload = {"url": payload}
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_add_urls(
+        self, 
+        payload: Iterable[str] | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_add_urls(
+        self, 
+        payload: Iterable[str] | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_add_urls(
+        self, 
+        payload: Iterable[str] | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """添加一组离线任务
+        POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
+        payload:
+            - url[0]: str
+            - url[1]: str
+            - ...
+            - sign: str = <default>
+            - time: int = <default>
+            - savepath: str = <default>
+            - wp_path_id: int | str = <default>
+        """
+        api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_urls"
+        if not isinstance(payload, dict):
+            payload = {f"url[{i}]": url for i, url in enumerate(payload)}
+            if not payload:
+                raise ValueError("no `url` specified")
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_clear(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_clear(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_clear(
+        self, 
+        payload: int | dict = {"flag": 0}, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """清空离线任务列表
+        POST https://115.com/web/lixian/?ct=lixian&ac=task_clear
+        payload:
+            flag: int = 0
+                - 0: 已完成
+                - 1: 全部
+                - 2: 已失败
+                - 3: 进行中
+                - 4: 已完成+删除源文件
+                - 5: 全部+删除源文件
+        """
+        api = "https://115.com/web/lixian/?ct=lixian&ac=task_clear"
+        if isinstance(payload, int):
+            flag = payload
+            if flag < 0:
+                flag = 0
+            elif flag > 5:
+                flag = 5
+            payload = {"flag": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_download_path(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_download_path(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_download_path(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取当前默认的离线下载到的目录信息（可能有多个）
+        GET https://webapi.115.com/offine/downpath
+        """
+        api = "https://webapi.115.com/offine/downpath"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取关于离线的限制的信息
+        GET https://115.com/?ct=offline&ac=space
+        """
+        api = "https://115.com/?ct=offline&ac=space"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_list(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取当前的离线任务列表
+        POST https://lixian.115.com/lixian/?ct=lixian&ac=task_lists
+        payload:
+            - page: int | str
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_lists"
+        if isinstance(payload, int):
+            payload = {"page": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_quota_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_quota_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_quota_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取当前离线配额信息（简略）
+        GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_quota_package_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_quota_package_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_quota_package_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取当前离线配额信息（详细）
+        GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_remove(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_remove(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_remove(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除一组离线任务（无论是否已经完成）
+        POST https://lixian.115.com/lixian/?ct=lixian&ac=task_del
+        payload:
+            - hash[0]: str
+            - hash[1]: str
+            - ...
+            - sign: str = <default>
+            - time: int = <default>
+            - flag: 0 | 1 = <default> # 是否删除源文件
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_del"
+        if isinstance(payload, str):
+            payload = {"hash[0]": payload}
+        if "sign" not in payload:
+            info = self.offline_info()
+            payload["sign"] = info["sign"]
+            payload["time"] = info["time"]
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_torrent_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_torrent_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_torrent_info(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """查看种子的文件列表等信息
+        POST https://lixian.115.com/lixian/?ct=lixian&ac=torrent
+        payload:
+            - sha1: str
+        """
+        api = "https://lixian.115.com/lixian/?ct=lixian&ac=torrent"
+        if isinstance(payload, str):
+            payload = {"sha1": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_upload_torrent_path(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_upload_torrent_path(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_upload_torrent_path(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取当前的种子上传到的目录，当你添加种子任务后，这个种子会在此目录中保存
+        GET https://115.com/?ct=lixian&ac=get_id&torrent=1
+        """
+        api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    ########## Recyclebin API ##########
+
+    @overload
+    def recyclebin_clean(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def recyclebin_clean(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def recyclebin_clean(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = {}, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """回收站：删除或清空
+        POST https://webapi.115.com/rb/clean
+        payload:
+            - rid[0]: int | str # NOTE: 如果没有 rid，就是清空回收站
+            - rid[1]: int | str
+            - ...
+            - password: int | str = <default>
+        """
+        api = "https://webapi.115.com/rb/clean"
+        if isinstance(payload, (int, str)):
+            payload = {"rid[0]": payload}
+        elif not isinstance(payload, dict):
+            payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def recyclebin_info(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def recyclebin_info(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def recyclebin_info(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """回收站：文件信息
+        POST https://webapi.115.com/rb/rb_info
+        payload:
+            - rid: int | str
+        """
+        api = "https://webapi.115.com/rb/rb_info"
+        if isinstance(payload, (int, str)):
+            payload = {"rid": payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def recyclebin_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def recyclebin_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def recyclebin_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """回收站：罗列
+        GET https://webapi.115.com/rb
+        payload:
+            - aid: int | str = 7
+            - cid: int | str = 0
+            - limit: int = 32
+            - offset: int = 0
+            - format: str = "json"
+            - source: str = <default>
+        """ 
+        api = "https://webapi.115.com/rb"
+        if isinstance(payload, int):
+            payload = {"aid": 7, "cid": 0, "limit": 32, "format": "json", "offset": payload}
+        else:
+            payload = {"aid": 7, "cid": 0, "limit": 32, "format": "json", "offset": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def recyclebin_revert(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def recyclebin_revert(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def recyclebin_revert(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """回收站：还原
+        POST https://webapi.115.com/rb/revert
+        payload:
+            - rid[0]: int | str
+            - rid[1]: int | str
+            - ...
+        """
+        api = "https://webapi.115.com/rb/revert"
+        if isinstance(payload, (int, str)):
+            payload = {"rid[0]": payload}
+        elif not isinstance(payload, dict):
+            payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Share API ##########
 
@@ -5162,6 +6783,243 @@ class P115Client:
         """
         api = "https://webapi.115.com/share/updateshare"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    ########## Tool API ##########
+
+    @overload
+    def tool_clear_empty_folder(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_clear_empty_folder(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_clear_empty_folder(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除空目录
+        GET https://115.com/?ct=tool&ac=clear_empty_folder
+        """
+        api = "https://115.com/?ct=tool&ac=clear_empty_folder"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开始一键排重任务
+        POST https://aps.115.com/repeat/repeat.php
+        payload:
+            - folder_id: int | str # 目录 id
+        """
+        api = "https://aps.115.com/repeat/repeat.php"
+        if isinstance(payload, (int, str)):
+            payload = {"folder_id": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_delete(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_delete(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_delete(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除重复文件
+        POST https://aps.115.com/repeat/repeat_delete.php
+        payload:
+            # 这 3 个参数用于批量删除
+            - filter_field: "parents" | "file_name" | "" | "" = <default>
+                # 保留条件
+                # - "file_name": 文件名（按长度）
+                # - "parents": 所在目录路径（按长度）
+                # - "user_utime": 操作时间
+                # - "user_ptime": 创建时间
+            - filter_order: "asc" | "desc" = <default>
+                # 排序
+                # - "asc": 升序，从小到大，取最小
+                # - "desc": 降序，从大到小，取最大
+            - batch: 0 | 1 = <default>
+            # 这 1 个参数用于手动指定删除对象
+            - sha1s[{sha1}]: int | str = <default> # 文件 id，多个用逗号 "," 隔开
+        """
+        api = "https://aps.115.com/repeat/repeat_delete.php"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_delete_status(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_delete_status(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_delete_status(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """删除重复文件进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
+        GET https://aps.115.com/repeat/delete_status.php
+        """
+        api = "https://aps.115.com/repeat/delete_status.php"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_list(
+        self, 
+        payload: dict = {"s": 0, "l": 100}, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_list(
+        self, 
+        payload: dict = {"s": 0, "l": 100}, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_list(
+        self, 
+        payload: dict = {"s": 0, "l": 100}, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取重复文件列表
+        GET https://aps.115.com/repeat/repeat_list.php
+        payload:
+            - s: int = 0 # offset，从 0 开始
+            - l: int = 0 # limit
+        """
+        api = "https://aps.115.com/repeat/repeat_list.php"
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_repeat_status(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_repeat_status(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_repeat_status(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """查询一键排重任务进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
+        GET https://aps.115.com/repeat/repeat_status.php
+        """
+        api = "https://aps.115.com/repeat/repeat_status.php"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def tool_space(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def tool_space(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def tool_space(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """检验空间
+        GET https://115.com/?ct=tool&ac=space
+
+        1、校验空间需全局进行扫描，请谨慎操作;
+        2、扫描出无父目录的文件将统一放入到"/修复文件"的目录中;
+        3、"/修复文件"的目录若超过存放文件数量限制，将创建多个目录存放，避免无法操作。
+        4、此接口一天只能使用一次
+        """
+        api = "https://115.com/?ct=tool&ac=space"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
     ########## User API ##########
 
@@ -5710,967 +7568,17 @@ class P115Client:
 
     ########## Upload API ##########
 
-    @staticmethod
-    def _oss_upload_sign(
-        bucket: str, 
-        object: str, 
-        token: dict, 
-        method: str = "PUT", 
-        params: None | str | Mapping | Sequence[tuple[Any, Any]] = "", 
-        headers: None | str | dict = "", 
-    ) -> dict:
-        """帮助函数：计算认证信息，返回带认证信息的请求头
-        """
-        subresource_key_set = frozenset((
-            "response-content-type", "response-content-language",
-            "response-cache-control", "logging", "response-content-encoding",
-            "acl", "uploadId", "uploads", "partNumber", "group", "link",
-            "delete", "website", "location", "objectInfo", "objectMeta",
-            "response-expires", "response-content-disposition", "cors", "lifecycle",
-            "restore", "qos", "referer", "stat", "bucketInfo", "append", "position", "security-token",
-            "live", "comp", "status", "vod", "startTime", "endTime", "x-oss-process",
-            "symlink", "callback", "callback-var", "tagging", "encryption", "versions",
-            "versioning", "versionId", "policy", "requestPayment", "x-oss-traffic-limit", "qosInfo", "asyncFetch",
-            "x-oss-request-payer", "sequential", "inventory", "inventoryId", "continuation-token", "callback",
-            "callback-var", "worm", "wormId", "wormExtend", "replication", "replicationLocation",
-            "replicationProgress", "transferAcceleration", "cname", "metaQuery",
-            "x-oss-ac-source-ip", "x-oss-ac-subnet-mask", "x-oss-ac-vpc-id", "x-oss-ac-forward-allow",
-            "resourceGroup", "style", "styleName", "x-oss-async-process", "regionList"
-        ))
-        date = formatdate(usegmt=True)
-        if params is None:
-            params = ""
-        else:
-            if not isinstance(params, str):
-                if isinstance(params, dict):
-                    if params.keys() - subresource_key_set:
-                        params = [(k, params[k]) for k in params.keys() & subresource_key_set]
-                elif isinstance(params, Mapping):
-                    params = [(k, params[k]) for k in params if k in subresource_key_set]
-                else:
-                    params = [(k, v) for k, v in params if k in subresource_key_set]
-                params = urlencode(params)
-            if params:
-                params = "?" + params
-        if headers is None:
-            headers = ""
-        elif isinstance(headers, dict):
-            it = (
-                (k2, v)
-                for k, v in headers.items()
-                if (k2 := k.lower()).startswith("x-oss-")
-            )
-            headers = "\n".join("%s:%s" % e for e in sorted(it))
-        signature_data = f"""{method.upper()}
-
-
-{date}
-{headers}
-/{bucket}/{object}{params}""".encode("utf-8")
-        signature = to_base64(hmac_digest(bytes(token["AccessKeySecret"], "utf-8"), signature_data, "sha1"))
-        return {
-            "date": date, 
-            "authorization": "OSS {0}:{1}".format(token["AccessKeyId"], signature), 
-        }
-
-    def _oss_upload_request(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        method: str = "PUT", 
-        params: None | str | dict | list[tuple] = None, 
-        headers: None | dict = None,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ):
-        """帮助函数：请求阿里云 OSS （115 目前所使用的阿里云的对象存储）的公用函数
-        """
-        headers2 = self._oss_upload_sign(
-            bucket, 
-            object, 
-            token, 
-            method=method, 
-            params=params, 
-            headers=headers, 
-        )
-        if headers:
-            headers2.update(headers)
-        headers2["Content-Type"] = ""
-        return self.request(
-            url=url, 
-            params=params, 
-            headers=headers2, 
-            method=method, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    # NOTE: https://github.com/aliyun/aliyun-oss-python-sdk/blob/master/oss2/api.py#L1359-L1595
-    @overload
-    def _oss_multipart_upload_init(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> str:
-        ...
-    @overload
-    def _oss_multipart_upload_init(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, str]:
-        ...
-    def _oss_multipart_upload_init(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> str | Coroutine[Any, Any, str]:
-        """帮助函数：分片上传的初始化，获取 upload_id
-        """
-        request_kwargs.setdefault("parse", lambda resp, content, /: getattr(fromstring(content).find("UploadId"), "text"))
-        request_kwargs["method"] = "POST"
-        request_kwargs["params"] = "uploads"
-        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
-        return self._oss_upload_request(
-            bucket, 
-            object, 
-            url, 
-            token, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def _oss_multipart_upload_part(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        part_number: int, 
-        partsize: int = 1 << 24, 
-        reporthook: None | Callable = None, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def _oss_multipart_upload_part(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        part_number: int, 
-        partsize: int = 1 << 24, 
-        reporthook: None | Callable = None, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def _oss_multipart_upload_part(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        part_number: int, 
-        partsize: int = 1 << 24, # default to: 16 MB
-        reporthook: None | Callable = None, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """帮助函数：上传一个分片，返回一个字典，包含如下字段：
-
-        .. python:
-
-            {
-                "PartNumber": int,    # 分块序号，从 1 开始计数
-                "LastModified": str,  # 最近更新时间
-                "ETag": str,          # ETag 值，判断资源是否发生变化
-                "HashCrc64ecma": int, # 校验码
-                "Size": int,          # 分片大小
-            }
-        """
-        def parse(resp, /) -> dict:
-            headers = resp.headers
-            return {
-                "PartNumber": part_number, 
-                "LastModified": datetime.strptime(headers["date"], "%a, %d %b %Y %H:%M:%S GMT").strftime("%FT%X.%f")[:-3] + "Z", 
-                "ETag": headers["ETag"], 
-                "HashCrc64ecma": int(headers["x-oss-hash-crc64ecma"]), 
-                "Size": count_in_bytes, 
-            }
-        request_kwargs.setdefault("parse", parse)
-        request_kwargs["params"] = {"partNumber": part_number, "uploadId": upload_id}
-        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
-        if hasattr(file, "getbuffer"):
-            try:
-                file = getattr(file, "getbuffer")()
-            except TypeError:
-                pass
-        dataiter: Iterator[Buffer] | AsyncIterator[Buffer]
-        if isinstance(file, Buffer):
-            count_in_bytes = len(file)
-            if async_:
-                dataiter = bytes_to_chunk_async_iter(file)
-            else:
-                dataiter = bytes_to_chunk_iter(file)
-        elif isinstance(file, SupportsRead):
-            count_in_bytes = 0
-            def acc(length):
-                nonlocal count_in_bytes
-                count_in_bytes += length
-            if async_:
-                dataiter = bio_chunk_async_iter(file, partsize, callback=acc)
-            else:
-                dataiter = bio_chunk_iter(file, partsize, callback=acc)
-        else:
-            count_in_bytes = 0
-            def acc(chunk):
-                nonlocal count_in_bytes
-                count_in_bytes += len(chunk)
-                if count_in_bytes >= partsize:
-                    raise StopIteration
-            if async_:
-                dataiter = wrap_aiter(file, callnext=acc)
-            else:
-                dataiter = wrap_iter(cast(Iterable, file), callnext=acc)
-        if reporthook is not None:
-            if async_:
-                reporthook = ensure_async(reporthook)
-                async def reporthook_wrap(b):
-                    await reporthook(len(b))
-                dataiter = wrap_aiter(dataiter, callnext=reporthook_wrap)
-            else:
-                dataiter = wrap_iter(cast(Iterable, dataiter), callnext=lambda b: reporthook(len(b)))
-        request_kwargs["data"] = dataiter
-        return self._oss_upload_request(
-            bucket, 
-            object, 
-            url, 
-            token, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def _oss_multipart_upload_complete(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        parts: list[dict],
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def _oss_multipart_upload_complete(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        parts: list[dict],
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def _oss_multipart_upload_complete(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        parts: list[dict],
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """帮助函数：完成分片上传，会执行回调然后 115 上就能看到文件
-        """
-        request_kwargs["method"] = "POST"
-        request_kwargs["params"] = {"uploadId": upload_id}
-        request_kwargs["headers"] = {
-            "x-oss-security-token": token["SecurityToken"], 
-            "x-oss-callback": to_base64(callback["callback"]), 
-            "x-oss-callback-var": to_base64(callback["callback_var"]), 
-        }
-        request_kwargs["data"] = ("<CompleteMultipartUpload>%s</CompleteMultipartUpload>" % "".join(map(
-            "<Part><PartNumber>{PartNumber}</PartNumber><ETag>{ETag}</ETag></Part>".format_map, 
-            parts, 
-        ))).encode("utf-8")
-        return self._oss_upload_request(
-            bucket, 
-            object, 
-            url, 
-            token, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def _oss_multipart_upload_cancel(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> bool:
-        ...
-    @overload
-    def _oss_multipart_upload_cancel(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, bool]:
-        ...
-    def _oss_multipart_upload_cancel(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> bool | Coroutine[Any, Any, bool]:
-        """帮助函数：取消分片上传
-        """
-        request_kwargs.setdefault("parse", lambda resp: 200 <= resp.status_code < 300 or resp.status_code == 404)
-        request_kwargs["method"] = "DELETE"
-        request_kwargs["params"] = {"uploadId": upload_id}
-        request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
-        return self._oss_upload_request(
-            bucket, 
-            object, 
-            url, 
-            token, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def _oss_multipart_upload_part_iter(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        part_number_start, 
-        partsize: int, 
-        reporthook: None | Callable = None, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> Iterator[dict]:
-        ...
-    @overload
-    def _oss_multipart_upload_part_iter(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        part_number_start: int, 
-        partsize: int, 
-        reporthook: None | Callable = None, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> AsyncIterator[dict]:
-        ...
-    def _oss_multipart_upload_part_iter(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str, 
-        part_number_start: int = 1, 
-        partsize: int = 10 * 1 << 20, # default to: 10 MB
-        reporthook: None | Callable = None, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> Iterator[dict] | AsyncIterator[dict]:
-        """帮助函数：迭代器，迭代一次上传一个分片
-        """
-        def gen_step():
-            nonlocal file
-            if hasattr(file, "getbuffer"):
-                try:
-                    file = getattr(file, "getbuffer")()
-                except TypeError:
-                    pass
-            if isinstance(file, Buffer):
-                file = memoryview(file)
-            elif isinstance(file, SupportsRead):
-                pass
-            elif async_:
-                file = bytes_iter_to_async_reader(file)
-            else:
-                file = bytes_iter_to_reader(cast(Iterable, file))
-            for i, part_number in enumerate(count(part_number_start)):
-                if isinstance(file, Buffer):
-                    chunk = file[i*partsize:(i+1)*partsize]
-                elif isinstance(file, SupportsRead):
-                    if async_:
-                        chunk = bio_chunk_async_iter(file, partsize)
-                    else:
-                        chunk = bio_chunk_iter(file, partsize)
-                part = yield Yield(self._oss_multipart_upload_part(
-                    chunk, 
-                    bucket, 
-                    object, 
-                    url, 
-                    token, 
-                    upload_id, 
-                    part_number=part_number, 
-                    partsize=partsize, 
-                    reporthook=reporthook, 
-                    async_=async_, 
-                    **request_kwargs, 
-                ))
-                if part["Size"] < partsize:
-                    break
-        return run_gen_step_iter(gen_step, async_=async_)
-
-    @overload
-    def _oss_multipart_part_iter(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> Iterator[dict]:
-        ...
-    @overload
-    def _oss_multipart_part_iter(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> AsyncIterator[dict]:
-        ...
-    def _oss_multipart_part_iter(
-        self, 
-        /, 
-        bucket: str, 
-        object: str, 
-        url: str, 
-        token: dict, 
-        upload_id: str,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> Iterator[dict] | AsyncIterator[dict]:
-        """帮助函数：上传文件到阿里云 OSS，罗列已经上传的分块
-        """
-        def gen_step():
-            to_num = lambda s: int(s) if isinstance(s, str) and s.isnumeric() else s
-            request_kwargs["method"] = "GET"
-            request_kwargs["headers"] = {"x-oss-security-token": token["SecurityToken"]}
-            request_kwargs["params"] = params = {"uploadId": upload_id}
-            request_kwargs.setdefault("parse", lambda resp, content, /: fromstring(content))
-            while True:
-                etree = yield self._oss_upload_request(
-                    bucket, 
-                    object, 
-                    url, 
-                    token, 
-                    async_=async_, 
-                    **request_kwargs, 
-                )
-                for el in etree.iterfind("Part"):
-                    yield Yield({sel.tag: to_num(sel.text) for sel in el}, identity=True)
-                if etree.find("IsTruncated").text == "false":
-                    break
-                params["part-number-marker"] = etree.find("NextPartNumberMarker").text
-        return run_gen_step_iter(gen_step, async_=async_)
-
-    @overload
-    def _oss_upload(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        token: None | dict = None, 
-        filesize: int = -1, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def _oss_upload(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        token: None | dict, 
-        filesize: int, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def _oss_upload(
-        self, 
-        /, 
-        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        token: None | dict = None, 
-        filesize: int = -1, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """帮助函数：上传文件到阿里云 OSS，一次上传全部（即不进行分片）
-        """
-        url = self.upload_endpoint_url(bucket, object)
-        if hasattr(file, "getbuffer"):
-            try:
-                file = getattr(file, "getbuffer")()
-            except TypeError:
-                pass
-        dataiter: Iterable[Buffer] | AsyncIterable[Buffer]
-        if isinstance(file, Buffer):
-            if async_:
-                dataiter = bytes_to_chunk_async_iter(file)
-            else:
-                dataiter = bytes_to_chunk_iter(file)
-        elif isinstance(file, SupportsRead):
-            if not async_ and iscoroutinefunction(file.read):
-                raise TypeError(f"{file!r} with async read in non-async mode")
-            if async_:
-                dataiter = bio_chunk_async_iter(file)
-            else:
-                dataiter = bio_chunk_iter(file)
-        else:
-            if not async_ and isinstance(file, AsyncIterable):
-                raise TypeError(f"async iterable {file!r} in non-async mode")
-            if async_:
-                dataiter = ensure_aiter(file)
-            else:
-                dataiter = cast(Iterable, file)
-        if callable(make_reporthook):
-            if async_:
-                dataiter = progress_bytes_async_iter(
-                    cast(AsyncIterable[Buffer], dataiter), 
-                    make_reporthook, 
-                    None if filesize < 0 else filesize, 
-                )
-            else:
-                dataiter = progress_bytes_iter(
-                    cast(Iterable[Buffer], dataiter), 
-                    make_reporthook, 
-                    None if filesize < 0 else filesize, 
-                )
-        request_kwargs["data"] = dataiter
-        if async_:
-            async def async_request():
-                nonlocal async_, token
-                async_ = cast(Literal[True], async_)
-                if not token:
-                    token = await self.upload_token(async_=async_)
-                request_kwargs["headers"] = {
-                    "x-oss-security-token": token["SecurityToken"], 
-                    "x-oss-callback": to_base64(callback["callback"]), 
-                    "x-oss-callback-var": to_base64(callback["callback_var"]), 
-                }
-                return await self._oss_upload_request(
-                    bucket, 
-                    object, 
-                    url, 
-                    token, 
-                    async_=async_, 
-                    **request_kwargs, 
-                )
-            return async_request()
-        else:
-            if not token:
-                token = self.upload_token(async_=async_)
-            request_kwargs["headers"] = {
-                "x-oss-security-token": token["SecurityToken"], 
-                "x-oss-callback": to_base64(callback["callback"]), 
-                "x-oss-callback-var": to_base64(callback["callback_var"]), 
-            }
-            return self._oss_upload_request(
-                bucket, 
-                object, 
-                url, 
-                token, 
-                async_=async_, 
-                **request_kwargs, 
-            )
-
-    # TODO: 返回一个task，初始化成功后，生成 {"bucket": bucket, "object": object, "upload_id": upload_id, "callback": callback, "partsize": partsize, "filesize": filesize}
-    @overload
-    def _oss_multipart_upload(
-        self, 
-        /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        token: None | dict = None, 
-        upload_id: None | str = None, 
-        partsize: int = 10 * 1 << 20, 
-        parts: None | list[dict] = None, 
-        filesize: int = -1, 
-        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] = None, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def _oss_multipart_upload(
-        self, 
-        /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        token: None | dict = None, 
-        upload_id: None | str = None, 
-        partsize: int = 10 * 1 << 20, 
-        parts: None | list[dict] = None, 
-        filesize: int = -1, 
-        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def _oss_multipart_upload(
-        self, 
-        /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        bucket: str, 
-        object: str, 
-        callback: dict, 
-        token: None | dict = None, 
-        upload_id: None | str = None, 
-        partsize: int = 10 * 1 << 20, # default to: 10 MB
-        parts: None | list[dict] = None, 
-        filesize: int = -1, 
-        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        def gen_step():
-            nonlocal file, make_reporthook, parts, token, upload_id
-            if not token:
-                token = cast(dict, (yield self.upload_token(async_=async_)))
-            url = self.upload_endpoint_url(bucket, object)
-            skipsize = 0
-            if parts is None:
-                parts = []
-                if upload_id:
-                    if async_:
-                        async def request():
-                            async for part in self._oss_multipart_part_iter(
-                                bucket, 
-                                object, 
-                                url, 
-                                token, 
-                                cast(str, upload_id), 
-                                async_=True, 
-                                **request_kwargs, 
-                            ):
-                                if part["Size"] != partsize:
-                                    break
-                                parts.append(part)
-                        yield request
-                    else:
-                        for part in self._oss_multipart_part_iter(
-                            bucket, 
-                            object, 
-                            url, 
-                            token, 
-                            upload_id, 
-                            **request_kwargs, 
-                        ):
-                            if part["Size"] != partsize:
-                                break
-                            parts.append(part)
-                    skipsize = sum(part["Size"] for part in parts)
-                else:
-                    upload_id = yield self._oss_multipart_upload_init(
-                        bucket, object, url, token, async_=async_, **request_kwargs)
-            reporthook: None | Callable = None
-            close_reporthook: None | Callable = None
-            if callable(make_reporthook):
-                make_reporthook = make_reporthook(None if filesize < 0 else filesize)
-                if isinstance(make_reporthook, Generator):
-                    make_reporthook.send(None)
-                    close_reporthook = make_reporthook.close
-                elif isinstance(make_reporthook, AsyncGenerator):
-                    yield partial(make_reporthook.asend, None)
-                    close_reporthook = make_reporthook.aclose
-            if isinstance(make_reporthook, Generator):
-                reporthook = make_reporthook.send
-            elif isinstance(make_reporthook, AsyncGenerator):
-                reporthook = make_reporthook.asend
-            elif callable(make_reporthook):
-                reporthook = make_reporthook
-            kwargs = dict(
-                bucket=bucket, 
-                object=object, 
-                callback=callback, 
-                token=token, 
-                upload_id=upload_id, 
-                partsize=partsize, 
-                parts=parts, 
-                filesize=filesize, 
-                make_reporthook=lambda _: reporthook, 
-                async_=async_, 
-                **request_kwargs, 
-            )
-            try:
-                if hasattr(file, "getbuffer"):
-                    try:
-                        file = getattr(file, "getbuffer")()
-                    except TypeError:
-                        pass
-                if isinstance(file, Buffer):
-                    file = memoryview(file)[skipsize:]
-                    if skipsize and reporthook is not None:
-                        yield partial(reporthook, skipsize)
-                elif isinstance(file, SupportsRead):
-                    if not async_ and iscoroutinefunction(file.read):
-                        raise TypeError(f"{file!r} with async read in non-async mode")
-                elif isinstance(file, (str, PathLike)):
-                    filepath = fsdecode(file)
-                    if async_:
-                        try:
-                            from aiofile import async_open
-                        except ImportError:
-                            file = yield to_thread(open, filepath, "rb")
-                            yield to_thread(file.seek, skipsize)
-                            if skipsize and reporthook is not None:
-                                yield partial(reporthook, skipsize)
-                        else:
-                            async def request():
-                                async with async_open(filepath, "rb") as file:
-                                    file.seek(skipsize)
-                                    if skipsize and reporthook is not None:
-                                        await ensure_async(reporthook)(skipsize)
-                                    return await self._oss_multipart_upload(file, **kwargs)
-                            return (yield request)
-                    else:
-                        file = open(filepath, "rb")
-                        file.seek(skipsize)
-                        if skipsize and reporthook is not None:
-                            yield partial(reporthook, skipsize)
-                elif isinstance(file, (URL, SupportsGeturl)):
-                    if isinstance(file, URL):
-                        url = str(file)
-                    else:
-                        url = file.geturl()
-                    headers = {"Accept-Encoding": "identity"}
-                    if skipsize:
-                        headers["Range"] = "bytes=%d-" % skipsize
-                    if async_:
-                        try:
-                            from aiohttp import request as async_request
-                        except ImportError:
-                            # TODO: 需要优化，不能这么复杂
-                            from httpx import AsyncClient
-                            async def request():
-                                async with AsyncClient() as client:
-                                    async with client.stream("GET", url, headers=headers) as resp:
-                                        file = resp.aiter_bytes(65536)
-                                        if skipsize and reporthook is not None:
-                                            if is_range_request(resp):
-                                                await ensure_async(reporthook)(skipsize)
-                                            else:
-                                                file = await bytes_async_iter_skip(file, skipsize, callback=reporthook)
-                                        return await self._oss_multipart_upload(file, **kwargs)
-                        else:
-                            async def request():
-                                async with async_request("GET", url, headers=headers) as resp:
-                                    file = resp.content
-                                    if skipsize and reporthook is not None:
-                                        if is_range_request(resp):
-                                            await ensure_async(reporthook)(skipsize)
-                                        else:
-                                            async for _ in bio_skip_async_iter(file, skipsize, callback=reporthook):
-                                                pass
-                                    return await self._oss_multipart_upload(file, **kwargs)
-                        return (yield request)
-                    else:
-                        from urllib.request import urlopen, Request
-
-                        with urlopen(Request(url, headers=headers)) as resp:
-                            file = resp
-                            if skipsize and reporthook is not None:
-                                if is_range_request(resp):
-                                    yield partial(reporthook, skipsize)
-                                else:
-                                    for _ in bio_skip_iter(file, skipsize, callback=reporthook):
-                                        pass
-                            return self._oss_multipart_upload(file, **kwargs)
-                elif async_:
-                    if skipsize:
-                        file = yield bytes_async_iter_skip(file, skipsize, callback=reporthook)
-                    else:
-                        file = ensure_aiter(file)
-                elif isinstance(file, AsyncIterable):
-                    raise TypeError(f"async iterable {file!r} in non-async mode")
-                elif skipsize:
-                    file = bytes_iter_skip(file, skipsize, callback=reporthook)
-                try:
-                    kwargs = dict(
-                        bucket=bucket, object=object, url=url, 
-                        token=token, upload_id=upload_id, **request_kwargs, 
-                    )
-                    if async_:
-                        async def request():
-                            async for part in self._oss_multipart_upload_part_iter(
-                                file, 
-                                part_number_start=len(parts)+1, 
-                                partsize=partsize, 
-                                reporthook=reporthook, 
-                                async_=True, 
-                                **kwargs, 
-                            ):
-                                parts.append(part)
-                        yield request
-                    else:
-                        for part in self._oss_multipart_upload_part_iter(
-                            file, 
-                            part_number_start=len(parts)+1, 
-                            partsize=partsize, 
-                            reporthook=reporthook, 
-                            **kwargs, 
-                        ):
-                            parts.append(part)
-                    return (yield self._oss_multipart_upload_complete(
-                        callback=callback, 
-                        parts=parts, 
-                        async_=async_, # type: ignore
-                        **kwargs, 
-                    ))
-                except BaseException as e:
-                    raise MultipartUploadAbort({
-                        "bucket": bucket, "object": object, "upload_id": cast(str, upload_id), 
-                        "callback": callback, "partsize": partsize, "filesize": filesize, 
-                    }) from e
-            finally:
-                if close_reporthook is not None:
-                    yield close_reporthook
-        return run_gen_step(gen_step, async_=async_)
-
-    @cached_property
-    def user_id(self, /) -> int:
-        cookie_uid = self.__dict__["cookies"].get("UID")
-        if cookie_uid:
-            return int(cookie_uid.split("_")[0])
-        else:
-            return 0
-
-    @cached_property
-    def user_key(self, /) -> str:
-        return self.upload_key()["data"]["userkey"]
-
-    @cached_property
-    def upload_url(self, /) -> AttrDict:
-        """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可
-        GET https://uplb.115.com/3.0/getuploadinfo.php
-        response:
-            - endpoint: 此接口用于上传文件到阿里云 OSS 
-            - gettokenurl: 上传前需要用此接口获取 token
-        """
-        api = "https://uplb.115.com/3.0/getuploadinfo.php"
-        return AttrDict(self.request(url=api))
+    upload_endpoint = "http://oss-cn-shenzhen.aliyuncs.com"
 
     def upload_endpoint_url(
         self, 
         /, 
         bucket: str, 
         object: str, 
+        endpoint: None | str = None, 
     ) -> str:
-        endpoint = self.upload_url["endpoint"]
+        if endpoint is None:
+            endpoint = self.upload_endpoint
         urlp = urlsplit(endpoint)
         return f"{urlp.scheme}://{bucket}.{urlp.netloc}/{object}"
 
@@ -6701,6 +7609,100 @@ class P115Client:
         """
         api = "https://proapi.115.com/app/uploadinfo"
         return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def upload_init(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_init(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def upload_init(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """秒传接口，参数的构造较为复杂，所以请不要直接使用
+        POST https://uplb.115.com/4.0/initupload.php
+        """
+        api = "https://uplb.115.com/4.0/initupload.php"
+        return self.request(url=api, method="POST", async_=async_, **request_kwargs)
+
+    @overload
+    def upload_key(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_key(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def upload_key(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取 user_key
+        GET https://proapi.115.com/android/2.0/user/upload_key
+        """
+        api = "https://proapi.115.com/android/2.0/user/upload_key"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def upload_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def upload_sample_init(
+        self, 
+        /, 
+        filename: str, 
+        pid: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """网页端的上传接口的初始化，注意：不支持秒传
+        POST https://uplb.115.com/3.0/sampleinitupload.php
+        """
+        api = "https://uplb.115.com/3.0/sampleinitupload.php"
+        payload = {"filename": filename, "target": f"U_1_{pid}"}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     @overload
     @staticmethod
@@ -6738,322 +7740,41 @@ class P115Client:
             return request(url=api, **request_kwargs)
 
     @overload
-    def upload_file_sample_init(
-        self, 
-        /, 
-        filename: str, 
-        pid: int = 0, 
-        *, 
+    @staticmethod
+    def upload_url(
         async_: Literal[False] = False, 
+        request: None | Callable = None, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def upload_file_sample_init(
-        self, 
-        /, 
-        filename: str, 
-        pid: int = 0, 
-        *, 
+    @staticmethod
+    def upload_url(
         async_: Literal[True], 
+        request: None | Callable = None, 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def upload_file_sample_init(
-        self, 
-        /, 
-        filename: str, 
-        pid: int = 0, 
-        *, 
+    @staticmethod
+    def upload_url(
         async_: Literal[False, True] = False, 
+        request: None | Callable = None, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """网页端的上传接口的初始化，注意：不支持秒传
-        POST https://uplb.115.com/3.0/sampleinitupload.php
+        """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可
+        GET https://uplb.115.com/3.0/getuploadinfo.php
+        response:
+            - endpoint: 此接口用于上传文件到阿里云 OSS 
+            - gettokenurl: 上传前需要用此接口获取 token
         """
-        api = "https://uplb.115.com/3.0/sampleinitupload.php"
-        payload = {"filename": filename, "target": f"U_1_{pid}"}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+        api = "https://uplb.115.com/3.0/getuploadinfo.php"
+        request_kwargs.setdefault("parse", default_parse)
+        if request is None:
+            return get_default_request()(url=api, async_=async_, **request_kwargs)
+        else:
+            return request(url=api, **request_kwargs)
 
-    @overload
-    def upload_file_sample(
-        self, 
-        /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] ), 
-        filename: None | str = None, 
-        filesize: int = -1, 
-        pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def upload_file_sample(
-        self, 
-        /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        filename: None | str = None, 
-        filesize: int = -1, 
-        pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def upload_file_sample(
-        self, 
-        /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
-        filename: None | str = None, 
-        filesize: int = -1, 
-        pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
-        """
-        def gen_step():
-            nonlocal file, filename, filesize
-            if hasattr(file, "getbuffer"):
-                try:
-                    file = getattr(file, "getbuffer")()
-                except TypeError:
-                    pass
-            if isinstance(file, Buffer):
-                if filesize < 0:
-                    filesize = len(file)
-            elif isinstance(file, SupportsRead):
-                if not async_ and iscoroutinefunction(file.read):
-                    raise TypeError(f"{file!r} with async read in non-async mode")
-                if filesize < 0:
-                    try:
-                        filesize = fstat(getattr(file, "fileno")()).st_size
-                    except Exception:
-                        pass
-                if not filename:
-                    try:
-                        filename = ospath.basename(fsdecode(getattr(file, "name")))
-                    except Exception:
-                        pass
-            elif isinstance(file, (str, PathLike)):
-                path = fsdecode(file)
-                if not filename:
-                    filename = ospath.basename(path)
-                if async_:
-                    try:
-                        from aiofile import async_open
-                    except ImportError:
-                        file = yield partial(to_thread, open, path, "rb")
-                    else:
-                        async def request():
-                            nonlocal filesize
-                            async with async_open(path) as file:
-                                if filesize < 0:
-                                    filesize = fstat(file.file.fileno()).st_size
-                                return self.upload_file_sample(
-                                    file, 
-                                    filename, 
-                                    filesize, 
-                                    pid=pid, 
-                                    make_reporthook=make_reporthook, 
-                                    async_=True, 
-                                    **request_kwargs, 
-                                )
-                        return (yield request)
-                else:
-                    file = open(path, "rb")
-                if filesize < 0:
-                    filesize = fstat(file.fileno()).st_size
-            elif isinstance(file, (URL, SupportsGeturl)):
-                if isinstance(file, URL):
-                    url = str(file)
-                else:
-                    url = file.geturl()
-                if async_:
-                    try:
-                        from aiohttp import request as async_request
-                    except ImportError:
-                        async def request():
-                            nonlocal file, filesize, filename
-                            # TODO: 需要优化，不能这么复杂
-                            from httpx import AsyncClient
-                            async with AsyncClient() as client:
-                                async with client.stream("GET", url) as resp:
-                                    if not filename:
-                                        filename = get_filename(resp)
-                                    size = filesize if filesize >= 0 else get_content_length(resp)
-                                    if size is None or is_chunked(resp):
-                                        file = await resp.aread()
-                                        filesize = len(file)
-                                    else:
-                                        file = resp.aiter_bytes()
-                                    return self.upload_file_sample(
-                                        file, 
-                                        filename, 
-                                        filesize, 
-                                        pid=pid, 
-                                        make_reporthook=make_reporthook, 
-                                        async_=True, 
-                                        **request_kwargs, 
-                                    )
-                    else:
-                        async def request():
-                            nonlocal file, filesize, filename
-                            async with async_request("GET", url) as resp:
-                                if not filename:
-                                    filename = get_filename(resp)
-                                size = filesize if filesize >= 0 else get_content_length(resp)
-                                if size is None or is_chunked(resp):
-                                    file = await resp.read()
-                                    filesize = len(file)
-                                else:
-                                    file = resp.content
-                                return self.upload_file_sample(
-                                    file, 
-                                    filename, 
-                                    filesize, 
-                                    pid=pid, 
-                                    make_reporthook=make_reporthook, 
-                                    async_=True, 
-                                    **request_kwargs, 
-                                )
-                    return (yield request)
-                else:
-                    from urllib.request import urlopen
-
-                    with urlopen(url) as resp:
-                        if not filename:
-                            filename = get_filename(resp)
-                        size = filesize if filesize >= 0 else get_content_length(resp)
-                        if size is None or is_chunked(resp):
-                            file = resp.read()
-                            filesize = len(file)
-                        else:
-                            file = resp
-                        return self.upload_file_sample(
-                            file, 
-                            filename, 
-                            filesize, 
-                            pid=pid, 
-                            make_reporthook=make_reporthook, 
-                            **request_kwargs, 
-                        )
-            elif async_:
-                file = ensure_aiter(file)
-            elif isinstance(file, AsyncIterable):
-                raise TypeError(f"async iterable {file!r} in non-async mode")
-
-            if callable(make_reporthook):
-                if async_:
-                    if isinstance(file, Buffer):
-                        file = bytes_to_chunk_async_iter(file)
-                    elif isinstance(file, SupportsRead):
-                        file = bio_chunk_async_iter(file)
-                    file = progress_bytes_async_iter(file, make_reporthook, None if filesize < 0 else filesize)
-                else:
-                    if isinstance(file, Buffer):
-                        file = bytes_to_chunk_iter(file)
-                    elif isinstance(file, SupportsRead):
-                        file = bio_chunk_iter(file)
-                    file = progress_bytes_iter(file, make_reporthook, None if filesize < 0 else filesize)
-
-            if not filename:
-                filename = str(uuid4())
-            resp = yield partial(
-                self.upload_file_sample_init, 
-                filename, 
-                pid=pid, 
-                async_=async_, 
-                **request_kwargs, 
-            )
-            api = resp["host"]
-            data = {
-                "name": filename, 
-                "key": resp["object"], 
-                "policy": resp["policy"], 
-                "OSSAccessKeyId": resp["accessid"], 
-                "success_action_status": "200", 
-                "callback": resp["callback"], 
-                "signature": resp["signature"], 
-            }
-
-            if async_:
-                headers, request_kwargs["data"] = encode_multipart_data_async(data, {"file": file})
-            else:
-                headers, request_kwargs["data"] = encode_multipart_data(data, {"file": file})
-            request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
-            return (yield partial(
-                self.request, 
-                url=api, 
-                method="POST", 
-                async_=async_, 
-                **request_kwargs, 
-            ))
-        return run_gen_step(gen_step, async_=async_)
-
-    @overload
-    def upload_key(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def upload_key(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def upload_key(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取 user_key
-        GET https://proapi.115.com/android/2.0/user/upload_key
-        """
-        api = "https://proapi.115.com/android/2.0/user/upload_key"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def upload_init(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def upload_init(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def upload_init(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """秒传接口，参数的构造较为复杂，所以请不要直接使用
-        POST https://uplb.115.com/4.0/initupload.php
-        """
-        api = "https://uplb.115.com/4.0/initupload.php"
-        return self.request(url=api, method="POST", async_=async_, **request_kwargs)
+    # NOTE: 下列是关于上传功能的封装方法
 
     @overload
     def _upload_file_init(
@@ -7062,9 +7783,10 @@ class P115Client:
         filename: str, 
         filesize: int, 
         filesha1: str, 
-        target: str, 
-        sign_key: str, 
-        sign_val: str,
+        target: str = "U_1_0", 
+        sign_key: str = "", 
+        sign_val: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -7076,9 +7798,10 @@ class P115Client:
         filename: str, 
         filesize: int, 
         filesha1: str, 
-        target: str, 
-        sign_key: str, 
-        sign_val: str,
+        target: str = "U_1_0", 
+        sign_key: str = "", 
+        sign_val: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -7091,7 +7814,8 @@ class P115Client:
         filesha1: str, 
         target: str = "U_1_0", 
         sign_key: str = "", 
-        sign_val: str = "",
+        sign_val: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -7115,12 +7839,12 @@ class P115Client:
             request_kwargs["headers"] = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
         else:
             request_kwargs["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
-        request_kwargs.setdefault("parse", lambda resp, content: json_loads(ecdh_aes_decode(content, decompress=True)))
+        request_kwargs.setdefault("parse", parse_upload_init_response)
         def gen_step():
-            resp = yield partial(self.upload_init, async_=async_, **request_kwargs)
+            resp = yield self.upload_init(async_=async_, **request_kwargs)
             if resp["status"] == 2 and resp["statuscode"] == 0:
                 # NOTE: 再次调用一下上传接口，确保能在 life_list 接口中看到更新，目前猜测推送 upload_file 的事件信息，需要用 websocket，待破解
-                request_kwargs["parse"] = lambda resp, content, /: None
+                request_kwargs["parse"] = ...
                 if async_:
                     create_task(to_thread(self.upload_init, **request_kwargs))
                 else:
@@ -7178,8 +7902,7 @@ class P115Client:
         filesha1 = filesha1.upper()
         target = f"U_1_{pid}"
         def gen_step():
-            resp = yield partial(
-                self._upload_file_init, 
+            resp = yield self._upload_file_init(
                 filename, 
                 filesize, 
                 filesha1, 
@@ -7196,18 +7919,14 @@ class P115Client:
                 sign_check = resp["sign_check"]
                 data: str | Buffer
                 if async_:
-                    data = yield partial(
-                        ensure_async(read_range_bytes_or_hash), 
-                        sign_check, 
-                    )
+                    data = yield ensure_async(read_range_bytes_or_hash)(sign_check)
                 else:
                     data = read_range_bytes_or_hash(sign_check)
                 if isinstance(data, str):
                     sign_val = data.upper()
                 else:
                     sign_val = sha1(data).hexdigest().upper()
-                resp = yield partial(
-                    self._upload_file_init, 
+                resp = yield self._upload_file_init(
                     filename, 
                     filesize, 
                     filesha1, 
@@ -7227,6 +7946,111 @@ class P115Client:
             }
             return resp
         return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def upload_file_sample(
+        self, 
+        /, 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
+        filename: str, 
+        filesize: int = -1, 
+        pid: int = 0, 
+        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_file_sample(
+        self, 
+        /, 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer],  
+        filename: str, 
+        filesize: int = -1, 
+        pid: int = 0, 
+        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def upload_file_sample(
+        self, 
+        /, 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer],  
+        filename: str, 
+        filesize: int = -1, 
+        pid: int = 0, 
+        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """网页端的上传接口，注意：不支持秒传，但也不需要文件大小和 sha1
+        """
+        def gen_step():
+            dataiter = make_dataiter(file, async_=async_)
+            if callable(make_reporthook):
+                if async_:
+                    dataiter = progress_bytes_async_iter(
+                        cast(AsyncIterable[Buffer], dataiter), 
+                        make_reporthook, 
+                        None if filesize < 0 else filesize, 
+                    )
+                else:
+                    dataiter = progress_bytes_iter(
+                        cast(Iterable[Buffer], dataiter), 
+                        make_reporthook, 
+                        None if filesize < 0 else filesize, 
+                    )
+            resp = yield self.upload_sample_init(
+                filename, 
+                pid=pid, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+            api = resp["host"]
+            data = {
+                "name": filename, 
+                "key": resp["object"], 
+                "policy": resp["policy"], 
+                "OSSAccessKeyId": resp["accessid"], 
+                "success_action_status": "200", 
+                "callback": resp["callback"], 
+                "signature": resp["signature"], 
+            }
+            if async_:
+                headers, request_kwargs["data"] = encode_multipart_data_async(data, {"file": file})
+            else:
+                headers, request_kwargs["data"] = encode_multipart_data(data, {"file": file})
+            request_kwargs["headers"] = {**request_kwargs.get("headers", {}), **headers}
+            return (yield self.request(
+                url=api, 
+                method="POST", 
+                async_=async_, 
+                **request_kwargs, 
+            ))
+        return run_gen_step(gen_step, async_=async_)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # TODO: 这个函数需要极致优化，并不应该自己来计算很多东西
+    # url = self.upload_endpoint_url(bucket, object)
+    # token = await self.upload_token(async_=async_)
+    # TODO: 返回一个task，初始化成功后，生成 {"bucket": bucket, "object": object, "upload_id": upload_id, "callback": callback, "partsize": partsize, "filesize": filesize}
 
     # TODO: 支持进度条和随时暂停，基于迭代器，使用一个 flag，每次迭代检查一下
     # TODO: 返回 task，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait
@@ -7291,7 +8115,8 @@ class P115Client:
         """文件上传接口，这是高层封装，推荐使用
         """
         if multipart_resume_data is not None:
-            return self._oss_multipart_upload(
+            return oss_multipart_upload(
+                self.request, 
                 file, 
                 bucket=multipart_resume_data["bucket"], 
                 object=multipart_resume_data["object"], 
@@ -7748,1858 +8573,14 @@ class P115Client:
                 filename = str(uuid4())
             return do_upload(file)
 
-    ########## Decompress API ##########
 
-    @overload
-    def extract_push(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_push(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_push(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
-        POST https://webapi.115.com/files/push_extract
-        payload:
-            - pick_code: str
-            - secret: str = "" # 解压密码
-        """
-        api = "https://webapi.115.com/files/push_extract"
-        if isinstance(payload, str):
-            payload = {"pick_code": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
-    @overload
-    def extract_push_progress(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_push_progress(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_push_progress(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """查询解压缩任务的进度
-        GET https://webapi.115.com/files/push_extract
-        payload:
-            - pick_code: str
-        """
-        api = "https://webapi.115.com/files/push_extract"
-        if isinstance(payload, str):
-            payload = {"pick_code": payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
-    @overload
-    def extract_info(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_info(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取压缩文件的文件列表，推荐直接用封装函数 `extract_list`
-        GET https://webapi.115.com/files/extract_info
-        payload:
-            - pick_code: str
-            - file_name: str = ""
-            - next_marker: str = ""
-            - page_count: int | str = 999 # NOTE: 介于 1-999
-            - paths: str = "文件"
-        """
-        api = "https://webapi.115.com/files/extract_info"
-        if isinstance(payload, str):
-            payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", "pick_code": payload}
-        else:
-            payload = {"paths": "文件", "page_count": 999, "next_marker": "", "file_name": "", **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
-    @overload
-    def extract_list(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str, 
-        next_marker: str, 
-        page_count: int, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_list(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str, 
-        next_marker: str, 
-        page_count: int, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_list(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str = "", 
-        next_marker: str = "", 
-        page_count: int = 999, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取压缩文件的文件列表，此方法是对 `extract_info` 的封装，推荐使用
-        """
-        if not 1 <= page_count <= 999:
-            page_count = 999
-        payload = {
-            "pick_code": pickcode, 
-            "file_name": path.strip("/"), 
-            "paths": "文件", 
-            "next_marker": next_marker, 
-            "page_count": page_count, 
-        }
-        return self.extract_info(payload, async_=async_, **request_kwargs)
 
-    @overload
-    def extract_add_file(
-        self, 
-        payload: list | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_add_file(
-        self, 
-        payload: list | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_add_file(
-        self, 
-        payload: list | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """解压缩到某个目录，推荐直接用封装函数 `extract_file`
-        POST https://webapi.115.com/files/add_extract_file
-        payload:
-            - pick_code: str
-            - extract_file[]: str
-            - extract_file[]: str
-            - ...
-            - to_pid: int | str = 0
-            - paths: str = "文件"
-        """
-        api = "https://webapi.115.com/files/add_extract_file"
-        if (headers := request_kwargs.get("headers")):
-            headers = request_kwargs["headers"] = dict(headers)
-        else:
-            headers = request_kwargs["headers"] = {}
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        return self.request(
-            api, 
-            "POST", 
-            data=urlencode(payload), 
-            async_=async_, 
-            **request_kwargs, 
-        )
 
-    @overload
-    def extract_progress(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_progress(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_progress(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取 解压缩到目录 任务的进度
-        GET https://webapi.115.com/files/add_extract_file
-        payload:
-            - extract_id: str
-        """
-        api = "https://webapi.115.com/files/add_extract_file"
-        if isinstance(payload, (int, str)):
-            payload = {"extract_id": payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
 
-    @overload
-    def extract_file(
-        self, 
-        /, 
-        pickcode: str, 
-        paths: str | Sequence[str], 
-        dirname: str, 
-        to_pid: int | str,
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_file(
-        self, 
-        /, 
-        pickcode: str, 
-        paths: str | Sequence[str], 
-        dirname: str, 
-        to_pid: int | str,
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_file(
-        self, 
-        /, 
-        pickcode: str, 
-        paths: str | Sequence[str] = "", 
-        dirname: str = "", 
-        to_pid: int | str = 0,
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """解压缩到某个目录，是对 `extract_add_file` 的封装，推荐使用
-        """
-        dirname = dirname.strip("/")
-        dir2 = f"文件/{dirname}" if dirname else "文件"
-        data = [
-            ("pick_code", pickcode), 
-            ("paths", dir2), 
-            ("to_pid", to_pid), 
-        ]
-        if async_:
-            async def async_request():
-                nonlocal async_, paths
-                async_ = cast(Literal[True], async_)
-                if not paths:
-                    resp = await self.extract_list(pickcode, dirname, async_=async_, **request_kwargs)
-                    if not resp["state"]:
-                        return resp
-                    paths = [
-                        p["file_name"] if p["file_category"] else p["file_name"]+"/" 
-                        for p in resp["data"]["list"]
-                    ]
-                    while (next_marker := resp["data"].get("next_marker")):
-                        resp = await self.extract_list(
-                            pickcode, dirname, next_marker, async_=async_, **request_kwargs)
-                        paths.extend(
-                            p["file_name"] if p["file_category"] else p["file_name"]+"/" 
-                            for p in resp["data"]["list"]
-                        )
-                if isinstance(paths, str):
-                    data.append(
-                        ("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/"))
-                    )
-                else:
-                    data.extend(
-                        ("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) 
-                        for path in paths
-                    )
-                return await self.extract_add_file(data, async_=async_, **request_kwargs)
-            return async_request()
-        else:
-            if not paths:
-                resp = self.extract_list(pickcode, dirname, async_=async_, **request_kwargs)
-                if not resp["state"]:
-                    return resp
-                paths = [
-                    p["file_name"] if p["file_category"] else p["file_name"]+"/" 
-                    for p in resp["data"]["list"]
-                ]
-                while (next_marker := resp["data"].get("next_marker")):
-                    resp = self.extract_list(
-                        pickcode, dirname, next_marker, async_=async_, **request_kwargs)
-                    paths.extend(
-                        p["file_name"] if p["file_category"] else p["file_name"]+"/" 
-                        for p in resp["data"]["list"]
-                    )
-            if isinstance(paths, str):
-                data.append(
-                    ("extract_dir[]" if paths.endswith("/") else "extract_file[]", paths.strip("/"))
-                )
-            else:
-                data.extend(
-                    ("extract_dir[]" if path.endswith("/") else "extract_file[]", path.strip("/")) 
-                    for path in paths
-                )
-            return self.extract_add_file(data, async_=async_, **request_kwargs)
 
-    @overload
-    def extract_download_url(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> P115URL:
-        ...
-    @overload
-    def extract_download_url(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, P115URL]:
-        ...
-    def extract_download_url(
-        self, 
-        /, 
-        pickcode: str, 
-        path: str, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> P115URL | Coroutine[Any, Any, P115URL]:
-        """获取压缩包中文件的下载链接
-        GET https://webapi.115.com/files/extract_down_file
-        payload:
-            - pick_code: str
-            - full_name: str
-        """
-        path = path.rstrip("/")
-        resp = self.extract_download_url_web(
-            {"pick_code": pickcode, "full_name": path.lstrip("/")}, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-        def get_url(resp: dict) -> P115URL:
-            data = check_response(resp)["data"]
-            url = quote(data["url"], safe=":/?&=%#")
-            return P115URL(
-                url, 
-                file_path=path, 
-                file_name=posixpath.basename(path), 
-                headers=resp["headers"], 
-            )
-        if async_:
-            async def async_request() -> P115URL:
-                return get_url(await cast(Coroutine[Any, Any, dict], resp))
-            return async_request()
-        else:
-            return get_url(cast(dict, resp))
-
-    @overload
-    def extract_download_url_web(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def extract_download_url_web(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def extract_download_url_web(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取压缩包中文件的下载链接
-        GET https://webapi.115.com/files/extract_down_file
-        payload:
-            - pick_code: str
-            - full_name: str
-        """
-        api = "https://webapi.115.com/files/extract_down_file"
-        request_headers = request_kwargs.get("headers")
-        headers = request_kwargs.get("headers")
-        if headers:
-            if isinstance(headers, Mapping):
-                headers = ItemsView(headers)
-            headers = request_kwargs["headers"] = {
-                "User-Agent": next((v for k, v in headers if k.lower() == "user-agent" and v), "")}
-        else:
-            headers = request_kwargs["headers"] = {"User-Agent": ""}
-        def parse(resp, content: bytes):
-            json = json_loads(content)
-            if "Set-Cookie" in resp.headers:
-                if isinstance(resp.headers, Mapping):
-                    match = CRE_SET_COOKIE.search(resp.headers["Set-Cookie"])
-                    if match is not None:
-                        headers["Cookie"] = match[0]
-                else:
-                    for k, v in reversed(resp.headers.items()):
-                        if k == "Set-Cookie" and CRE_SET_COOKIE.match(v) is not None:
-                            headers["Cookie"] = v
-                            break
-            json["headers"] = headers
-            return json
-        request_kwargs["parse"] = parse
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    ########## Offline Download API ##########
-
-    @overload
-    def offline_info(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_info(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_info(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取关于离线的限制的信息
-        GET https://115.com/?ct=offline&ac=space
-        """
-        api = "https://115.com/?ct=offline&ac=space"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_quota_info(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_quota_info(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_quota_info(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取当前离线配额信息（简略）
-        GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
-        """
-        api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_quota_package_info(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_quota_package_info(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_quota_package_info(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取当前离线配额信息（详细）
-        GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
-        """
-        api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_download_path(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_download_path(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_download_path(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取当前默认的离线下载到的目录信息（可能有多个）
-        GET https://webapi.115.com/offine/downpath
-        """
-        api = "https://webapi.115.com/offine/downpath"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_upload_torrent_path(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_upload_torrent_path(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_upload_torrent_path(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取当前的种子上传到的目录，当你添加种子任务后，这个种子会在此目录中保存
-        GET https://115.com/?ct=lixian&ac=get_id&torrent=1
-        """
-        api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_add_url(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_add_url(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_add_url(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """添加一个离线任务
-        POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
-        payload:
-            - url: str
-            - sign: str = <default>
-            - time: int = <default>
-            - savepath: str = <default>
-            - wp_path_id: int | str = <default>
-        """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_url"
-        if isinstance(payload, str):
-            payload = {"url": payload}
-        if "sign" not in payload:
-            info = self.offline_info()
-            payload["sign"] = info["sign"]
-            payload["time"] = info["time"]
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_add_urls(
-        self, 
-        payload: Iterable[str] | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_add_urls(
-        self, 
-        payload: Iterable[str] | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_add_urls(
-        self, 
-        payload: Iterable[str] | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """添加一组离线任务
-        POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
-        payload:
-            - url[0]: str
-            - url[1]: str
-            - ...
-            - sign: str = <default>
-            - time: int = <default>
-            - savepath: str = <default>
-            - wp_path_id: int | str = <default>
-        """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_urls"
-        if not isinstance(payload, dict):
-            payload = {f"url[{i}]": url for i, url in enumerate(payload)}
-            if not payload:
-                raise ValueError("no `url` specified")
-        if "sign" not in payload:
-            info = self.offline_info()
-            payload["sign"] = info["sign"]
-            payload["time"] = info["time"]
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_add_torrent(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_add_torrent(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_add_torrent(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """添加一个种子作为离线任务
-        POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
-        payload:
-            - info_hash: str
-            - wanted: str
-            - sign: str = <default>
-            - time: int = <default>
-            - savepath: str = <default>
-            - wp_path_id: int | str = <default>
-        """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_bt"
-        if "sign" not in payload:
-            info = self.offline_info()
-            payload["sign"] = info["sign"]
-            payload["time"] = info["time"]
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_torrent_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_torrent_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_torrent_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """查看种子的文件列表等信息
-        POST https://lixian.115.com/lixian/?ct=lixian&ac=torrent
-        payload:
-            - sha1: str
-        """
-        api = "https://lixian.115.com/lixian/?ct=lixian&ac=torrent"
-        if isinstance(payload, str):
-            payload = {"sha1": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_remove(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_remove(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_remove(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除一组离线任务（无论是否已经完成）
-        POST https://lixian.115.com/lixian/?ct=lixian&ac=task_del
-        payload:
-            - hash[0]: str
-            - hash[1]: str
-            - ...
-            - sign: str = <default>
-            - time: int = <default>
-            - flag: 0 | 1 = <default> # 是否删除源文件
-        """
-        api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_del"
-        if isinstance(payload, str):
-            payload = {"hash[0]": payload}
-        if "sign" not in payload:
-            info = self.offline_info()
-            payload["sign"] = info["sign"]
-            payload["time"] = info["time"]
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_list(
-        self, 
-        payload: int | dict = 1, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_list(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_list(
-        self, 
-        payload: int | dict = 1, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取当前的离线任务列表
-        POST https://lixian.115.com/lixian/?ct=lixian&ac=task_lists
-        payload:
-            - page: int | str
-        """
-        api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_lists"
-        if isinstance(payload, int):
-            payload = {"page": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def offline_clear(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def offline_clear(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def offline_clear(
-        self, 
-        payload: int | dict = {"flag": 0}, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """清空离线任务列表
-        POST https://115.com/web/lixian/?ct=lixian&ac=task_clear
-        payload:
-            flag: int = 0
-                - 0: 已完成
-                - 1: 全部
-                - 2: 已失败
-                - 3: 进行中
-                - 4: 已完成+删除源文件
-                - 5: 全部+删除源文件
-        """
-        api = "https://115.com/web/lixian/?ct=lixian&ac=task_clear"
-        if isinstance(payload, int):
-            flag = payload
-            if flag < 0:
-                flag = 0
-            elif flag > 5:
-                flag = 5
-            payload = {"flag": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    ########## Recyclebin API ##########
-
-    @overload
-    def recyclebin_info(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def recyclebin_info(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def recyclebin_info(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """回收站：文件信息
-        POST https://webapi.115.com/rb/rb_info
-        payload:
-            - rid: int | str
-        """
-        api = "https://webapi.115.com/rb/rb_info"
-        if isinstance(payload, (int, str)):
-            payload = {"rid": payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def recyclebin_clean(
-        self, 
-        payload: int | str | Iterable[int | str] | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def recyclebin_clean(
-        self, 
-        payload: int | str | Iterable[int | str] | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def recyclebin_clean(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = {}, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """回收站：删除或清空
-        POST https://webapi.115.com/rb/clean
-        payload:
-            - rid[0]: int | str # NOTE: 如果没有 rid，就是清空回收站
-            - rid[1]: int | str
-            - ...
-            - password: int | str = <default>
-        """
-        api = "https://webapi.115.com/rb/clean"
-        if isinstance(payload, (int, str)):
-            payload = {"rid[0]": payload}
-        elif not isinstance(payload, dict):
-            payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def recyclebin_list(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def recyclebin_list(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def recyclebin_list(
-        self, 
-        payload: dict = {"limit": 32, "offset": 0}, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """回收站：罗列
-        GET https://webapi.115.com/rb
-        payload:
-            - aid: int | str = 7
-            - cid: int | str = 0
-            - limit: int = 32
-            - offset: int = 0
-            - format: str = "json"
-            - source: str = <default>
-        """ 
-        api = "https://webapi.115.com/rb"
-        payload = {"aid": 7, "cid": 0, "limit": 32, "offset": 0, "format": "json", **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def recyclebin_revert(
-        self, 
-        payload: int | str | Iterable[int | str] | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def recyclebin_revert(
-        self, 
-        payload: int | str | Iterable[int | str] | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def recyclebin_revert(
-        self, 
-        payload: int | str | Iterable[int | str] | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """回收站：还原
-        POST https://webapi.115.com/rb/revert
-        payload:
-            - rid[0]: int | str
-            - rid[1]: int | str
-            - ...
-        """
-        api = "https://webapi.115.com/rb/revert"
-        if isinstance(payload, (int, str)):
-            payload = {"rid[0]": payload}
-        elif not isinstance(payload, dict):
-            payload = {f"rid[{i}]": rid for i, rid in enumerate(payload)}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    ########## Captcha System API ##########
-
-    @overload
-    def captcha_sign(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def captcha_sign(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def captcha_sign(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取验证码的签名字符串
-        GET https://captchaapi.115.com/?ac=code&t=sign
-        """
-        api = "https://captchaapi.115.com/?ac=code&t=sign"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def captcha_code(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> bytes:
-        ...
-    @overload
-    def captcha_code(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, bytes]:
-        ...
-    def captcha_code(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> bytes | Coroutine[Any, Any, bytes]:
-        """更新验证码，并获取图片数据（含 4 个汉字）
-        GET https://captchaapi.115.com/?ct=index&ac=code
-        """
-        api = "https://captchaapi.115.com/?ct=index&ac=code"
-        request_kwargs["parse"] = False
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def captcha_all(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> bytes:
-        ...
-    @overload
-    def captcha_all(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, bytes]:
-        ...
-    def captcha_all(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> bytes | Coroutine[Any, Any, bytes]:
-        """返回一张包含 10 个汉字的图片，包含验证码中 4 个汉字（有相应的编号，从 0 到 9，计数按照从左到右，从上到下的顺序）
-        GET https://captchaapi.115.com/?ct=index&ac=code&t=all
-        """
-        api = "https://captchaapi.115.com/?ct=index&ac=code&t=all"
-        request_kwargs["parse"] = False
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def captcha_single(
-        self, 
-        id: int, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> bytes:
-        ...
-    @overload
-    def captcha_single(
-        self, 
-        id: int, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, bytes]:
-        ...
-    def captcha_single(
-        self, 
-        id: int, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> bytes | Coroutine[Any, Any, bytes]:
-        """10 个汉字单独的图片，包含验证码中 4 个汉字，编号从 0 到 9
-        GET https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}
-        """
-        if not 0 <= id <= 9:
-            raise ValueError(f"expected integer between 0 and 9, got {id}")
-        api = f"https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}"
-        request_kwargs["parse"] = False
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def captcha_verify(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def captcha_verify(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def captcha_verify(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """提交验证码
-        POST https://webapi.115.com/user/captcha
-        payload:
-            - code: int | str # 从 0 到 9 中选取 4 个数字的一种排列
-            - sign: str = <default>
-            - ac: str = "security_code" # 默认就行，不要自行决定
-            - type: str = "web"         # 默认就行，不要自行决定
-            - ctype: str = "web"        # 需要和 type 相同
-            - client: str = "web"       # 需要和 type 相同
-        """
-        if isinstance(payload, (int, str)):
-            payload = {"code": payload, "ac": "security_code", "type": "web", "ctype": "web", "client": "web"}
-        else:
-            payload = {"ac": "security_code", "type": "web", "ctype": "web", "client": "web", **payload}
-        if "sign" not in payload:
-            payload["sign"] = self.captcha_sign()["sign"]
-        api = "https://webapi.115.com/user/captcha"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    ########## Tool API ##########
-
-    @overload
-    def tool_space(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_space(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_space(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """检验空间
-        GET https://115.com/?ct=tool&ac=space
-
-        1、校验空间需全局进行扫描，请谨慎操作;
-        2、扫描出无父目录的文件将统一放入到"/修复文件"的目录中;
-        3、"/修复文件"的目录若超过存放文件数量限制，将创建多个目录存放，避免无法操作。
-        4、此接口一天只能使用一次
-        """
-        api = "https://115.com/?ct=tool&ac=space"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def tool_clear_empty_folder(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_clear_empty_folder(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_clear_empty_folder(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除空目录
-        GET https://115.com/?ct=tool&ac=clear_empty_folder
-        """
-        api = "https://115.com/?ct=tool&ac=clear_empty_folder"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def tool_repeat(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_repeat(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_repeat(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开始一键排重任务
-        POST https://aps.115.com/repeat/repeat.php
-        payload:
-            - folder_id: int | str # 目录 id
-        """
-        api = "https://aps.115.com/repeat/repeat.php"
-        if isinstance(payload, (int, str)):
-            payload = {"folder_id": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def tool_repeat_status(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_repeat_status(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_repeat_status(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """查询一键排重任务进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
-        GET https://aps.115.com/repeat/repeat_status.php
-        """
-        api = "https://aps.115.com/repeat/repeat_status.php"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def tool_repeat_list(
-        self, 
-        payload: dict = {"s": 0, "l": 100}, 
-        /, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_repeat_list(
-        self, 
-        payload: dict = {"s": 0, "l": 100}, 
-        /, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_repeat_list(
-        self, 
-        payload: dict = {"s": 0, "l": 100}, 
-        /, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取重复文件列表
-        GET https://aps.115.com/repeat/repeat_list.php
-        payload:
-            - s: int = 0 # offset，从 0 开始
-            - l: int = 0 # limit
-        """
-        api = "https://aps.115.com/repeat/repeat_list.php"
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def tool_repeat_delete(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_repeat_delete(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_repeat_delete(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除重复文件
-        POST https://aps.115.com/repeat/repeat_delete.php
-        payload:
-            # 这 3 个参数用于批量删除
-            - filter_field: "parents" | "file_name" | "" | "" = <default>
-                # 保留条件
-                # - "file_name": 文件名（按长度）
-                # - "parents": 所在目录路径（按长度）
-                # - "user_utime": 操作时间
-                # - "user_ptime": 创建时间
-            - filter_order: "asc" | "desc" = <default>
-                # 排序
-                # - "asc": 升序，从小到大，取最小
-                # - "desc": 降序，从大到小，取最大
-            - batch: 0 | 1 = <default>
-            # 这 1 个参数用于手动指定删除对象
-            - sha1s[{sha1}]: int | str = <default> # 文件 id，多个用逗号 "," 隔开
-        """
-        api = "https://aps.115.com/repeat/repeat_delete.php"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def tool_repeat_delete_status(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def tool_repeat_delete_status(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def tool_repeat_delete_status(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除重复文件进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
-        GET https://aps.115.com/repeat/delete_status.php
-        """
-        api = "https://aps.115.com/repeat/delete_status.php"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    ########## Activity API ##########
-
-    @overload
-    def act_xys_get_act_info(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_get_act_info(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_get_act_info(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取许愿树活动的信息
-        GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_home_list(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_home_list(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_home_list(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """首页的许愿树（随机刷新 15 条）
-        GET https://act.115.com/api/1.0/web/1.0/act2024xys/home_list
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/home_list"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_my_desire(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_my_desire(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_my_desire(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """我的许愿列表
-        GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire
-        payload:
-            - type: 0 | 1 | 2 = 0
-                # 类型
-                # - 0: 全部
-                # - 1: 进行中
-                # - 2: 已实现
-            - start: int = 0  # 开始索引
-            - page: int = 1   # 第几页
-            - limit: int = 10 # 每页大小
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire"
-        if isinstance(payload, int):
-            payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
-        else:
-            payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_my_aid_desire(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_my_aid_desire(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_my_aid_desire(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """我的助愿列表
-        GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire
-        payload:
-            - type: 0 | 1 | 2 = 0
-                # 类型
-                # - 0: 全部
-                # - 1: 进行中
-                # - 2: 已实现
-            - start: int = 0  # 开始索引
-            - page: int = 1   # 第几页
-            - limit: int = 10 # 每页大小
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire"
-        if isinstance(payload, int):
-            payload = {"start": 0, "page": 1, "limit": 10, "type": payload}
-        else:
-            payload = {"type": 0, "start": 0, "page": 1, "limit": 10, **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_wish(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_wish(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_wish(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """创建许愿
-        POST https://act.115.com/api/1.0/web/1.0/act2024xys/wish
-        payload:
-            - content: str # 许愿文本，不少于 5 个字，不超过 500 个字
-            - rewardSpace: int = 5 # 奖励容量，单位是 GB
-            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/wish"
-        if isinstance(payload, str):
-            payload = {"rewardSpace": 5, "content": payload}
-        else:
-            payload = {"rewardSpace": 5, **payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_wish_del(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_wish_del(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_wish_del(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除许愿
-        POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish
-        payload:
-            - ids: str # 许愿的 id，多个用逗号 "," 隔开
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish"
-        if isinstance(payload, str):
-            payload = {"ids": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_aid_desire(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_aid_desire(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_aid_desire(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """创建助愿（如果提供 file_ids，则会创建一个分享链接）
-        POST https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire
-        payload:
-            - id: str # 许愿 id
-            - content: str # 助愿文本，不少于 5 个字，不超过 500 个字
-            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
-            - file_ids: int | str = <default> # 文件在你的网盘的 id，多个用逗号 "," 隔开
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_aid_desire_del(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_aid_desire_del(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_aid_desire_del(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """删除助愿
-        POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire
-        payload:
-            - ids: int | str # 助愿的 id，多个用逗号 "," 隔开
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire"
-        if isinstance(payload, (int, str)):
-            payload = {"ids": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_get_desire_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_get_desire_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_get_desire_info(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取的许愿信息
-        GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info
-        payload:
-            - id: str # 许愿的 id
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info"
-        if isinstance(payload, str):
-            payload = {"id": payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_desire_aid_list(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_desire_aid_list(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_desire_aid_list(
-        self, 
-        payload: str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取许愿的助愿列表
-        GET https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list
-        payload:
-            - id: str         # 许愿的 id
-            - start: int = 0  # 开始索引
-            - page: int = 1   # 第几页
-            - limit: int = 10 # 每页大小
-            - sort: int | str = <default>
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list"
-        if isinstance(payload, str):
-            payload = {"start": 0, "page": 1, "limit": 10, "id": payload}
-        else:
-            payload = {"start": 0, "page": 1, "limit": 10, **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def act_xys_adopt(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def act_xys_adopt(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def act_xys_adopt(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """采纳助愿
-        POST https://act.115.com/api/1.0/web/1.0/act2024xys/adopt
-        payload:
-            - did: str # 许愿的 id
-            - aid: int | str # 助愿的 id
-            - to_cid: int = <default> # 助愿中的分享链接转存到你的网盘中目录的 id
-        """
-        api = "https://act.115.com/api/1.0/web/1.0/act2024xys/adopt"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
 
@@ -9888,8 +8869,7 @@ class P115Client:
             bytes_range = yield from get_bytes_range(start, stop)
             if not bytes_range:
                 return b""
-            return (yield partial(
-                self.read_bytes_range, 
+            return (yield self.read_bytes_range(
                 url, 
                 bytes_range=bytes_range, 
                 headers=headers, 
@@ -10014,15 +8994,4 @@ for name, method in P115Client.__dict__.items():
         CLIENT_API_MAP[match[1]] = "P115Client." + name
 
 
-# TODO: 只有把这些 todo 都完成了，才能标记为 0.0.1
-# TODO: 各个二次封装函数需要进行极致的简化，不能太长
-# TODO: 各个函数的名字，尽量和接口名字接近 fs_file 改成 fs_file_skim，哪个 fs_file_skim，改成 fs_xxx
-# TODO: 任何函数，除非无法，否则尽量把payload弄个默认值
-# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数
-# TODO: check_for_relogin 进行优化，增强美观度
 # TODO: qrcode_login 的返回值，是一个 Future 对象，包含登录必要凭证、二维码链接、登录状态、返回值或报错信息等数据，并且可以被等待完成，也可以把二维码输出到命令行、浏览器、图片查看器等
-# TODO: 参考 sqlite 的 Error 体系，构建一个 exception.py 模块
-# TODO: 尽量减少各种所谓包装和v2的接口，都合并到一个中
-# TODO: 增加更多的异常类型，比如 P115OSBusy
-
-
