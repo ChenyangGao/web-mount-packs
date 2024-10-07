@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ed2k"
-version = "0.0.1"
+version = "0.0.1.1"
 description = "Python ed2k hash module."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -26,9 +26,9 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+iterdir = ">=0.0.6"
 pycryptodome = "*"
 python-filewrap = ">=0.2"
-python-iterdir = ">=0.0.6"
 
 [tool.poetry.scripts]
 python-ed2k = "ed2k.__main__:main"
