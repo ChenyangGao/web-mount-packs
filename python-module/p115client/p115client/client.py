@@ -13,8 +13,7 @@ from collections.abc import (
     AsyncGenerator, AsyncIterable, Awaitable, Callable, Coroutine, 
     Generator, ItemsView, Iterable, Mapping, MutableMapping, Sequence, 
 )
-#???
-from contextlib import asynccontextmanager
+from contextlib import closing, asynccontextmanager
 from datetime import date, datetime
 from functools import cached_property, partial
 from hashlib import sha1
@@ -24,6 +23,7 @@ from os import fsdecode, fstat, isatty, stat, PathLike, path as ospath
 from pathlib import Path, PurePath
 from re import compile as re_compile, MULTILINE
 from _thread import start_new_thread
+from tempfile import TemporaryFile
 from threading import Lock
 from time import time
 from typing import cast, overload, Any, Final, Literal, Self, TypeVar, Unpack
@@ -31,20 +31,20 @@ from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 from warnings import warn
 
-#???
-from asynctools import as_thread, ensure_async
+from asynctools import ensure_async
 from cookietools import cookies_str_to_dict, create_cookie
 from filewrap import (
     Buffer, SupportsRead, 
-    bio_skip_iter, bio_skip_async_iter, 
+    bytes_iter_to_reader, bytes_iter_to_async_reader, 
     progress_bytes_iter, progress_bytes_async_iter, 
+    copyfileobj, copyfileobj_async, 
 )
 from ed2k import ed2k_hash, ed2k_hash_async, Ed2kHash
 from hashtools import HashObj, file_digest, file_mdigest, file_digest_async, file_mdigest_async
 from http_request import encode_multipart_data, encode_multipart_data_async, SupportsGeturl
-from http_response import get_filename, get_total_length, is_range_request
+from http_response import get_total_length
 from httpfile import HTTPFileReader, AsyncHTTPFileReader
-from iterutils import through, async_through, run_gen_step
+from iterutils import run_gen_step
 from orjson import dumps, loads
 from p115cipher.fast import rsa_encode, rsa_decode, ecdh_aes_decode, make_upload_payload
 from startfile import startfile, startfile_async # type: ignore
@@ -54,10 +54,10 @@ from yarl import URL
 from .const import APP_TO_SSOENT, CLIENT_API_MAP
 from .exception import (
     AuthenticationError, BusyOSError, DataError, LoginError, NotSupportedError, 
-    P115OSError, OperationalError, 
+    P115OSError, OperationalError, P115Warning, 
 )
 from .type import RequestKeywords, MultipartResumeData, P115Cookies, P115URL
-from ._upload import make_dataiter
+from ._upload import make_dataiter, oss_upload, oss_multipart_upload
 
 
 T = TypeVar("T")
@@ -111,6 +111,24 @@ def items(m: Mapping, /) -> ItemsView:
     except (AttributeError, TypeError):
         pass
     return ItemsView(m)
+
+
+@asynccontextmanager
+async def async_closing(file):
+    try:
+        yield file
+    finally:
+        try:
+            aclose = getattr(file, "aclose", None)
+            if callable(aclose):
+                await aclose()
+            else:
+                close = getattr(file, "close", None)
+                if callable(close):
+                    close = ensure_async(close, threaded=True)
+                    await close()
+        except:
+            pass
 
 
 def convert_digest(digest, /):
@@ -241,47 +259,79 @@ def check_response(resp: dict | Awaitable[dict], /) -> dict | Coroutine[Any, Any
 class P115Client:
     """115 的客户端对象
 
-    :param cookies: 115 的 cookies，要包含 UID、CID 和 SEID
-        - 如果为 None，则会要求人工扫二维码登录
-        - 如果为 str，则要求是格式正确的 cookies 字符串，例如 "UID=...; CID=...; SEID=..."
-        - 如果是 bytes 或 PathLike，则视为路径，当更新 cookies 时，也会往此路径写入文件
-        - 如果是 Mapping，则是一堆 cookie 的名称到值的映射
-        - 如果是 Iterable，则其中每一条都视为单个 cookie
+    :param cookies: 115 的 cookies，要包含 `UID`、`CID` 和 `SEID`
+
+        - 如果为 ``None``，则会要求人工扫二维码登录
+        - 如果是 :class:`str`，则要求是格式正确的 cookies 字符串，例如 ``"UID=...; CID=...; SEID=..."``
+        - 如果是 :class:`bytes` 或 :class:`os.PathLike`，则视为路径，当更新 cookies 时，也会往此路径写入文件
+        - 如果是 :class:`collections.abc.Mapping`，则是一堆 cookie 的名称到值的映射
+        - 如果是 :class:`collections.abc.Iterable`，则其中每一条都视为单个 cookie
+
     :param check_for_relogin: 网页请求抛出异常时，判断是否要重新登录并重试
-        - 如果为 False，则不重试
-        - 如果为 True，则自动通过判断 HTTP 响应码为 405 时重新登录并重试
-        - 如果为 Callable，则调用以判断，当返回值为 bool 类型且值为True，或者值为 405 时重新登录，然后循环此流程，直到成功或不可重试
-    :param app: 人工扫二维码后绑定的 app （或者叫 device）
+
+        - 如果为 ``False``，则不重试
+        - 如果为 ``True``，则自动通过判断 HTTP 响应码为 ``405`` 时重新登录并重试
+        - 如果为 :class:`collections.abc.Callable`，则调用以判断，当返回值为 :class:`bool` 类型且值为 ``True``，或者值为 ``405`` 时重新登录，然后循环此流程，直到成功或不可重试
+
+    :param app: 人工扫二维码后绑定的 `app` （或者叫 `device`）
     :param console_qrcode: 在命令行输出二维码，否则在浏览器中打开
 
-    设备列表如下：
+    ----
 
-    | No.    | ssoent  | app        | description            |
-    |-------:|:--------|:-----------|:-----------------------|
-    |     01 | A1      | web        | 网页版                 |
-    |     02 | A2      | ?          | 未知: android          |
-    |     03 | A3      | ?          | 未知: iphone           |
-    |     04 | A4      | ?          | 未知: ipad             |
-    |     05 | B1      | ?          | 未知: android          |
-    |     06 | D1      | ios        | 115生活(iOS端)         |
-    |     07 | D2      | ?          | 未知: ios              |
-    |     08 | D3      | 115ios     | 115(iOS端)             |
-    |     09 | F1      | android    | 115生活(Android端)     |
-    |     10 | F2      | ?          | 未知: android          |
-    |     11 | F3      | 115android | 115(Android端)         |
-    |     12 | H1      | ipad       | 未知: ipad             |
-    |     13 | H2      | ?          | 未知: ipad             |
-    |     14 | H3      | 115ipad    | 115(iPad端)            |
-    |     15 | I1      | tv         | 115网盘(Android电视端) |
-    |     16 | M1      | qandriod   | 115管理(Android端)     |
-    |     17 | N1      | qios       | 115管理(iOS端)         |
-    |     18 | O1      | ?          | 未知: ipad             |
-    |     19 | P1      | windows    | 115生活(Windows端)     |
-    |     20 | P2      | mac        | 115生活(macOS端)       |
-    |     21 | P3      | linux      | 115生活(Linux端)       |
-    |     22 | R1      | wechatmini | 115生活(微信小程序)    |
-    |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
-    |     24 | S1      | harmony    | 115(Harmony端)         |
+    :设备列表如下:
+
+    +-------+----------+------------+-------------------------+
+    | No.   | ssoent   | app        | description             |
+    +=======+==========+============+=========================+
+    | 01    | A1       | web        | 网页版                  |
+    +-------+----------+------------+-------------------------+
+    | 02    | A2       | ?          | 未知: android           |
+    +-------+----------+------------+-------------------------+
+    | 03    | A3       | ?          | 未知: iphone            |
+    +-------+----------+------------+-------------------------+
+    | 04    | A4       | ?          | 未知: ipad              |
+    +-------+----------+------------+-------------------------+
+    | 05    | B1       | ?          | 未知: android           |
+    +-------+----------+------------+-------------------------+
+    | 06    | D1       | ios        | 115生活(iOS端)          |
+    +-------+----------+------------+-------------------------+
+    | 07    | D2       | ?          | 未知: ios               |
+    +-------+----------+------------+-------------------------+
+    | 08    | D3       | 115ios     | 115(iOS端)              |
+    +-------+----------+------------+-------------------------+
+    | 09    | F1       | android    | 115生活(Android端)      |
+    +-------+----------+------------+-------------------------+
+    | 10    | F2       | ?          | 未知: android           |
+    +-------+----------+------------+-------------------------+
+    | 11    | F3       | 115android | 115(Android端)          |
+    +-------+----------+------------+-------------------------+
+    | 12    | H1       | ipad       | 未知: ipad              |
+    +-------+----------+------------+-------------------------+
+    | 13    | H2       | ?          | 未知: ipad              |
+    +-------+----------+------------+-------------------------+
+    | 14    | H3       | 115ipad    | 115(iPad端)             |
+    +-------+----------+------------+-------------------------+
+    | 15    | I1       | tv         | 115网盘(Android电视端)  |
+    +-------+----------+------------+-------------------------+
+    | 16    | M1       | qandriod   | 115管理(Android端)      |
+    +-------+----------+------------+-------------------------+
+    | 17    | N1       | qios       | 115管理(iOS端)          |
+    +-------+----------+------------+-------------------------+
+    | 18    | O1       | ?          | 未知: ipad              |
+    +-------+----------+------------+-------------------------+
+    | 19    | P1       | windows    | 115生活(Windows端)      |
+    +-------+----------+------------+-------------------------+
+    | 20    | P2       | mac        | 115生活(macOS端)        |
+    +-------+----------+------------+-------------------------+
+    | 21    | P3       | linux      | 115生活(Linux端)        |
+    +-------+----------+------------+-------------------------+
+    | 22    | R1       | wechatmini | 115生活(微信小程序)     |
+    +-------+----------+------------+-------------------------+
+    | 23    | R2       | alipaymini | 115生活(支付宝小程序)   |
+    +-------+----------+------------+-------------------------+
+    | 24    | S1       | harmony    | 115(Harmony端)          |
+    +-------+----------+------------+-------------------------+
+
     """
     def __init__(
         self, 
@@ -510,55 +560,83 @@ class P115Client:
     ) -> Self | Coroutine[Any, Any, Self]:
         """扫码二维码登录，如果已登录则忽略
         app 至少有 24 个可用值，目前找出 14 个：
-            - web
-            - ios
-            - 115ios
-            - android
-            - 115android
-            - 115ipad
-            - tv
-            - qandroid
-            - windows
-            - mac
-            - linux
-            - wechatmini
-            - alipaymini
-            - harmony
+
+        - web
+        - ios
+        - 115ios
+        - android
+        - 115android
+        - 115ipad
+        - tv
+        - qandroid
+        - windows
+        - mac
+        - linux
+        - wechatmini
+        - alipaymini
+        - harmony
+
         还有几个备选（暂不可用）：
-            - bios
-            - bandroid
-            - ipad（登录机制有些不同，暂时未破解）
-            - qios（登录机制有些不同，暂时未破解）
-            - desktop（就是 web，但是用 115 浏览器登录）
 
-        设备列表如下：
+        - bios
+        - bandroid
+        - ipad（登录机制有些不同，暂时未破解）
+        - qios（登录机制有些不同，暂时未破解）
+        - desktop（就是 web，但是用 115 浏览器登录）
 
-        | No.    | ssoent  | app        | description            |
-        |-------:|:--------|:-----------|:-----------------------|
-        |     01 | A1      | web        | 网页版                 |
-        |     02 | A2      | ?          | 未知: android          |
-        |     03 | A3      | ?          | 未知: iphone           |
-        |     04 | A4      | ?          | 未知: ipad             |
-        |     05 | B1      | ?          | 未知: android          |
-        |     06 | D1      | ios        | 115生活(iOS端)         |
-        |     07 | D2      | ?          | 未知: ios              |
-        |     08 | D3      | 115ios     | 115(iOS端)             |
-        |     09 | F1      | android    | 115生活(Android端)     |
-        |     10 | F2      | ?          | 未知: android          |
-        |     11 | F3      | 115android | 115(Android端)         |
-        |     12 | H1      | ipad       | 未知: ipad             |
-        |     13 | H2      | ?          | 未知: ipad             |
-        |     14 | H3      | 115ipad    | 115(iPad端)            |
-        |     15 | I1      | tv         | 115网盘(Android电视端) |
-        |     16 | M1      | qandriod   | 115管理(Android端)     |
-        |     17 | N1      | qios       | 115管理(iOS端)         |
-        |     18 | O1      | ?          | 未知: ipad             |
-        |     19 | P1      | windows    | 115生活(Windows端)     |
-        |     20 | P2      | mac        | 115生活(macOS端)       |
-        |     21 | P3      | linux      | 115生活(Linux端)       |
-        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
-        |     24 | S1      | harmony    | 115(Harmony端)         |
+        :设备列表如下:
+
+        +-------+----------+------------+-------------------------+
+        | No.   | ssoent   | app        | description             |
+        +=======+==========+============+=========================+
+        | 01    | A1       | web        | 网页版                  |
+        +-------+----------+------------+-------------------------+
+        | 02    | A2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 03    | A3       | ?          | 未知: iphone            |
+        +-------+----------+------------+-------------------------+
+        | 04    | A4       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 05    | B1       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 06    | D1       | ios        | 115生活(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 07    | D2       | ?          | 未知: ios               |
+        +-------+----------+------------+-------------------------+
+        | 08    | D3       | 115ios     | 115(iOS端)              |
+        +-------+----------+------------+-------------------------+
+        | 09    | F1       | android    | 115生活(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 10    | F2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 11    | F3       | 115android | 115(Android端)          |
+        +-------+----------+------------+-------------------------+
+        | 12    | H1       | ipad       | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 13    | H2       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 14    | H3       | 115ipad    | 115(iPad端)             |
+        +-------+----------+------------+-------------------------+
+        | 15    | I1       | tv         | 115网盘(Android电视端)  |
+        +-------+----------+------------+-------------------------+
+        | 16    | M1       | qandriod   | 115管理(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 17    | N1       | qios       | 115管理(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 18    | O1       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 19    | P1       | windows    | 115生活(Windows端)      |
+        +-------+----------+------------+-------------------------+
+        | 20    | P2       | mac        | 115生活(macOS端)        |
+        +-------+----------+------------+-------------------------+
+        | 21    | P3       | linux      | 115生活(Linux端)        |
+        +-------+----------+------------+-------------------------+
+        | 22    | R1       | wechatmini | 115生活(微信小程序)     |
+        +-------+----------+------------+-------------------------+
+        | 23    | R2       | alipaymini | 115生活(支付宝小程序)   |
+        +-------+----------+------------+-------------------------+
+        | 24    | S1       | harmony    | 115(Harmony端)          |
+        +-------+----------+------------+-------------------------+
         """
         def gen_step():
             status = yield self.login_status(
@@ -608,55 +686,83 @@ class P115Client:
     ) -> dict | Coroutine[Any, Any, dict]:
         """扫码二维码登录，获取响应（如果需要更新此 client 的 cookies，请直接用 login 方法）
         app 至少有 24 个可用值，目前找出 14 个：
-            - web
-            - ios
-            - 115ios
-            - android
-            - 115android
-            - 115ipad
-            - tv
-            - qandroid
-            - windows
-            - mac
-            - linux
-            - wechatmini
-            - alipaymini
-            - harmony
+
+        - web
+        - ios
+        - 115ios
+        - android
+        - 115android
+        - 115ipad
+        - tv
+        - qandroid
+        - windows
+        - mac
+        - linux
+        - wechatmini
+        - alipaymini
+        - harmony
+
         还有几个备选（暂不可用）：
-            - bios
-            - bandroid
-            - ipad（登录机制有些不同，暂时未破解）
-            - qios（登录机制有些不同，暂时未破解）
-            - desktop（就是 web，但是用 115 浏览器登录）
 
-        设备列表如下：
+        - bios
+        - bandroid
+        - ipad（登录机制有些不同，暂时未破解）
+        - qios（登录机制有些不同，暂时未破解）
+        - desktop（就是 web，但是用 115 浏览器登录）
 
-        | No.    | ssoent  | app        | description            |
-        |-------:|:--------|:-----------|:-----------------------|
-        |     01 | A1      | web        | 网页版                 |
-        |     02 | A2      | ?          | 未知: android          |
-        |     03 | A3      | ?          | 未知: iphone           |
-        |     04 | A4      | ?          | 未知: ipad             |
-        |     05 | B1      | ?          | 未知: android          |
-        |     06 | D1      | ios        | 115生活(iOS端)         |
-        |     07 | D2      | ?          | 未知: ios              |
-        |     08 | D3      | 115ios     | 115(iOS端)             |
-        |     09 | F1      | android    | 115生活(Android端)     |
-        |     10 | F2      | ?          | 未知: android          |
-        |     11 | F3      | 115android | 115(Android端)         |
-        |     12 | H1      | ipad       | 未知: ipad             |
-        |     13 | H2      | ?          | 未知: ipad             |
-        |     14 | H3      | 115ipad    | 115(iPad端)            |
-        |     15 | I1      | tv         | 115网盘(Android电视端) |
-        |     16 | M1      | qandriod   | 115管理(Android端)     |
-        |     17 | N1      | qios       | 115管理(iOS端)         |
-        |     18 | O1      | ?          | 未知: ipad             |
-        |     19 | P1      | windows    | 115生活(Windows端)     |
-        |     20 | P2      | mac        | 115生活(macOS端)       |
-        |     21 | P3      | linux      | 115生活(Linux端)       |
-        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
-        |     24 | S1      | harmony    | 115(Harmony端)         |
+        :设备列表如下:
+
+        +-------+----------+------------+-------------------------+
+        | No.   | ssoent   | app        | description             |
+        +=======+==========+============+=========================+
+        | 01    | A1       | web        | 网页版                  |
+        +-------+----------+------------+-------------------------+
+        | 02    | A2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 03    | A3       | ?          | 未知: iphone            |
+        +-------+----------+------------+-------------------------+
+        | 04    | A4       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 05    | B1       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 06    | D1       | ios        | 115生活(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 07    | D2       | ?          | 未知: ios               |
+        +-------+----------+------------+-------------------------+
+        | 08    | D3       | 115ios     | 115(iOS端)              |
+        +-------+----------+------------+-------------------------+
+        | 09    | F1       | android    | 115生活(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 10    | F2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 11    | F3       | 115android | 115(Android端)          |
+        +-------+----------+------------+-------------------------+
+        | 12    | H1       | ipad       | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 13    | H2       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 14    | H3       | 115ipad    | 115(iPad端)             |
+        +-------+----------+------------+-------------------------+
+        | 15    | I1       | tv         | 115网盘(Android电视端)  |
+        +-------+----------+------------+-------------------------+
+        | 16    | M1       | qandriod   | 115管理(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 17    | N1       | qios       | 115管理(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 18    | O1       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 19    | P1       | windows    | 115生活(Windows端)      |
+        +-------+----------+------------+-------------------------+
+        | 20    | P2       | mac        | 115生活(macOS端)        |
+        +-------+----------+------------+-------------------------+
+        | 21    | P3       | linux      | 115生活(Linux端)        |
+        +-------+----------+------------+-------------------------+
+        | 22    | R1       | wechatmini | 115生活(微信小程序)     |
+        +-------+----------+------------+-------------------------+
+        | 23    | R2       | alipaymini | 115生活(支付宝小程序)   |
+        +-------+----------+------------+-------------------------+
+        | 24    | S1       | harmony    | 115(Harmony端)          |
+        +-------+----------+------------+-------------------------+
         """
         def gen_step():
             resp = yield cls.login_qrcode_token(
@@ -741,34 +847,59 @@ class P115Client:
         :param app: 要登录的 app，如果为 None，则用同一登录设备
         :param replace: 替换当前 client 对象的 cookie，否则返回新的 client 对象
 
-        设备列表如下：
+        :设备列表如下:
 
-        | No.    | ssoent  | app        | description            |
-        |-------:|:--------|:-----------|:-----------------------|
-        |     01 | A1      | web        | 网页版                 |
-        |     02 | A2      | ?          | 未知: android          |
-        |     03 | A3      | ?          | 未知: iphone           |
-        |     04 | A4      | ?          | 未知: ipad             |
-        |     05 | B1      | ?          | 未知: android          |
-        |     06 | D1      | ios        | 115生活(iOS端)         |
-        |     07 | D2      | ?          | 未知: ios              |
-        |     08 | D3      | 115ios     | 115(iOS端)             |
-        |     09 | F1      | android    | 115生活(Android端)     |
-        |     10 | F2      | ?          | 未知: android          |
-        |     11 | F3      | 115android | 115(Android端)         |
-        |     12 | H1      | ipad       | 未知: ipad             |
-        |     13 | H2      | ?          | 未知: ipad             |
-        |     14 | H3      | 115ipad    | 115(iPad端)            |
-        |     15 | I1      | tv         | 115网盘(Android电视端) |
-        |     16 | M1      | qandriod   | 115管理(Android端)     |
-        |     17 | N1      | qios       | 115管理(iOS端)         |
-        |     18 | O1      | ?          | 未知: ipad             |
-        |     19 | P1      | windows    | 115生活(Windows端)     |
-        |     20 | P2      | mac        | 115生活(macOS端)       |
-        |     21 | P3      | linux      | 115生活(Linux端)       |
-        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
-        |     24 | S1      | harmony    | 115(Harmony端)         |
+        +-------+----------+------------+-------------------------+
+        | No.   | ssoent   | app        | description             |
+        +=======+==========+============+=========================+
+        | 01    | A1       | web        | 网页版                  |
+        +-------+----------+------------+-------------------------+
+        | 02    | A2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 03    | A3       | ?          | 未知: iphone            |
+        +-------+----------+------------+-------------------------+
+        | 04    | A4       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 05    | B1       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 06    | D1       | ios        | 115生活(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 07    | D2       | ?          | 未知: ios               |
+        +-------+----------+------------+-------------------------+
+        | 08    | D3       | 115ios     | 115(iOS端)              |
+        +-------+----------+------------+-------------------------+
+        | 09    | F1       | android    | 115生活(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 10    | F2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 11    | F3       | 115android | 115(Android端)          |
+        +-------+----------+------------+-------------------------+
+        | 12    | H1       | ipad       | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 13    | H2       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 14    | H3       | 115ipad    | 115(iPad端)             |
+        +-------+----------+------------+-------------------------+
+        | 15    | I1       | tv         | 115网盘(Android电视端)  |
+        +-------+----------+------------+-------------------------+
+        | 16    | M1       | qandriod   | 115管理(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 17    | N1       | qios       | 115管理(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 18    | O1       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 19    | P1       | windows    | 115生活(Windows端)      |
+        +-------+----------+------------+-------------------------+
+        | 20    | P2       | mac        | 115生活(macOS端)        |
+        +-------+----------+------------+-------------------------+
+        | 21    | P3       | linux      | 115生活(Linux端)        |
+        +-------+----------+------------+-------------------------+
+        | 22    | R1       | wechatmini | 115生活(微信小程序)     |
+        +-------+----------+------------+-------------------------+
+        | 23    | R2       | alipaymini | 115生活(支付宝小程序)   |
+        +-------+----------+------------+-------------------------+
+        | 24    | S1       | harmony    | 115(Harmony端)          |
+        +-------+----------+------------+-------------------------+
         """
         def gen_step():
             nonlocal app
@@ -856,11 +987,13 @@ class P115Client:
         :param async_: 说明 `request` 是同步调用还是异步调用
         :param request: HTTP 请求调用，如果为 None，则默认用 httpx 执行请求
             如果传入调用，则必须至少能接受以下几个关键词参数：
+
             - url:     HTTP 的请求链接
             - method:  HTTP 的请求方法
             - headers: HTTP 的请求头
             - data:    HTTP 的请求体
             - parse:   解析 HTTP 响应的方法，默认会构建一个 Callable，会把响应的字节数据视为 JSON 进行反序列化解析
+
                 - 如果为 None，则直接把响应对象返回
                 - 如果为 ...(Ellipsis)，则把响应对象关闭后将其返回
                 - 如果为 True，则根据响应头来确定把响应得到的字节数据解析成何种格式（反序列化），请求也会被自动关闭
@@ -868,6 +1001,7 @@ class P115Client:
                 - 如果为 Callable，则使用此调用来解析数据，接受 1-2 个位置参数，并把解析结果返回给 `request` 的调用者，请求也会被自动关闭
                     - 如果只接受 1 个位置参数，则把响应对象传给它
                     - 如果能接受 2 个位置参数，则把响应对象和响应得到的字节数据（响应体）传给它
+
         :param request_kwargs: 其余的请求参数，会被传给 `request`
 
         :return: 直接返回 `request` 执行请求后的返回值
@@ -877,31 +1011,31 @@ class P115Client:
 
             1. `httpx_request <https://pypi.org/project/httpx_request/>`__，由 httpx 封装，支持同步和异步调用，本模块默认用的就是这个封装
 
-                .. python:
+                .. code:: python
 
                     from httpx_request import request
 
             2. `python-urlopen <https://pypi.org/project/python-urlopen/>`__，由 urllib.request.urlopen 封装，支持同步调用，性能相对最差
 
-                .. python:
+                .. code:: python
 
                     from urlopen import request
 
             3. `urllib3_request <https://pypi.org/project/urllib3_request/>`__，由 urllib.request.urlopen 封装，支持同步调用
 
-                .. python:
+                .. code:: python
 
                     from urllib3_request import request
 
             4. `requests_request <https://pypi.org/project/requests_request/>`__，由 urllib.request.urlopen 封装，支持同步调用，性能相对最好，推荐使用
 
-                .. python:
+                .. code:: python
 
                     from requests_request import request
 
             5. `aiohttp_client_request <https://pypi.org/project/aiohttp_client_request/>`__，由 urllib.request.urlopen 封装，支持异步调用，异步并发能力最强，推荐使用
 
-                .. python:
+                .. code:: python
 
                     from aiohttp_client_request import request
         """
@@ -936,7 +1070,7 @@ class P115Client:
                                 cookies_new = self.cookies_str
                                 cookies_mtime_new = getattr(self, "cookies_mtime", 0)
                                 if cookies == cookies_new:
-                                    warn("relogin to refresh cookies")
+                                    warn("relogin to refresh cookies", category=P115Warning)
                                     if not cookies_mtime_new or cookies_mtime == cookies_mtime_new:
                                         await self.login_another_app(replace=True, async_=True)
                                     else:
@@ -956,7 +1090,7 @@ class P115Client:
                             cookies_new = self.cookies_str
                             cookies_mtime_new = getattr(self, "cookies_mtime", 0)
                             if cookies == cookies_new:
-                                warn("relogin to refresh cookies")
+                                warn("relogin to refresh cookies", category=P115Warning)
                                 if not cookies_mtime_new or cookies_mtime == cookies_mtime_new:
                                     self.login_another_app(replace=True)
                                 else:
@@ -992,11 +1126,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """采纳助愿
+
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/adopt
-        payload:
-            - did: str # 许愿的 id
-            - aid: int | str # 助愿的 id
-            - to_cid: int = <default> # 助愿中的分享链接转存到你的网盘中目录的 id
+
+        :payload:
+            - did: :class:`str` 许愿的 id
+            - aid: :class:`int` | :class:`str` 助愿的 id
+            - to_cid: :class:`int` = ``<default>`` 助愿中的分享链接转存到你的网盘中目录的 id
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/adopt"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -1027,12 +1163,14 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """创建助愿（如果提供 file_ids，则会创建一个分享链接）
+
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire
-        payload:
-            - id: str # 许愿 id
-            - content: str # 助愿文本，不少于 5 个字，不超过 500 个字
-            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
-            - file_ids: int | str = <default> # 文件在你的网盘的 id，多个用逗号 "," 隔开
+
+        :payload:
+            - id: :class:`str` 许愿 id
+            - content: :class:`str` 助愿文本，不少于 5 个字，不超过 500 个字
+            - images: :class:`int` | :class:`str` = ``<default>`` 图片文件在你的网盘的 id，多个用逗号 ``","`` 隔开
+            - file_ids: :class:`int` | :class:`str` = ``<default>`` 文件在你的网盘的 id，多个用逗号 ``","`` 隔开
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/aid_desire"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -1063,9 +1201,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除助愿
+
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire
-        payload:
-            - ids: int | str # 助愿的 id，多个用逗号 "," 隔开
+
+        :payload:
+            - ids: :class:`int` | :class:`str` 助愿的 id，多个用逗号 ``","`` 隔开
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_aid_desire"
         if isinstance(payload, (int, str)):
@@ -1098,13 +1238,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取许愿的助愿列表
+
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list
-        payload:
-            - id: str         # 许愿的 id
-            - start: int = 0  # 开始索引
-            - page: int = 1   # 第几页
-            - limit: int = 10 # 每页大小
-            - sort: int | str = <default>
+
+        :payload:
+            - id: :class:`str`         许愿的 id
+            - start: :class:`int` = ``0``  开始索引
+            - page: :class:`int` = ``1``   第几页
+            - limit: :class:`int` = ``10`` 分页大小
+            - sort: :class:`int` | :class:`str` = ``<default>`` 排序
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/desire_aid_list"
         if isinstance(payload, str):
@@ -1136,6 +1278,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取许愿树活动的信息
+
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_act_info"
@@ -1167,9 +1310,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取的许愿信息
+
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info
-        payload:
-            - id: str # 许愿的 id
+
+        :payload:
+            - id: :class:`str` 许愿的 id
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/get_desire_info"
         if isinstance(payload, str):
@@ -1199,6 +1344,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """首页的许愿树（随机刷新 15 条）
+
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/home_list
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/home_list"
@@ -1230,16 +1376,19 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """我的助愿列表
+
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire
-        payload:
-            - type: 0 | 1 | 2 = 0
-                # 类型
-                # - 0: 全部
-                # - 1: 进行中
-                # - 2: 已实现
-            - start: int = 0  # 开始索引
-            - page: int = 1   # 第几页
-            - limit: int = 10 # 每页大小
+
+        :payload:
+            - type: ``0`` | ``1`` | ``2`` = ``0`` 类型
+
+              - ``0``: 全部
+              - ``1``: 进行中
+              - ``2``: 已实现
+
+            - start: :class:`int` = ``0``  开始索引
+            - page: :class:`int` = ``1``   第几页
+            - limit: :class:`int` = ``10`` 分页大小
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_aid_desire"
         if isinstance(payload, int):
@@ -1274,16 +1423,19 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """我的许愿列表
+
         GET https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire
-        payload:
-            - type: 0 | 1 | 2 = 0
+
+        :payload:
+
+            - type: ``0`` | ``1`` | 2 = 0
                 # 类型
                 # - 0: 全部
                 # - 1: 进行中
                 # - 2: 已实现
             - start: int = 0  # 开始索引
             - page: int = 1   # 第几页
-            - limit: int = 10 # 每页大小
+            - limit: int = 10 # 分页大小
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/my_desire"
         if isinstance(payload, int):
@@ -1318,11 +1470,14 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """创建许愿
+
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/wish
-        payload:
+
+        :payload:
+
             - content: str # 许愿文本，不少于 5 个字，不超过 500 个字
             - rewardSpace: int = 5 # 奖励容量，单位是 GB
-            - images: int | str = <default> # 图片文件在你的网盘的 id，多个用逗号 "," 隔开
+            - images: :class:`int` | :class:`str` = ``<default>`` # 图片文件在你的网盘的 id，多个用逗号 ``","`` 隔开
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/wish"
         if isinstance(payload, str):
@@ -1357,9 +1512,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除许愿
+
         POST https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish
-        payload:
-            - ids: str # 许愿的 id，多个用逗号 "," 隔开
+
+        :payload:
+
+            - ids: str # 许愿的 id，多个用逗号 ``","`` 隔开
         """
         api = "https://act.115.com/api/1.0/web/1.0/act2024xys/del_wish"
         if isinstance(payload, str):
@@ -1391,6 +1549,7 @@ class P115Client:
         **request_kwargs
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前各平台最新版 115 app 下载链接
+
         GET https://appversion.115.com/1/web/1.0/api/chrome
         """
         api = "https://appversion.115.com/1/web/1.0/api/chrome"
@@ -1425,6 +1584,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """返回一张包含 10 个汉字的图片，包含验证码中 4 个汉字（有相应的编号，从 0 到 9，计数按照从左到右，从上到下的顺序）
+
         GET https://captchaapi.115.com/?ct=index&ac=code&t=all
         """
         api = "https://captchaapi.115.com/?ct=index&ac=code&t=all"
@@ -1454,6 +1614,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """更新验证码，并获取图片数据（含 4 个汉字）
+
         GET https://captchaapi.115.com/?ct=index&ac=code
         """
         api = "https://captchaapi.115.com/?ct=index&ac=code"
@@ -1483,6 +1644,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取验证码的签名字符串
+
         GET https://captchaapi.115.com/?ac=code&t=sign
         """
         api = "https://captchaapi.115.com/?ac=code&t=sign"
@@ -1514,6 +1676,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """10 个汉字单独的图片，包含验证码中 4 个汉字，编号从 0 到 9
+
         GET https://captchaapi.115.com/?ct=index&ac=code&t=single&id={id}
         """
         if not 0 <= id <= 9:
@@ -1548,10 +1711,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """提交验证码
+
         POST https://webapi.115.com/user/captcha
-        payload:
-            - code: int | str # 从 0 到 9 中选取 4 个数字的一种排列
-            - sign: str = <default>
+
+        :payload:
+
+            - code: :class:`int` | :class:`str` # 从 0 到 9 中选取 4 个数字的一种排列
+            - sign: :class:`str` = ``<default>``
             - ac: str = "security_code" # 默认就行，不要自行决定
             - type: str = "web"         # 默认就行，不要自行决定
             - ctype: str = "web"        # 需要和 type 相同
@@ -1693,8 +1859,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的下载链接
+
         POST https://proapi.115.com/app/chrome/downurl
-        payload:
+
+        :payload:
+
             - pickcode: str
         """
         api = "https://proapi.115.com/app/chrome/downurl"
@@ -1745,8 +1914,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的下载链接（网页版接口，不推荐使用）
+
         GET https://webapi.115.com/files/download
-        payload:
+
+        :payload:
+
             - pickcode: str
         """
         api = "https://webapi.115.com/files/download"
@@ -1805,8 +1977,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """解压缩到某个目录，推荐直接用封装函数 `extract_file`
+
         POST https://webapi.115.com/files/add_extract_file
-        payload:
+
+        :payload:
+
             - pick_code: str
             - extract_file[]: str
             - extract_file[]: str
@@ -1857,8 +2032,11 @@ class P115Client:
         **request_kwargs, 
     ) -> P115URL | Coroutine[Any, Any, P115URL]:
         """获取压缩包中文件的下载链接
+
         GET https://webapi.115.com/files/extract_down_file
-        payload:
+
+        :payload:
+
             - pick_code: str
             - full_name: str
         """
@@ -1911,8 +2089,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取压缩包中文件的下载链接
+
         GET https://webapi.115.com/files/extract_down_file
-        payload:
+
+        :payload:
+
             - pick_code: str
             - full_name: str
         """
@@ -2069,8 +2250,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取压缩文件的文件列表，推荐直接用封装函数 `extract_list`
+
         GET https://webapi.115.com/files/extract_info
-        payload:
+
+        :payload:
+
             - pick_code: str
             - file_name: str = ""
             - next_marker: str = ""
@@ -2157,8 +2341,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取 解压缩到目录 任务的进度
+
         GET https://webapi.115.com/files/add_extract_file
-        payload:
+
+        :payload:
+
             - extract_id: str
         """
         api = "https://webapi.115.com/files/add_extract_file"
@@ -2192,8 +2379,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """推送一个解压缩任务给服务器，完成后，就可以查看压缩包的文件列表了
+
         POST https://webapi.115.com/files/push_extract
-        payload:
+
+        :payload:
+
             - pick_code: str
             - secret: str = "" # 解压密码
         """
@@ -2228,8 +2418,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """查询解压缩任务的进度
+
         GET https://webapi.115.com/files/push_extract
-        payload:
+
+        :payload:
+
             - pick_code: str
         """
         api = "https://webapi.115.com/files/push_extract"
@@ -2268,8 +2461,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """相册列表
+
         GET https://webapi.115.com/photo/albumlist
-        payload:
+
+        :payload:
+
             - offset: int = 0
             - limit: int = 1150
             - album_type: int = 1
@@ -2307,9 +2503,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """批量设置文件或目录（显示时长等）
+
         POST https://webapi.115.com/files/batch_edit
-        payload:
-            - show_play_long[{fid}]: 0 | 1 = 1 # 设置或取消显示时长
+
+        :payload:
+
+            - show_play_long[{fid}]: ``0`` | ``1`` = 1 # 设置或取消显示时长
         """
         api = "https://webapi.115.com/files/batch_edit"
         if (headers := request_kwargs.get("headers")):
@@ -2351,8 +2550,10 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """显示属性，可获取文件或目录的统计信息（提示：但得不到根目录的统计信息，所以 cid 为 0 时无意义）
+
         GET https://webapi.115.com/category/get
-        payload:
+
+        :payload:
             cid: int | str
             aid: int | str = 1
         """
@@ -2392,8 +2593,10 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """快捷入口列表（罗列所有的快捷入口）
+
         GET https://webapi.115.com/category/shortcut
-        payload:
+
+        :payload:
             - offset: int = 0
             - limit: int = 1150
         """
@@ -2430,14 +2633,16 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """把一个目录设置或取消为快捷入口（快捷入口需要是目录）
+
         POST https://webapi.115.com/category/shortcut
-        payload:
-            file_id: int | str # 有多个时，用逗号 "," 隔开
-            op: "add" | "delete" | "top" = "add"
-                # 操作代码
-                # - add: 添加
-                # - delete: 删除
-                # - top: 置顶
+
+        :payload:
+            - file_id: :class:`int` | :class:`str` 目录 id，如果有多个，则用逗号 ``","`` 隔开
+            - op: ``"add"`` | ``"delete"`` | ``"top"`` = ``"add"`` 操作代码
+
+              - ``"add"``:    添加
+              - ``"delete"``: 删除
+              - ``"top"``:    置顶
         """
         api = "https://webapi.115.com/category/shortcut"
         if isinstance(payload, (int, str)):
@@ -2476,12 +2681,20 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """复制文件或目录
+
         POST https://webapi.115.com/files/copy
-        payload:
-            - fid[0]: int | str
-            - fid[1]: int | str
+
+        :payload:
+
+            - fid[0]: :class:`int` | :class:`str`
+
+              文件或目录的 id
+
+            - fid[1]: :class:`int` | :class:`str`
             - ...
-            - pid: int | str = 0
+            - pid: :class:`int` | :class:`str` = 0
+
+              目录 id，把 ``fid[{no}]`` 全都移动到此目录中
         """
         api = "https://webapi.115.com/files/copy"
         if isinstance(payload, (int, str)):
@@ -2563,8 +2776,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除文件或目录
+
         POST https://webapi.115.com/rb/delete
-        payload:
+
+        :payload:
+
             - fid[0]: int | str
             - fid[1]: int | str
             - ...
@@ -2604,12 +2820,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或目录的备注
+
         GET https://webapi.115.com/files/desc
-        payload:
+
+        :payload:
+
             - file_id: int | str
             - format: str = "json"
-            - compat: 0 | 1 = 1
-            - new_html: 0 | 1 = <default>
+            - compat: ``0`` | ``1`` = 1
+            - new_html: ``0`` | ``1`` = ``<default>``
         """
         api = "https://webapi.115.com/files/desc"
         if isinstance(payload, (int, str)):
@@ -2686,8 +2905,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """由路径获取对应的 id（但只能获取目录，不能获取文件）
+
         GET https://webapi.115.com/files/getid
-        payload:
+
+        :payload:
+
             - path: str
         """
         api = "https://webapi.115.com/files/getid"
@@ -2721,8 +2943,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置文件或目录（备注、标签等）
+
         POST https://webapi.115.com/files/edit
-        payload:
+
+        :payload:
+
             # 如果是单个文件或目录，也可以是多个但用逗号 "," 隔开
             - fid: int | str
             # 如果是多个文件或目录
@@ -2730,10 +2955,10 @@ class P115Client:
             - fid[]: int | str
             - ...
             # 其它配置信息
-            - file_desc: str = <default> # 可以用 html
-            - file_label: int | str = <default> # 标签 id，如果有多个，用逗号 "," 隔开
-            - fid_cover: int | str = <default> # 封面图片的文件 id，如果有多个，用逗号 "," 隔开，如果要删除，值设为 0 即可
-            - show_play_long: 0 | 1 = <default> # 文件名称显示时长
+            - file_desc: :class:`str` = ``<default>`` # 可以用 html
+            - file_label: :class:`int` | :class:`str` = ``<default>`` # 标签 id，多个用逗号 ``","`` 隔开
+            - fid_cover: :class:`int` | :class:`str` = ``<default>`` # 封面图片的文件 id，多个用逗号 ``","`` 隔开，如果要删除，值设为 0 即可
+            - show_play_long: ``0`` | ``1`` = ``<default>`` # 文件名称显示时长
         """
         api = "https://webapi.115.com/files/edit"
         if (headers := request_kwargs.get("headers")):
@@ -2775,11 +3000,14 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """导出目录树
+
         POST https://webapi.115.com/files/export_dir
-        payload:
+
+        :payload:
+
             file_ids: int | str   # 有多个时，用逗号 "," 隔开
             target: str = "U_1_0" # 导出目录树到这个目录
-            layer_limit: int = <default> # 层级深度，自然数
+            layer_limit: :class:`int` = ``<default>`` # 层级深度，自然数
         """
         api = "https://webapi.115.com/files/export_dir"
         if isinstance(payload, (int, str)):
@@ -2812,8 +3040,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取导出目录树的完成情况
+
         GET https://webapi.115.com/files/export_dir
-        payload:
+
+        :payload:
+
             export_id: int | str
         """
         api = "https://webapi.115.com/files/export_dir"
@@ -2847,9 +3078,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或目录的基本信息
+
         GET https://webapi.115.com/files/get_info
-        payload:
-            - file_id: int | str # 文件或目录的 id，不能为 0，只能传 1 个 id，如果有多个只采用第一个
+
+        :payload:
+
+            - file_id: :class:`int` | :class:`str` # 文件或目录的 id，不能为 0，只能传 1 个 id，如果有多个只采用第一个
         """
         api = "https://webapi.115.com/files/get_info"
         if isinstance(payload, (int, str)):
@@ -2882,9 +3116,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件或目录的简略信息
+
         GET https://webapi.115.com/files/file
-        payload:
-            - file_id: int | str # 文件或目录的 id，不能为 0，如果有多个则用逗号 "," 隔开
+
+        :payload:
+
+            - file_id: :class:`int` | :class:`str` # 文件或目录的 id，不能为 0，如果有多个则用逗号 "," 隔开
         """
         api = "https://webapi.115.com/files/file"
         if isinstance(payload, (int, str)):
@@ -2921,58 +3158,68 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取目录的中的文件列表和基本信息（指定 1) cid=0 且 star=1, 2) suffix, 3) type 中任一，则默认 cur=0，可遍历搜索所在目录树）
-        GET https://webapi.115.com/files
-        payload:
-            - cid: int | str = 0 # 目录 id
-            - limit: int = 32    # 一页大小，意思就是 page_size
-            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+        """获取目录中的文件列表和基本信息
 
-            - aid: int | str = 1 # area_id，不知道的话，设置为 1
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - code: int | str = <default>
-            - count_folders: 0 | 1 = 1 # 统计文件数和目录数
-            - cur: 0 | 1 = <default> # 是否只搜索当前目录
-            - custom_order: 0 | 1 = <default> # 启用自定义排序，如果指定了 "asc", "fc_mix", "o" 其一，则此参数要设置为 1 （我实现了自动设置）
-            - date: str = <default> # 筛选日期
-            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
-            - fields: str = <default>
-            - format: str = "json"
-            - hide_data: str = <default>
-            - is_q: 0 | 1 = <default>
-            - is_share: 0 | 1 = <default>
-            - min_size: int = 0 # 最小的文件大小
-            - max_size: int = 0 # 最大的文件大小
-            - natsort: 0 | 1 = <default>
-            - o: str = <default>
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上一次打开时间："user_otime"
-            - r_all: 0 | 1 = <default>
-            - record_open_time: 0 | 1 = 1 # 是否要记录目录的打开时间
-            - scid: int | str = <default>
-            - show_dir: 0 | 1 = 1
-            - snap: 0 | 1 = <default>
-            - source: str = <default>
-            - sys_dir: int | str = <default>
-            - star: 0 | 1 = <default> # 是否星标文件
-            - stdir: 0 | 1 = <default>
-            - suffix: str = <default> # 后缀名（优先级高于 type）
-            - type: int = <default>
-                # 文件类型：
-                # - 全部: 0
-                # - 文档: 1
-                # - 图片: 2
-                # - 音频: 3
-                # - 视频: 4
-                # - 压缩包: 5
-                # - 应用: 6
-                # - 书籍: 7
-                # - 仅文件: 99
+        .. hint::
+            指定如下条件中任一，且 ``cur = 0`` （默认），即可遍历搜索所在目录树
+
+            1. cid=0 且 star=1
+            2. suffix 为非空的字符串
+            3. type 为正整数
+
+        GET https://webapi.115.com/files
+
+        :payload:
+            - cid: :class:`int` | :class:`str` = ``0`` 目录 id
+            - limit: :class:`int` = ``32``         分页大小
+            - offset: :class:`int` = ``0``         分页开始的索引，索引从 ``0`` 开始计算
+
+            - aid: :class:`int` | :class:`str` = ``1`` area_id，默认即可
+            - asc: ``0`` | ``1`` = ``<default>`` 是否升序排列。``0``: 降序 ``1``: 升序
+            - code: :class:`int` | :class:`str` = ``<default>``
+            - count_folders: ``0`` | ``1`` = ``1`` 统计文件数和目录数
+            - cur: ``0`` | ``1`` = ``<default>`` 是否只搜索当前目录
+            - custom_order: ``0`` | ``1`` = ``<default>`` 启用自定义排序，如果指定了 ``"asc"``、``"fc_mix"``、``"o"`` 中其一，则此参数会被自动设置为 ``1`` 
+            - date: :class:`str` = ``<default>`` 筛选日期
+            - fc_mix: ``0`` | ``1`` = ``<default>`` 是否目录和文件混合，如果为 ``0`` 则目录在前
+            - fields: :class:`str` = ``<default>``
+            - format: :class:`str` = ``"json"`` 返回格式，默认即可
+            - hide_data: :class:`str` = ``<default>``
+            - is_q: ``0`` | ``1`` = ``<default>``
+            - is_share: ``0`` | ``1`` = ``<default>``
+            - min_size: :class:`int` = ``0`` 最小的文件大小
+            - max_size: :class:`int` = ``0`` 最大的文件大小
+            - natsort: ``0`` | ``1`` = ``<default>``
+            - o: :class:`str` = ``<default>`` 用某字段排序
+
+              - 文件名：``"file_name"``
+              - 文件大小：``"file_size"```
+              - 文件种类：``"file_type"``
+              - 修改时间：``"user_utime"``
+              - 创建时间：``"user_ptime"``
+              - 上一次打开时间：``"user_otime"``
+
+            - r_all: ``0`` | ``1`` = ``<default>``
+            - record_open_time: ``0`` | ``1`` = ``1`` 是否要记录目录的打开时间
+            - scid: :class:`int` | :class:`str` = ``<default>``
+            - show_dir: ``0`` | ``1`` = ``1``
+            - snap: ``0`` | ``1`` = ``<default>``
+            - source: :class:`str` = ``<default>``
+            - sys_dir: :class:`int` | :class:`str` = ``<default>``
+            - star: ``0`` | ``1`` = ``<default>`` 是否星标文件
+            - stdir: ``0`` | ``1`` = ``<default>``
+            - suffix: :class:`str` = ``<default>`` 后缀名（优先级高于 `type`）
+            - type: :class:`int` = ``<default>`` 文件类型
+
+              - ``0``: 全部
+              - ``1``: 文档
+              - ``2``: 图片
+              - ``3``: 音频
+              - ``4``: 视频
+              - ``5``: 压缩包
+              - ``6``: 应用
+              - ``7``: 书籍
+              - ``99``: 仅文件
         """
         api = "https://webapi.115.com/files"
         if isinstance(payload, int):
@@ -3020,58 +3267,61 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取目录的中的文件列表和基本信息
-        GET https://proapi.115.com/{app}/2.0/ufile/files
-        payload:
-            - cid: int | str = 0 # 目录 id
-            - limit: int = 32    # 一页大小，意思就是 page_size
-            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+        """获取目录中的文件列表和基本信息
 
-            - aid: int | str = 1 # area_id，不知道的话，设置为 1
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - code: int | str = <default>
-            - count_folders: 0 | 1 = 1 # 统计文件数和目录数
-            - cur: 0 | 1 = <default> # 是否只搜索当前目录
-            - custom_order: 0 | 1 = <default> # 启用自定义排序，如果指定了 "asc", "fc_mix", "o" 其一，则此参数要设置为 1 （我实现了自动设置）
-            - date: str = <default> # 筛选日期
-            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
-            - fields: str = <default>
-            - format: str = "json"
-            - hide_data: str = <default>
-            - is_q: 0 | 1 = <default>
-            - is_share: 0 | 1 = <default>
-            - min_size: int = 0 # 最小的文件大小
-            - max_size: int = 0 # 最大的文件大小
-            - natsort: 0 | 1 = <default>
-            - o: str = <default>
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上一次打开时间："user_otime"
-            - r_all: 0 | 1 = <default>
-            - record_open_time: 0 | 1 = 1 # 是否要记录目录的打开时间
-            - scid: int | str = <default>
-            - show_dir: 0 | 1 = 1
-            - snap: 0 | 1 = <default>
-            - source: str = <default>
-            - sys_dir: int | str = <default>
-            - star: 0 | 1 = <default> # 是否星标文件
-            - stdir: 0 | 1 = <default>
-            - suffix: str = <default> # 后缀名（优先级高于 type）
-            - type: int = <default>
-                # 文件类型：
-                # - 全部: 0
-                # - 文档: 1
-                # - 图片: 2
-                # - 音频: 3
-                # - 视频: 4
-                # - 压缩包: 5
-                # - 应用: 6
-                # - 书籍: 7
-                # - 仅文件: 99
+        GET https://proapi.115.com/{app}/2.0/ufile/files
+
+        :payload:
+            - cid: :class:`int` | :class:`str` = ``0`` 目录 id
+            - limit: :class:`int` = ``32``         分页大小
+            - offset: :class:`int` = ``0``         分页开始的索引，索引从 ``0`` 开始计算
+
+            - aid: :class:`int` | :class:`str` = ``1`` area_id，默认即可
+            - asc: ``0`` | ``1`` = ``<default>`` 是否升序排列。``0``: 降序 ``1``: 升序
+            - code: :class:`int` | :class:`str` = ``<default>``
+            - count_folders: ``0`` | ``1`` = ``1`` 统计文件数和目录数
+            - cur: ``0`` | ``1`` = ``<default>`` 是否只搜索当前目录
+            - custom_order: ``0`` | ``1`` = ``<default>`` 启用自定义排序，如果指定了 ``"asc"``、``"fc_mix"``、``"o"`` 中其一，则此参数会被自动设置为 ``1`` 
+            - date: :class:`str` = ``<default>`` 筛选日期
+            - fc_mix: ``0`` | ``1`` = ``<default>`` 是否目录和文件混合，如果为 ``0`` 则目录在前
+            - fields: :class:`str` = ``<default>``
+            - format: :class:`str` = ``"json"`` 返回格式，默认即可
+            - hide_data: :class:`str` = ``<default>``
+            - is_q: ``0`` | ``1`` = ``<default>``
+            - is_share: ``0`` | ``1`` = ``<default>``
+            - min_size: :class:`int` = ``0`` 最小的文件大小
+            - max_size: :class:`int` = ``0`` 最大的文件大小
+            - natsort: ``0`` | ``1`` = ``<default>``
+            - o: :class:`str` = ``<default>`` 用某字段排序
+
+              - 文件名：``"file_name"``
+              - 文件大小：``"file_size"```
+              - 文件种类：``"file_type"``
+              - 修改时间：``"user_utime"``
+              - 创建时间：``"user_ptime"``
+              - 上一次打开时间：``"user_otime"``
+
+            - r_all: ``0`` | ``1`` = ``<default>``
+            - record_open_time: ``0`` | ``1`` = ``1`` 是否要记录目录的打开时间
+            - scid: :class:`int` | :class:`str` = ``<default>``
+            - show_dir: ``0`` | ``1`` = ``1``
+            - snap: ``0`` | ``1`` = ``<default>``
+            - source: :class:`str` = ``<default>``
+            - sys_dir: :class:`int` | :class:`str` = ``<default>``
+            - star: ``0`` | ``1`` = ``<default>`` 是否星标文件
+            - stdir: ``0`` | ``1`` = ``<default>``
+            - suffix: :class:`str` = ``<default>`` 后缀名（优先级高于 `type`）
+            - type: :class:`int` = ``<default>`` 文件类型
+
+              - ``0``: 全部
+              - ``1``: 文档
+              - ``2``: 图片
+              - ``3``: 音频
+              - ``4``: 视频
+              - ``5``: 压缩包
+              - ``6``: 应用
+              - ``7``: 书籍
+              - ``99``: 仅文件
         """
         api = f"https://proapi.115.com/{app}/2.0/ufile/files"
         if isinstance(payload, int):
@@ -3116,58 +3366,61 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取目录的中的文件列表和基本信息
-        GET https://aps.115.com/natsort/files.php
-        payload:
-            - cid: int | str = 0 # 目录 id
-            - limit: int = 32    # 一页大小，意思就是 page_size
-            - offset: int = 0    # 索引偏移，索引从 0 开始计算
+        """获取目录中的文件列表和基本信息
 
-            - aid: int | str = 1 # area_id，不知道的话，设置为 1
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - code: int | str = <default>
-            - count_folders: 0 | 1 = 1 # 统计文件数和目录数
-            - cur: 0 | 1 = <default> # 是否只搜索当前目录
-            - custom_order: 0 | 1 = <default> # 启用自定义排序，如果指定了 "asc", "fc_mix", "o" 其一，则此参数要设置为 1 （我实现了自动设置）
-            - date: str = <default> # 筛选日期
-            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
-            - fields: str = <default>
-            - format: str = "json"
-            - hide_data: str = <default>
-            - is_q: 0 | 1 = <default>
-            - is_share: 0 | 1 = <default>
-            - min_size: int = 0 # 最小的文件大小
-            - max_size: int = 0 # 最大的文件大小
-            - natsort: 0 | 1 = <default>
-            - o: str = <default>
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上一次打开时间："user_otime"
-            - r_all: 0 | 1 = <default>
-            - record_open_time: 0 | 1 = 1 # 是否要记录目录的打开时间
-            - scid: int | str = <default>
-            - show_dir: 0 | 1 = 1
-            - snap: 0 | 1 = <default>
-            - source: str = <default>
-            - sys_dir: int | str = <default>
-            - star: 0 | 1 = <default> # 是否星标文件
-            - stdir: 0 | 1 = <default>
-            - suffix: str = <default> # 后缀名（优先级高于 type）
-            - type: int = <default>
-                # 文件类型：
-                # - 全部: 0
-                # - 文档: 1
-                # - 图片: 2
-                # - 音频: 3
-                # - 视频: 4
-                # - 压缩包: 5
-                # - 应用: 6
-                # - 书籍: 7
-                # - 仅文件: 99
+        GET https://aps.115.com/natsort/files.php
+
+        :payload:
+            - cid: :class:`int` | :class:`str` = ``0`` 目录 id
+            - limit: :class:`int` = ``32``         分页大小
+            - offset: :class:`int` = ``0``         分页开始的索引，索引从 ``0`` 开始计算
+
+            - aid: :class:`int` | :class:`str` = ``1`` area_id，默认即可
+            - asc: ``0`` | ``1`` = ``<default>`` 是否升序排列。``0``: 降序 ``1``: 升序
+            - code: :class:`int` | :class:`str` = ``<default>``
+            - count_folders: ``0`` | ``1`` = ``1`` 统计文件数和目录数
+            - cur: ``0`` | ``1`` = ``<default>`` 是否只搜索当前目录
+            - custom_order: ``0`` | ``1`` = ``<default>`` 启用自定义排序，如果指定了 ``"asc"``、``"fc_mix"``、``"o"`` 中其一，则此参数会被自动设置为 ``1`` 
+            - date: :class:`str` = ``<default>`` 筛选日期
+            - fc_mix: ``0`` | ``1`` = ``<default>`` 是否目录和文件混合，如果为 ``0`` 则目录在前
+            - fields: :class:`str` = ``<default>``
+            - format: :class:`str` = ``"json"`` 返回格式，默认即可
+            - hide_data: :class:`str` = ``<default>``
+            - is_q: ``0`` | ``1`` = ``<default>``
+            - is_share: ``0`` | ``1`` = ``<default>``
+            - min_size: :class:`int` = ``0`` 最小的文件大小
+            - max_size: :class:`int` = ``0`` 最大的文件大小
+            - natsort: ``0`` | ``1`` = ``<default>``
+            - o: :class:`str` = ``<default>`` 用某字段排序
+
+              - 文件名：``"file_name"``
+              - 文件大小：``"file_size"```
+              - 文件种类：``"file_type"``
+              - 修改时间：``"user_utime"``
+              - 创建时间：``"user_ptime"``
+              - 上一次打开时间：``"user_otime"``
+
+            - r_all: ``0`` | ``1`` = ``<default>``
+            - record_open_time: ``0`` | ``1`` = ``1`` 是否要记录目录的打开时间
+            - scid: :class:`int` | :class:`str` = ``<default>``
+            - show_dir: ``0`` | ``1`` = ``1``
+            - snap: ``0`` | ``1`` = ``<default>``
+            - source: :class:`str` = ``<default>``
+            - sys_dir: :class:`int` | :class:`str` = ``<default>``
+            - star: ``0`` | ``1`` = ``<default>`` 是否星标文件
+            - stdir: ``0`` | ``1`` = ``<default>``
+            - suffix: :class:`str` = ``<default>`` 后缀名（优先级高于 `type`）
+            - type: :class:`int` = ``<default>`` 文件类型
+
+              - ``0``: 全部
+              - ``1``: 文档
+              - ``2``: 图片
+              - ``3``: 音频
+              - ``4``: 视频
+              - ``5``: 压缩包
+              - ``6``: 应用
+              - ``7``: 书籍
+              - ``99``: 仅文件
         """
         api = "https://aps.115.com/natsort/files.php"
         if isinstance(payload, int):
@@ -3210,12 +3463,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取文件的观看历史，主要用于视频
+
         GET https://webapi.115.com/files/history
-        payload:
+
+        :payload:
+
             - pick_code: str
             - fetch: str = "one"
-            - category: int = <default>
-            - share_id: int | str = <default>
+            - category: :class:`int` = ``<default>``
+            - share_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://webapi.115.com/files/history"
         if isinstance(payload, str):
@@ -3250,10 +3506,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取目录中某个文件类型的扩展名的（去重）列表
+
         GET https://webapi.115.com/files/get_second_type
-        payload:
+
+        :payload:
+
             - cid: int | str = 0 # 目录 id
-            - type: int = <default>
+            - type: :class:`int` = ``<default>``
                 # 文件类型：
                 # - 文档: 1
                 # - 图片: 2
@@ -3262,7 +3521,7 @@ class P115Client:
                 # - 压缩包: 5
                 # - 应用: 6
                 # - 书籍: 7
-            - file_label: int | str = <default> # 标签 id，如果有多个则用逗号 "," 隔开
+            - file_label: :class:`int` | :class:`str` = ``<default>`` # 标签 id，如果有多个则用逗号 "," 隔开
         """
         api = "https://webapi.115.com/files/get_second_type"
         if isinstance(payload, int):
@@ -3295,9 +3554,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取目录内文件总的播放时长
+
         POST https://aps.115.com/getFolderPlaylong
-        payload:
-            - folder_ids: int | str # 目录 id，如果有多个，用逗号 "," 隔开
+
+        :payload:
+
+            - folder_ids: :class:`int` | :class:`str` # 目录 id，多个用逗号 ``","`` 隔开
         """
         api = "https://aps.115.com/getFolderPlaylong"
         if isinstance(payload, (int, str)):
@@ -3374,12 +3636,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """隐藏或者取消隐藏某些文件或目录
+
         POST https://webapi.115.com/files/hiddenfiles
-        payload:
+
+        :payload:
+
             - fid[0]: int | str
             - fid[1]: int | str
             - ...
-            - hidden: 0 | 1 = 1
+            - hidden: ``0`` | ``1`` = 1
         """
         api = "https://webapi.115.com/files/hiddenfiles"
         if isinstance(payload, (int, str)):
@@ -3419,10 +3684,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """切换隐藏模式
+
         POST https://115.com/?ct=hiddenfiles&ac=switching
-        payload:
+
+        :payload:
+
             safe_pwd: str = "" # 密码，如果需要进入隐藏模式，请传递此参数
-            show: 0 | 1 = 1
+            show: ``0`` | ``1`` = 1
             valid_type: int = 1
         """
         api = "https://115.com/?ct=hiddenfiles&ac=switching"
@@ -3458,8 +3726,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取历史记录
+
         GET https://proapi.115.com/android/history
-        payload:
+
+        :payload:
+
             - pick_code: str
             - action: str = "get_one"
         """
@@ -3496,9 +3767,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """清空历史记录
+
         POST https://webapi.115.com/history/clean
-        payload:
-            - type: int | str # 类型（？？表示还未搞清楚），如果有多个，用逗号 "," 隔开
+
+        :payload:
+
+            - type: :class:`int` | :class:`str` # 类型（？？表示还未搞清楚），多个用逗号 ``","`` 隔开
                 # 类型：
                 # - 全部: 0
                 # - 接收文件: 1
@@ -3509,7 +3783,7 @@ class P115Client:
                 # - ？？: 6
                 # - 接收目录: 7
                 # - ？？: 8
-            - with_file: 0 | 1 = 0
+            - with_file: ``0`` | ``1`` = 0
         """
         api = "https://webapi.115.com/history/clean"
         if isinstance(payload, (int, str)):
@@ -3547,12 +3821,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """历史记录列表
+
         GET https://webapi.115.com/history/list
-        payload:
+
+        :payload:
+
             - offset: int = 0
             - limit: int = 1150
-            - played_end: 0 | 1 = <default>
-            - type: int = <default> # 类型（？？表示还未搞清楚），如果有多个，用逗号 "," 隔开
+            - played_end: ``0`` | ``1`` = ``<default>``
+            - type: :class:`int` = ``<default>`` # 类型（？？表示还未搞清楚），多个用逗号 ``","`` 隔开
                 # 类型：
                 # - 全部: 0
                 # - 接收文件: 1
@@ -3600,8 +3877,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """移动列表
+
         GET https://webapi.115.com/history/move_target_list
-        payload:
+
+        :payload:
+
             - offset: int = 0
             - limit: int = 1150
         """
@@ -3641,8 +3921,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """接收列表
+
         GET https://webapi.115.com/history/receive_list
-        payload:
+
+        :payload:
+
             - offset: int = 0
             - limit: int = 1150
         """
@@ -3679,14 +3962,17 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """更新文件的观看历史，主要用于视频
+
         POST https://webapi.115.com/files/history
-        payload:
+
+        :payload:
+
             - pick_code: str
             - op: str = "update"
-            - category: int = <default>
-            - definition: int = <default>
-            - share_id: int | str = <default>
-            - time: int = <default>
+            - category: :class:`int` = ``<default>``
+            - definition: :class:`int` = ``<default>``
+            - share_id: :class:`int` | :class:`str` = ``<default>``
+            - time: :class:`int` = ``<default>``
             - ...（其它未找全的参数）
         """
         api = "https://webapi.115.com/files/history"
@@ -3722,8 +4008,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取图片的各种链接
+
         GET https://webapi.115.com/files/image
-        payload:
+
+        :payload:
+
             - pickcode: str
         """
         api = "https://webapi.115.com/files/image"
@@ -3757,8 +4046,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取图片的分辨率等信息
+
         POST https://imgjump.115.com/getimgdata_url
-        payload:
+
+        :payload:
+
             - imgurl: str # 图片的访问链接，以 "http://thumb.115.com" 开头
         """
         api = "https://imgjump.115.com/getimgdata_url"
@@ -3794,17 +4086,20 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """获取目录的中的图片列表和基本信息
+        """获取目录中的图片列表和基本信息
+
         GET https://proapi.115.com/android/files/imglist
-        payload:
+
+        :payload:
+
             - cid: int | str = 0 # 目录 id
             - limit: int = 32    # 一页大小，建议控制在 <= 9000，不然会报错
             - offset: int = 0    # 索引偏移，索引从 0 开始计算
 
             - aid: int | str = 1 # area_id，不知道的话，设置为 1
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - cur: 0 | 1 = <default> # 只罗列当前目录
-            - o: str = <default>
+            - asc: ``0`` | ``1`` = ``<default>`` # 是否升序排列
+            - cur: ``0`` | ``1`` = ``<default>`` # 只罗列当前目录
+            - o: :class:`str` = ``<default>``
                 # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
@@ -3846,9 +4141,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前已用空间、可用空间、登录设备等信息
+
         GET https://webapi.115.com/files/index_info
-        payload:
-            count_space_nums: 0 | 1 = 0 # 如果为 0，包含各种类型文件的数量统计；如果为 1，包含登录设备列表
+
+        :payload:
+
+            count_space_nums: ``0`` | ``1`` = 0 # 如果为 0，包含各种类型文件的数量统计；如果为 1，包含登录设备列表
         """
         api = "https://webapi.115.com/files/index_info"
         if not isinstance(payload, dict):
@@ -3881,6 +4179,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """添加标签（可以接受多个）
+
         POST https://webapi.115.com/label/add_multi
 
         可传入多个 label 描述，每个 label 的格式都是 "{label_name}" 或 "{label_name}\x07{color}"，例如 "tag\x07#FF0000"
@@ -3928,9 +4227,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除标签
+
         POST https://webapi.115.com/label/delete
-        payload:
-            - id: int | str # 标签 id，如果有多个，用逗号 "," 隔开
+
+        :payload:
+
+            - id: :class:`int` | :class:`str` # 标签 id，多个用逗号 ``","`` 隔开
         """
         api = "https://webapi.115.com/label/delete"
         if isinstance(payload, (int, str)):
@@ -3963,12 +4265,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """编辑标签
+
         POST https://webapi.115.com/label/edit
-        payload:
-            - id: int | str # 标签 id
-            - name: str = <default>  # 标签名
-            - color: str = <default> # 标签颜色，支持 css 颜色语法
-            - sort: int = <default>  # 序号
+
+        :payload:
+
+            - id: :class:`int` | :class:`str` # 标签 id
+            - name: :class:`str` = ``<default>``  # 标签名
+            - color: :class:`str` = ``<default>`` # 标签颜色，支持 css 颜色语法
+            - sort: :class:`int` = ``<default>``  # 序号
         """
         api = "https://webapi.115.com/label/edit"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -3999,17 +4304,20 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """罗列标签列表（如果要获取做了标签的文件列表，用 `fs_search` 接口）
+
         GET https://webapi.115.com/label/list
-        payload:
+
+        :payload:
+
             - offset: int = 0 # 索引偏移，从 0 开始
             - limit: int = 11500 # 一页大小
-            - keyword: str = <default> # 搜索关键词
-            - sort: "name" | "update_time" | "create_time" = <default>
+            - keyword: :class:`str` = ``<default>`` # 搜索关键词
+            - sort: "name" | "update_time" | "create_time" = ``<default>``
                 # 排序字段:
                 # - 名称: "name"
                 # - 创建时间: "create_time"
                 # - 更新时间: "update_time"
-            - order: "asc" | "desc" = <default> # 排序顺序："asc"(升序), "desc"(降序)
+            - order: "asc" | "desc" = ``<default>`` # 排序顺序："asc"(升序), "desc"(降序)
         """
         api = "https://webapi.115.com/label/list"
         payload = {"offset": 0, "limit": 11500, **payload}
@@ -4046,7 +4354,7 @@ class P115Client:
         """为文件或目录设置标签，此接口是对 `fs_edit` 的封装
 
         :param fids: 单个或多个文件或目录 id
-        :param file_label: 标签 id，如果有多个，用逗号 "," 隔开
+        :param file_label: 标签 id，多个用逗号 ``","`` 隔开
         """
         if isinstance(fids, (int, str)):
             payload = [("fid", fids)]
@@ -4083,17 +4391,20 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """批量设置标签
+
         POST https://webapi.115.com/files/batch_label
-        payload:
+
+        :payload:
+
             - action: "add" | "remove" | "reset" | "replace"
                 # 操作名
                 # - 添加: "add"
                 # - 移除: "remove"
                 # - 重设: "reset"
                 # - 替换: "replace"
-            - file_ids: int | str # 文件或目录 id，如果有多个，用逗号 "," 隔开
-            - file_label: int | str = <default> # 标签 id，如果有多个，用逗号 "," 隔开
-            - file_label[{file_label}]: int | str = <default> # action 为 replace 时使用此参数，file_label[{原标签id}]: {目标标签id}，例如 file_label[123]: 456，就是把 id 是 123 的标签替换为 id 是 456 的标签
+            - file_ids: :class:`int` | :class:`str` # 文件或目录 id，多个用逗号 ``","`` 隔开
+            - file_label: :class:`int` | :class:`str` = ``<default>`` # 标签 id，多个用逗号 ``","`` 隔开
+            - file_label[{file_label}]: :class:`int` | :class:`str` = ``<default>`` # action 为 replace 时使用此参数，file_label[{原标签id}]: {目标标签id}，例如 file_label[123]: 456，就是把 id 是 123 的标签替换为 id 是 456 的标签
         """
         api = "https://webapi.115.com/files/batch_label"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -4124,8 +4435,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """新建目录
+
         POST https://webapi.115.com/files/add
-        payload:
+
+        :payload:
+
             - cname: str
             - pid: int | str = 0
         """
@@ -4168,13 +4482,16 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """移动文件或目录
+
         POST https://webapi.115.com/files/move
-        payload:
+
+        :payload:
+
             - pid: int | str
             - fid[0]: int | str
             - fid[1]: int | str
             - ...
-            - move_proid: str = <default> # 任务 id
+            - move_proid: :class:`str` = ``<default>`` # 任务 id
         """
         api = "https://webapi.115.com/files/move"
         if isinstance(payload, (int, str)):
@@ -4214,8 +4531,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置某个目录内文件的默认排序
+
         POST https://webapi.115.com/files/order
-        payload:
+
+        :payload:
+
             - user_order: str
                 # 用某字段排序：
                 # - 文件名："file_name"
@@ -4225,8 +4545,8 @@ class P115Client:
                 # - 创建时间："user_ptime"
                 # - 上一次打开时间："user_otime"
             - file_id: int | str = 0 # 目录 id
-            - user_asc: 0 | 1 = <default> # 是否升序排列
-            - fc_mix: 0 | 1 = <default>   # 是否目录和文件混合，如果为 0 则目录在前
+            - user_asc: ``0`` | ``1`` = ``<default>`` # 是否升序排列
+            - fc_mix: ``0`` | ``1`` = ``<default>``   # 是否目录和文件混合，如果为 0 则目录在前
         """
         api = "https://webapi.115.com/files/order"
         if isinstance(payload, str):
@@ -4261,8 +4581,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """重命名文件或目录
+
         POST https://webapi.115.com/files/batch_rename
-        payload:
+
+        :payload:
+
             - files_new_name[{file_id}]: str # 值为新的文件名（basename）
         """
         api = "https://webapi.115.com/files/batch_rename"
@@ -4300,8 +4623,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """查找重复文件（罗列除此以外的 sha1 相同的文件）
+
         GET https://webapi.115.com/files/get_repeat_sha
-        payload:
+
+        :payload:
+
             file_id: int | str
             offset: int = 0
             limit: int = 1150
@@ -4344,9 +4670,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """给文件或目录评分
+
         POST https://webapi.115.com/files/score
-        payload:
-            - file_id: int | str # 文件或目录 id，如果有多个，用逗号 "," 隔开
+
+        :payload:
+
+            - file_id: :class:`int` | :class:`str` # 文件或目录 id，多个用逗号 ``","`` 隔开
             - score: int = 0     # 0 为删除评分
         """
         api = "https://webapi.115.com/files/score"
@@ -4379,18 +4708,21 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """搜索文件或目录（提示：好像最多只能罗列前 10,000 条数据，也就是 limit + offset <= 10_000）
+
         GET https://webapi.115.com/files/search
-        payload:
+
+        :payload:
+
             - aid: int | str = 1 # area_id，不知道的话，设置为 1
-            - asc: 0 | 1 = <default> # 是否升序排列
+            - asc: ``0`` | ``1`` = ``<default>`` # 是否升序排列
             - cid: int | str = 0 # 目录 id
-            - count_folders: 0 | 1 = <default>
-            - date: str = <default> # 筛选日期
-            - fc_mix: 0 | 1 = <default> # 是否目录和文件混合，如果为 0 则目录在前
-            - file_label: int | str = <default> # 标签 id
+            - count_folders: ``0`` | ``1`` = ``<default>``
+            - date: :class:`str` = ``<default>`` # 筛选日期
+            - fc_mix: ``0`` | ``1`` = ``<default>`` # 是否目录和文件混合，如果为 0 则目录在前
+            - file_label: :class:`int` | :class:`str` = ``<default>`` # 标签 id
             - format: str = "json" # 输出格式（不用管）
             - limit: int = 32 # 一页大小，意思就是 page_size
-            - o: str = <default>
+            - o: :class:`str` = ``<default>``
                 # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
@@ -4399,13 +4731,13 @@ class P115Client:
                 # - 创建时间："user_ptime"
                 # - 上一次打开时间："user_otime"
             - offset: int = 0  # 索引偏移，索引从 0 开始计算
-            - pick_code: str = <default>
-            - search_value: str = <default>
-            - show_dir: 0 | 1 = 1
-            - source: str = <default>
-            - star: 0 | 1 = <default>
-            - suffix: str = <default>
-            - type: int = <default>
+            - pick_code: :class:`str` = ``<default>``
+            - search_value: :class:`str` = ``<default>``
+            - show_dir: ``0`` | ``1`` = 1
+            - source: :class:`str` = ``<default>``
+            - star: ``0`` | ``1`` = ``<default>``
+            - suffix: :class:`str` = ``<default>``
+            - type: :class:`int` = ``<default>``
                 # 文件类型：
                 # - 全部: 0
                 # - 文档: 1
@@ -4455,8 +4787,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """通过 sha1 搜索文件
+
         GET https://webapi.115.com/files/shasearch
-        payload:
+
+        :payload:
+
             - sha1: str
         """
         api = "https://webapi.115.com/files/shasearch"
@@ -4487,6 +4822,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取使用空间的统计数据（较为简略，如需更详细，请用 `P115Client.fs_index_info()`）
+
         GET https://proapi.115.com/android/1.0/user/space_info
         """
         api = "https://proapi.115.com/android/1.0/user/space_info"
@@ -4521,8 +4857,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取数据报告
+
         GET https://webapi.115.com/user/report
-        payload:
+
+        :payload:
+
             - month: str # 年月，格式为 YYYYMM
         """
         api = "https://webapi.115.com/user/report"
@@ -4553,6 +4892,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取数据报告（分组聚合）
+
         POST https://webapi.115.com/user/space_summury
         """
         api = "https://webapi.115.com/user/space_summury"
@@ -4590,10 +4930,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """为文件或目录设置或取消星标
+
         POST https://webapi.115.com/files/star
-        payload:
-            - file_id: int | str # 文件或目录 id，如果有多个，用逗号 "," 隔开
-            - star: 0 | 1 = 1
+
+        :payload:
+
+            - file_id: :class:`int` | :class:`str` # 文件或目录 id，多个用逗号 ``","`` 隔开
+            - star: ``0`` | ``1`` = 1
         """
         api = "https://webapi.115.com/files/star"
         payload = {"file_id": file_id, "star": int(star)}
@@ -4622,6 +4965,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取使用空间的统计数据（最简略，如需更详细，请用 `fs.fs_space_info()`）
+
         GET https://115.com/index.php?ct=ajax&ac=get_storage_info
         """
         api = "https://115.com/index.php?ct=ajax&ac=get_storage_info"
@@ -4653,11 +4997,14 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取视频信息
+
         GET https://webapi.115.com/files/video
-        payload:
+
+        :payload:
+
             - pickcode: str
-            - share_id: int | str = <default>
-            - local: 0 | 1 = <default>
+            - share_id: :class:`int` | :class:`str` = ``<default>``
+            - local: ``0`` | ``1`` = ``<default>``
         """
         api = "https://webapi.115.com/files/video"
         if isinstance(payload, str):
@@ -4696,6 +5043,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """获取视频的 m3u8 文件列表，此接口必须使用 web 的 cookies
+
         GET http://115.com/api/video/m3u8/{pickcode}.m3u8?definition={definition}
 
         :param pickcode: 视频文件的 pickcode
@@ -4746,8 +5094,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取视频字幕
+
         GET https://webapi.115.com/movies/subtitle
-        payload:
+
+        :payload:
+
             - pickcode: str
         """
         api = "https://webapi.115.com/movies/subtitle"
@@ -4783,8 +5134,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取 life_list 操作记录明细
+
         GET https://proapi.115.com/android/1.0/behavior/detail
-        payload:
+
+        :payload:
+
             - type: str
                 # 操作类型
                 # - "browser_image":     浏览图片
@@ -4804,7 +5158,7 @@ class P115Client:
                 # - "copy_file":         复制文件（未实现）
             - limit: int = 32
             - offset: int = 0
-            - date: str = <default> # 默认为今天，格式为 yyyy-mm-dd
+            - date: :class:`str` = ``<default>`` # 默认为今天，格式为 yyyy-mm-dd
         """
         api = "https://proapi.115.com/android/1.0/behavior/detail"
         if isinstance(payload, str):
@@ -4836,6 +5190,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取 115 生活的开关设置
+
         GET https://life.115.com/api/1.0/web/1.0/calendar/getoption
         """
         api = "https://life.115.com/api/1.0/web/1.0/calendar/getoption"
@@ -4870,17 +5225,20 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置 115 生活的开关选项
+
         POST https://life.115.com/api/1.0/web/1.0/calendar/setoption
-        payload:
-            - locus: 0 | 1 = 1     # 开启或关闭最近记录
-            - open_life: 0 | 1 = 1 # 显示或关闭
-            - birthday: 0 | 1 = <default>
-            - holiday: 0 | 1 = <default>
-            - lunar: 0 | 1 = <default>
-            - view: 0 | 1 = <default>
-            - diary: 0 | 1 = <default>
-            - del_notice_item: 0 | 1 = <default>
-            - first_week: 0 | 1 = <default>
+
+        :payload:
+
+            - locus: ``0`` | ``1`` = 1     # 开启或关闭最近记录
+            - open_life: ``0`` | ``1`` = 1 # 显示或关闭
+            - birthday: ``0`` | ``1`` = ``<default>``
+            - holiday: ``0`` | ``1`` = ``<default>``
+            - lunar: ``0`` | ``1`` = ``<default>``
+            - view: ``0`` | ``1`` = ``<default>``
+            - diary: ``0`` | ``1`` = ``<default>``
+            - del_notice_item: ``0`` | ``1`` = ``<default>``
+            - first_week: ``0`` | ``1`` = ``<default>``
         """
         if isinstance(payload, dict):
             payload = {"locus": 1, "open_life": 1, **payload}
@@ -4918,8 +5276,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """罗列登录和增删改操作记录（最新几条）
+
         GET https://life.115.com/api/1.0/web/1.0/life/life_list
-        payload:
+
+        :payload:
+
             - start: int = 0
             - limit: int = 1000
             - show_type: int = 0
@@ -4929,18 +5290,18 @@ class P115Client:
                 # 2: 浏览文件
                 # 3: <UNKNOWN>
                 # 4: account_security
-            - type: int = <default>
-            - tab_type: int = <default>
-            - file_behavior_type: int | str = <default>
-            - mode: str = <default>
-            - check_num: int = <default>
-            - total_count: int = <default>
-            - start_time: int = <default>
-            - end_time: int = <default> # 默认为次日零点前一秒
-            - show_note_cal: 0 | 1 = <default>
-            - isShow: 0 | 1 = <default>
-            - isPullData: 'true' | 'false' = <default>
-            - last_data: str = <default> # JSON object, e.g. {"last_time":1700000000,"last_count":1,"total_count":200}
+            - type: :class:`int` = ``<default>``
+            - tab_type: :class:`int` = ``<default>``
+            - file_behavior_type: :class:`int` | :class:`str` = ``<default>``
+            - mode: :class:`str` = ``<default>``
+            - check_num: :class:`int` = ``<default>``
+            - total_count: :class:`int` = ``<default>``
+            - start_time: :class:`int` = ``<default>``
+            - end_time: :class:`int` = ``<default>`` # 默认为次日零点前一秒
+            - show_note_cal: ``0`` | ``1`` = ``<default>``
+            - isShow: ``0`` | ``1`` = ``<default>``
+            - isPullData: 'true' | 'false' = ``<default>``
+            - last_data: :class:`str` = ``<default>`` # JSON object, e.g. {"last_time":1700000000,"last_count":1,"total_count":200}
         """
         api = "https://life.115.com/api/1.0/web/1.0/life/life_list"
         now = datetime.now()
@@ -5013,6 +5374,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """检查当前用户的登录状态
+
         GET https://passportapi.115.com/app/1.0/web/1.0/check/sso
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/check/sso"
@@ -5073,6 +5435,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取所有的已登录设备的信息，不过当前的 cookies 必须是登录状态（未退出或未失效）
+
         GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_devices"
@@ -5101,6 +5464,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取登录信息
+
         GET https://proapi.115.com/pc/user/login_info
         """
         api = "https://proapi.115.com/pc/user/login_info"
@@ -5135,8 +5499,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取登录信息
+
         GET https://passportapi.115.com/app/1.0/web/1.0/login_log/log
-        payload:
+
+        :payload:
+
             - start: int = 0
             - limit: int = 100
         """
@@ -5167,6 +5534,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """当前登录的设备总数和最近登录的设备
+
         GET https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/login_log/login_online"
@@ -5201,6 +5569,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """下载登录二维码图片
+
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode
 
         :params uid: 二维码的 uid
@@ -5242,8 +5611,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """扫描二维码，payload 数据取自 `login_qrcode_token` 接口响应
+
         GET https://qrcodeapi.115.com/api/2.0/prompt.php
-        payload:
+
+        :payload:
+
             - uid: str
         """
         api = "https://qrcodeapi.115.com/api/2.0/prompt.php"
@@ -5277,8 +5649,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
+
         GET https://hnqrcodeapi.115.com/api/2.0/slogin.php
-        payload:
+
+        :payload:
+
             - key: str
             - uid: str
             - client: int = 0
@@ -5317,8 +5692,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """确认扫描二维码，payload 数据取自 `login_qrcode_scan` 接口响应
+
         GET https://hnqrcodeapi.115.com/api/2.0/cancel.php
-        payload:
+
+        :payload:
+
             - key: str
             - uid: str
             - client: int = 0
@@ -5361,8 +5739,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取扫码登录的结果，包含 cookie
+
         POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
-        payload:
+
+        :payload:
+
             - account: int | str
             - app: str = "qandroid"
         """
@@ -5409,8 +5790,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取二维码的状态（未扫描、已扫描、已登录、已取消、已过期等），payload 数据取自 `login_qrcode_token` 接口响应
+
         GET https://qrcodeapi.115.com/get/status/
-        payload:
+
+        :payload:
+
             - uid: str
             - time: int
             - sign: str
@@ -5445,6 +5829,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取登录二维码，扫码可用
+
         GET https://qrcodeapi.115.com/api/1.0/web/1.0/token/
         """
         api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
@@ -5477,6 +5862,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bool | Coroutine[Any, Any, bool]:
         """检查是否已登录
+
         GET https://my.115.com/?ct=guide&ac=status
         """
         api = "https://my.115.com/?ct=guide&ac=status"
@@ -5532,38 +5918,64 @@ class P115Client:
         **request_kwargs, 
     ) -> None | Coroutine[Any, Any, None]:
         """退出登录状态（可以把某个客户端下线，所有已登录设备可从 `login_devices` 获取）
+
         GET https://passportapi.115.com/app/1.0/{app}/1.0/logout/logout
 
         :param app: 退出登录的 app
 
-        设备列表如下：
+        :设备列表如下:
 
-        | No.    | ssoent  | app        | description            |
-        |-------:|:--------|:-----------|:-----------------------|
-        |     01 | A1      | web        | 网页版                 |
-        |     02 | A2      | ?          | 未知: android          |
-        |     03 | A3      | ?          | 未知: iphone           |
-        |     04 | A4      | ?          | 未知: ipad             |
-        |     05 | B1      | ?          | 未知: android          |
-        |     06 | D1      | ios        | 115生活(iOS端)         |
-        |     07 | D2      | ?          | 未知: ios              |
-        |     08 | D3      | 115ios     | 115(iOS端)             |
-        |     09 | F1      | android    | 115生活(Android端)     |
-        |     10 | F2      | ?          | 未知: android          |
-        |     11 | F3      | 115android | 115(Android端)         |
-        |     12 | H1      | ipad       | 未知: ipad             |
-        |     13 | H2      | ?          | 未知: ipad             |
-        |     14 | H3      | 115ipad    | 115(iPad端)            |
-        |     15 | I1      | tv         | 115网盘(Android电视端) |
-        |     16 | M1      | qandriod   | 115管理(Android端)     |
-        |     17 | N1      | qios       | 115管理(iOS端)         |
-        |     18 | O1      | ?          | 未知: ipad             |
-        |     19 | P1      | windows    | 115生活(Windows端)     |
-        |     20 | P2      | mac        | 115生活(macOS端)       |
-        |     21 | P3      | linux      | 115生活(Linux端)       |
-        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
-        |     24 | S1      | harmony    | 115(Harmony端)         |
+        +-------+----------+------------+-------------------------+
+        | No.   | ssoent   | app        | description             |
+        +=======+==========+============+=========================+
+        | 01    | A1       | web        | 网页版                  |
+        +-------+----------+------------+-------------------------+
+        | 02    | A2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 03    | A3       | ?          | 未知: iphone            |
+        +-------+----------+------------+-------------------------+
+        | 04    | A4       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 05    | B1       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 06    | D1       | ios        | 115生活(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 07    | D2       | ?          | 未知: ios               |
+        +-------+----------+------------+-------------------------+
+        | 08    | D3       | 115ios     | 115(iOS端)              |
+        +-------+----------+------------+-------------------------+
+        | 09    | F1       | android    | 115生活(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 10    | F2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 11    | F3       | 115android | 115(Android端)          |
+        +-------+----------+------------+-------------------------+
+        | 12    | H1       | ipad       | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 13    | H2       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 14    | H3       | 115ipad    | 115(iPad端)             |
+        +-------+----------+------------+-------------------------+
+        | 15    | I1       | tv         | 115网盘(Android电视端)  |
+        +-------+----------+------------+-------------------------+
+        | 16    | M1       | qandriod   | 115管理(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 17    | N1       | qios       | 115管理(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 18    | O1       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 19    | P1       | windows    | 115生活(Windows端)      |
+        +-------+----------+------------+-------------------------+
+        | 20    | P2       | mac        | 115生活(macOS端)        |
+        +-------+----------+------------+-------------------------+
+        | 21    | P3       | linux      | 115生活(Linux端)        |
+        +-------+----------+------------+-------------------------+
+        | 22    | R1       | wechatmini | 115生活(微信小程序)     |
+        +-------+----------+------------+-------------------------+
+        | 23    | R2       | alipaymini | 115生活(支付宝小程序)   |
+        +-------+----------+------------+-------------------------+
+        | 24    | S1       | harmony    | 115(Harmony端)          |
+        +-------+----------+------------+-------------------------+
         """
         def gen_step():
             nonlocal app
@@ -5609,38 +6021,66 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """退出登录状态（可以把某个客户端下线，所有已登录设备可从 `login_devices` 获取）
+
         GET https://passportapi.115.com/app/1.0/web/1.0/logout/mange
-        payload:
+
+        :payload:
+
             ssoent: str
 
-        设备列表如下：
+        :设备列表如下:
 
-        | No.    | ssoent  | app        | description            |
-        |-------:|:--------|:-----------|:-----------------------|
-        |     01 | A1      | web        | 网页版                 |
-        |     02 | A2      | ?          | 未知: android          |
-        |     03 | A3      | ?          | 未知: iphone           |
-        |     04 | A4      | ?          | 未知: ipad             |
-        |     05 | B1      | ?          | 未知: android          |
-        |     06 | D1      | ios        | 115生活(iOS端)         |
-        |     07 | D2      | ?          | 未知: ios              |
-        |     08 | D3      | 115ios     | 115(iOS端)             |
-        |     09 | F1      | android    | 115生活(Android端)     |
-        |     10 | F2      | ?          | 未知: android          |
-        |     11 | F3      | 115android | 115(Android端)         |
-        |     12 | H1      | ipad       | 未知: ipad             |
-        |     13 | H2      | ?          | 未知: ipad             |
-        |     14 | H3      | 115ipad    | 115(iPad端)            |
-        |     15 | I1      | tv         | 115网盘(Android电视端) |
-        |     16 | M1      | qandriod   | 115管理(Android端)     |
-        |     17 | N1      | qios       | 115管理(iOS端)         |
-        |     18 | O1      | ?          | 未知: ipad             |
-        |     19 | P1      | windows    | 115生活(Windows端)     |
-        |     20 | P2      | mac        | 115生活(macOS端)       |
-        |     21 | P3      | linux      | 115生活(Linux端)       |
-        |     22 | R1      | wechatmini | 115生活(微信小程序)    |
-        |     23 | R2      | alipaymini | 115生活(支付宝小程序)  |
-        |     24 | S1      | harmony    | 115(Harmony端)         |
+        +-------+----------+------------+-------------------------+
+        | No.   | ssoent   | app        | description             |
+        +=======+==========+============+=========================+
+        | 01    | A1       | web        | 网页版                  |
+        +-------+----------+------------+-------------------------+
+        | 02    | A2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 03    | A3       | ?          | 未知: iphone            |
+        +-------+----------+------------+-------------------------+
+        | 04    | A4       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 05    | B1       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 06    | D1       | ios        | 115生活(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 07    | D2       | ?          | 未知: ios               |
+        +-------+----------+------------+-------------------------+
+        | 08    | D3       | 115ios     | 115(iOS端)              |
+        +-------+----------+------------+-------------------------+
+        | 09    | F1       | android    | 115生活(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 10    | F2       | ?          | 未知: android           |
+        +-------+----------+------------+-------------------------+
+        | 11    | F3       | 115android | 115(Android端)          |
+        +-------+----------+------------+-------------------------+
+        | 12    | H1       | ipad       | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 13    | H2       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 14    | H3       | 115ipad    | 115(iPad端)             |
+        +-------+----------+------------+-------------------------+
+        | 15    | I1       | tv         | 115网盘(Android电视端)  |
+        +-------+----------+------------+-------------------------+
+        | 16    | M1       | qandriod   | 115管理(Android端)      |
+        +-------+----------+------------+-------------------------+
+        | 17    | N1       | qios       | 115管理(iOS端)          |
+        +-------+----------+------------+-------------------------+
+        | 18    | O1       | ?          | 未知: ipad              |
+        +-------+----------+------------+-------------------------+
+        | 19    | P1       | windows    | 115生活(Windows端)      |
+        +-------+----------+------------+-------------------------+
+        | 20    | P2       | mac        | 115生活(macOS端)        |
+        +-------+----------+------------+-------------------------+
+        | 21    | P3       | linux      | 115生活(Linux端)        |
+        +-------+----------+------------+-------------------------+
+        | 22    | R1       | wechatmini | 115生活(微信小程序)     |
+        +-------+----------+------------+-------------------------+
+        | 23    | R2       | alipaymini | 115生活(支付宝小程序)   |
+        +-------+----------+------------+-------------------------+
+        | 24    | S1       | harmony    | 115(Harmony端)          |
+        +-------+----------+------------+-------------------------+
         """
         api = "https://passportapi.115.com/app/1.0/web/1.0/logout/mange"
         if payload is None:
@@ -5680,11 +6120,14 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取提示消息
+
         GET https://pmsg.115.com/api/1.0/app/1.0/contact/ls
-        payload:
+
+        :payload:
+
             limit: int = 115
             skip: int = 0
-            t: 0 | 1 = 1
+            t: ``0`` | ``1`` = 1
         """
         api = "https://pmsg.115.com/api/1.0/app/1.0/contact/ls"
         if isinstance(payload, int):
@@ -5716,6 +6159,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取提示消息
+
         GET https://msg.115.com/?ct=contacts&ac=notice&client=web
         """
         api = "https://msg.115.com/?ct=contacts&ac=notice&client=web"
@@ -5744,6 +6188,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取 websocket 链接
+
         GET https://msg.115.com/?ct=im&ac=get_websocket_host
         """
         api = "https://msg.115.com/?ct=im&ac=get_websocket_host"
@@ -5777,14 +6222,17 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """添加一个种子作为离线任务
+
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_bt
-        payload:
+
+        :payload:
+
             - info_hash: str
             - wanted: str
-            - sign: str = <default>
-            - time: int = <default>
-            - savepath: str = <default>
-            - wp_path_id: int | str = <default>
+            - sign: :class:`str` = ``<default>``
+            - time: :class:`int` = ``<default>``
+            - savepath: :class:`str` = ``<default>``
+            - wp_path_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_bt"
         if "sign" not in payload:
@@ -5819,13 +6267,16 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """添加一个离线任务
+
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_url
-        payload:
+
+        :payload:
+
             - url: str
-            - sign: str = <default>
-            - time: int = <default>
-            - savepath: str = <default>
-            - wp_path_id: int | str = <default>
+            - sign: :class:`str` = ``<default>``
+            - time: :class:`int` = ``<default>``
+            - savepath: :class:`str` = ``<default>``
+            - wp_path_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_url"
         if isinstance(payload, str):
@@ -5862,15 +6313,18 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """添加一组离线任务
+
         POST https://115.com/web/lixian/?ct=lixian&ac=add_task_urls
-        payload:
+
+        :payload:
+
             - url[0]: str
             - url[1]: str
             - ...
-            - sign: str = <default>
-            - time: int = <default>
-            - savepath: str = <default>
-            - wp_path_id: int | str = <default>
+            - sign: :class:`str` = ``<default>``
+            - time: :class:`int` = ``<default>``
+            - savepath: :class:`str` = ``<default>``
+            - wp_path_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://115.com/web/lixian/?ct=lixian&ac=add_task_urls"
         if not isinstance(payload, dict):
@@ -5909,8 +6363,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """清空离线任务列表
+
         POST https://115.com/web/lixian/?ct=lixian&ac=task_clear
-        payload:
+
+        :payload:
+
             flag: int = 0
                 - 0: 已完成
                 - 1: 全部
@@ -5952,6 +6409,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前默认的离线下载到的目录信息（可能有多个）
+
         GET https://webapi.115.com/offine/downpath
         """
         api = "https://webapi.115.com/offine/downpath"
@@ -5980,6 +6438,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取关于离线的限制的信息
+
         GET https://115.com/?ct=offline&ac=space
         """
         api = "https://115.com/?ct=offline&ac=space"
@@ -6011,8 +6470,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前的离线任务列表
+
         POST https://lixian.115.com/lixian/?ct=lixian&ac=task_lists
-        payload:
+
+        :payload:
+
             - page: int | str
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_lists"
@@ -6043,6 +6505,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前离线配额信息（简略）
+
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_info"
@@ -6071,6 +6534,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前离线配额信息（详细）
+
         GET https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=get_quota_package_info"
@@ -6102,14 +6566,17 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除一组离线任务（无论是否已经完成）
+
         POST https://lixian.115.com/lixian/?ct=lixian&ac=task_del
-        payload:
+
+        :payload:
+
             - hash[0]: str
             - hash[1]: str
             - ...
-            - sign: str = <default>
-            - time: int = <default>
-            - flag: 0 | 1 = <default> # 是否删除源文件
+            - sign: :class:`str` = ``<default>``
+            - time: :class:`int` = ``<default>``
+            - flag: ``0`` | ``1`` = ``<default>`` # 是否删除源文件
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=task_del"
         if isinstance(payload, str):
@@ -6146,8 +6613,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """查看种子的文件列表等信息
+
         POST https://lixian.115.com/lixian/?ct=lixian&ac=torrent
-        payload:
+
+        :payload:
+
             - sha1: str
         """
         api = "https://lixian.115.com/lixian/?ct=lixian&ac=torrent"
@@ -6178,6 +6648,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前的种子上传到的目录，当你添加种子任务后，这个种子会在此目录中保存
+
         GET https://115.com/?ct=lixian&ac=get_id&torrent=1
         """
         api = "https://115.com/?ct=lixian&ac=get_id&torrent=1"
@@ -6211,12 +6682,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：删除或清空
+
         POST https://webapi.115.com/rb/clean
-        payload:
-            - rid[0]: int | str # NOTE: 如果没有 rid，就是清空回收站
+
+        :payload:
+
+            - rid[0]: :class:`int` | :class:`str` # NOTE: 如果没有 rid，就是清空回收站
             - rid[1]: int | str
             - ...
-            - password: int | str = <default>
+            - password: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://webapi.115.com/rb/clean"
         if isinstance(payload, (int, str)):
@@ -6251,8 +6725,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：文件信息
+
         POST https://webapi.115.com/rb/rb_info
-        payload:
+
+        :payload:
+
             - rid: int | str
         """
         api = "https://webapi.115.com/rb/rb_info"
@@ -6289,14 +6766,17 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：罗列
+
         GET https://webapi.115.com/rb
-        payload:
+
+        :payload:
+
             - aid: int | str = 7
             - cid: int | str = 0
             - limit: int = 32
             - offset: int = 0
             - format: str = "json"
-            - source: str = <default>
+            - source: :class:`str` = ``<default>``
         """ 
         api = "https://webapi.115.com/rb"
         if isinstance(payload, int):
@@ -6331,8 +6811,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """回收站：还原
+
         POST https://webapi.115.com/rb/revert
-        payload:
+
+        :payload:
+
             - rid[0]: int | str
             - rid[1]: int | str
             - ...
@@ -6372,8 +6855,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接的某个目录中可下载的文件的列表（只含文件，不含目录，任意深度，简略信息）
+
         GET https://proapi.115.com/app/share/downlist
-        payload:
+
+        :payload:
+
             - share_code: str
             - receive_code: str
             - cid: int | str = 0
@@ -6416,12 +6902,15 @@ class P115Client:
         **request_kwargs, 
     ) -> P115URL | Coroutine[Any, Any, P115URL]:
         """获取分享链接中某个文件的下载链接，此接口是对 `share_download_url_app` 的封装
+
         POST https://proapi.115.com/app/share/downurl
-        payload:
+
+        :payload:
+
             - file_id: int | str
             - receive_code: str
             - share_code: str
-            - user_id: int | str = <default>
+            - user_id: :class:`int` | :class:`str` = ``<default>``
         """
         if use_web_api:
             resp = self.share_download_url_web(payload, async_=async_, **request_kwargs)
@@ -6481,12 +6970,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接中某个文件的下载链接
+
         POST https://proapi.115.com/app/share/downurl
-        payload:
+
+        :payload:
+
             - file_id: int | str
             - receive_code: str
             - share_code: str
-            - user_id: int | str = <default>
+            - user_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://proapi.115.com/app/share/downurl"
         def parse(resp, content: bytes) -> dict:
@@ -6524,12 +7016,15 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接中某个文件的下载链接（网页版接口，不推荐使用）
+
         GET https://webapi.115.com/share/downurl
-        payload:
+
+        :payload:
+
             - file_id: int | str
             - receive_code: str
             - share_code: str
-            - user_id: int | str = <default>
+            - user_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://webapi.115.com/share/downurl"
         return self.request(url=api, params=payload, async_=async_, **request_kwargs)
@@ -6560,8 +7055,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取（自己的）分享信息
+
         GET https://webapi.115.com/share/shareinfo
-        payload:
+
+        :payload:
+
             - share_code: str
         """
         api = "https://webapi.115.com/share/shareinfo"
@@ -6595,11 +7093,14 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """罗列（自己的）分享信息列表
+
         GET https://webapi.115.com/share/slist
-        payload:
+
+        :payload:
+
             - limit: int = 32
             - offset: int = 0
-            - user_id: int | str = <default>
+            - user_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://webapi.115.com/share/slist"
         payload = {"offset": 0, "limit": 32, **payload}
@@ -6631,13 +7132,16 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """接收分享链接的某些文件或目录
+
         POST https://webapi.115.com/share/receive
-        payload:
+
+        :payload:
+
             - share_code: str
             - receive_code: str
             - file_id: int | str             # 有多个时，用逗号 "," 分隔
-            - cid: int | str = <default>     # 这是你网盘的目录 cid
-            - user_id: int | str = <default>
+            - cid: :class:`int` | :class:`str` = ``<default>``     # 这是你网盘的目录 cid
+            - user_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://webapi.115.com/share/receive"
         payload = {"cid": 0, **payload}
@@ -6669,10 +7173,13 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """创建（自己的）分享
+
         POST https://webapi.115.com/share/send
-        payload:
-            - file_ids: int | str # 文件列表，有多个用逗号 "," 隔开
-            - is_asc: 0 | 1 = 1 # 是否升序排列
+
+        :payload:
+
+            - file_ids: :class:`int` | :class:`str` # 文件列表，有多个用逗号 ``","`` 隔开
+            - is_asc: ``0`` | ``1`` = 1 # 是否升序排列
             - order: str = "file_name"
                 # 用某字段排序：
                 # - 文件名："file_name"
@@ -6681,8 +7188,8 @@ class P115Client:
                 # - 修改时间："user_utime"
                 # - 创建时间："user_ptime"
                 # - 上一次打开时间："user_otime"
-            - ignore_warn: 0 | 1 = 1 # 忽略信息提示，传 1 就行了
-            - user_id: int | str = <default>
+            - ignore_warn: ``0`` | ``1`` = 1 # 忽略信息提示，传 1 就行了
+            - user_id: :class:`int` | :class:`str` = ``<default>``
         """
         api = "https://webapi.115.com/share/send"
         if isinstance(payload, (int, str)):
@@ -6720,15 +7227,18 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享链接的某个目录中的文件和子目录的列表（包含详细信息）
+
         GET https://webapi.115.com/share/snap
-        payload:
+
+        :payload:
+
             - share_code: str
             - receive_code: str
             - cid: int | str = 0
             - limit: int = 32
             - offset: int = 0
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - o: str = <default>
+            - asc: ``0`` | ``1`` = ``<default>`` # 是否升序排列
+            - o: :class:`str` = ``<default>``
                 # 用某字段排序：
                 # - 文件名："file_name"
                 # - 文件大小："file_size"
@@ -6771,15 +7281,18 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """变更（自己的）分享的配置（例如改访问密码，取消分享）
+
         POST https://webapi.115.com/share/updateshare
-        payload:
+
+        :payload:
+
             - share_code: str
-            - receive_code: str = <default>         # 访问密码（口令）
-            - share_duration: int = <default>       # 分享天数: 1(1天), 7(7天), -1(长期)
-            - is_custom_code: 0 | 1 = <default>     # 用户自定义口令（不用管）
-            - auto_fill_recvcode: 0 | 1 = <default> # 分享链接自动填充口令（不用管）
-            - share_channel: int = <default>        # 分享渠道代码（不用管）
-            - action: str = <default>               # 操作: 取消分享 "cancel"
+            - receive_code: :class:`str` = ``<default>``         # 访问密码（口令）
+            - share_duration: :class:`int` = ``<default>``       # 分享天数: 1(1天), 7(7天), -1(长期)
+            - is_custom_code: ``0`` | ``1`` = ``<default>``     # 用户自定义口令（不用管）
+            - auto_fill_recvcode: ``0`` | ``1`` = ``<default>`` # 分享链接自动填充口令（不用管）
+            - share_channel: :class:`int` = ``<default>``        # 分享渠道代码（不用管）
+            - action: :class:`str` = ``<default>``               # 操作: 取消分享 "cancel"
         """
         api = "https://webapi.115.com/share/updateshare"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -6809,6 +7322,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除空目录
+
         GET https://115.com/?ct=tool&ac=clear_empty_folder
         """
         api = "https://115.com/?ct=tool&ac=clear_empty_folder"
@@ -6840,9 +7354,12 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """开始一键排重任务
+
         POST https://aps.115.com/repeat/repeat.php
-        payload:
-            - folder_id: int | str # 目录 id
+
+        :payload:
+
+            - folder_id: :class:`int` | :class:`str` # 目录 id
         """
         api = "https://aps.115.com/repeat/repeat.php"
         if isinstance(payload, (int, str)):
@@ -6875,22 +7392,28 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除重复文件
+
         POST https://aps.115.com/repeat/repeat_delete.php
-        payload:
-            # 这 3 个参数用于批量删除
-            - filter_field: "parents" | "file_name" | "" | "" = <default>
+
+        :payload:
+
+            这 3 个参数用于批量删除
+
+            - filter_field: "parents" | "file_name" | "" | "" = ``<default>``
                 # 保留条件
                 # - "file_name": 文件名（按长度）
                 # - "parents": 所在目录路径（按长度）
                 # - "user_utime": 操作时间
                 # - "user_ptime": 创建时间
-            - filter_order: "asc" | "desc" = <default>
+            - filter_order: "asc" | "desc" = ``<default>``
                 # 排序
                 # - "asc": 升序，从小到大，取最小
                 # - "desc": 降序，从大到小，取最大
-            - batch: 0 | 1 = <default>
-            # 这 1 个参数用于手动指定删除对象
-            - sha1s[{sha1}]: int | str = <default> # 文件 id，多个用逗号 "," 隔开
+            - batch: ``0`` | ``1`` = ``<default>``
+
+            这 1 个参数用于手动指定删除对象
+
+            - sha1s[{sha1}]: :class:`int` | :class:`str` = ``<default>`` # 文件 id，多个用逗号 ``","`` 隔开
         """
         api = "https://aps.115.com/repeat/repeat_delete.php"
         return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
@@ -6918,6 +7441,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除重复文件进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
+
         GET https://aps.115.com/repeat/delete_status.php
         """
         api = "https://aps.115.com/repeat/delete_status.php"
@@ -6952,8 +7476,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取重复文件列表
+
         GET https://aps.115.com/repeat/repeat_list.php
-        payload:
+
+        :payload:
+
             - s: int = 0 # offset，从 0 开始
             - l: int = 0 # limit
         """
@@ -6983,6 +7510,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """查询一键排重任务进度和统计信息（status 为 False 表示进行中，为 True 表示完成）
+
         GET https://aps.115.com/repeat/repeat_status.php
         """
         api = "https://aps.115.com/repeat/repeat_status.php"
@@ -7011,6 +7539,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """检验空间
+
         GET https://115.com/?ct=tool&ac=space
 
         1、校验空间需全局进行扫描，请谨慎操作;
@@ -7020,551 +7549,6 @@ class P115Client:
         """
         api = "https://115.com/?ct=tool&ac=space"
         return self.request(url=api, async_=async_, **request_kwargs)
-
-    ########## User API ##########
-
-    @overload
-    def user_fingerprint(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_fingerprint(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_fingerprint(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取截图时嵌入的水印
-        GET https://webapi.115.com/user/fingerprint
-        """
-        api = "https://webapi.115.com/user/fingerprint"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_my(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_my(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_my(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取此用户信息
-        GET https://my.115.com/?ct=ajax&ac=nav
-        """
-        api = "https://my.115.com/?ct=ajax&ac=nav"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_my_info(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_my_info(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_my_info(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取此用户信息（更全）
-        GET https://my.115.com/?ct=ajax&ac=get_user_aq
-        """
-        api = "https://my.115.com/?ct=ajax&ac=get_user_aq"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_points_sign(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_points_sign(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_points_sign(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取签到信息
-        GET https://proapi.115.com/android/2.0/user/points_sign
-        """
-        api = "https://proapi.115.com/android/2.0/user/points_sign"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_points_sign_post(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_points_sign_post(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_points_sign_post(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """每日签到（注意：不要用 web，即浏览器，的 cookies，会失败）
-        POST https://proapi.115.com/android/2.0/user/points_sign
-        """
-        api = "https://proapi.115.com/android/2.0/user/points_sign"
-        t = int(time())
-        payload = {
-            "token": sha1(b"%d-Points_Sign@#115-%d" % (self.user_id, t)).hexdigest(), 
-            "token_time": t, 
-        }
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def user_setting(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_setting(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_setting(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取此账户的网页版设置（提示：较为复杂，自己抓包研究）
-        GET https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
-        """
-        api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_setting_set(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_setting_set(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_setting_set(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """修改此账户的网页版设置（提示：较为复杂，自己抓包研究）
-        POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
-        """
-        api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def user_setting_web(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_setting_web(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_setting_web(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
-        GET https://webapi.115.com/user/setting
-        """
-        api = "https://webapi.115.com/user/setting"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_setting_web_set(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_setting_web_set(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_setting_web_set(
-        self, 
-        payload: dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
-        POST https://webapi.115.com/user/setting
-        """
-        api = "https://webapi.115.com/user/setting"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def user_setting_app(
-        self, 
-        /, 
-        app: str = "android", 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_setting_app(
-        self, 
-        /, 
-        app: str = "android", 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_setting_app(
-        self, 
-        /, 
-        app: str = "android", 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
-        GET https://proapi.115.com/{app}/1.0/user/setting
-        """
-        api = f"https://proapi.115.com/{app}/1.0/user/setting"
-        return self.request(url=api, async_=async_, **request_kwargs)
-
-    @overload
-    def user_setting_app_set(
-        self, 
-        payload: dict, 
-        /, 
-        app: str = "android", 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_setting_app_set(
-        self, 
-        payload: dict, 
-        /, 
-        app: str = "android", 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_setting_app_set(
-        self, 
-        payload: dict, 
-        /, 
-        app: str = "android", 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
-        POST https://proapi.115.com/{app}/1.0/user/setting
-        """
-        api = f"https://proapi.115.com/{app}/1.0/user/setting"
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    ########## User Share API ##########
-
-    @overload
-    def usershare_action(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def usershare_action(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def usershare_action(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取共享动态列表
-        GET https://webapi.115.com/usershare/action
-        payload:
-            - share_id: int | str
-            - offset: int = 0
-            - limit: int = 32
-        """
-        api = "https://webapi.115.com/usershare/action"
-        if isinstance(payload, int):
-            payload = {"limit": 32, "offset": 0, "share_id": payload}
-        else:
-            payload = {"limit": 32, "offset": 0, **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def usershare_invite(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def usershare_invite(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def usershare_invite(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取共享链接
-        POST https://webapi.115.com/usershare/invite
-        payload:
-            - share_id: int | str
-        """
-        api = "https://webapi.115.com/usershare/invite"
-        if isinstance(payload, (int, str)):
-            payload = {"share_id": payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def usershare_list(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def usershare_list(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def usershare_list(
-        self, 
-        payload: int | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """共享列表
-        GET https://webapi.115.com/usershare/list
-        payload:
-            - offset: int = 0
-            - limit: int = 1150
-            - all: 0 | 1 = 1
-        """
-        api = "https://webapi.115.com/usershare/list"
-        if isinstance(payload, int):
-            payload = {"all": 1, "limit": 1150, "offset": payload}
-        else:
-            payload = {"all": 1, "limit": 1150, "offset": 0, **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def usershare_member(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def usershare_member(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def usershare_member(
-        self, 
-        payload: int | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """某共享的成员信息
-        GET https://webapi.115.com/usershare/member
-        payload:
-            - share_id: int | str
-            - action: "member_list" | "member_info" | "noticeset" = "member_list"
-            - notice_set: 0 | 1 = <default> # action 为 "noticeset" 时可以设置
-        """
-        api = "https://webapi.115.com/usershare/member"
-        if isinstance(payload, int):
-            payload = {"action": "member_list", "share_id": payload}
-        else:
-            payload = {"action": "member_list", **payload}
-        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def usershare_share(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def usershare_share(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def usershare_share(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """设置共享
-        POST https://webapi.115.com/usershare/share
-        payload:
-            - file_id: int | str
-            - share_opt: 1 | 2 = 1 # 1: 设置 2: 取消
-            - ignore_warn: 0 | 1 = 0
-            - safe_pwd: str = "" 
-        """
-        api = "https://webapi.115.com/usershare/share"
-        if isinstance(payload, (int, str)):
-            payload = {"ignore_warn": 0, "share_opt": 1, "safe_pwd": "", "file_id": payload}
-        else:
-            payload = {"ignore_warn": 0, "share_opt": 1, "safe_pwd": "", **payload}
-        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
-
-
-
-
-
-
-
-
-
-
-
-
 
     ########## Upload API ##########
 
@@ -7605,6 +7589,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取和上传有关的各种服务信息
+
         GET https://proapi.115.com/app/uploadinfo
         """
         api = "https://proapi.115.com/app/uploadinfo"
@@ -7633,6 +7618,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """秒传接口，参数的构造较为复杂，所以请不要直接使用
+
         POST https://uplb.115.com/4.0/initupload.php
         """
         api = "https://uplb.115.com/4.0/initupload.php"
@@ -7661,6 +7647,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取 user_key
+
         GET https://proapi.115.com/android/2.0/user/upload_key
         """
         api = "https://proapi.115.com/android/2.0/user/upload_key"
@@ -7698,6 +7685,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """网页端的上传接口的初始化，注意：不支持秒传
+
         POST https://uplb.115.com/3.0/sampleinitupload.php
         """
         api = "https://uplb.115.com/3.0/sampleinitupload.php"
@@ -7730,6 +7718,7 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取阿里云 OSS 的 token，用于上传
+
         GET https://uplb.115.com/3.0/gettoken.php
         """
         api = "https://uplb.115.com/3.0/gettoken.php"
@@ -7762,8 +7751,11 @@ class P115Client:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取用于上传的一些 http 接口，此接口具有一定幂等性，请求一次，然后把响应记下来即可
+
         GET https://uplb.115.com/3.0/getuploadinfo.php
-        response:
+
+        :response:
+
             - endpoint: 此接口用于上传文件到阿里云 OSS 
             - gettokenurl: 上传前需要用此接口获取 token
         """
@@ -7915,8 +7907,8 @@ class P115Client:
             if resp["status"] == 7 and resp["statuscode"] == 701:
                 if read_range_bytes_or_hash is None:
                     raise ValueError("filesize >= 1 MB, thus need pass the `read_range_bytes_or_hash` argument")
-                sign_key = resp["sign_key"]
-                sign_check = resp["sign_check"]
+                sign_key: str = resp["sign_key"]
+                sign_check: str = resp["sign_check"]
                 data: str | Buffer
                 if async_:
                     data = yield ensure_async(read_range_bytes_or_hash)(sign_check)
@@ -7933,7 +7925,7 @@ class P115Client:
                     target, 
                     sign_key=sign_key, 
                     sign_val=sign_val, 
-                    async_=async_, 
+                    async_=async_, # type: ignore
                     **request_kwargs, 
                 )
             resp["state"] = True
@@ -7955,7 +7947,7 @@ class P115Client:
         filename: str, 
         filesize: int = -1, 
         pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -7969,7 +7961,7 @@ class P115Client:
         filename: str, 
         filesize: int = -1, 
         pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -7982,7 +7974,7 @@ class P115Client:
         filename: str, 
         filesize: int = -1, 
         pid: int = 0, 
-        make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
+        make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -8033,30 +8025,6 @@ class P115Client:
             ))
         return run_gen_step(gen_step, async_=async_)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # TODO: 这个函数需要极致优化，并不应该自己来计算很多东西
-    # url = self.upload_endpoint_url(bucket, object)
-    # token = await self.upload_token(async_=async_)
-    # TODO: 返回一个task，初始化成功后，生成 {"bucket": bucket, "object": object, "upload_id": upload_id, "callback": callback, "partsize": partsize, "filesize": filesize}
-
-    # TODO: 支持进度条和随时暂停，基于迭代器，使用一个 flag，每次迭代检查一下
-    # TODO: 返回 task，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait
-    # TODO: class P115MultipartUploadTask:
-    #           @classmethod
-    #           def from_cache(cls, /, bucket, object, upload_id, callback, file): ...
     @overload
     def upload_file(
         self, 
@@ -8112,475 +8080,809 @@ class P115Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """文件上传接口，这是高层封装，推荐使用
+        """文件上传，这是高层封装，推荐使用
         """
-        if multipart_resume_data is not None:
-            return oss_multipart_upload(
-                self.request, 
-                file, 
-                bucket=multipart_resume_data["bucket"], 
-                object=multipart_resume_data["object"], 
-                upload_id=multipart_resume_data["upload_id"], 
-                callback=multipart_resume_data["callback"], 
-                partsize=multipart_resume_data["partsize"], 
-                filesize=multipart_resume_data.get("filesize", -1), 
-                make_reporthook=make_reporthook, 
-                async_=async_, 
-                **request_kwargs, 
+        def gen_step():
+            nonlocal file, filename, filesize, filesha1
+            def reload():
+                kwargs = dict(
+                    file=file, 
+                    filename=filename, 
+                    pid=pid, 
+                    filesize=filesize, 
+                    filesha1=filesha1, 
+                    partsize=partsize, 
+                    upload_directly=upload_directly, 
+                    make_reporthook=make_reporthook, 
+                )
+                if async_:
+                    async def async_request():
+                        async with async_closing(file):
+                            return await self.upload_file(async_=True, **kwargs, **request_kwargs) # type: ignore
+                    return async_request()
+                else:
+                    with closing(file): # type: ignore
+                        return self.upload_file(**kwargs, **request_kwargs) # type: ignore
+            need_calc_filesha1 = (
+                not filesha1 and
+                not upload_directly and
+                multipart_resume_data is None
             )
-        if upload_directly:
-            return self.upload_file_sample(
-                file, 
-                filename, 
-                filesize=filesize, 
-                pid=pid, 
-                make_reporthook=make_reporthook, 
-                async_=async_, 
-                **request_kwargs, 
-            )
-        if hasattr(file, "getbuffer"):
             try:
                 file = getattr(file, "getbuffer")()
-            except TypeError:
+            except (AttributeError, TypeError):
                 pass
-        if async_:
-            async def async_request():
-                nonlocal file, filename, filesize, filesha1
-
-                async def do_upload(file):
-                    resp = await self.upload_file_init(
-                        cast(str, filename), 
-                        filesize, 
-                        cast(str, filesha1), 
-                        read_range_bytes_or_hash, 
-                        pid=pid, 
-                        async_=True, 
-                        **request_kwargs, 
-                    )
-                    status = resp["status"]
-                    statuscode = resp.get("statuscode", 0)
-                    if status == 2 and statuscode == 0:
-                        return resp
-                    elif status == 1 and statuscode == 0:
-                        bucket, object, callback = resp["bucket"], resp["object"], resp["callback"]
-                    else:
-                        raise OSError(errno.EINVAL, resp)
-
-                    if upload_directly is None:
-                        return await self.upload_file_sample(
-                            file, 
-                            filename, 
-                            pid=pid, 
-                            filesize=filesize, 
-                            make_reporthook=make_reporthook, 
-                            async_=True, 
-                            **request_kwargs, 
-                        )
-                    elif partsize <= 0:
-                        return await self._oss_upload(
-                            file, 
-                            bucket, 
-                            object, 
-                            callback, 
-                            filesize=filesize, 
-                            make_reporthook=make_reporthook, 
-                            async_=True, 
-                            **request_kwargs, 
-                        )
-                    else:
-                        return await self._oss_multipart_upload(
-                            file, 
-                            bucket, 
-                            object, 
-                            callback, 
-                            partsize=partsize, 
-                            filesize=filesize, 
-                            make_reporthook=make_reporthook, 
-                            async_=True, 
-                            **request_kwargs, 
-                        )
-
-                read_range_bytes_or_hash = None
-                if isinstance(file, Buffer):
-                    if filesize < 0:
-                        filesize = len(file)
-                    if not filesha1:
-                        filesha1 = sha1(file).hexdigest()
-                    if filesize >= 1 << 20:
-                        mmv = memoryview(file)
-                        def read_range_bytes_or_hash(sign_check: str):
-                            start, end = map(int, sign_check.split("-"))
-                            return mmv[start : end + 1]
-                elif isinstance(file, (str, PathLike)):
-                    @asynccontextmanager
-                    async def ctx_async_read(path, /, start=0):
-                        try:
-                            from aiofile import async_open
-                        except ImportError:
-                            with open(path, "rb") as file:
-                                if start:
-                                    file.seek(start)
-                                yield file, as_thread(file.read)
-                        else:
-                            async with async_open(path, "rb") as file:
-                                if start:
-                                    await getattr(file, "seek")(start)
-                                yield file, file.read
-                    path = fsdecode(file)
-                    if not filename:
-                        filename = ospath.basename(path)
-                    if filesize < 0:
-                        filesize = stat(path).st_size
-                    if filesize < 1 << 20:
-                        async with ctx_async_read(path) as (_, read):
-                            file = cast(bytes, await read())
-                        if not filesha1:
-                            filesha1 = sha1(file).hexdigest()
-                    else:
-                        if not filesha1:
-                            async with ctx_async_read(path) as (file, _):
-                                _, hashobj = await file_digest_async(file, "sha1")
-                            filesha1 = hashobj.hexdigest()
-                        async def read_range_bytes_or_hash(sign_check):
-                            start, end = map(int, sign_check.split("-"))
-                            async with ctx_async_read(path, start) as (_, read):
-                                return await read(end - start + 1)
-                        async with ctx_async_read(path) as (file, _):
-                            return await do_upload(file)
-                elif isinstance(file, SupportsRead):
-                    try:
-                        file_seek = ensure_async(getattr(file, "seek"))
-                        curpos = await file_seek(0, 1)
-                        seekable = True
-                    except Exception:
-                        curpos = 0
-                        seekable = False
-                    file_read = ensure_async(file.read)
-                    if not filename:
-                        try:
-                            filename = ospath.basename(fsdecode(getattr(file, "name")))
-                        except Exception:
-                            filename = str(uuid4())
-                    if filesize < 0:
-                        try:
-                            fileno = getattr(file, "fileno")()
-                            filesize = fstat(fileno).st_size - curpos
-                        except Exception:
-                            try:
-                                filesize = len(file) - curpos # type: ignore
-                            except TypeError:
-                                if seekable:
-                                    try:
-                                        filesize = (await file_seek(0, 2)) - curpos
-                                    finally:
-                                        await file_seek(curpos)
-                                else:
-                                    filesize = 0
-                    if 0 < filesize <= 1 << 20:
-                        file = await file_read()
-                        if not filesha1:
-                            filesha1 = sha1(file).hexdigest()
-                    else:
-                        if not filesha1:
-                            if not seekable:
-                                return await self.upload_file_sample(
-                                    file, 
-                                    filename, 
-                                    pid=pid, 
-                                    filesize=filesize, 
-                                    make_reporthook=make_reporthook, 
-                                    async_=True, 
-                                    **request_kwargs, 
-                                )
-                            try:
-                                _, hashobj = await file_digest_async(file, "sha1")
-                                filesha1 = hashobj.hexdigest()
-                            finally:
-                                await file_seek(curpos)
-                        async def read_range_bytes_or_hash(sign_check):
-                            if not seekable:
-                                raise TypeError(f"not a seekable reader: {file!r}")
-                            start, end = map(int, sign_check.split("-"))
-                            try:
-                                await file_seek(start)
-                                return await file_read(end - start + 1)
-                            finally:
-                                await file_seek(curpos)
-                elif isinstance(file, (URL, SupportsGeturl)):
-                    @asynccontextmanager
-                    async def ctx_async_read(url, /, start=0):
-                        if is_ranged and start:
-                            headers = {"Range": "bytes=%s-" % start}
-                        else:
-                            headers = {}
-                        try:
-                            from aiohttp import request
-                        except ImportError:
-                            with (await to_thread(urlopen, url, headers=headers)) as resp:
-                                if not headers:
-                                    await async_through(bio_skip_async_iter(resp, start))
-                                yield resp, as_thread(resp.read)
-                        else:
-                            async with request("GET", url, headers=headers) as resp:
-                                if not headers:
-                                    await async_through(bio_skip_async_iter(resp.content, start))
-                                yield resp, resp.read
-                    async def read_range_bytes_or_hash(sign_check):
-                        start, end = map(int, sign_check.split("-"))
-                        async with ctx_async_read(url, start) as (_, read):
-                            return await read(end - start + 1)
-                    if isinstance(file, URL):
-                        url = str(file)
-                    else:
-                        url = file.geturl()
-                    async with ctx_async_read(url) as (resp, read):
-                        is_ranged = is_range_request(resp)
-                        if not filename:
-                            filename = get_filename(resp) or str(uuid4())
-                        if filesize < 0:
-                            filesize = get_total_length(resp) or 0
-                        if filesize < 1 << 20:
-                            file = cast(bytes, await read())
-                            if not filesha1:
-                                filesha1 = sha1(file).hexdigest()
-                        else:
-                            if not filesha1 or not is_ranged:
-                                return await self.upload_file_sample(
-                                    resp, 
-                                    filename, 
-                                    pid=pid, 
-                                    filesize=filesize, 
-                                    make_reporthook=make_reporthook, 
-                                    async_=True, 
-                                    **request_kwargs
-                                )
-                            return await do_upload(resp)
-                elif filesha1:
-                    if filesize < 0 or filesize >= 1 << 20:
-                        filesize = 0
-                else:
-                    return await self.upload_file_sample(
-                        file, 
-                        filename, 
-                        pid=pid, 
-                        filesize=filesize, 
-                        make_reporthook=make_reporthook, 
-                        async_=True, 
-                        **request_kwargs, 
-                    )
-                if not filename:
-                    filename = str(uuid4())
-                return await do_upload(file)
-            return async_request()
-        else:
-            make_reporthook = cast(None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]], make_reporthook)
-
-            def do_upload(file):
-                resp = self.upload_file_init(
-                    cast(str, filename), 
-                    filesize, 
-                    cast(str, filesha1), 
-                    read_range_bytes_or_hash, 
-                    pid=pid, 
-                    async_=False, 
-                    **request_kwargs, 
-                )
-                status = resp["status"]
-                statuscode = resp.get("statuscode", 0)
-                if status == 2 and statuscode == 0:
-                    return resp
-                elif status == 1 and statuscode == 0:
-                    bucket, object, callback = resp["bucket"], resp["object"], resp["callback"]
-                else:
-                    raise OSError(errno.EINVAL, resp)
-
-                if upload_directly is None:
-                    return self.upload_file_sample(
-                        file, 
-                        filename, 
-                        pid=pid, 
-                        filesize=filesize, 
-                        make_reporthook=make_reporthook, 
-                        async_=False, 
-                        **request_kwargs, 
-                    )
-                elif partsize <= 0:
-                    return self._oss_upload(
-                        file, 
-                        bucket, 
-                        object, 
-                        callback, 
-                        filesize=filesize, 
-                        make_reporthook=make_reporthook, 
-                        async_=False, 
-                        **request_kwargs, 
-                    )
-                else:
-                    return self._oss_multipart_upload(
-                        file, 
-                        bucket, 
-                        object, 
-                        callback, 
-                        partsize=partsize, 
-                        filesize=filesize, 
-                        make_reporthook=make_reporthook, 
-                        async_=False, 
-                        **request_kwargs, 
-                    )
-
             read_range_bytes_or_hash: None | Callable = None
             if isinstance(file, Buffer):
-                if filesize < 0:
-                    filesize = len(file)
-                if not filesha1:
+                filesize = len(file)
+                if need_calc_filesha1:
                     filesha1 = sha1(file).hexdigest()
-                if filesize >= 1 << 20:
-                    mmv = memoryview(file)
+                if not upload_directly and multipart_resume_data is None and filesize >= 1 << 20:
+                    view = memoryview(file)
                     def read_range_bytes_or_hash(sign_check: str):
                         start, end = map(int, sign_check.split("-"))
-                        return mmv[start : end + 1]
+                        return view[start:end+1]
             elif isinstance(file, (str, PathLike)):
-                path = fsdecode(file)
                 if not filename:
-                    filename = ospath.basename(path)
-                if filesize < 0:
-                    filesize = stat(path).st_size
-                if filesize < 1 << 20:
-                    file = open(path, "rb", buffering=0).read()
-                    if not filesha1:
-                        filesha1 = sha1(file).hexdigest()
+                    filename = ospath.basename(fsdecode(file))
+                open_file: None | Callable = None
+                if isinstance(file, PathLike):
+                    open_file = getattr(file, "open", None)
+                    if not callable(open_file):
+                        open_file = None
+                if open_file is None: 
+                    open_file = partial(open, file)
+                if async_:
+                    open_file = ensure_async(open_file, threaded=True)
+                    file = yield partial(open_file, "rb")
                 else:
-                    if not filesha1:
-                        _, hashobj = file_digest(open(path, "rb"), "sha1")
-                        filesha1 = hashobj.hexdigest()
-                    def read_range_bytes_or_hash(sign_check: str):
-                        start, end = map(int, sign_check.split("-"))
-                        with open(path, "rb") as file:
-                            file.seek(start)
-                            return sha1(file.read(end - start + 1)).hexdigest()
-                    file = open(path, "rb")
+                    file = open_file("rb")
+                return (yield reload)
             elif isinstance(file, SupportsRead):
-                file_read: Callable[..., bytes] = getattr(file, "read")
-                file_seek = getattr(file, "seek", None)
-                if file_seek is not None:
+                seekable = False
+                seek = getattr(file, "seek", None)
+                curpos = 0
+                if callable(seek):
+                    if async_:
+                        seek = ensure_async(seek, threaded=True)
                     try:
-                        curpos = file_seek(0, 1)
-                        seekable = True
-                    except Exception:
-                        curpos = 0
-                        seekable = False
-                if not filename:
+                        seekable = getattr(file, "seekable")()
+                    except (AttributeError, TypeError):
+                        try:
+                            curpos = yield seek(0, 1)
+                            seekable = True
+                        except Exception:
+                            seekable = False
+                if need_calc_filesha1:
+                    if not seekable:
+                        fsrc = file
+                        with TemporaryFile() as file:
+                            if async_:
+                                yield copyfileobj_async(fsrc, file)
+                            else:
+                                copyfileobj(fsrc, file)
+                            file.seek(0)
+                            return (yield reload)
                     try:
-                        filename = ospath.basename(fsdecode(getattr(file, "name")))
-                    except Exception:
-                        filename = str(uuid4())
+                        if async_:
+                            filesize, filesha1_obj = yield file_digest_async(file, "sha1")
+                        else:
+                            filesize, filesha1_obj = file_digest(file, "sha1")
+                    finally:
+                        yield seek(curpos)
+                    filesha1 = filesha1_obj.hexdigest()
                 if filesize < 0:
                     try:
                         fileno = getattr(file, "fileno")()
                         filesize = fstat(fileno).st_size - curpos
-                    except Exception:
+                    except (AttributeError, TypeError, OSError):
                         try:
                             filesize = len(file) - curpos # type: ignore
                         except TypeError:
                             if seekable:
                                 try:
-                                    filesize = file_seek(0, 2) - curpos
+                                    filesize = (yield seek(0, 2)) - curpos
                                 finally:
-                                    file_seek(curpos)
+                                    yield seek(curpos)
                             else:
                                 filesize = 0
-                if 0 < filesize < 1 << 20:
-                    file = file_read()
-                    if not filesha1:
-                        filesha1 = sha1(file).hexdigest()
-                else:
-                    if not filesha1:
-                        if not seekable:
-                            return self.upload_file_sample(
-                                file, 
-                                filename, 
-                                pid=pid, 
-                                filesize=filesize, 
-                                make_reporthook=make_reporthook, 
-                                async_=False, 
-                                **request_kwargs, 
-                            )
-                        try:
-                            _, hashobj = file_digest(file, "sha1")
-                            filesha1 = hashobj.hexdigest()
-                        finally:
-                            file_seek(curpos)
-                    def read_range_bytes_or_hash(sign_check: str):
-                        if not seekable:
-                            raise TypeError(f"not a seekable reader: {file!r}")
-                        start, end = map(int, sign_check.split("-"))
-                        try:
-                            file_seek(start)
-                            return sha1(file_read(end - start + 1)).hexdigest()
-                        finally:
-                            file_seek(curpos)
-            elif isinstance(file, (URL, SupportsGeturl)):
-                def read_range_bytes_or_hash(sign_check: str):
-                    start, end = map(int, sign_check.split("-"))
-                    if is_ranged and start:
-                        headers = {"Range": "bytes=%s-" % start}
+                if not upload_directly and multipart_resume_data is None and filesize >= 1 << 20:
+                    if seekable:
+                        if async_:
+                            read = ensure_async(file.read, threaded=True)
+                            async def read_range_bytes_or_hash(sign_check: str):
+                                start, end = map(int, sign_check.split("-"))
+                                try:
+                                    await seek(curpos + start)
+                                    return await read(end - start + 1)
+                                finally:
+                                    await seek(curpos)
+                        else:
+                            read = file.read
+                            def read_range_bytes_or_hash(sign_check: str):
+                                start, end = map(int, sign_check.split("-"))
+                                try:
+                                    seek(curpos + start)
+                                    return read(end - start + 1)
+                                finally:
+                                    seek(curpos)
                     else:
-                        headers = {}
-                    with urlopen(url, headers=headers) as resp:
-                        if not headers:
-                            through(bio_skip_iter(resp, start))
-                        return resp.read(end - start + 1)
+                        filesize = 0
+            elif isinstance(file, (URL, SupportsGeturl)):
                 if isinstance(file, URL):
                     url = str(file)
                 else:
                     url = file.geturl()
-                with urlopen(url) as resp:
-                    is_ranged = is_range_request(resp)
-                    if not filename:
-                        filename = get_filename(resp) or str(uuid4())
-                    if filesize < 0:
-                        filesize = resp.length or 0
-                    if 0 < filesize < 1 << 20:
-                        file = resp.read()
-                        if not filesha1:
-                            filesha1 = sha1(file).hexdigest()
-                    else:
-                        if not filesha1 or not is_ranged:
-                            return self.upload_file_sample(
-                                resp, 
-                                filename, 
-                                pid=pid, 
-                                filesize=filesize, 
-                                make_reporthook=make_reporthook, 
-                                async_=False, 
-                                **request_kwargs, 
-                            )
-                        return do_upload(resp)
-            elif filesha1:
-                if filesize < 0 or filesize >= 1 << 20:
-                    filesize = 0
+                if async_:
+                    file = yield AsyncHTTPFileReader.new(url)
+                else:
+                    file = HTTPFileReader(url)
+                if not filename:
+                    try:
+                        filename = file.name
+                    except Exception:
+                        pass
+                if filesize < 0:
+                    try:
+                        filesize = file.length
+                    except Exception:
+                        pass
+                return (yield reload)
             else:
-                return self.upload_file_sample(
+                if need_calc_filesha1:
+                    if async_:
+                        file = bytes_iter_to_async_reader(file) # type: ignore
+                    else:
+                        file = bytes_iter_to_reader(file) # type: ignore
+                    return (yield reload)
+                if not upload_directly and multipart_resume_data is None and filesize >= 1 << 20:
+                    filesize = 0
+            if multipart_resume_data is not None:
+                bucket = multipart_resume_data["bucket"]
+                object = multipart_resume_data["object"]
+                url = multipart_resume_data.get("url", "") # type: ignore
+                if not url:
+                    url = self.upload_endpoint_url(bucket, object)
+                token = multipart_resume_data.get("token")
+                if not token:
+                    token = yield self.upload_token(async_=async_)
+                return (yield oss_multipart_upload(
+                    self.request, 
                     file, 
-                    filename, 
-                    pid=pid, 
-                    filesize=filesize, 
-                    make_reporthook=make_reporthook, 
-                    async_=False, 
+                    url=url, 
+                    bucket=bucket, 
+                    object=object, 
+                    token=multipart_resume_data.get("token"), # type: ignore
+                    callback=multipart_resume_data["callback"], 
+                    upload_id=multipart_resume_data["upload_id"], 
+                    partsize=multipart_resume_data["partsize"], 
+                    filesize=multipart_resume_data.get("filesize", filesize), 
+                    make_reporthook=make_reporthook, # type: ignore
+                    async_=async_, # type: ignore
                     **request_kwargs, 
-                )
+                ))
             if not filename:
                 filename = str(uuid4())
-            return do_upload(file)
+            if filesize < 0:
+                filesize = 0
+            if upload_directly:
+                return (yield self.upload_file_sample(
+                    file, 
+                    filename=filename, 
+                    filesize=filesize, 
+                    pid=pid, 
+                    make_reporthook=make_reporthook, # type: ignore
+                    async_=async_, # type: ignore
+                    **request_kwargs, 
+                ))
+            resp = yield self.upload_file_init(
+                filename=filename, 
+                filesize=filesize, 
+                filesha1=cast(str, filesha1), 
+                read_range_bytes_or_hash=read_range_bytes_or_hash, 
+                pid=pid, 
+                async_=async_, # type: ignore
+                **request_kwargs, 
+            )
+            status = resp["status"]
+            statuscode = resp.get("statuscode", 0)
+            if status == 2 and statuscode == 0:
+                return resp
+            elif status == 1 and statuscode == 0:
+                bucket, object, callback = resp["bucket"], resp["object"], resp["callback"]
+            else:
+                raise P115OSError(errno.EINVAL, resp)
+            url = self.upload_endpoint_url(bucket, object)
+            token = cast(dict, (yield self.upload_token(async_=async_)))
+            if partsize <= 0:
+                return (yield oss_upload(
+                    self.request, 
+                    file, 
+                    url=url, 
+                    bucket=bucket, 
+                    object=object, 
+                    callback=callback, 
+                    token=token, 
+                    filesize=filesize, 
+                    make_reporthook=make_reporthook, # type: ignore
+                    async_=async_, # type: ignore
+                    **request_kwargs, 
+                ))
+            else:
+                return (yield oss_multipart_upload(
+                    self.request, 
+                    file, 
+                    url=url, 
+                    bucket=bucket, 
+                    object=object, 
+                    callback=callback, 
+                    token=token, 
+                    partsize=partsize, 
+                    filesize=filesize, 
+                    make_reporthook=make_reporthook, # type: ignore
+                    async_=async_, # type: ignore
+                    **request_kwargs, 
+                ))
+        return run_gen_step(gen_step, async_=async_)
 
+    ########## User API ##########
 
+    @overload
+    def user_fingerprint(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_fingerprint(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_fingerprint(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取截图时嵌入的水印
 
+        GET https://webapi.115.com/user/fingerprint
+        """
+        api = "https://webapi.115.com/user/fingerprint"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
+    @overload
+    def user_my(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_my(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_my(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取此用户信息
 
+        GET https://my.115.com/?ct=ajax&ac=nav
+        """
+        api = "https://my.115.com/?ct=ajax&ac=nav"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
+    @overload
+    def user_my_info(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_my_info(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_my_info(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取此用户信息（更全）
 
+        GET https://my.115.com/?ct=ajax&ac=get_user_aq
+        """
+        api = "https://my.115.com/?ct=ajax&ac=get_user_aq"
+        return self.request(url=api, async_=async_, **request_kwargs)
 
+    @overload
+    def user_points_sign(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_points_sign(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_points_sign(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取签到信息
 
+        GET https://proapi.115.com/android/2.0/user/points_sign
+        """
+        api = "https://proapi.115.com/android/2.0/user/points_sign"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_points_sign_post(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_points_sign_post(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_points_sign_post(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """每日签到（注意：不要用 web，即浏览器，的 cookies，会失败）
+
+        POST https://proapi.115.com/android/2.0/user/points_sign
+        """
+        api = "https://proapi.115.com/android/2.0/user/points_sign"
+        t = int(time())
+        payload = {
+            "token": sha1(b"%d-Points_Sign@#115-%d" % (self.user_id, t)).hexdigest(), 
+            "token_time": t, 
+        }
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_setting(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取此账户的网页版设置（提示：较为复杂，自己抓包研究）
+
+        GET https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
+        """
+        api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_setting_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """修改此账户的网页版设置（提示：较为复杂，自己抓包研究）
+
+        POST https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1
+        """
+        api = "https://115.com/?ac=setting&even=saveedit&is_wl_tpl=1"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting_web(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting_web(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_setting_web(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
+
+        GET https://webapi.115.com/user/setting
+        """
+        api = "https://webapi.115.com/user/setting"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting_web_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting_web_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_setting_web_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
+
+        POST https://webapi.115.com/user/setting
+        """
+        api = "https://webapi.115.com/user/setting"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting_app(
+        self, 
+        /, 
+        app: str = "android", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting_app(
+        self, 
+        /, 
+        app: str = "android", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_setting_app(
+        self, 
+        /, 
+        app: str = "android", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取此账户的 app 版设置（提示：较为复杂，自己抓包研究）
+
+        GET https://proapi.115.com/{app}/1.0/user/setting
+        """
+        api = f"https://proapi.115.com/{app}/1.0/user/setting"
+        return self.request(url=api, async_=async_, **request_kwargs)
+
+    @overload
+    def user_setting_app_set(
+        self, 
+        payload: dict, 
+        /, 
+        app: str = "android", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_setting_app_set(
+        self, 
+        payload: dict, 
+        /, 
+        app: str = "android", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_setting_app_set(
+        self, 
+        payload: dict, 
+        /, 
+        app: str = "android", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取（并可修改）此账户的网页版设置（提示：较为复杂，自己抓包研究）
+
+        POST https://proapi.115.com/{app}/1.0/user/setting
+        """
+        api = f"https://proapi.115.com/{app}/1.0/user/setting"
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    ########## User Share API ##########
+
+    @overload
+    def usershare_action(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def usershare_action(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def usershare_action(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取共享动态列表
+
+        GET https://webapi.115.com/usershare/action
+
+        :payload:
+
+            - share_id: int | str
+            - offset: int = 0
+            - limit: int = 32
+        """
+        api = "https://webapi.115.com/usershare/action"
+        if isinstance(payload, int):
+            payload = {"limit": 32, "offset": 0, "share_id": payload}
+        else:
+            payload = {"limit": 32, "offset": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def usershare_invite(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def usershare_invite(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def usershare_invite(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取共享链接
+
+        POST https://webapi.115.com/usershare/invite
+
+        :payload:
+
+            - share_id: int | str
+        """
+        api = "https://webapi.115.com/usershare/invite"
+        if isinstance(payload, (int, str)):
+            payload = {"share_id": payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def usershare_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def usershare_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def usershare_list(
+        self, 
+        payload: int | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """共享列表
+
+        GET https://webapi.115.com/usershare/list
+
+        :payload:
+
+            - offset: int = 0
+            - limit: int = 1150
+            - all: ``0`` | ``1`` = 1
+        """
+        api = "https://webapi.115.com/usershare/list"
+        if isinstance(payload, int):
+            payload = {"all": 1, "limit": 1150, "offset": payload}
+        else:
+            payload = {"all": 1, "limit": 1150, "offset": 0, **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def usershare_member(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def usershare_member(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def usershare_member(
+        self, 
+        payload: int | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """某共享的成员信息
+
+        GET https://webapi.115.com/usershare/member
+
+        :payload:
+
+            - share_id: int | str
+            - action: "member_list" | "member_info" | "noticeset" = "member_list"
+            - notice_set: ``0`` | ``1`` = ``<default>`` # action 为 "noticeset" 时可以设置
+        """
+        api = "https://webapi.115.com/usershare/member"
+        if isinstance(payload, int):
+            payload = {"action": "member_list", "share_id": payload}
+        else:
+            payload = {"action": "member_list", **payload}
+        return self.request(url=api, params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def usershare_share(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def usershare_share(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def usershare_share(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """设置共享
+
+        POST https://webapi.115.com/usershare/share
+
+        :payload:
+
+            - file_id: int | str
+            - share_opt: 1 | 2 = 1 # 1: 设置 2: 取消
+            - ignore_warn: ``0`` | ``1`` = 0
+            - safe_pwd: str = "" 
+        """
+        api = "https://webapi.115.com/usershare/share"
+        if isinstance(payload, (int, str)):
+            payload = {"ignore_warn": 0, "share_opt": 1, "safe_pwd": "", "file_id": payload}
+        else:
+            payload = {"ignore_warn": 0, "share_opt": 1, "safe_pwd": "", **payload}
+        return self.request(url=api, method="POST", data=payload, async_=async_, **request_kwargs)
 
     ########## Other Encapsulations ##########
 
@@ -8839,6 +9141,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """读取文件一定索引范围的数据
+
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param start: 开始索引，可以为负数（从文件尾部开始）
         :param stop: 结束索引（不含），可以为负数（从文件尾部开始）
@@ -8913,6 +9216,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """读取文件一定索引范围的数据
+
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param bytes_range: 索引范围，语法符合 [HTTP Range Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests)
         :param headers: 请求头
@@ -8966,6 +9270,7 @@ class P115Client:
         **request_kwargs, 
     ) -> bytes | Coroutine[Any, Any, bytes]:
         """读取文件一定索引范围的数据
+
         :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
         :param size: 下载字节数（最多下载这么多字节，如果遇到 EOF，就可能较小）
         :param offset: 偏移索引，从 0 开始，可以为负数（从文件尾部开始）
@@ -8993,5 +9298,3 @@ for name, method in P115Client.__dict__.items():
     if match is not None:
         CLIENT_API_MAP[match[1]] = "P115Client." + name
 
-
-# TODO: qrcode_login 的返回值，是一个 Future 对象，包含登录必要凭证、二维码链接、登录状态、返回值或报错信息等数据，并且可以被等待完成，也可以把二维码输出到命令行、浏览器、图片查看器等

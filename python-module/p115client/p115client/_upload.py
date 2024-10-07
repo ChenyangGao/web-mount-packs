@@ -3,10 +3,9 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "oss_upload_sign", "oss_upload_request", "oss_multipart_upload_init", 
-    "oss_multipart_upload_complete", "oss_multipart_upload_cancel", 
-    "oss_multipart_upload_part", "oss_multipart_upload_part_iter", 
-    "oss_multipart_part_iter", "oss_upload", "oss_multipart_upload", 
+    "make_dataiter", "oss_upload_sign", "oss_upload_request", "oss_multipart_upload_init", 
+    "oss_multipart_upload_complete", "oss_multipart_upload_cancel", "oss_multipart_upload_part", 
+    "oss_multipart_upload_part_iter", "oss_multipart_part_iter", "oss_upload", "oss_multipart_upload", 
 ]
 
 from base64 import b64encode
@@ -333,8 +332,8 @@ def oss_multipart_upload_complete(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     upload_id: str, 
     parts: list[dict], 
     async_: Literal[False] = False, 
@@ -347,8 +346,8 @@ def oss_multipart_upload_complete(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     upload_id: str, 
     parts: list[dict], 
     async_: Literal[True], 
@@ -360,8 +359,8 @@ def oss_multipart_upload_complete(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     upload_id: str, 
     parts: list[dict], 
     async_: Literal[False, True] = False, 
@@ -647,8 +646,8 @@ def oss_upload(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     filesize: int = -1, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
     *, 
@@ -663,8 +662,8 @@ def oss_upload(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     filesize: int = -1, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
     *, 
@@ -678,8 +677,8 @@ def oss_upload(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     filesize: int = -1, 
     make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
     *, 
@@ -726,13 +725,13 @@ def oss_multipart_upload(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     upload_id: None | str = None, 
     partsize: int = 10 * 1 << 20, 
     parts: None | list[dict] = None, 
     filesize: int = -1, 
-    make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] = None, 
+    make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any]] = None, 
     *, 
     async_: Literal[False] = False, 
     **request_kwargs, 
@@ -745,13 +744,13 @@ def oss_multipart_upload(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     upload_id: None | str = None, 
     partsize: int = 10 * 1 << 20, 
     parts: None | list[dict] = None, 
     filesize: int = -1, 
-    make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
+    make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
     *, 
     async_: Literal[True], 
     **request_kwargs, 
@@ -763,13 +762,13 @@ def oss_multipart_upload(
     url: str, 
     bucket: str, 
     object: str, 
-    token: dict, 
     callback: dict, 
+    token: dict, 
     upload_id: None | str = None, 
     partsize: int = 10 * 1 << 20, # default to: 10 MB
     parts: None | list[dict] = None, 
     filesize: int = -1, 
-    make_reporthook: None | Callable[[None | int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None, 
+    make_reporthook: None | Callable[[None | int], Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any]] = None, 
     *, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
@@ -819,22 +818,16 @@ def oss_multipart_upload(
                     **request_kwargs, 
                 )
         upload_id = cast(str, upload_id)
-        reporthook: None | Callable = None
+        reporthook: None | Callable[[int], Any] | Generator[int, Any, Any] | AsyncGenerator[int, Any] = None
         close_reporthook: None | Callable = None
         if callable(make_reporthook):
-            make_reporthook = make_reporthook(None if filesize < 0 else filesize)
-            if isinstance(make_reporthook, Generator):
-                make_reporthook.send(None)
-                close_reporthook = make_reporthook.close
-            elif isinstance(make_reporthook, AsyncGenerator):
-                yield partial(make_reporthook.asend, None)
-                close_reporthook = make_reporthook.aclose
-        if isinstance(make_reporthook, Generator):
-            reporthook = make_reporthook.send
-        elif isinstance(make_reporthook, AsyncGenerator):
-            reporthook = make_reporthook.asend
-        elif callable(make_reporthook):
-            reporthook = make_reporthook
+            reporthook = make_reporthook(None if filesize < 0 else filesize)
+            if isinstance(reporthook, Generator):
+                reporthook.send(None)
+                close_reporthook = reporthook.close
+            elif isinstance(reporthook, AsyncGenerator):
+                yield partial(reporthook.asend, None)
+                close_reporthook = reporthook.aclose
         if async_:
             batch: Callable = partial(async_foreach, threaded=False)
         else:
@@ -862,8 +855,8 @@ def oss_multipart_upload(
                 url=url, 
                 bucket=bucket, 
                 object=object, 
-                token=token, 
                 callback=callback, 
+                token=token, 
                 upload_id=upload_id, 
                 parts=parts, 
                 async_=async_, # type: ignore

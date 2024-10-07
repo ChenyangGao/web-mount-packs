@@ -2,14 +2,18 @@
 # encoding: utf-8
 
 __all__ = [
-    "P115OSError", "AuthenticationError", "BusyOSError", "DataError", "LoginError", 
-    "MultipartUploadAbort", "NotSupportedError", "OperationalError", 
+    "P115Warning", "P115OSError", "AuthenticationError", "BusyOSError", "DataError", 
+    "LoginError", "MultipartUploadAbort", "NotSupportedError", "OperationalError", 
 ]
 
 from collections.abc import Mapping
 from functools import cached_property
 
 from .type import MultipartResumeData
+
+
+class P115Warning(UserWarning):
+    pass
 
 
 class P115OSError(OSError):

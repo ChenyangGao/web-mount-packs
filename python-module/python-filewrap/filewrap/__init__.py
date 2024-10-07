@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 1)
+__version__ = (0, 2, 2)
 __all__ = [
     "Buffer", "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", 
@@ -14,6 +14,7 @@ __all__ = [
     "bytes_to_chunk_iter", "bytes_to_chunk_async_iter", 
     "bytes_ensure_part_iter", "bytes_ensure_part_async_iter", 
     "progress_bytes_iter", "progress_bytes_async_iter", 
+    "copyfileobj", "copyfileobj_async", 
 ]
 
 from asyncio import to_thread, Lock as AsyncLock
@@ -1792,4 +1793,58 @@ async def progress_bytes_async_iter(
     finally:
         if callable(close_progress):
             await ensure_async(close_progress)()
+
+
+def copyfileobj(
+    fsrc, 
+    fdst: SupportsWrite[Buffer], 
+    /, 
+    chunksize: int = COPY_BUFSIZE, 
+):
+    if chunksize <= 0:
+        chunksize = COPY_BUFSIZE
+    fdst_write = fdst.write
+    fsrc_read = getattr(fsrc, "read", None)
+    fsrc_readinto = getattr(fsrc, "readinto", None)
+    if callable(fsrc_readinto):
+        buf = bytearray(chunksize)
+        view = memoryview(buf)
+        while size := fsrc_readinto(buf):
+            fdst_write(view[:size])
+    elif callable(fsrc_read):
+        while chunk := fsrc_read(chunksize):
+            fdst_write(chunk)
+    else:
+        for chunk in fsrc:
+            if chunk:
+                fdst_write(chunk)
+
+
+async def copyfileobj_async(
+    fsrc, 
+    fdst: SupportsWrite[Buffer], 
+    /, 
+    chunksize: int = COPY_BUFSIZE, 
+    threaded: bool = True, 
+):
+    if chunksize <= 0:
+        chunksize = COPY_BUFSIZE
+    fdst_write = ensure_async(fdst.write, threaded=threaded)
+    fsrc_read = getattr(fsrc, "read", None)
+    fsrc_readinto = getattr(fsrc, "readinto", None)
+    if callable(fsrc_readinto):
+        fsrc_readinto = ensure_async(fsrc_readinto, threaded=threaded)
+        buf = bytearray(chunksize)
+        view = memoryview(buf)
+        while size := await fsrc_readinto(buf):
+            await fdst_write(view[:size])
+    elif callable(fsrc_read):
+        fsrc_read = ensure_async(fsrc_read, threaded=threaded)
+        while chunk := await fsrc_read(chunksize):
+            await fdst_write(chunk)
+    else:
+        chunkiter = ensure_aiter(fsrc, threaded=threaded)
+        async for chunk in chunkiter:
+            if chunk:
+                await fdst_write(chunk)
 

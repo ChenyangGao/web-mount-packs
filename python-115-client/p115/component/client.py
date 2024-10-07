@@ -10160,7 +10160,10 @@ from .offline import P115Offline
 from .recyclebin import P115Recyclebin
 from .sharing import P115Sharing
 
-# TODO: login_with_qrcode 可以调用另一个 qrcode_login 函数
 # TODO: qrcode_login 的返回值，是一个 Future 对象，包含登录必要凭证、二维码链接、登录状态、返回值或报错信息等数据，并且可以被等待完成，也可以把二维码输出到命令行、浏览器、图片查看器等
-# TODO: 参考 sqlite 的 Error 体系，构建一个 exception.py 模块
-# TODO: 尽量减少各种所谓包装和v2的接口，都合并到一个中
+# TODO: upload_file 返回一个task，初始化成功后，生成 {"bucket": bucket, "object": object, "upload_id": upload_id, "callback": callback, "partsize": partsize, "filesize": filesize}
+# TODO: 支持进度条和随时暂停，基于迭代器，使用一个 flag，每次迭代检查一下
+# TODO: 返回 task，支持 pause（暂停此任务，连接不释放）、stop（停止此任务，连接释放）、cancel（取消此任务）、resume（恢复），此时需要增加参数 wait
+# TODO: class P115MultipartUploadTask:
+#           @classmethod
+#           def from_cache(cls, /, bucket, object, upload_id, callback, file): ...
