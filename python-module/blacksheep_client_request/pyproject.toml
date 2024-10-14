@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-filewrap"
-version = "0.2.3.1"
-description = "Python file wrappers."
+name = "blacksheep_client_request"
+version = "0.0.1"
+description = "blacksheep request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-filewrap"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-filewrap"
-keywords = ["file", "wrapper"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/blacksheep_client_request"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/blacksheep_client_request"
+keywords = ["blacksheep", "request"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,12 +27,18 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-python-asynctools = ">=0.0.5"
-python-property = ">=0.0.2"
+blacksheep = "*"
+brotli = "*"
+http_response = "*"
+multidict = "*"
+python-asynctools = ">=0.0.4"
+python-argtools = "*"
+python-filewrap = "*"
+zstandard = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "filewrap"
+include = "blacksheep_client_request"

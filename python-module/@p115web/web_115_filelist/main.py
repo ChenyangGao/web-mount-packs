@@ -246,7 +246,7 @@ def normalize_attr(
     KEYS = (
         "id", "parent_id", "name", "path", "pickcode", "is_directory", "sha1", 
         "size", "ico", "ctime", "mtime", "atime", "thumb", "star", "labels", 
-        "score", "hidden", "described", "violated", "ancestors", 
+        "score", "hidden", "has_desc", "violated", "ancestors", 
     )
     data = {k: attr[k] for k in KEYS if k in attr}
     data["id"] = str(data["id"])

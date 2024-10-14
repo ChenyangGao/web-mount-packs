@@ -215,6 +215,8 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         return self.file.fileno()
 
     def flush(self, /):
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
         return self.file.flush()
 
     def isatty(self, /) -> bool:
@@ -253,7 +255,16 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             return 0
         if self.file_closed:
             self.reconnect()
-        size = self.file.readinto(buffer)
+        try:
+            readinto = self.file.readinto
+        except AttributeError:
+            read = self.file.read
+            def readinto(buffer, /):
+                data = read(len(buffer))
+                size = len(data)
+                buffer[:size] = data
+                return data
+        size = readinto(buffer)
         if size:
             self._add_start(size)
         return size
@@ -265,6 +276,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             return b""
         if self.file_closed:
             self.reconnect()
+        # TODO: if no readline method, give a default impl
         if size is None or size < 0:
             data = self.file.readline()
         else:
@@ -280,6 +292,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
             return []
         if self.file_closed:
             self.reconnect()
+        # TODO: if no readlines method, give a default impl
         ls = self.file.readlines(hint)
         if ls:
             self._add_start(sum(map(len, ls)))
@@ -520,9 +533,10 @@ class AsyncHTTPFileReader(HTTPFileReader):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
-        urlopen = urlopen, 
+        urlopen = None, 
     ):
-        run_async(self.__ainit__(
+        self.__dict__.update(closed=False, start=0, _seekable=True)
+        self.__dict__["_initing"] = run_async(self.__ainit__(
             url=url, 
             headers=headers, 
             start=start, 
@@ -531,6 +545,9 @@ class AsyncHTTPFileReader(HTTPFileReader):
         ))
 
     async def __aenter__(self, /) -> Self:
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         return self
 
     async def __aexit__(self, /, *exc_info):
@@ -591,12 +608,12 @@ class AsyncHTTPFileReader(HTTPFileReader):
             length = get_total_length(response) or 0, 
             chunked = is_chunked(response), 
             start = start, 
-            closed = False, 
             urlopen = urlopen, 
             headers = MappingProxyType(headers), 
             seek_threshold = max(seek_threshold, 0), 
             _seekable = is_range_request(response), 
         )
+        self.__dict__.pop("_initing", None)
 
     async def aclose(self, /):
         if not self.closed:
@@ -609,7 +626,10 @@ class AsyncHTTPFileReader(HTTPFileReader):
             try:
                 ret = self.response.aclose()
             except (AttributeError, TypeError):
-                ret = self.response.close()
+                try:
+                    ret = self.response.close()
+                except (AttributeError, TypeError):
+                    return
             if isawaitable(ret):
                 run_async(ret)
 
@@ -617,24 +637,36 @@ class AsyncHTTPFileReader(HTTPFileReader):
         try:
             ret = self.response.aclose()
         except (AttributeError, TypeError):
-            ret = self.response.close()
+            try:
+                ret = self.response.close()
+            except (AttributeError, TypeError):
+                return
         if isawaitable(ret):
             await ret
 
     async def flush(self, /):
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         return await ensure_async(self.file.flush, threaded=True)()
 
     async def read(self, size: int = -1, /) -> bytes: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         if size == 0 or not self.chunked and self.tell() >= self.length:
             return b""
         if self.file_closed:
             await self.reconnect()
+        read = ensure_async(self.file.read, threaded=True)
         if size is None or size < 0:
-            data = await ensure_async(self.file.read, threaded=True)()
+            data = await read(-1)
         else:
-            data = await ensure_async(self.file.read, threaded=True)(size)
+            data = await read(size)
         if data:
             self._add_start(len(data))
         return data
@@ -642,11 +674,23 @@ class AsyncHTTPFileReader(HTTPFileReader):
     async def readinto(self, buffer, /) -> int: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         if not buffer or not self.chunked and self.tell() >= self.length:
             return 0
         if self.file_closed:
             await self.reconnect()
-        size = await ensure_async(self.file.readinto, threaded=True)(buffer)
+        try:
+            readinto = ensure_async(self.file.readinto, threaded=True)
+        except AttributeError:
+            read = ensure_async(self.file.read, threaded=True)
+            async def readinto(buffer, /):
+                data = await read(len(buffer))
+                size = len(data)
+                buffer[:size] = data
+                return size
+        size = await readinto(buffer)
         if size:
             self._add_start(size)
         return size
@@ -654,10 +698,14 @@ class AsyncHTTPFileReader(HTTPFileReader):
     async def readline(self, size: None | int = -1, /) -> bytes: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         if size == 0 or not self.chunked and self.tell() >= self.length:
             return b""
         if self.file_closed:
             await self.reconnect()
+        # TODO: if no readline method, give a default impl
         if size is None or size < 0:
             data = await ensure_async(self.file.readline, threaded=True)()
         else:
@@ -669,16 +717,23 @@ class AsyncHTTPFileReader(HTTPFileReader):
     async def readlines(self, hint: int = -1, /) -> list[bytes]: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         if not self.chunked and self.tell() >= self.length:
             return []
         if self.file_closed:
             await self.reconnect()
+        # TODO: if no readlines method, give a default impl
         ls = await ensure_async(self.file.readlines, threaded=True)(hint)
         if ls:
             self._add_start(sum(map(len, ls)))
         return ls
 
     async def reconnect(self, /, start: None | int = None) -> int: # type: ignore
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         if not self._seekable:
             if start is None and self.tell() or start:
                 raise OSError(errno.EOPNOTSUPP, "Unsupport for reconnection of non-seekable streams.")
@@ -711,6 +766,9 @@ class AsyncHTTPFileReader(HTTPFileReader):
     async def seek(self, pos: int, whence: int = 0, /) -> int: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        if _initing := self.__dict__.get("_initing"):
+            await _initing
+            self.__dict__.pop("_initing", None)
         if not self._seekable:
             raise OSError(errno.EINVAL, "not a seekable stream")
         if whence == 0:
@@ -1128,7 +1186,7 @@ if find_spec("httpx"):
             elif urlopen is None:
                 if _httpx_urlopen_async is None:
                     if "__del__" not in AsyncClient.__dict__:
-                        setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
+                       setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
                     def async_stream(
                         method, 
                         url, 
@@ -1197,4 +1255,5 @@ if find_spec("httpx"):
     __all__.append("HttpxFileReader")
     __all__.append("AsyncHttpxFileReader")
 
+# TODO: 增加 blacksheep 的 HTTPFileReader
 # TODO: 设计实现一个 HTTPFileWriter，用于实现上传，关闭后视为上传完成

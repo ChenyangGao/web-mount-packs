@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __all__ = [
     "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
     "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", "run_gen_step", "run_gen_step_iter", 
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from inspect import isawaitable
 from typing import overload, Any, Literal, TypeVar
 
-from asynctools import async_zip, ensure_async, ensure_aiter
+from asynctools import async_map, async_zip, ensure_async, ensure_aiter
 
 
 T = TypeVar("T")
@@ -77,18 +77,34 @@ async def async_foreach(ret: Callable, iterable, /, *iterables, threaded: bool =
             await ret(arg)
 
 
-def through(it: Iterable, /):
-    for _ in it:
-        pass
+def through(it: Iterable, /, take_while: None | Callable = None):
+    if take_while is None:
+        for _ in it:
+            pass
+    else:
+        for v in map(take_while, it):
+            if not v:
+                break
 
 
 async def async_through(
     it: Iterable | AsyncIterable, 
     /, 
+    take_while: None | Callable = None, 
     threaded: bool = True, 
 ):
-    async for _ in ensure_aiter(it, threaded=threaded):
-        pass
+    it = ensure_aiter(it, threaded=threaded)
+    if take_while is None:
+        async for _ in it:
+            pass
+    elif take_while is bool:
+        async for v in it:
+            if not v:
+                break
+    else:
+        async for v in async_map(take_while, it):
+            if not v:
+                break
 
 
 def wrap_iter(

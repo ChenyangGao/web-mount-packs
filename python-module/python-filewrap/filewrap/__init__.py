@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+# TODO: 实现一种 memoryview，可以作为环形缓冲区使用
+# TODO: 使用 codecs.iterdecode 来避免解码过程中的一些重复操作
+# TODO: AsyncTextIOWrapper 的 read 和 readline 算法效率不高，因为会反复创建二进制对象，如果可以复用一段或者几段(内存块组)内存，则可以大大增加效率，还可以引入环形缓冲区（使用长度限定的 bytearray，之后所有操作在 memoryview 上进行，根据当前的可用区块开返回 memoryview），以减少内存分配的开销
+# TODO: AsyncTextIOWrapper.readline 有大量的字符串拼接操作，效率极低，需用 str.joins 方法优化
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 2)
+__version__ = (0, 2, 3)
 __all__ = [
     "Buffer", "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", 
@@ -82,6 +87,20 @@ class SupportsWrite(Protocol[_T_contra]):
 @runtime_checkable
 class SupportsSeek(Protocol):
     def seek(self, /, __offset: int, __whence: int = 0) -> int: ...
+
+
+# TODO: 一些特定编码的 bom 用字典写死，编码名可以规范化，用 codecs.lookup(encoding).name
+def get_bom(encoding: str) -> bytes:
+    code = memoryview(bytes("a", encoding))
+    if len(code) == 1:
+        return b""
+    for i in range(1, len(code)):
+        try:
+            str(code[:i], encoding)
+            return code[:i].tobytes()
+        except UnicodeDecodeError:
+            pass
+    raise UnicodeError
 
 
 class AsyncBufferedReader(BufferedReader):
@@ -331,8 +350,9 @@ class AsyncBufferedReader(BufferedReader):
                         break
                     if length < BUFSIZE:
                         part1, part2 = buf_view[length:].tobytes(), buf_view[:length].tobytes()
-                        buf_view[:length] = part1
-                        buf_view[length:] = part2
+                        index = len(part1)
+                        buf_view[:index] = part1
+                        buf_view[index:] = part2
                         running = False
                         buf_pos = self._buf_pos = BUFSIZE - length
                     else:
@@ -548,6 +568,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
             write_through=write_through, 
         )
         self.newline = newline
+        self._bom = get_bom(self.encoding)
 
     def __del__(self, /):
         try:
@@ -624,9 +645,8 @@ class AsyncTextIOWrapper(TextIOWrapper):
 
         ls_parts: list[str] = []
         add_part = ls_parts.append
-        cache = b""
-        while data := await read(size):
-            cache += data
+        cache = data
+        while size and len(data) == size:
             while cache:
                 try:
                     size -= process_part(cache)
@@ -635,15 +655,37 @@ class AsyncTextIOWrapper(TextIOWrapper):
                     start, stop = e.start, e.end
                     if start:
                         size -= process_part(cache[:start])
-                    if e.reason == "unexpected end of data" and stop == len(cache):
+                    if e.reason == "truncated data":
+                        if stop == len(cache):
+                            cache = cache[start:]
+                            break
+                        else:
+                            while stop < len(cache):
+                                stop += 1
+                                try:
+                                    size -= process_part(cache[start:stop])
+                                    cache = cache[stop:]
+                                    break_this_loop = True
+                                    break
+                                except UnicodeDecodeError as exc:
+                                    e = exc
+                                    if e.reason != "truncated data":
+                                        break
+                                    if stop == len(cache):
+                                        cache = cache[start:]
+                                        break_this_loop = True
+                                        break
+                            if break_this_loop:
+                                break
+                    elif e.reason == "unexpected end of data" and stop == len(cache):
                         cache = cache[start:]
                         break
                     if errors == "strict":
-                        raise
+                        raise e
                     size -= process_part(cache[start:stop], errors)
                     cache = cache[stop:]
-            if len(data) < size:
-                break
+            data = await read(size)
+            cache += data
         if cache:
             process_part(cache, errors)
         return "".join(ls_parts)
@@ -665,9 +707,14 @@ class AsyncTextIOWrapper(TextIOWrapper):
             peek = None
         if newline:
             sepb = bytes(newline, encoding)
+            if bom := self._bom:
+                sepb = sepb.removeprefix(bom)
         else:
             crb = bytes("\r", encoding)
             lfb = bytes("\n", encoding)
+            if bom := self._bom:
+                crb = crb.removeprefix(bom)
+                lfb = lfb.removeprefix(bom)
             lfb_len = len(lfb)
         buf = bytearray()
         text = ""
@@ -702,17 +749,17 @@ class AsyncTextIOWrapper(TextIOWrapper):
                             buf += peek_b
                         if newline:
                             if (idx := buf.find(sepb)) > -1:
-                                idx += 1
+                                idx += len(sepb)
                                 await read(idx - buf_stop)
                                 del buf[idx:]
                                 break
                         elif (idx := buf.find(lfb)) > -1:
-                            idx += 1
+                            idx += len(lfb)
                             await read(idx - buf_stop)
                             del buf[idx:]
                             break
                         elif (idx := buf.find(crb)) > -1:
-                            idx += 1
+                            idx += len(crb)
                             await read(idx - buf_stop)
                             if buf.startswith(lfb, idx):
                                 await read(lfb_len)
@@ -720,6 +767,8 @@ class AsyncTextIOWrapper(TextIOWrapper):
                             else:
                                 del buf[idx:]
                             break
+                        if peek_b:
+                            await read(len(peek_b))
                         c = await read(1)
                         if not c:
                             reach_end = True
@@ -729,10 +778,32 @@ class AsyncTextIOWrapper(TextIOWrapper):
                     try:
                         text += str(buf, encoding)
                         buf.clear()
-                    except UnicodeEncodeError as e:
+                    except UnicodeDecodeError as e:
                         start, stop = e.start, e.end
                         if start:
                             text += str(buf[:start], encoding)
+                        if e.reason == "truncated data":
+                            if stop == len(buf):
+                                buf = buf[start:]
+                                break
+                            else:
+                                while stop < len(buf):
+                                    stop += 1
+                                    try:
+                                        text += str(buf[start:stop], encoding)
+                                        buf = buf[stop:]
+                                        break_this_loop = True
+                                        break
+                                    except UnicodeDecodeError as exc:
+                                        e = exc
+                                        if e.reason != "truncated data":
+                                            break
+                                        if stop == len(buf):
+                                            buf = buf[start:]
+                                            break_this_loop = True
+                                            break
+                                if break_this_loop:
+                                    break
                         if e.reason == "unexpected end of data" and stop == len(buf):
                             buf = buf[start:]
                             break
@@ -820,11 +891,11 @@ class AsyncTextIOWrapper(TextIOWrapper):
                     try:
                         text += str(buf, encoding)
                         buf.clear()
-                    except UnicodeEncodeError as e:
+                    except UnicodeDecodeError as e:
                         start, stop = e.start, e.end
                         if start:
                             text += str(buf[:start], encoding)
-                        if e.reason == "unexpected end of data" and stop == len(buf):
+                        if e.reason in ("unexpected end of data", "truncated data") and stop == len(buf):
                             buf = buf[start:]
                             break
                         if errors == "strict":

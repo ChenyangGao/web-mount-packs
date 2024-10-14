@@ -25,6 +25,7 @@ from typing import cast, overload, Any, Literal, Never, Self
 
 from dictattr import AttrDict
 from iterutils import run_gen_step
+from p115client import normalize_attr
 from posixpatht import escape, joins, splits, path_is_dir_form
 
 from .client import check_response, P115Client, P115URL
@@ -33,39 +34,6 @@ from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 CRE_SHARE_LINK_search1 = re_compile(r"(?:/s/|share\.115\.com/)(?P<share_code>[a-z0-9]+)\?password=(?P<receive_code>[a-z0-9]{4})").search
 CRE_SHARE_LINK_search2 = re_compile(r"(?P<share_code>[a-z0-9]+)-(?P<receive_code>[a-z0-9]{4})").search
-
-
-def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
-    if "fid" in info:
-        fid = info["fid"]
-        parent_id = info["cid"]
-        is_directory = False
-    else:
-        fid = info["cid"]
-        parent_id = info["pid"]
-        is_directory = True
-    attr: AttrDict[str, Any] = AttrDict({
-        "name": info["n"], 
-        "is_directory": is_directory, 
-        "size": info.get("s"), 
-        "id": int(fid), 
-        "parent_id": int(parent_id), 
-        "sha1": info.get("sha"), 
-    })
-    timestamp = attr["timestamp"] = int(info["t"])
-    attr["time"] = datetime.fromtimestamp(timestamp)
-    if "pc" in info:
-        attr["pickcode"] = info["pc"]
-    if "fl" in info:
-        attr["labels"] = info["fl"]
-    if "c" in info:
-        attr["violated"] = bool(info["c"])
-    if "u" in info:
-        attr["thumb"] = info["u"]
-    if "play_long" in info:
-        attr["play_long"] = info["play_long"]
-    attr["ico"] = info.get("ico", "folder" if is_directory else "")
-    return attr
 
 
 class P115SharePath(P115PathBase):

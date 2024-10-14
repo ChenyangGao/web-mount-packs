@@ -19,13 +19,18 @@ parser.add_argument("-fl", "--follow-symlinks", action="store_true", help="跟�
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 
 
-def main():
-    args = parser.parse_args()
-
+def parse_args(argv=None):
+    args = parser.parse_args(argv)
     if args.version:
         from statsdir import __version__
         print(".".join(map(str, __version__)))
         raise SystemExit(0)
+    return args
+
+
+
+def main(argv=None):
+    args = parse_args(argv)
 
     from collections.abc import Callable, Iterable
     from json import dumps

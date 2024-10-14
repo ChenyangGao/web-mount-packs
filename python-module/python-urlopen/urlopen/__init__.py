@@ -66,13 +66,20 @@ def decompress_deflate(data: bytes, compresslevel: int = 9) -> bytes:
     return deflated
 
 
+def get_charset(content_type: str, default="utf-8") -> str:
+    match = CRE_search_charset(content_type)
+    if match is None:
+        return "utf-8"
+    return match["charset"]
+
+
 def ensure_ascii_url(url: str, /) -> str:
     if url.isascii():
         return url
     return quote(url, safe=punctuation)
 
 
-def decompress_response(resp: HTTPResponse) -> bytes:
+def decompress_response(resp: HTTPResponse, /) -> bytes:
     data = resp.read()
     content_encoding = resp.headers.get("Content-Encoding")
     match content_encoding:
@@ -170,13 +177,6 @@ def urlopen(
         return opener.open(req)
     else:
         return opener.open(req, timeout=timeout)
-
-
-def get_charset(content_type: str, default="utf-8") -> str:
-    match = CRE_search_charset(content_type)
-    if match is None:
-        return "utf-8"
-    return match["charset"]
 
 
 def request(

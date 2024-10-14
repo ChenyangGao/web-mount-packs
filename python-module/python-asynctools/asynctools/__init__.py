@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "run_async", "as_thread", "ensure_async", "ensure_await", 
     "ensure_coroutine", "ensure_aiter", "async_map", "async_filter", 
@@ -29,12 +29,11 @@ def run_async(obj, /):
         has_running_loop = True
     except RuntimeError:
         has_running_loop = False
-    if has_running_loop:
-        if isawaitable(obj):
+    if isawaitable(obj):
+        if has_running_loop:
             return create_task(ensure_coroutine(obj))
-        return ensure_coroutine(obj)
-    elif isawaitable(obj):
-        return run(ensure_coroutine(obj))
+        else:
+            return run(ensure_coroutine(obj))
     else:
         return obj
 
@@ -161,15 +160,20 @@ async def async_map(
 
 
 async def async_filter(
-    func: Callable[[T], bool], 
+    func: None | Callable[[T], bool], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
-    fn = ensure_async(func, threaded=threaded)
-    async for arg in ensure_aiter(iterable, threaded=threaded):
-        if (await fn(arg)):
-            yield arg
+    if func is None or func is bool:
+        async for arg in ensure_aiter(iterable, threaded=threaded):
+            if arg:
+                yield arg
+    else:
+        fn = ensure_async(func, threaded=threaded)
+        async for arg in ensure_aiter(iterable, threaded=threaded):
+            if await fn(arg):
+                yield arg
 
 
 async def async_reduce(

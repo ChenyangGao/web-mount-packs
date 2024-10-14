@@ -347,7 +347,7 @@ webdav_file_cache: MutableMapping[str, DAVNonCollection] = LRUCache(65536)
 KEYS = (
     "id", "parent_id", "name", "path", "relpath", "sha1", "pickcode", "is_directory", 
     "size", "format_size", "ctime", "mtime", "atime", "thumb", "star", "labels", 
-    "score", "hidden", "described", "violated", "url", "short_url", "ancestors", 
+    "score", "hidden", "has_desc", "violated", "url", "short_url", "ancestors", 
 )
 flask_app = Flask(__name__)
 Compress(flask_app)
@@ -547,7 +547,7 @@ class P115FileSystemProvider(DAVProvider):
         if attr.is_dir():
             return FolderResource(path, environ, attr)
         else:
-            if not attr.is_dir() and strm_predicate and strm_predicate(attr):
+            if strm_predicate and strm_predicate(attr):
                 path = splitext(path)[0] + ".strm"
             elif predicate and not predicate(attr):
                 raise DAVError(404, path)

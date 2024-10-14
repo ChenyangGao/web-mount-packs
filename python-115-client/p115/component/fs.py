@@ -36,6 +36,7 @@ from dictattr import AttrDict, MapAttr
 from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
+from p115client import normalize_attr
 from posixpatht import (
     basename, commonpath, dirname, escape, joins, normpath, split, splits, 
     unescape, path_is_dir_form, 
@@ -44,62 +45,6 @@ from yarl import URL
 
 from .client import check_response, P115Client, P115URL
 from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
-
-
-def normalize_attr(info: Mapping, /) -> AttrDict[str, Any]:
-    attr: AttrDict[str, Any] = AttrDict()
-    is_directory = attr["is_directory"] = "fid" not in info
-    if is_directory:
-        attr["id"] = int(info["cid"])        # cid => category_id
-        attr["parent_id"] = int(info["pid"]) # pid => parent_id
-    else:
-        attr["id"] = int(info["fid"])        # fid => file_id
-        attr["parent_id"] = int(info["cid"])
-    #attr["area_id"] = int(attr["aid"])
-    attr["pickcode"] = info["pc"]
-    #attr["pick_time"] = int(info["pt"])
-    #attr["pick_expire"] = info["e"]
-    attr["name"] = info["n"]
-    attr["size"] = int(info.get("s") or 0)
-    attr["sha1"] = info.get("sha")
-    attr["labels"] = info["fl"]
-    attr["score"] = int(info.get("score") or 0)
-    attr["ico"] = info.get("ico", "folder" if is_directory else "")
-    attr["mtime"] = attr["user_utime"] = int(info["te"])
-    attr["ctime"] = attr["user_ptime"] = int(info["tp"])
-    if "to" in info:
-        attr["atime"] = attr["user_otime"] = int(info["to"])
-    if "tu" in info:
-        attr["utime"] = int(info["tu"])
-    for key, name in (
-        ("m", "star"), 
-        ("issct", "shortcut"), 
-        ("hdf", "hidden"), 
-        ("fdes", "described"), 
-        ("c", "violated"), 
-        #("sh", "shared"), 
-        #("d", "has_desc"), 
-        #("p", "has_pass"), 
-    ):
-        if key in info:
-            attr[name] = int(info[key] or 0) == 1
-    for key, name in (
-        #("dp", "dir_path"), 
-        #("style", "style"), 
-        #("ns", "name_show"), 
-        #("cc", "category_cover"), 
-        ("sta", "status"), 
-        ("class", "class"), 
-        ("u", "thumb"), 
-        ("vdi", "video_type"), 
-        ("play_long", "play_long"), 
-        ("current_time", "current_time"), 
-        ("last_time", "last_time"), 
-        ("played_end", "played_end"), 
-    ):
-        if key in info:
-            attr[name] = info[key]
-    return attr
 
 
 class LRUDict(dict):

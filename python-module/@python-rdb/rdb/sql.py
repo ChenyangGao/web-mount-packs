@@ -13,6 +13,8 @@ from itertools import chain, islice, repeat
 from typing import Any
 from urllib.parse import urlencode
 
+from orjson import dumps
+
 
 VALUE_CONVERTER: list[tuple[Any, Any]] = []
 TYPE_CONVERTER: list[tuple[type, Any]] = []
@@ -48,13 +50,14 @@ def encode(
         return "TRUE"
     elif obj is False:
         return "FALSE"
-    match type(obj):
-        case AsStr | int | float:
-            return str(obj)
-        case str:
-            return "'%s'" % obj.replace("'", "''").replace("\\", r"\\")
-        case bytes | bytearray:
-            return "x'%s'" % obj.hex()
+    if isinstance(obj, (AsStr, int, float)):
+        return str(obj)
+    elif isinstance(obj, str):
+        return "'%s'" % obj.replace("'", "''").replace("\\", r"\\")
+    elif isinstance(obj, (bytes, bytearray, memoryview)):
+        return "x'%s'" % obj.hex()
+    elif isinstance(obj, (dict, list, tuple)):
+        return "x'%s'" % dumps(obj).hex()
     try:
         obj = obj.sql_convert()
     except (AttributeError, TypeError):

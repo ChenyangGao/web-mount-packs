@@ -2,20 +2,69 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["register_maker", "make_predicate"]
+__all__ = ["PathType", "MappingPath", "register_maker", "make_predicate"]
+__version__ = (0, 0, 1)
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from mimetypes import guess_type
+from posixpath import basename, splitext
 from re import compile as re_compile
 from runpy import run_path
 from textwrap import dedent
-from typing import Final, TypeAlias
+from typing import runtime_checkable, Final, Protocol, TypeAlias
 
-from p115 import P115Path
 from path_ignore_pattern import read_str, read_file, parse, ExtendedType
 
 
-ConditionSourceType: TypeAlias = P115Path
-PredicateType = Callable[[ConditionSourceType], bool]
+@runtime_checkable
+class PathType(Protocol):
+    @property
+    def name(self, /) -> str:
+        pass
+    @property
+    def path(self, /) -> str:
+        pass
+    def is_dir(self, /) -> bool:
+        pass
+
+
+class MappingPath:
+    __slots__ = ("data",)
+
+    def __init__(self, data: Mapping):
+        self.data = data
+
+    def __getitem__(self, key, /):
+        return self.data[key]
+
+    @property
+    def name(self, /):
+        try:
+            return self.data["name"]
+        except KeyError:
+            return basename(self.data["path"])
+
+    @property
+    def path(self, /):
+        return self.data["path"]
+
+    def is_dir(self, /) -> bool:
+        return bool(self.data["is_dir"])
+
+    @property
+    def media_type(self, /) -> str:
+        if self.is_dir():
+            return ""
+        return guess_type(self.name)[0] or ""
+
+    @property
+    def suffix(self, /) -> str:
+        if self.is_dir():
+            return ""
+        return splitext(self.name)[1]
+
+
+PredicateType = Callable[[PathType], bool]
 PredicateMakerType = Callable[[str, dict], None | PredicateType]
 
 TYPE_TO_PREIDCATE_MAKERS: Final[dict[str, PredicateMakerType]] = {}
@@ -148,7 +197,7 @@ def make_predicate_re(
     /, 
 ) -> None | PredicateType:
     search = re_compile(expr).search
-    return lambda path: search(path["name"]) is not None
+    return lambda path: search(path.name) is not None
 
 
 @register_maker("lambda")

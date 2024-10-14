@@ -29,7 +29,7 @@ from posixpatht import joins
 BASE_KEYS: Final = (
     "is_directory", "id", "parent_id", "pickcode", "name", "size", "sha1", "labels", 
     "score", "ico", "mtime", "user_utime", "ctime", "user_ptime", "atime", "user_otime", 
-    "utime", "star", "shortcut", "hidden", "described", "violated", "status", "class", 
+    "utime", "star", "is_shortcut", "hidden", "has_desc", "violated", "status", "class", 
     "thumb", "video_type", "play_long", "current_time", "last_time", "played_end", "path", 
 )
 EXTRA_KEYS: Final = (
@@ -274,7 +274,7 @@ def main(argv: None | list[str] | Namespace = None):
                                 break
                         d[k] = joins([a["name"] for a in ancestors[i+1:]])
                 case "desc":
-                    d[k] = path.desc if path.get("described") else ""
+                    d[k] = path.desc if path.get("has_desc") else ""
                 case "url":
                     d[k] = None if path.is_dir() else path.url
                 case _:

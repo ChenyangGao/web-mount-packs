@@ -48,7 +48,15 @@ async def request(
     **request_kwargs, 
 ):
     if session is None:
-        session = ClientSession()
+        async with ClientSession() as session:
+            return await request(
+                url, 
+                method, 
+                parse=parse, 
+                raise_for_status=raise_for_status, 
+                session=session, 
+                **request_kwargs, 
+            )
     request_kwargs.pop("stream", None)
     resp = await session.request(method, url, **request_kwargs)
     if raise_for_status:
