@@ -18,7 +18,7 @@ from collections.abc import (
     ItemsView, KeysView, Mapping, Sequence, ValuesView, 
 )
 from functools import cached_property, partial
-from io import BytesIO, TextIOWrapper, UnsupportedOperation
+from io import BytesIO, BufferedReader, TextIOWrapper, UnsupportedOperation
 from inspect import isawaitable
 from itertools import chain, pairwise
 from mimetypes import guess_type
@@ -38,14 +38,15 @@ from urllib.parse import parse_qsl, urlparse
 from asynctools import async_map
 from dictattr import AttrDict
 from download import AsyncDownloadTask, DownloadTask
-from filewrap import SupportsWrite
+from filewrap import AsyncBufferedReader, AsyncTextIOWrapper, SupportsWrite
 from glob_pattern import translate_iter
 from hashtools import HashObj
-from httpfile import HTTPFileReader
+from httpfile import AsyncHTTPFileReader, HTTPFileReader
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
+from p115client import check_response, P115URL
 from posixpatht import basename, commonpath, dirname, escape, joins, normpath, relpath, splits, unescape
 
-from .client import check_response, P115Client, P115URL
+from .client import P115Client
 
 
 T = TypeVar("T")
@@ -957,7 +958,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
     def name(self, /) -> str:
         return basename(self.path)
 
-    # TODO: 支持异步
+    @overload
     def open(
         self, 
         /, 
@@ -969,9 +970,43 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
+        http_file_reader_cls: None | type[HTTPFileReader] = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> HTTPFileReader | BufferedReader | TextIOWrapper:
+        ...
+    @overload
+    def open(
+        self, 
+        /, 
+        mode: str = "r", 
+        buffering: None | int = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        http_file_reader_cls: None | type[AsyncHTTPFileReader] = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncHTTPFileReader | AsyncBufferedReader | AsyncTextIOWrapper:
+        ...
+    def open(
+        self, 
+        /, 
+        mode: str = "r", 
+        buffering: None | int = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        http_file_reader_cls: None | type[HTTPFileReader] | type[AsyncHTTPFileReader] = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> HTTPFileReader | IO:
+    ) -> HTTPFileReader | BufferedReader | TextIOWrapper | AsyncHTTPFileReader | AsyncBufferedReader | AsyncTextIOWrapper:
         return self.fs.open(
             self, 
             mode=mode, 
@@ -982,7 +1017,8 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
             headers=headers, 
             start=start, 
             seek_threshold=seek_threshold, 
-            async_=async_, 
+            http_file_reader_cls=http_file_reader_cls, 
+            async_=async_, # type: ignore
         )
 
     @property
@@ -3335,12 +3371,12 @@ class P115FileSystemBase(Generic[P115PathType]):
         else:
             return [path_class(self, attr) for attr in self.iterdir(id_or_path, pid=pid, **kwargs)]
 
-    # TODO: 支持异步
+    @overload
     def open(
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        mode: str = "r", 
+        mode: Literal["r", "rt", "tr", "rb", "br"] = "r", 
         buffering: None | int = None, 
         encoding: None | str = None, 
         errors: None | str = None, 
@@ -3348,17 +3384,53 @@ class P115FileSystemBase(Generic[P115PathType]):
         headers: None | Mapping = None, 
         start: int = 0, 
         seek_threshold: int = 1 << 20, 
+        http_file_reader_cls: None | type[HTTPFileReader] = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> HTTPFileReader | BufferedReader | TextIOWrapper:
+        ...
+    @overload
+    def open(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        mode: Literal["r", "rt", "tr", "rb", "br"] = "r", 
+        buffering: None | int = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        http_file_reader_cls: None | type[AsyncHTTPFileReader] = None, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncHTTPFileReader | AsyncBufferedReader | AsyncTextIOWrapper:
+        ...
+    def open(
+        self, 
+        id_or_path: IDOrPathType, 
+        /, 
+        mode: Literal["r", "rt", "tr", "rb", "br"] = "r", 
+        buffering: None | int = None, 
+        encoding: None | str = None, 
+        errors: None | str = None, 
+        newline: None | str = None, 
+        headers: None | Mapping = None, 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        http_file_reader_cls: None | type[HTTPFileReader] | type[AsyncHTTPFileReader] = None, 
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> HTTPFileReader | IO:
-        if async_:
-            raise NotImplementedError("asynchronous mode not implemented")
+    ) -> HTTPFileReader | BufferedReader | TextIOWrapper | AsyncHTTPFileReader | AsyncBufferedReader | AsyncTextIOWrapper:
         if mode not in ("r", "rt", "tr", "rb", "br"):
             raise OSError(errno.EINVAL, f"invalid (or unsupported) mode: {mode!r}")
         url = self.get_url(id_or_path, pid=pid, headers=headers, async_=async_)
         return self.client.open(
-            url, 
+            url, # type: ignore
             headers=headers, 
             start=start, 
             seek_threshold=seek_threshold, 

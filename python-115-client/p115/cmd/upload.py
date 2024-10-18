@@ -43,9 +43,7 @@ class Result(NamedTuple):
     tasks: Tasks
 
 
-def parse_args(
-    argv: None | list[str] = None, 
-) -> Namespace:
+def parse_args(argv: None | list[str] = None, /) -> Namespace:
     args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
@@ -54,11 +52,8 @@ def parse_args(
     return args
 
 
-def main(argv: None | list[str] | Namespace = None) -> Result:
-    if isinstance(argv, Namespace):
-        args = argv
-    else:
-        args = parse_args(argv)
+def main(argv: None | list[str] = None, /) -> Result:
+    args = parse_args(argv)
 
     import errno
 
@@ -75,7 +70,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
     from traceback import format_exc
     from typing import cast, ContextManager
     from urllib.error import URLError
-    from warnings import warn
 
     from concurrenttools import thread_batch
     from hashtools import file_digest
@@ -111,35 +105,12 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
             fs_lock = Lock()
     cookies_path_mtime = 0
 
-    if not cookies:
-        if cookies_path:
-            try:
-                cookies = open(cookies_path).read()
-            except FileNotFoundError:
-                pass
-        else:
-            seen = set()
-            for dir_ in (".", expanduser("~"), dirname(__file__)):
-                dir_ = realpath(dir_)
-                if dir_ in seen:
-                    continue
-                seen.add(dir_)
-                try:
-                    cookies = open(joinpath(dir_, "115-cookies.txt")).read()
-                    if cookies:
-                        cookies_path = joinpath(dir_, "115-cookies.txt")
-                        break
-                except FileNotFoundError:
-                    pass
-
     client = P115Client(cookies, app=args.app)
 
     do_request: None | Callable = None
     match use_request:
         case "httpx":
             from httpx import HTTPStatusError as StatusError, RequestError
-            def get_status_code(e):
-                return e.response.status_code
         case "requests":
             try:
                 from requests import Session
@@ -153,8 +124,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
                 from requests_request import request as requests_request
             do_request = partial(requests_request, session=Session())
-            def get_status_code(e):
-                return e.response.status_code
         case "urllib3":
             from urllib.error import HTTPError as StatusError # type: ignore
             try:
@@ -166,8 +135,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 run([executable, "-m", "pip", "install", "-U", "urllib3", "urllib3_request"], check=True)
                 from urllib3.exceptions import RequestError # type: ignore
                 from urllib3_request import request as do_request
-            def get_status_code(e):
-                return e.status
         case "urlopen":
             from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
             from urllib.request import build_opener, HTTPCookieProcessor
@@ -179,20 +146,9 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
                 from urlopen import request as urlopen_request
             do_request = partial(urlopen_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
-            def get_status_code(e):
-                return e.status
 
-    device = client.login_device(request=do_request)["icon"]
-    if device not in AVAILABLE_APPS:
-        # 115 浏览器版
-        if device == "desktop":
-            device = "web"
-        else:
-            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
-            device = "qandroid"
-    if cookies_path and cookies != client.cookies:
-        open(cookies_path, "w").write(client.cookies)
-
+    # TODO
+    client = ...
     fs = client.get_fs(request=do_request)
 
     @contextmanager
@@ -202,45 +158,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 yield val
         else:
             yield cm
-
-    def relogin(exc=None):
-        nonlocal cookies_path_mtime
-        if exc is None:
-            exc = exc_info()[0]
-        mtime = cookies_path_mtime
-        with ensure_cm(login_lock):
-            need_update = mtime == cookies_path_mtime
-            if cookies_path and need_update:
-                try:
-                    mtime = stat(cookies_path).st_mtime_ns
-                    if mtime != cookies_path_mtime:
-                        client.cookies = open(cookies_path).read()
-                        cookies_path_mtime = mtime
-                        need_update = False
-                except FileNotFoundError:
-                    console_print("[bold yellow][SCAN] 🦾 文件空缺[/bold yellow]")
-            if need_update:
-                if exc is None:
-                    console_print("[bold yellow][SCAN] 🦾 重新扫码[/bold yellow]")
-                else:
-                    console_print("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
-                        prompt = "[bold yellow][SCAN] 🤖 重新扫码：[/bold yellow]", 
-                        exc    = f"    ├ [red]{type(exc).__qualname__}[/red]: {exc}")
-                    )
-                client.login_another_app(device, request=do_request, replace=True, timeout=5)
-                if cookies_path:
-                    open(cookies_path, "w").write(client.cookies)
-                    cookies_path_mtime = stat(cookies_path).st_mtime_ns
-
-    def relogin_wrap(func, /, *args, **kwds):
-        try:
-            with ensure_cm(fs_lock):
-                return func(*args, **kwds)
-        except StatusError as e:
-            if get_status_code(e) != 405:
-                raise
-            relogin(e)
-        return relogin_wrap(func, *args, **kwds)
 
     stats: dict = {
         # 开始时间
@@ -656,9 +573,14 @@ parser.set_defaults(func=main)
 
 
 if __name__ == "__main__":
-    args = parser.parse_args()
-    main(args)
+    main()
 
 # TODO: statistics 行要有更详细的信息，如果一行不够，就再加一行
 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
 # TODO: 任务可能要执行很久，允许中途删除文件，则自动跳过此任务
+# TODO: 这个模块应可以单独运行，也可以被 import
+# TODO: 支持在上传的时候，改变文件的名字，特别是改变了扩展名，则直接利用秒传实现
+# TODO: 如果文件大于特定大小，就不能秒传，需要直接报错（而不需要进行尝试）
+# TODO: 支持把一个目录上传到另一个目录（如果扩展名没改，就直接复制，然后改名，否则就秒传）
+# TODO: 支持直接从一个115网盘直接上传到另一个115网盘
+

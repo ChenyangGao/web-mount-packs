@@ -41,9 +41,7 @@ class Result(NamedTuple):
     tasks: Tasks
 
 
-def parse_args(
-    argv: None | list[str] = None, 
-) -> Namespace:
+def parse_args(argv: None | list[str] = None, /) -> Namespace:
     args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
@@ -52,11 +50,8 @@ def parse_args(
     return args
 
 
-def main(argv: None | list[str] | Namespace = None) -> Result:
-    if isinstance(argv, Namespace):
-        args = argv
-    else:
-        args = parse_args(argv)
+def main(argv: None | list[str] = None, /) -> Result:
+    args = parse_args(argv)
 
     import errno
 
@@ -129,16 +124,17 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 except FileNotFoundError:
                     pass
 
+    # TODO
     client = P115Client(cookies, app=args.app)
+    # TODO: HTTPResponse 实现一个函数 get_status_code
 
+    # TODO: 实现一个函数，获取 urlopen，如果是不支持的类型，就报错 ValueError
     urlopen: Callable
     do_request: None | Callable = None
     match use_request:
         case "httpx":
             from httpx import Client, HTTPStatusError as StatusError, RequestError
             from httpx_request import request as httpx_request
-            def get_status_code(e):
-                return e.response.status_code
             urlopen = partial(httpx_request, session=Client())
             iter_bytes = lambda resp: resp.iter_bytes(COPY_BUFSIZE)
         case "requests":
@@ -155,8 +151,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 from requests_request import request as requests_request
             do_request = urlopen = partial(requests_request, session=Session())
             iter_bytes = lambda resp: resp.iter_content(COPY_BUFSIZE)
-            def get_status_code(e):
-                return e.response.status_code
         case "urllib3":
             from urllib.error import HTTPError as StatusError # type: ignore
             try:
@@ -169,8 +163,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 from urllib3.exceptions import RequestError # type: ignore
                 from urllib3_request import request as urllib3_request
             do_request = urlopen = urllib3_request
-            def get_status_code(e):
-                return e.status
         case "urlopen":
             from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
             from urllib.request import build_opener, HTTPCookieProcessor
@@ -182,25 +174,15 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 run([executable, "-m", "pip", "install", "-U", "python-urlopen"], check=True)
                 from urlopen import request as urlopen_request
             do_request = urlopen = partial(urlopen_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
-            def get_status_code(e):
-                return e.status
 
-    device = client.login_device(request=do_request)["icon"]
-    if device not in AVAILABLE_APPS:
-        # 115 浏览器版
-        if device == "desktop":
-            device = "web"
-        else:
-            warn(f"encountered an unsupported app {device!r}, fall back to 'qandroid'")
-            device = "qandroid"
-    if cookies_path and cookies != client.cookies:
-        open(cookies_path, "w").write(client.cookies)
+    client = ...
 
     if share_link:
         fs = client.get_share_fs(share_link, request=do_request)
     else:
         fs = client.get_fs(request=do_request)
 
+    # TODO: 这个也写个函数
     match system():
         case "Windows":
             transtab = str.maketrans('<>/\\|:*?"', '＜＞／＼｜：＊？＂')
@@ -221,45 +203,6 @@ def main(argv: None | list[str] | Namespace = None) -> Result:
                 yield val
         else:
             yield cm
-
-    def relogin(exc=None):
-        nonlocal cookies_path_mtime
-        if exc is None:
-            exc = exc_info()[0]
-        mtime = cookies_path_mtime
-        with ensure_cm(login_lock):
-            need_update = mtime == cookies_path_mtime
-            if cookies_path and need_update:
-                try:
-                    mtime = stat(cookies_path).st_mtime_ns
-                    if mtime != cookies_path_mtime:
-                        client.cookies = open(cookies_path).read()
-                        cookies_path_mtime = mtime
-                        need_update = False
-                except FileNotFoundError:
-                    console_print("[bold yellow][SCAN] 🦾 文件空缺[/bold yellow]")
-            if need_update:
-                if exc is None:
-                    console_print("[bold yellow][SCAN] 🦾 重新扫码[/bold yellow]")
-                else:
-                    console_print("""{prompt}一个 Web API 受限 (响应 "405: Not Allowed"), 将自动扫码登录同一设备\n{exc}""".format(
-                        prompt = "[bold yellow][SCAN] 🤖 重新扫码：[/bold yellow]", 
-                        exc    = f"    ├ [red]{type(exc).__qualname__}[/red]: {exc}")
-                    )
-                client.login_another_app(device, request=do_request, replace=True, timeout=5)
-                if cookies_path:
-                    open(cookies_path, "w").write(client.cookies)
-                    cookies_path_mtime = stat(cookies_path).st_mtime_ns
-
-    def relogin_wrap(func, /, *args, **kwds):
-        try:
-            with ensure_cm(fs_lock):
-                return func(*args, **kwds)
-        except StatusError as e:
-            if get_status_code(e) != 405:
-                raise
-            relogin(e)
-        return relogin_wrap(func, *args, **kwds)
 
     stats: dict = {
         # 开始时间
@@ -584,6 +527,9 @@ parser.set_defaults(func=main)
 
 
 if __name__ == "__main__":
-    args = parser.parse_args()
-    main(args)
+    main()
+
+# TODO: 这个模块应可以单独运行，也可以被 import
+# TODO: 允许下载的时候改变名字
+# TODO: 允许下载到压缩包，或者 tar 包中
 

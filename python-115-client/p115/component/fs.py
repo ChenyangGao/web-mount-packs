@@ -36,14 +36,14 @@ from dictattr import AttrDict, MapAttr
 from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
-from p115client import normalize_attr
+from p115client import check_response, normalize_attr, P115URL
 from posixpatht import (
     basename, commonpath, dirname, escape, joins, normpath, split, splits, 
     unescape, path_is_dir_form, 
 )
 from yarl import URL
 
-from .client import check_response, P115Client, P115URL
+from .client import P115Client
 from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 
@@ -2085,19 +2085,25 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     dst_pid = dst_attr["parent_id"]
 
                 if splitext(src_name)[1] != splitext(dst_name)[1]:
-                    dst_name = check_response((yield self.client.upload_file_init(
+                    # TODO: 专门编写一个工具函数，可以把网盘里的一个文件，秒传到网盘的另一个地方，如果文件不能被秒传，或者文件被封禁，可以直接一点点上传，但需要打开选项
+                    # TODO: 如果秒传失败，但文件小于一定值，则直接上传
+                    # TODO: 上面所提到的函数，可以给 rename 和 copy 所使用
+                    # TODO: 增删改查函数，都增加一个timeout参数，如果系统繁忙中，可以等多少时间，也可以无限等
+                    resp = yield self.client.upload_file_init(
                         filename=dst_name, 
                         filesize=src_attr["size"], 
                         filesha1=src_attr["sha1"], 
                         read_range_bytes_or_hash=lambda rng: self.read_bytes_range(
-                            src_attr["pickcode"], 
+                            src_attr, 
                             bytes_range=rng, 
                             async_=async_, 
                         ), 
                         pid=dst_pid, 
                         request=self.async_request if async_ else self.request, 
                         async_=async_, 
-                    )))["data"]["file_name"]
+                    )
+                    check_response(resp)
+                    dst_name = resp["data"]["file_name"]
                     return (yield partial(
                         self.attr, 
                         [dst_name], 
@@ -3443,23 +3449,20 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     yield partial(self.fs_move, src_id, src_attr["parent_id"], async_=async_)
                     raise
             else:
-                url = yield partial(self.get_url, src_id, async_=async_)
-                client = self.client
-                resp = yield partial(
-                    client.upload_file_init, 
-                    dst_name, 
+                resp = yield self.client.upload_file_init(
+                    filename=dst_name, 
                     filesize=src_attr["size"], 
                     filesha1=src_attr["sha1"], 
-                    pid=dst_pid, 
-                    read_range_bytes_or_hash=lambda rng: client.read_bytes_range(
-                        url, 
+                    read_range_bytes_or_hash=lambda rng: self.read_bytes_range(
+                        src_attr, 
                         bytes_range=rng, 
-                        request=self.async_request if async_ else self.request, 
                         async_=async_, 
                     ), 
+                    pid=dst_pid, 
                     request=self.async_request if async_ else self.request, 
                     async_=async_, 
                 )
+                check_response(resp)
                 status = resp["status"]
                 statuscode = resp.get("statuscode", 0)
                 if status == 2 and statuscode == 0:

@@ -16,10 +16,10 @@ from threading import Condition
 from time import sleep
 from typing import overload, Any, Literal
 
-from p115client import P115Client
+from p115client import check_response, P115Client as Client
 
 
-class P115Client(P115Client):
+class P115Client(Client):
 
     # TODO 支持异步
     @overload

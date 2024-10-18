@@ -1,15 +1,15 @@
-# Python chunked iterator..
+# Python decorator tools.
 
 ## Installation
 
-You can install from [pypi](https://pypi.org/project/chunkiter/)
+You can install from [pypi](https://pypi.org/project/python-decotools/)
 
 ```console
-pip install -U chunkiter
+pip install -U decotools
 ```
 
 ## Usage
 
 ```python
-import chunkiter
+import decotools
 ```

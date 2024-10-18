@@ -25,10 +25,10 @@ from typing import cast, overload, Any, Literal, Never, Self
 
 from dictattr import AttrDict
 from iterutils import run_gen_step
-from p115client import normalize_attr
+from p115client import check_response, normalize_attr, P115URL
 from posixpatht import escape, joins, splits, path_is_dir_form
 
-from .client import check_response, P115Client, P115URL
+from .client import P115Client
 from .fs_base import IDOrPathType, P115PathBase, P115FileSystemBase
 
 

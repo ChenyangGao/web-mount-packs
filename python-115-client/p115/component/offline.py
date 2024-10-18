@@ -18,10 +18,10 @@ from typing import overload, Any, Final, Literal, Self
 from asynctools import async_any, to_list
 from dictattr import AttrDict
 from iterutils import run_gen_step
-from magnet2torrent import Magnet2Torrent # type: ignore
+from p115client import check_response
 from undefined import undefined
 
-from .client import check_response, P115Client
+from .client import P115Client
 from .fs import P115Path
 
 
@@ -811,6 +811,8 @@ class P115Offline:
             elif isinstance(torrent_or_magnet_or_sha1_or_fid, bytes):
                 torrent = torrent_or_magnet_or_sha1_or_fid
             elif torrent_or_magnet_or_sha1_or_fid.startswith("magnet:?xt=urn:btih:"):
+                from magnet2torrent import Magnet2Torrent # type: ignore
+
                 m2t = Magnet2Torrent(torrent_or_magnet_or_sha1_or_fid)
                 if async_:
                     torrent = (yield m2t.retrieve_torrent)[1]

@@ -19,9 +19,7 @@ else:
     parser = subparsers.add_parser("qrcode", description=__doc__, formatter_class=RawTextHelpFormatter)
 
 
-def parse_args(
-    argv: None | list[str] = None, 
-) -> Namespace:
+def parse_args(argv: None | list[str] = None, /) -> Namespace:
     args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
@@ -30,11 +28,8 @@ def parse_args(
     return args
 
 
-def main(argv: None | list[str] | Namespace = None):
-    if isinstance(argv, Namespace):
-        args = argv
-    else:
-        args = parse_args(argv)
+def main(argv: None | list[str] = None, /):
+    args = parse_args(argv)
 
     from os.path import expanduser, dirname, join as joinpath, realpath
     from typing import TextIO
@@ -107,6 +102,6 @@ parser.set_defaults(func=main)
 
 
 if __name__ == "__main__":
-    args = parser.parse_args()
-    main(args)
+    main()
 
+# TODO: 这个模块应可以单独运行，也可以被 import

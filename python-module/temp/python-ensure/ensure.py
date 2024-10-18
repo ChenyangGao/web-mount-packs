@@ -12,6 +12,7 @@ __all__ = [
 ]
 
 from contextlib import asynccontextmanager, contextmanager, AbstractAsyncContextManager, AbstractContextManager
+from enum import Enum
 from functools import update_wrapper
 from inspect import isawaitable
 from sys import byteorder
@@ -74,7 +75,7 @@ def ensure_acm(
     return _acm(obj)
 
 
-def ensure_enum(cls, val):
+def ensure_enum[T: Enum](cls: type[T], val) -> T:
     if isinstance(val, cls):
         return val
     elif isinstance(val, str):

@@ -43,9 +43,7 @@ def default(obj, /):
     return NotImplemented
 
 
-def parse_args(
-    argv: None | list[str] = None, 
-) -> Namespace:
+def parse_args(argv: None | list[str] = None, /) -> Namespace:
     args = parser.parse_args(argv)
     if args.version:
         from p115 import __version__
@@ -54,11 +52,8 @@ def parse_args(
     return args
 
 
-def main(argv: None | list[str] | Namespace = None):
-    if isinstance(argv, Namespace):
-        args = argv
-    else:
-        args = parse_args(argv)
+def main(argv: None | list[str] = None, /):
+    args = parse_args(argv)
 
     from orjson import dumps
     from p115 import P115Client, P115Path
@@ -174,6 +169,7 @@ def main(argv: None | list[str] | Namespace = None):
 
     output_file = args.output_file
     if output_file:
+        # TODO: 写一个单独的模块，用来保存这个函数
         from collections import deque
         from time import perf_counter
 
@@ -366,3 +362,6 @@ parser.set_defaults(func=main)
 if __name__ == "__main__":
     main()
 
+# TODO: 使用 iter_files 进行加速
+# TODO: 代码还需要尽量简化
+# TODO: 这个模块应可以单独运行，也可以被 import

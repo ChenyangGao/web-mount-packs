@@ -12,9 +12,10 @@ from typing import overload, Any, Literal
 
 from asynctools import async_any, to_list
 from iterutils import run_gen_step
+from p115client import check_response
 from undefined import undefined
 
-from .client import check_response, P115Client
+from .client import P115Client
 
 
 class P115Recyclebin:
