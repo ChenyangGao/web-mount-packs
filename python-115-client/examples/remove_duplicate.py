@@ -141,8 +141,8 @@ def main():
     args = parse_args()
     cookies = get_cookie(args)
     client = P115Client(cookies, app=args.app, check_for_relogin=True)
-    if args.cookies_path and cookies != client.cookies:
-        open(args.cookies_path, "w").write(client.cookies)
+    if args.cookies_path and cookies != client.cookies_str:
+        open(args.cookies_path, "w").write(client.cookies_str)
 
     fs = client.fs
     target_cid = 0
