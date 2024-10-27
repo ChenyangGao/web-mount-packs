@@ -3,8 +3,6 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 
-from p115client import *
-
 from .client import *
 from .fs_base import *
 from .fs import *

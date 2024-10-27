@@ -2,13 +2,14 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9, 7, 9)
+__version__ = (0, 0, 9, 8)
 
 from warnings import filterwarnings
 
 filterwarnings("ignore", category=DeprecationWarning)
 filterwarnings("ignore", category=SyntaxWarning)
 
+from p115client import *
 from .component import *
 
 # TODO upload_tree 多线程和进度条，并且为每一个上传返回一个 task，可重试

@@ -2,13 +2,13 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__: list[str] = []
+__all__ = ["main"]
 __doc__ = "115 签到 (check in)"
 
 from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
+from pathlib import Path
 
-if __name__ == "__main__":
-    from pathlib import Path
+if __name__ == "__main__":  
     from sys import path
 
     path[0] = str(Path(__file__).parents[2])
@@ -28,55 +28,25 @@ def parse_args(argv: None | list[str] = None, /) -> Namespace:
     return args
 
 
-def main(argv: None | list[str] = None, /):
-    args = parse_args(argv)
-
-    from os.path import expanduser, dirname, join as joinpath, realpath
-    from sys import stdout
+def main(argv: None | list[str] | Namespace = None, /):
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     from p115 import P115Client
 
-    cookies = args.cookies
-    cookies_path = args.cookies_path
-    if not cookies:
-        if cookies_path:
-            try:
-                cookies = open(cookies_path).read()
-            except FileNotFoundError:
-                pass
+    if not (cookies := args.cookies):
+        if cookies_path := args.cookies_path:
+            cookies = Path(cookies_path)
         else:
-            seen = set()
-            for dir_ in (".", expanduser("~"), dirname(__file__)):
-                dir_ = realpath(dir_)
-                if dir_ in seen:
-                    continue
-                seen.add(dir_)
-                try:
-                    cookies = open(joinpath(dir_, "115-cookies.txt")).read()
-                    if cookies:
-                        cookies_path = joinpath(dir_, "115-cookies.txt")
-                        break
-                except FileNotFoundError:
-                    pass
-
-    client = P115Client(cookies, app=args.app)
-    if cookies_path and client.cookies != cookies:
-        open("115-cookies.txt", "w").write(client.cookies)
+            cookies = Path("115-cookies.txt")
+    client = P115Client(cookies, check_for_relogin=True)
     print(client.user_points_sign_post())
 
 
-from p115 import AVAILABLE_APPS
-
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="""\
-存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
-    1. 当前工作目录
-    2. 用户根目录
-    3. 此脚本所在目录""")
-parser.add_argument(
-    "-a", "--app", default="qandroid", 
-    choices=AVAILABLE_APPS, 
-    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径，默认为当前工作目录下的 115-cookies.txt")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 
@@ -84,4 +54,3 @@ parser.set_defaults(func=main)
 if __name__ == "__main__":
     main()
 
-# TODO: 这个模块应可以单独运行，也可以被 import

@@ -6,13 +6,7 @@ __all__ = ["main"]
 __doc__ = "遍历并导出 115 目录信息"
 
 from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
-from collections import UserString
-from collections.abc import Callable
-from functools import partial
-from hashlib import algorithms_available
 from pathlib import Path
-from sys import path, stderr, stdout
-from typing import Final
 
 if __name__ == "__main__":
     path[0] = str(Path(__file__).parents[2])
@@ -21,6 +15,14 @@ else:
     from .init import subparsers
 
     parser = subparsers.add_parser("iterdir", description=__doc__, formatter_class=RawTextHelpFormatter)
+
+from collections import UserString
+from collections.abc import Callable
+from functools import partial
+from hashlib import algorithms_available
+from os import environ
+from sys import path, stderr, stdout
+from typing import Final
 
 from p115 import AVAILABLE_APPS
 from posixpatht import joins
@@ -52,35 +54,22 @@ def parse_args(argv: None | list[str] = None, /) -> Namespace:
     return args
 
 
-def main(argv: None | list[str] = None, /):
-    args = parse_args(argv)
+def main(argv: None | list[str] | Namespace = None, /):
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     from orjson import dumps
-    from p115 import P115Client, P115Path
+    from p115.component import P115Client, P115Path
 
-    path: None | Path = None
-    client: None | P115Client = None
-    cookies = args.cookies
-    cookies_path = args.cookies_path
-    if cookies:
-        client = P115Client(cookies, check_for_relogin=True)
-    elif cookies_path:
-        path = Path(cookies_path).absolute()
-        client = P115Client(path, app=args.app, check_for_relogin=True)
-    else:
-        for path_ in (
-            Path("./115-cookies.txt").absolute(), 
-            Path("~/115-cookies.txt").expanduser(), 
-            Path(__file__).parent / "115-cookies.txt", 
-        ):
-            if path_.is_file():
-                path = path_
-                client = P115Client(path, app=args.app, check_for_relogin=True)
-                break
-    if not (client and client.login_status()):
-        client = P115Client(app=args.app, check_for_relogin=True)
-        if path:
-            client.__dict__["cookies_path"] = path
+    if not (cookies := args.cookies):
+        if cookies_path := args.cookies_path:
+            cookies = Path(cookies_path)
+        else:
+            cookies = Path("115-cookies.txt")
+    client = P115Client(cookies, check_for_relogin=True)
+    environ["WEBAPI_BASE_URL"] = ""
 
     do_request: None | Callable
     match args.use_request:
@@ -117,7 +106,7 @@ def main(argv: None | list[str] = None, /):
 
     fs = client.get_fs(request=do_request)
 
-    if args.password and not fs.hidden_mode:
+    if args.password and not fs.hidden_mode():
         fs.hidden_switch(True, password=args.password)
 
     has_base_keys: bool = False
@@ -319,13 +308,7 @@ def main(argv: None | list[str] = None, /):
 
 parser.add_argument("path", nargs="?", default="0", help="文件夹路径或 id，默认值 0，即根目录")
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="""\
-存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
-    1. 当前工作目录
-    2. 用户根目录
-    3. 此脚本所在目录""")
-parser.add_argument("-a", "--app", default="qandroid", choices=AVAILABLE_APPS, 
-                    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径，默认为当前工作目录下的 115-cookies.txt")
 parser.add_argument("-p", "--password", help="密码，用于进入隐藏模式，罗列隐藏文件")
 parser.add_argument("-s", "--select", help="提供一个表达式（会注入一个变量 path，类型是 p115.P115Path），用于对路径进行筛选")
 parser.add_argument("-k", "--keys", metavar="key", nargs="*", choices=("*", *BASE_KEYS, *EXTRA_KEYS), help=f"""\
@@ -362,6 +345,3 @@ parser.set_defaults(func=main)
 if __name__ == "__main__":
     main()
 
-# TODO: 使用 iter_files 进行加速
-# TODO: 代码还需要尽量简化
-# TODO: 这个模块应可以单独运行，也可以被 import

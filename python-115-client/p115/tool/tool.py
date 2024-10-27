@@ -8,6 +8,7 @@ __all__ = ["crack_captcha"]
 
 from collections import defaultdict
 from collections.abc import Callable
+from time import sleep, time
 from typing import cast
 
 from concurrenttools import thread_pool_batch
@@ -83,43 +84,41 @@ def crack_captcha(
     return resp["state"]
 
 
-
 # TODO: 实现一个函数，用来实现选择自定义的 request
 
 # TODO 删除文件，如果文件数过多，会尝试拆分后再执行任务，从回收站删除
 # TODO 会等待目录被删除完成，采取回收站清除它
-def remove(
-    client: str | P115Client, 
-    id: int, 
-    /, 
-    password: str = "", 
-):
-    """删除文件或目录，如果提供密码，则会从回收站把它删除
+# def remove(
+#     client: str | P115Client, 
+#     id: int, 
+#     /, 
+#     password: str = "", 
+# ):
+#     """删除文件或目录，如果提供密码，则会从回收站把它删除
 
-    :param client: 115 客户端或 cookies
-    :param id: 文件或目录的 id
-    :param password: 回收站密码（即 安全密钥，是 6 位数字）
+#     :param client: 115 客户端或 cookies
+#     :param id: 文件或目录的 id
+#     :param password: 回收站密码（即 安全密钥，是 6 位数字）
 
-    :return: 返回一个 Future，可以被关停
-    """
-    if not isinstance(client, P115Client):
-        client = P115Client(client)
-    try:
-        attr = fs.attr("/我的接收", ensure_dir=True)
-    except FileNotFoundError:
-        return
-    now = str(int(time()))
-    fs.rmtree(attr)
-    recyclebin = client.recyclebin
-    while True:
-        for i, info in enumerate(recyclebin):
-            # NOTE: 因为删除后，并不能立即在回收站看到被删除的文件夹，所以看情况需要等一等
-            if not i and info["dtime"] < now:
-                sleep(0.1)
-                break
-            if info["cid"] == 0 and info["file_name"] == "我的接收":
-                recyclebin.remove(info["id"], password)
-                return
-
-
+#     :return: 返回一个 Future，可以被关停
+#     """
+#     if not isinstance(client, P115Client):
+#         client = P115Client(client)
+#     fs = client.fs
+#     try:
+#         attr = fs.attr("/我的接收", ensure_dir=True)
+#     except FileNotFoundError:
+#         return
+#     now = str(int(time()))
+#     fs.rmtree(attr)
+#     recyclebin = client.recyclebin
+#     while True:
+#         for i, info in enumerate(recyclebin):
+#             # NOTE: 因为删除后，并不能立即在回收站看到被删除的文件夹，所以看情况需要等一等
+#             if not i and info["dtime"] < now:
+#                 sleep(0.1)
+#                 break
+#             if info["cid"] == 0 and info["file_name"] == "我的接收":
+#                 recyclebin.remove(info["id"], password)
+#                 return
 

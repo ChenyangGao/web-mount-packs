@@ -2,13 +2,13 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__: list[str] = []
+__all__ = ["main"]
 __doc__ = "115 网盘批量上传"
 
 from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
+from pathlib import Path
 
 if __name__ == "__main__":
-    from pathlib import Path
     from sys import path
 
     path[0] = str(Path(__file__).parents[2])
@@ -18,7 +18,7 @@ else:
 
     parser = subparsers.add_parser("upload", description=__doc__, formatter_class=RawTextHelpFormatter)
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import NamedTuple, TypedDict
 
@@ -43,6 +43,18 @@ class Result(NamedTuple):
     tasks: Tasks
 
 
+def get_status_code(e: BaseException, /) -> int:
+    status = getattr(e, "status", None) or getattr(e, "code", None) or getattr(e, "status_code", None)
+    if status is None and hasattr(e, "response"):
+        response = e.response
+        status = (
+            getattr(response, "status", None) or 
+            getattr(response, "code", None) or 
+            getattr(response, "status_code", None)
+        )
+    return status or 0
+
+
 def parse_args(argv: None | list[str] = None, /) -> Namespace:
     args = parser.parse_args(argv)
     if args.version:
@@ -52,8 +64,11 @@ def parse_args(argv: None | list[str] = None, /) -> Namespace:
     return args
 
 
-def main(argv: None | list[str] = None, /) -> Result:
-    args = parse_args(argv)
+def main(argv: None | list[str] | Namespace = None, /):
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     import errno
 
@@ -61,10 +76,8 @@ def main(argv: None | list[str] = None, /) -> Result:
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from os import fspath, makedirs, remove, removedirs, scandir, stat
-    from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
-    from pathlib import Path
-    from sys import exc_info
+    from os import environ, fspath, remove, removedirs, scandir, stat
+    from os.path import dirname, normpath
     from textwrap import indent
     from threading import Lock
     from traceback import format_exc
@@ -73,59 +86,56 @@ def main(argv: None | list[str] = None, /) -> Result:
 
     from concurrenttools import thread_batch
     from hashtools import file_digest
-    from p115 import check_response, P115Client, MultipartUploadAbort
+    from p115 import check_response, MultipartUploadAbort, MultipartResumeData
+    from p115.component import P115Client
     from posixpatht import escape, split, normpath as pnormpath
     from rich.progress import (
         Progress, DownloadColumn, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, 
         TimeElapsedColumn, TransferSpeedColumn, 
     )
-    from texttools import cycle_text, rotate_text
+    from texttools import rotate_text
 
-    cookies = args.cookies
-    cookies_path = args.cookies_path
+    if not (cookies := args.cookies):
+        if cookies_path := args.cookies_path:
+            cookies = Path(cookies_path)
+        else:
+            cookies = Path("115-cookies.txt")
+    client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app="qandroid")
+    environ["WEBAPI_BASE_URL"] = ""
+
     src_path = args.src_path
     dst_path = args.dst_path
-    lock_dir_methods = args.lock_dir_methods
     use_request = args.use_request
     max_workers = args.max_workers
     max_retries = args.max_retries
     resume = args.resume
     remove_done = args.remove_done
     no_root = args.no_root
+
     if max_workers <= 0:
         max_workers = 1
-
     count_lock: None | ContextManager = None
-    login_lock: None | ContextManager = None
-    fs_lock: None | ContextManager = None
     if max_workers > 1:
         count_lock = Lock()
-        login_lock = Lock()
-        if lock_dir_methods:
-            fs_lock = Lock()
-    cookies_path_mtime = 0
-
-    client = P115Client(cookies, app=args.app)
 
     do_request: None | Callable = None
     match use_request:
         case "httpx":
-            from httpx import HTTPStatusError as StatusError, RequestError
+            from httpx import RequestError
         case "requests":
             try:
                 from requests import Session
-                from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
+                from requests.exceptions import RequestException as RequestError # type: ignore
                 from requests_request import request as requests_request
             except ImportError:
                 from sys import executable
                 from subprocess import run
                 run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
                 from requests import Session
-                from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
+                from requests.exceptions import RequestException as RequestError # type: ignore
                 from requests_request import request as requests_request
             do_request = partial(requests_request, session=Session())
         case "urllib3":
-            from urllib.error import HTTPError as StatusError # type: ignore
             try:
                 from urllib3.exceptions import RequestError # type: ignore
                 from urllib3_request import request as do_request
@@ -136,7 +146,7 @@ def main(argv: None | list[str] = None, /) -> Result:
                 from urllib3.exceptions import RequestError # type: ignore
                 from urllib3_request import request as do_request
         case "urlopen":
-            from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
+            from urllib.error import URLError as RequestError # type: ignore
             from urllib.request import build_opener, HTTPCookieProcessor
             try:
                 from urlopen import request as urlopen_request
@@ -147,8 +157,6 @@ def main(argv: None | list[str] = None, /) -> Result:
                 from urlopen import request as urlopen_request
             do_request = partial(urlopen_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
 
-    # TODO
-    client = ...
     fs = client.get_fs(request=do_request)
 
     @contextmanager
@@ -311,19 +319,19 @@ def main(argv: None | list[str] = None, /) -> Result:
                 subdattrs: None | dict = None
                 try:
                     if isinstance(dst_attr, str):
-                        resp = check_response(relogin_wrap(fs.fs_mkdir, name, dst_pid))
+                        resp = check_response(fs.fs_mkdir(name, dst_pid))
                         name = resp["file_name"]
                         dst_id = int(resp["file_id"])
                         task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
                         subdattrs = {}
                         console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
                 except FileExistsError:
-                    dst_attr = task.dst_attr = relogin_wrap(fs.attr, [name], pid=dst_pid, ensure_dir=True)
+                    dst_attr = task.dst_attr = fs.attr([name], pid=dst_pid, ensure_dir=True)
                 if subdattrs is None:
                     dst_id = cast(Mapping, dst_attr)["id"]
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
-                        for attr in relogin_wrap(fs.listdir_attr, dst_id)
+                        for attr in fs.listdir_attr(dst_id)
                     }
                 subattrs = [
                     a for a in map(get_path_attr, scandir(src_path))
@@ -368,7 +376,7 @@ def main(argv: None | list[str] = None, /) -> Result:
                     for i in range(0, len(pending_to_remove), 1_000):
                         part_ids = pending_to_remove[i:i+1_000]
                         try:
-                            resp = relogin_wrap(fs.fs_delete, part_ids)
+                            resp = fs.fs_delete(part_ids)
                             console_print(f"""\
 [bold green][DELETE][/bold green] 📝 删除文件列表
     ├ ids({len(part_ids)}) = {part_ids}
@@ -391,7 +399,7 @@ def main(argv: None | list[str] = None, /) -> Result:
                 console_print(f"[bold green][HASH][/bold green] 🧠 计算哈希: sha1([blue underline]{src_path!r}[/blue underline]) = {filehash.hexdigest()!r}")
                 kwargs["filesize"] = filesize
                 kwargs["filesha1"] = filehash.hexdigest()
-                ticket: dict
+                ticket: MultipartResumeData
                 for i in range(5):
                     if i:
                         console_print(f"""\
@@ -434,16 +442,9 @@ def main(argv: None | list[str] = None, /) -> Result:
             task.reasons.append(e)
             update_errors(e, src_attr["is_directory"])
             if max_retries < 0:
-                if isinstance(e, StatusError):
-                    status_code = get_status_code(e)
-                    if status_code == 405:
-                        retryable = True
-                        try:
-                            relogin()
-                        except:
-                            pass
-                    else:
-                        retryable = not (400 <= status_code < 500)
+                status_code = get_status_code(e)
+                if status_code:
+                    retryable = status_code >= 500
                 else:
                     retryable = isinstance(e, (RequestError, URLError, TimeoutError))
             else:
@@ -486,22 +487,22 @@ def main(argv: None | list[str] = None, /) -> Result:
             elif not dst_path.startswith("0") and dst_path.isascii() and dst_path.isdecimal():
                 dst_id = int(dst_path)
             elif is_directory:
-                dst_attr = relogin_wrap(fs.makedirs, dst_path, exist_ok=True)
+                dst_attr = fs.makedirs(dst_path, exist_ok=True)
                 dst_path = dst_attr["path"]
                 dst_id = dst_attr["id"]
             else:
                 dst_dir, dst_name = split(dst_path)
-                dst_attr = relogin_wrap(fs.makedirs, dst_dir, exist_ok=True)
+                dst_attr = fs.makedirs(dst_dir, exist_ok=True)
                 dst_path = dst_attr["path"] + "/" + escape(dst_name)
                 dst_id = dst_attr["id"]
         else:
             dst_id = dst_path
         if name and is_directory and not no_root:
-            dst_attr = relogin_wrap(fs.makedirs, [name], pid=dst_id, exist_ok=True)
+            dst_attr = fs.makedirs([name], pid=dst_id, exist_ok=True)
             dst_path = dst_attr["path"]
             dst_id = dst_attr["id"]
         if not dst_attr:
-            dst_attr = relogin_wrap(fs.attr, dst_id)
+            dst_attr = fs.attr(dst_id)
             dst_path = cast(str, dst_attr["path"])
             if is_directory:
                 if not dst_attr["is_directory"]:
@@ -509,7 +510,7 @@ def main(argv: None | list[str] = None, /) -> Result:
             elif dst_attr["is_directory"]:
                 dst_path = dst_path + "/" + escape(name)
             else:
-                relogin_wrap(fs.remove, dst_attr["id"])
+                fs.remove(dst_attr["id"])
                 dst_id = dst_attr["parent_id"]
                 name = dst_attr["name"]
         if is_directory:
@@ -542,18 +543,8 @@ def main(argv: None | list[str] = None, /) -> Result:
     return Result(stats, all_tasks)
 
 
-from p115 import AVAILABLE_APPS
-
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="""\
-存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
-    1. 当前工作目录
-    2. 用户根目录
-    3. 此脚本所在目录""")
-parser.add_argument(
-    "-a", "--app", default="qandroid", 
-    choices=AVAILABLE_APPS, 
-    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径，默认为当前工作目录下的 115-cookies.txt")
 parser.add_argument("-p", "--src-path", default=".", help="本地的路径，默认是当前工作目录")
 parser.add_argument("-t", "--dst-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：'/'")
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
@@ -562,8 +553,6 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果小于 0（默认），则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
     - 如果等于 0，则发生错误就抛出
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
-parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
-                    help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-n", "--no-root", action="store_true", help="上传目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
@@ -583,4 +572,3 @@ if __name__ == "__main__":
 # TODO: 如果文件大于特定大小，就不能秒传，需要直接报错（而不需要进行尝试）
 # TODO: 支持把一个目录上传到另一个目录（如果扩展名没改，就直接复制，然后改名，否则就秒传）
 # TODO: 支持直接从一个115网盘直接上传到另一个115网盘
-

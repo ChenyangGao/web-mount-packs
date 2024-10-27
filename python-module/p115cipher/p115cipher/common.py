@@ -100,12 +100,13 @@ def gen_key(
     /, 
 ) -> bytearray:
     xor_key = bytearray()
+    append = xor_key.append
     if rand_key and sk_len > 0:
         length = sk_len * (sk_len - 1)
         index = 0
         for i in range(sk_len):
             x = (rand_key[i] + G_kts[index]) & 0xff
-            xor_key.append(G_kts[length] ^ x)
+            append(G_kts[length] ^ x)
             length -= sk_len
             index += sk_len
     return xor_key

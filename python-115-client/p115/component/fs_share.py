@@ -137,6 +137,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "share_code": self.share_code, 
                 "receive_code": self.receive_code, 
             }, 
+            base_url=None, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))

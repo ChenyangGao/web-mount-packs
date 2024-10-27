@@ -17,10 +17,7 @@ from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper
 from itertools import accumulate, islice
 from json import JSONDecodeError
-from os import (
-    path as ospath, fsdecode, fspath, makedirs, remove, rmdir, scandir, 
-    stat_result, PathLike
-)
+from os import path as ospath, fsdecode, fspath, makedirs, remove, rmdir, scandir, stat_result, PathLike
 from pathlib import Path
 from posixpath import join as joinpath, splitext
 from shutil import SameFileError
@@ -1023,9 +1020,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         else:
             id = int(payload["cid"])
         def gen_step():
-            resp = yield partial(
-                self.client.fs_files, 
+            resp = yield self.client.fs_files(
                 payload, 
+                base_url=None, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -2584,7 +2581,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 id = id_or_path
                 ls = [""]
                 if id:
-                    resp = yield self.client.fs_files({"cid": id, "limit": 1}, async_=async_)
+                    resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
                     if int(resp["path"][-1]["cid"]) == id:
                         ls.extend(p["name"] for p in resp["path"][1:])
                     else:
@@ -2592,7 +2589,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         info = resp["data"][0]
                         pid, name = int(info["cid"]), info["n"]
                         if pid:
-                            resp = yield self.client.fs_files({"cid": pid, "limit": 1}, async_=async_)
+                            resp = yield self.fs_files({"cid": pid, "limit": 1}, async_=async_)
                             ls.extend(p["name"] for p in resp["path"][1:])
                         ls.append(name)
                 return ls
@@ -3470,8 +3467,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 elif status == 1 and statuscode == 0:
                     warn(f"wrong sha1 {src_attr['sha1']!r} found, will attempt to upload directly: {src_attr!r}")
                     resp = yield partial(
-                        client.upload_file_sample, 
-                        client.open(url=url), 
+                        self.client.upload_file_sample, 
+                        self.open(src_attr, "rb", buffering=0), 
                         dst_name, 
                         pid=dst_pid, 
                         request=self.async_request if async_ else self.request, 

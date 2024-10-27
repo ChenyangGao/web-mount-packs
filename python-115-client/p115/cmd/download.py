@@ -2,16 +2,13 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__: list[str] = []
+__all__ = ["main"]
 __doc__ = "115 网盘或分享链接批量下载"
 
 from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import NamedTuple, TypedDict
+from pathlib import Path
 
-if __name__ == "__main__":
-    from pathlib import Path
+if __name__ == "__main__": 
     from sys import path
 
     path[0] = str(Path(__file__).parents[2])
@@ -20,6 +17,10 @@ else:
     from .init import subparsers
 
     parser = subparsers.add_parser("download", description=__doc__, formatter_class=RawTextHelpFormatter)
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import NamedTuple, TypedDict
 
 
 @dataclass
@@ -41,6 +42,18 @@ class Result(NamedTuple):
     tasks: Tasks
 
 
+def get_status_code(e: BaseException, /) -> int:
+    status = getattr(e, "status", None) or getattr(e, "code", None) or getattr(e, "status_code", None)
+    if status is None and hasattr(e, "response"):
+        response = e.response
+        status = (
+            getattr(response, "status", None) or 
+            getattr(response, "code", None) or 
+            getattr(response, "status_code", None)
+        )
+    return status or 0
+
+
 def parse_args(argv: None | list[str] = None, /) -> Namespace:
     args = parser.parse_args(argv)
     if args.version:
@@ -50,8 +63,11 @@ def parse_args(argv: None | list[str] = None, /) -> Namespace:
     return args
 
 
-def main(argv: None | list[str] = None, /) -> Result:
-    args = parse_args(argv)
+def main(argv: None | list[str] | Namespace = None, /):
+    if isinstance(argv, Namespace):
+        args = argv
+    else:
+        args = parse_args(argv)
 
     import errno
 
@@ -59,7 +75,7 @@ def main(argv: None | list[str] = None, /) -> Result:
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from os import makedirs, scandir, stat
+    from os import environ, makedirs, scandir, stat
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
     from platform import system
     from shutil import COPY_BUFSIZE # type: ignore
@@ -72,19 +88,24 @@ def main(argv: None | list[str] = None, /) -> Result:
     from warnings import warn
 
     from concurrenttools import thread_batch
-    from p115 import P115Client
+    from p115.component import P115Client, P115FileSystemBase
     from rich.progress import (
         Progress, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, TimeElapsedColumn, TransferSpeedColumn
     )
     from texttools import cycle_text, rotate_text
     from download import download, DEFAULT_ITER_BYTES as iter_bytes
 
-    cookies = args.cookies
-    cookies_path = args.cookies_path
+    if not (cookies := args.cookies):
+        if cookies_path := args.cookies_path:
+            cookies = Path(cookies_path)
+        else:
+            cookies = Path("115-cookies.txt")
+    client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app="qandroid")
+    environ["WEBAPI_BASE_URL"] = ""
+
     src_path = args.src_path
     dst_path = args.dst_path
     share_link = args.share_link
-    lock_dir_methods = args.lock_dir_methods
     use_request = args.use_request
     max_workers = args.max_workers
     max_retries = args.max_retries
@@ -94,65 +115,32 @@ def main(argv: None | list[str] = None, /) -> Result:
     if max_workers <= 0:
         max_workers = 1
     count_lock: None | ContextManager = None
-    login_lock: None | ContextManager = None
-    fs_lock: None | ContextManager = None
     if max_workers > 1:
         count_lock = Lock()
-        login_lock = Lock()
-        if lock_dir_methods:
-            fs_lock = Lock()
-    cookies_path_mtime = 0
 
-    if not cookies:
-        if cookies_path:
-            try:
-                cookies = open(cookies_path).read()
-            except FileNotFoundError:
-                pass
-        else:
-            seen = set()
-            for dir_ in (".", expanduser("~"), dirname(__file__)):
-                dir_ = realpath(dir_)
-                if dir_ in seen:
-                    continue
-                seen.add(dir_)
-                try:
-                    cookies = open(joinpath(dir_, "115-cookies.txt")).read()
-                    if cookies:
-                        cookies_path = joinpath(dir_, "115-cookies.txt")
-                        break
-                except FileNotFoundError:
-                    pass
-
-    # TODO
-    client = P115Client(cookies, app=args.app)
-    # TODO: HTTPResponse 实现一个函数 get_status_code
-
-    # TODO: 实现一个函数，获取 urlopen，如果是不支持的类型，就报错 ValueError
     urlopen: Callable
     do_request: None | Callable = None
     match use_request:
         case "httpx":
-            from httpx import Client, HTTPStatusError as StatusError, RequestError
+            from httpx import Client, RequestError
             from httpx_request import request as httpx_request
             urlopen = partial(httpx_request, session=Client())
             iter_bytes = lambda resp: resp.iter_bytes(COPY_BUFSIZE)
         case "requests":
             try:
                 from requests import Session
-                from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
+                from requests.exceptions import RequestException as RequestError # type: ignore
                 from requests_request import request as requests_request
             except ImportError:
                 from sys import executable
                 from subprocess import run
                 run([executable, "-m", "pip", "install", "-U", "requests", "requests_request"], check=True)
                 from requests import Session
-                from requests.exceptions import HTTPError as StatusError, RequestException as RequestError # type: ignore
+                from requests.exceptions import RequestException as RequestError # type: ignore
                 from requests_request import request as requests_request
             do_request = urlopen = partial(requests_request, session=Session())
             iter_bytes = lambda resp: resp.iter_content(COPY_BUFSIZE)
         case "urllib3":
-            from urllib.error import HTTPError as StatusError # type: ignore
             try:
                 from urllib3.exceptions import RequestError # type: ignore
                 from urllib3_request import request as urllib3_request
@@ -164,7 +152,7 @@ def main(argv: None | list[str] = None, /) -> Result:
                 from urllib3_request import request as urllib3_request
             do_request = urlopen = urllib3_request
         case "urlopen":
-            from urllib.error import HTTPError as StatusError, URLError as RequestError # type: ignore
+            from urllib.error import URLError as RequestError # type: ignore
             from urllib.request import build_opener, HTTPCookieProcessor
             try:
                 from urlopen import request as urlopen_request
@@ -175,10 +163,8 @@ def main(argv: None | list[str] = None, /) -> Result:
                 from urlopen import request as urlopen_request
             do_request = urlopen = partial(urlopen_request, opener=build_opener(HTTPCookieProcessor(client.cookiejar)))
 
-    client = ...
-
     if share_link:
-        fs = client.get_share_fs(share_link, request=do_request)
+        fs: P115FileSystemBase = client.get_share_fs(share_link, request=do_request)
     else:
         fs = client.get_fs(request=do_request)
 
@@ -318,15 +304,11 @@ def main(argv: None | list[str] = None, /) -> Result:
         finally:
             progress.remove_task(task)
 
-    def get_url(attr) -> str:
-        if share_link:
-            return fs.get_url(attr["id"])
-        if attr.get("violated", False):
-            if attr["size"] >= 1024 * 1024 * 115:
-                return ""
-            return fs.get_url_from_pickcode(attr["pickcode"], use_web_api=True)
-        else:
-            return fs.get_url_from_pickcode(attr["pickcode"])
+    def get_url(attr, /) -> str:
+        try:
+            return fs.get_url(attr)
+        except Exception:
+            return ""
 
     def work(task: Task, submit):
         attr, dst_path = task.src_attr, task.dst_path
@@ -341,7 +323,7 @@ def main(argv: None | list[str] = None, /) -> Result:
                     sub_entries = {}
                     console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{attr['path']!r}[/blue underline] ➜ [blue underline]{dst_path!r}[/blue underline]")
 
-                subattrs = relogin_wrap(fs.listdir_attr, task_id)
+                subattrs = fs.listdir_attr(task_id)
                 update_tasks(
                     total=len(subattrs), 
                     files=sum(not a["is_directory"] for a in subattrs), 
@@ -395,16 +377,9 @@ def main(argv: None | list[str] = None, /) -> Result:
             task.reasons.append(e)
             update_errors(e, attr["is_directory"])
             if max_retries < 0:
-                if isinstance(e, StatusError):
-                    status_code = get_status_code(e)
-                    if status_code == 405:
-                        retryable = True
-                        try:
-                            relogin()
-                        except:
-                            pass
-                    else:
-                        retryable = not (400 <= status_code < 500)
+                status_code = get_status_code(e)
+                if status_code:
+                    retryable = status_code >= 500
                 else:
                     retryable = isinstance(e, (RequestError, URLError, TimeoutError))
             else:
@@ -441,7 +416,7 @@ def main(argv: None | list[str] = None, /) -> Result:
                 src_path = "/"
             elif not src_path.startswith("0") and src_path.isascii() and src_path.isdecimal():
                 src_path = int(src_path)
-        src_attr = relogin_wrap(fs.attr, src_path)
+        src_attr = fs.attr(src_path)
         is_directory = src_attr["is_directory"]
         name = escape_name(src_attr["name"])
         dst_path = normpath(dst_path)
@@ -493,18 +468,8 @@ def main(argv: None | list[str] = None, /) -> Result:
     return Result(stats, all_tasks)
 
 
-from p115 import AVAILABLE_APPS
-
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="""\
-存储 115 登录 cookies 的文本文件的路径，如果缺失，则从 115-cookies.txt 文件中获取，此文件可在如下目录之一: 
-    1. 当前工作目录
-    2. 用户根目录
-    3. 此脚本所在目录""")
-parser.add_argument(
-    "-a", "--app", default="qandroid", 
-    choices=AVAILABLE_APPS, 
-    help="必要时，选择一个 app 进行扫码登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径，默认为当前工作目录下的 115-cookies.txt")
 parser.add_argument("-p", "--src-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：'/")
 parser.add_argument("-t", "--dst-path", default=".", help="本地的路径，默认是当前工作目录，即 '.'")
 parser.add_argument("-s", "--share-link", nargs="?", help="""\
@@ -517,8 +482,6 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果小于 0（默认），则会对一些超时、网络请求错误进行无限重试，其它错误进行抛出
     - 如果等于 0，则发生错误就抛出
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
-parser.add_argument("-l", "--lock-dir-methods", action="store_true", 
-                    help="对 115 的文件系统进行增删改查的操作（但不包括上传和下载）进行加锁，限制为单线程，这样就可减少 405 响应，以降低扫码的频率")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
 parser.add_argument("-n", "--no-root", action="store_true", help="下载目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
@@ -529,7 +492,6 @@ parser.set_defaults(func=main)
 if __name__ == "__main__":
     main()
 
-# TODO: 这个模块应可以单独运行，也可以被 import
 # TODO: 允许下载的时候改变名字
 # TODO: 允许下载到压缩包，或者 tar 包中
 

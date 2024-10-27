@@ -365,9 +365,9 @@ class P115Sharing:
         if page_size <= 0:
             page_size = 1 << 10
         payload = {"offset": offset, "limit": page_size}
-        count = 0
         if async_:
             async def request():
+                count = 0
                 while True:
                     resp = await check_response(self.client.share_list(
                         payload, 
@@ -385,6 +385,7 @@ class P115Sharing:
                     payload["offset"] += page_size
         else:
             def request():
+                count = 0
                 while True:
                     resp = check_response(self.client.share_list(
                         payload, 
