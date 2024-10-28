@@ -38,12 +38,13 @@ def main(argv: None | list[str] | Namespace = None, /):
     from p115 import P115Client
 
     if not (cookies := args.cookies):
-        if cookies_path := args.cookies_path:
-            cookies = Path(cookies_path)
-        else:
-            cookies = Path("115-cookies.txt")
-            if not cookies.exists():
-                cookies = None
+        try:
+            if cookies_path := args.cookies_path:
+                cookies = open(cookies_path).read()
+            else:
+                cookies = open("115-cookies.txt").read()
+        except FileNotFoundError:
+            cookies = None
     client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app=args.app)
     if outfile := args.output_file:
         try:

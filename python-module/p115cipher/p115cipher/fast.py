@@ -19,8 +19,8 @@ from .const import AES_KEY, AES_IV, MD5_SALT, RSA_PUBKEY_PAIR
 from .common import Buffer, gen_key, from_bytes, to_bytes, xor
 
 
-def pad_pkcs1_v1_5(message: Buffer, keysize: int) -> int:
-    pad = b"\x00" + b"\x02" * (keysize // 8 - len(message) - 2) + b"\x00"
+def pad_pkcs1_v1_5(message: Buffer, keysize: int = 128) -> int:
+    pad = b"\x00" + b"\x02" * (keysize - len(message) - 2) + b"\x00"
     return from_bytes(pad + message)
 
 
@@ -31,10 +31,11 @@ def rsa_encode(data: Buffer, /) -> bytes:
     xor_text += xor(tmp, b"x\x06\xadL3\x86]\x18L\x01?F")
     cipher_data = bytearray()
     xor_text = memoryview(xor_text)
+    keysize = RSA_PUBKEY_PAIR[0].bit_length() // 8
     for l, r, _ in acc_step(0, len(xor_text), 117):
-        s = pad_pkcs1_v1_5(xor_text[l:r], RSA_PUBKEY_PAIR[0].bit_length())
+        s = pad_pkcs1_v1_5(xor_text[l:r], keysize)
         p = pow(s, RSA_PUBKEY_PAIR[1], RSA_PUBKEY_PAIR[0])
-        cipher_data += to_bytes(p, (p.bit_length() + 0b111) >> 3)
+        cipher_data += to_bytes(p, keysize)
     return b64encode(cipher_data)
 
 

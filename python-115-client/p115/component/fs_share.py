@@ -41,7 +41,6 @@ class P115SharePath(P115PathBase):
 
 
 class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
-    share_link: str
     share_code: str
     receive_code: str
     path_to_id: MutableMapping[str, int]
@@ -54,7 +53,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         self, 
         /, 
         client: str | P115Client, 
-        share_link: str, 
+        share_code: str, 
+        receive_code: str = "", 
         request: None | Callable = None, 
         async_request: None | Callable = None, 
     ):
@@ -65,22 +65,38 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         - http(s)://share.115.com/{share_code}?password={receive_code}(#)
         - (/){share_code}-{receive_code}(/)
         """
-        m = CRE_SHARE_LINK_search1(share_link)
-        if m is None:
-            m = CRE_SHARE_LINK_search2(share_link)
-        if m is None:
-            raise ValueError("not a valid 115 share link")
         super().__init__(client, request, async_request)
         self.__dict__.update(
             id=0, 
             path="/", 
-            share_link=share_link, 
-            share_code=m["share_code"], 
-            receive_code= m["receive_code"] or "", 
+            share_code=share_code, 
+            receive_code=receive_code, 
             path_to_id={"/": 0}, 
             id_to_attr={}, 
             pid_to_children={}, 
             full_loaded=False, 
+        )
+
+    @classmethod
+    def from_url(
+        cls, 
+        /, 
+        client: str | P115Client, 
+        url: str, 
+        request: None | Callable = None, 
+        async_request: None | Callable = None, 
+    ) -> Self:
+        m = CRE_SHARE_LINK_search1(url)
+        if m is None:
+            m = CRE_SHARE_LINK_search2(url)
+        if m is None:
+            raise ValueError("not a valid 115 share link")
+        return cls(
+            client, 
+            share_code=m["share_code"], 
+            receive_code=m["receive_code"] or "", 
+            request=request, 
+            async_request=async_request, 
         )
 
     def __repr__(self, /) -> str:
@@ -89,7 +105,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         name = cls.__qualname__
         if module != "__main__":
             name = module + "." + name
-        return f"<{name}(client={self.client!r}, share_link={self.share_link!r}, id={self.id!r}, path={self.path!r}) at {hex(id(self))}>"
+        return f"<{name}(client={self.client!r}, share_code={self.share_code!r}, receive_code={self.receive_code!r}, id={self.id!r}, path={self.path!r}) at {hex(id(self))}>"
 
     def __setattr__(self, attr, val, /) -> Never:
         raise TypeError("can't set attributes")
@@ -146,7 +162,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     def downlist(
         self, 
         /, 
-        id: int = 0, 
+        id: int, 
         *, 
         async_: Literal[False] = False, 
     ) -> dict:
@@ -155,7 +171,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     def downlist(
         self, 
         /, 
-        id: int = 0, 
+        id: int, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
@@ -163,7 +179,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     def downlist(
         self, 
         /, 
-        id: int = 0, 
+        id: int, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
