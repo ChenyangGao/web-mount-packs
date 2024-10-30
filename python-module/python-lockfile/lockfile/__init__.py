@@ -8,12 +8,11 @@ __all__ = ["LockFailed", "lockfile", "lockfile_async"]
 from asyncio import sleep as asleep
 from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager
-from os import remove, PathLike
+from os import fsdecode, remove, PathLike
 from time import perf_counter, sleep
 from typing import Any
 
-from aiofiles import open as aopen
-from aiofiles.os import remove as aremove
+from aiofile import async_open
 
 
 class LockFailed(OSError):
@@ -28,14 +27,14 @@ def lockfile(
 ):
     if timeout <= 0:
         try:
-            open(filepath, "xb").close()
+            open(filepath, "xb", buffering=0).close()
         except OSError as exc:
             raise LockFailed("lockfile creation failed") from exc
     else:
         stop_t = timeout + perf_counter()
         while perf_counter() < stop_t:
             try:
-                open(filepath, "xb").close()
+                open(filepath, "xb", buffering=0).close()
                 break
             except OSError:
                 if check_interval > 0:
@@ -57,9 +56,10 @@ async def lockfile_async(
     timeout: float | int = 0, 
     check_interval: float | int = 0, 
 ):
+    filepath = fsdecode(filepath)
     if timeout <= 0:
         try:
-            async with aopen(filepath, "xb"):
+            async with async_open(filepath, "xb"):
                 pass
         except OSError as exc:
             raise LockFailed("lockfile creation failed") from exc
@@ -67,7 +67,7 @@ async def lockfile_async(
         stop_t = timeout + perf_counter()
         while perf_counter() < stop_t:
             try:
-                async with aopen(filepath, "xb"):
+                async with async_open(filepath, "xb"):
                     pass
                 break
             except OSError:
@@ -78,7 +78,9 @@ async def lockfile_async(
         yield
     finally:
         try:
-            await aremove(filepath)
+            remove(filepath)
         except OSError:
             pass
+
+# TODO: 增加几种加锁的机制，Windows 下使用命名管道，linux 下使用 fcntl.flock
 

@@ -31,8 +31,7 @@ aiofiles = "*"
 
 [tool.poetry.dev-dependencies]
 python = "^3.10"
-aiofiles = "*"
-types-aiofiles = "*"
+aiofile = "*"
 
 [build-system]
 requires = ["poetry-core"]

@@ -174,7 +174,7 @@ class P115Client(Client):
     def get_share_fs(self, share_link: str, /, *args, **kwargs) -> P115ShareFileSystem:
         """新建一个分享链接的文件列表的封装对象
         """
-        return P115ShareFileSystem(self, share_link, *args, **kwargs)
+        return P115ShareFileSystem.from_url(self, share_link, *args, **kwargs)
 
     def get_zip_fs(self, id_or_pickcode: int | str, /, *args, **kwargs) -> P115ZipFileSystem:
         """新建压缩文件（支持 zip、rar、7z）的文件列表的封装对象（这个压缩文件在你的网盘中，且已经被云解压）

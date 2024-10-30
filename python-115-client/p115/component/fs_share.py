@@ -198,7 +198,12 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
     @cached_property
     def create_time(self, /) -> datetime:
         "分享的创建时间"
-        return datetime.fromtimestamp(int(self.shareinfo["create_time"]))
+        return datetime.fromtimestamp(self.create_timestamp)
+
+    @cached_property
+    def create_timestamp(self, /) -> int:
+        "分享的创建时间"
+        return int(self.shareinfo["create_time"])
 
     @cached_property
     def snap_id(self, /) -> int:
@@ -287,6 +292,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         /, 
         async_: Literal[False, True] = False, 
     ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+        share_code = self.share_code
+        receive_code = self.receive_code
         def gen_step():
             try:
                 return self.id_to_attr[id]
@@ -302,18 +309,19 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     "path": "/", 
                     "is_directory": True, 
                     "size": None, 
-                    "time": self.create_time, 
-                    "timestamp": int(self.create_time.timestamp()), 
+                    "time": self.create_timestamp, 
                     "ico": "folder", 
                     "ancestors": [{"id": 0, "name": ""}], 
+                    "share_code": share_code, 
+                    "receive_code": receive_code, 
                 })
                 return attr
             # NOTE: quick detection of id existence
             yield partial(
                 self.client.share_download_url, 
                 {
-                    "share_code": self.share_code, 
-                    "receive_code": self.receive_code, 
+                    "share_code": share_code, 
+                    "receive_code": receive_code, 
                     "file_id": id, 
                 }, 
                 strict=False, 
@@ -713,6 +721,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         path_class = type(self).path_class
         if page_size <= 0:
             page_size = 1_000
+        share_code = self.share_code
+        receive_code = self.receive_code
         def gen_step():
             nonlocal start, stop
             if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
@@ -759,6 +769,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 for attr in map(normalize_attr, data["list"]):
                     attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                     path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                    attr["share_code"] = share_code
+                    attr["receive_code"] = receive_code
                     path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                     add(attr)
                 for _ in range((data["count"] - 1) // page_size):
@@ -768,6 +780,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     for attr in map(normalize_attr, data["list"]):
                         attr["ancestors"] = [*ancestors, {"id": attr["id"], "name": attr["name"]}]
                         path = attr["path"] = joinpath(dirname, escape(attr["name"]))
+                        attr["share_code"] = share_code
+                        attr["receive_code"] = receive_code
                         path_to_id[path + "/"[:attr["is_directory"]]] = attr["id"]
                         add(attr)
                 children = self.pid_to_children[id] = tuple(ls)

@@ -29,7 +29,7 @@ from uuid import uuid4
 from warnings import warn
 from weakref import WeakValueDictionary
 
-from dictattr import AttrDict, MapAttr
+from dictattr import AttrDict
 from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
@@ -85,6 +85,36 @@ class LRUDict(dict):
                 pop(key, None)
                 setitem(key, val)
         self.clean()
+
+
+class AttrDictWithAncestors(AttrDict):
+
+    def __contains__(self, key, /) -> bool:
+        if key == "ancestors":
+            return True
+        return super().__contains__(key)
+
+    def __iter__(self, /):
+        yield from super().__iter__()
+        if not super().__contains__("ancestors"):
+            yield "ancestors"
+
+    def __getitem__(self, key, /):
+        match key:
+            case "path":
+                return str(super().__getitem__("path"))
+            case "ancestors":
+                if super().__contains__("ancestors"):
+                    return super().__getitem__(key)
+                else:
+                    return super().__getitem__("path").ancestors
+            case _:
+                return super().__getitem__(key)
+
+    def __getattr__(self, attr, /):
+        if attr == "ancestors":
+            return self["ancestors"]
+        raise AttributeError(attr)
 
 
 class Ancestor(dict[str, int | str]):
@@ -363,7 +393,7 @@ class P115Path(P115PathBase):
         recursive: bool = True, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def remove(
@@ -372,7 +402,7 @@ class P115Path(P115PathBase):
         recursive: bool = True, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def remove(
         self, 
@@ -380,7 +410,7 @@ class P115Path(P115PathBase):
         recursive: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         return self.fs.remove(
             self, 
             recursive=recursive, 
@@ -515,20 +545,20 @@ class P115Path(P115PathBase):
         self, 
         /, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def rmdir(
         self, 
         /, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def rmdir(
         self, 
         /, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         return self.fs.rmdir(self, async_=async_)
 
     @overload
@@ -702,7 +732,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             else:
                 return LRUDict(cache_size)
 
-        self._iterdir_locks: WeakValueDictionary[int, AttrDict] = WeakValueDictionary()
+        self._iterdir_locks: WeakValueDictionary[int, AttrDictWithAncestors] = WeakValueDictionary()
         self.__dict__.update(
             id = 0, 
             path = "/", 
@@ -1072,7 +1102,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def fs_upload(
@@ -1084,7 +1114,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def fs_upload(
         self, 
@@ -1095,7 +1125,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         if pid is None:
             pid = self.id
         def gen_step():
@@ -1199,7 +1229,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: None | bool = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def _attr(
@@ -1209,7 +1239,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: None | bool = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def _attr(
         self, 
@@ -1218,7 +1248,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         def gen_step():
             nonlocal refresh
 
@@ -1241,7 +1271,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     mtime = 0
                 else:
                     mtime = int(resp["data"][0]["te"])
-                attr: AttrDict = AttrDict(
+                attr: AttrDict = AttrDictWithAncestors(
                     is_directory=True, 
                     id=0, 
                     parent_id=0, 
@@ -1266,7 +1296,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 except FileNotFoundError as e:
                     self._clear_cache(id)
                     raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
-                attr = normalize_attr(resp["data"][0])
+                attr = normalize_attr(resp["data"][0], dict_cls=AttrDictWithAncestors)
                 yield self._get_ancestors(attr, async_=async_)
 
             id_to_readdir = self.id_to_readdir
@@ -1311,7 +1341,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ensure_dir: None | bool = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def _attr_path(
@@ -1322,7 +1352,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ensure_dir: None | bool = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def _attr_path(
         self, 
@@ -1332,7 +1362,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         ensure_dir: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         def gen_step():
             nonlocal path, pid, ensure_dir
 
@@ -1435,11 +1465,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     if ensure_dir:
                         raise
 
-            parent: int | AttrDict
+            parent: int | AttrDictWithAncestors
             for i in reversed(range(len(ancestors_paths)-1)):
                 if path_to_id and (id := path_to_id.get((dirname := ancestors_paths[i]) + "/")):
                     try:
-                        parent = cast(AttrDict, (yield get_attr_by_id(id, async_=async_)))
+                        parent = cast(AttrDictWithAncestors, (yield get_attr_by_id(id, async_=async_)))
                         if str(parent["path"]) == dirname:
                             i += 1
                             break
@@ -1472,7 +1502,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                 else:
                                     break
                         else:
-                            if isinstance(parent, AttrDict):
+                            if isinstance(parent, AttrDictWithAncestors):
                                 parent = parent["id"]
                             raise FileNotFoundError(
                                 errno.ENOENT, 
@@ -1490,7 +1520,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             else:
                                 break
                     else:
-                        if isinstance(parent, AttrDict):
+                        if isinstance(parent, AttrDictWithAncestors):
                             parent = parent["id"]
                         raise FileNotFoundError(
                             errno.ENOENT, 
@@ -1618,7 +1648,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: None | bool = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def attr(
@@ -1630,7 +1660,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: None | bool = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def attr(
         self, 
@@ -1641,7 +1671,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         refresh: None | bool = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "获取属性"
         def gen_step():
             path_class = type(self).path_class
@@ -1649,7 +1679,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 attr = id_or_path.attr
                 if refresh:
                     attr = yield partial(self._attr, attr["id"], async_=async_)
-            elif isinstance(id_or_path, AttrDict):
+            elif isinstance(id_or_path, AttrDictWithAncestors):
                 attr = id_or_path
                 if refresh:
                     attr = yield partial(self._attr, attr["id"], async_=async_)
@@ -1687,7 +1717,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         *, 
         async_: Literal[False] = False, 
         **kwargs, 
-    ) -> Iterator[AttrDict]:
+    ) -> Iterator[AttrDictWithAncestors]:
         ...
     @overload
     def iterdir(
@@ -1705,7 +1735,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         *, 
         async_: Literal[True], 
         **kwargs, 
-    ) -> AsyncIterator[AttrDict]:
+    ) -> AsyncIterator[AttrDictWithAncestors]:
         ...
     def iterdir(
         self, 
@@ -1722,7 +1752,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         *, 
         async_: Literal[False, True] = False, 
         **kwargs, 
-    ) -> Iterator[AttrDict] | AsyncIterator[AttrDict]:
+    ) -> Iterator[AttrDictWithAncestors] | AsyncIterator[AttrDictWithAncestors]:
         """迭代获取目录内直属的文件或目录的信息
 
         :param id_or_path: id 或 路径
@@ -1758,7 +1788,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         path_to_id = self.path_to_id
 
         def normalize_attr2(attr, ancestor, /):
-            attr = normalize_attr(attr)
+            attr = normalize_attr(attr, dict_cls=AttrDictWithAncestors)
             if (cid := attr["id"]) in seen:
                 raise RuntimeError(f"{attr['parent_id']} detected count changes during iteration")
             seen_add(cid)
@@ -1879,7 +1909,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
                         def process(resp, /):
                             nonlocal can_merge, done, his_mtime, his_ids, n 
-                            attr: AttrDict
+                            attr: AttrDictWithAncestors
                             for info in resp["data"]:
                                 attr = normalize_attr2(info, ancestor)
                                 if can_merge:
@@ -1900,7 +1930,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                                 n -= 1
                                                 if count - len(seen) == n:
                                                     yield Yield(attr, identity=True)
-                                                    for attr in cast(dict[int, AttrDict], children).values():
+                                                    for attr in cast(dict[int, AttrDictWithAncestors], children).values():
                                                         if attr["id"] not in seen:
                                                             yield Yield(attr, identity=True)
                                                     done = True
@@ -1927,12 +1957,12 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
                     if async_:
                         async def request():
-                            d: AttrDict = AttrDict(lock=Lock(), alock=AsyncLock())
+                            d: AttrDictWithAncestors = AttrDictWithAncestors(lock=Lock(), alock=AsyncLock())
                             async with self._iterdir_locks.setdefault(id, d)["alock"]:
                                 return {a["id"]: a async for a in run_gen_step_iter(iterdir, async_=True)}
                         children = yield request
                     else:
-                        d: AttrDict = AttrDict(lock=Lock(), alock=AsyncLock())
+                        d: AttrDictWithAncestors = AttrDictWithAncestors(lock=Lock(), alock=AsyncLock())
                         with self._iterdir_locks.setdefault(id, d)["lock"]:
                             children = {a["id"]: a for a in run_gen_step_iter(iterdir, async_=False)}
                     id_to_readdir[id] = children
@@ -1986,7 +2016,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[False] = False, 
-    ) -> None | AttrDict:
+    ) -> None | AttrDictWithAncestors:
         ...
     @overload
     def copy(
@@ -2000,7 +2030,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, None | AttrDict]:
+    ) -> Coroutine[Any, Any, None | AttrDictWithAncestors]:
         ...
     def copy(
         self, 
@@ -2013,7 +2043,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> None | AttrDict | Coroutine[Any, Any, None | AttrDict]:
+    ) -> None | AttrDictWithAncestors | Coroutine[Any, Any, None | AttrDictWithAncestors]:
         "复制文件"
         def gen_step():
             nonlocal src_path, dst_path
@@ -2156,7 +2186,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False] = False, 
-    ) -> None | AttrDict:
+    ) -> None | AttrDictWithAncestors:
         ...
     @overload
     def copytree(
@@ -2169,7 +2199,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, None | AttrDict]:
+    ) -> Coroutine[Any, Any, None | AttrDictWithAncestors]:
         ...
     def copytree(
         self, 
@@ -2181,7 +2211,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         onerror: None | bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> None | AttrDict | Coroutine[Any, Any, None | AttrDict]:
+    ) -> None | AttrDictWithAncestors | Coroutine[Any, Any, None | AttrDictWithAncestors]:
         "复制路径"
         def gen_step():
             nonlocal src_path, dst_path
@@ -2853,7 +2883,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         page_size: int = 1150, 
         *, 
         async_: Literal[False] = False, 
-    ) -> Iterator[AttrDict]:
+    ) -> Iterator[AttrDictWithAncestors]:
         ...
     @overload
     def iter_repeat(
@@ -2864,7 +2894,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         page_size: int = 1150, 
         *, 
         async_: Literal[True], 
-    ) -> AsyncIterator[AttrDict]:
+    ) -> AsyncIterator[AttrDictWithAncestors]:
         ...
     def iter_repeat(
         self, 
@@ -2874,7 +2904,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         page_size: int = 1150, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> Iterator[AttrDict] | AsyncIterator[AttrDict]:
+    ) -> Iterator[AttrDictWithAncestors] | AsyncIterator[AttrDictWithAncestors]:
         "获取重复文件（不含当前这个）"
         if page_size <= 0:
             page_size = 1150
@@ -2983,7 +3013,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         exist_ok: bool = False, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def makedirs(
@@ -2994,7 +3024,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         exist_ok: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def makedirs(
         self, 
@@ -3004,7 +3034,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         exist_ok: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "创建目录，如果上级目录不存在，则会进行创建"
         def gen_step():
             nonlocal path, pid
@@ -3017,7 +3047,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     f"{attr['path']!r} (id={attr['id']}) is not a directory", 
                 )
             path_class = type(self).path_class
-            if isinstance(path, (AttrDict, path_class)):
+            if isinstance(path, (AttrDictWithAncestors, path_class)):
                 path = str(path["path"])
             path = cast(str | PathLike | Sequence[str], path)
             if isinstance(path, (str, PathLike)):
@@ -3068,7 +3098,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def mkdir(
@@ -3078,7 +3108,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def mkdir(
         self, 
@@ -3087,7 +3117,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "创建目录"
         def gen_step():
             nonlocal path, pid
@@ -3103,7 +3133,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     f"{attr['path']!r} (id={attr['id']}) is not a directory", 
                 )
             path_class = type(self).path_class
-            if isinstance(path, (AttrDict, path_class)):
+            if isinstance(path, (AttrDictWithAncestors, path_class)):
                 path = str(path["path"])
             path = cast(str | PathLike | Sequence[str], path)
             if isinstance(path, (str, PathLike)):
@@ -3158,7 +3188,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def move(
@@ -3169,7 +3199,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def move(
         self, 
@@ -3179,7 +3209,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "重命名路径，如果目标路径是目录，则移动到其中"
         def gen_step():
             nonlocal src_path, dst_path
@@ -3225,7 +3255,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def remove(
@@ -3236,7 +3266,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def remove(
         self, 
@@ -3246,7 +3276,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         recursive: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "删除文件"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
@@ -3258,7 +3288,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         f"{attr['path']!r} (id={id!r}) is a directory", 
                     )
                 if id == 0:
-                    ls: list[AttrDict] = yield partial(self.listdir_attr, 0, async_=async_)
+                    ls: list[AttrDictWithAncestors] = yield partial(self.listdir_attr, 0, async_=async_)
                     for subattr in ls:
                         yield partial(self.remove, subattr, recursive=True, async_=async_)
                     return attr
@@ -3275,7 +3305,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def removedirs(
@@ -3285,7 +3315,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def removedirs(
         self, 
@@ -3294,7 +3324,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "逐级往上尝试删除空目录"
         def gen_step():
             attr = yield partial(
@@ -3337,7 +3367,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         replace: bool = False, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def rename(
@@ -3349,7 +3379,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         replace: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def rename(
         self, 
@@ -3360,7 +3390,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         replace: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "重命名路径"
         def gen_step():
             nonlocal src_path, dst_path
@@ -3495,7 +3525,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def renames(
@@ -3506,7 +3536,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def renames(
         self, 
@@ -3516,7 +3546,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "重命名路径，如果文件被移动到其它目录中，则尝试从原来的上级目录逐级往上删除空目录"
         def gen_step():
             attr = yield partial(self.attr, src_path, pid=pid, async_=async_)
@@ -3536,7 +3566,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def replace(
@@ -3547,7 +3577,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def replace(
         self, 
@@ -3557,7 +3587,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "替换路径"
         return self.rename(src_path, dst_path, pid=pid, replace=True, async_=async_)
 
@@ -3569,7 +3599,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def rmdir(
@@ -3579,7 +3609,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def rmdir(
         self, 
@@ -3588,7 +3618,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "删除空目录"
         def gen_step():
             attr = yield partial(
@@ -3622,7 +3652,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def rmtree(
@@ -3632,7 +3662,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def rmtree(
         self, 
@@ -3641,7 +3671,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "删除路径"
         return self.remove(id_or_path, pid, recursive=True, async_=async_)
 
@@ -3784,7 +3814,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if not data:
                     return
                 for attr in resp["data"]:
-                    attr = normalize_attr(attr)
+                    attr = normalize_attr(attr, dict_cls=AttrDictWithAncestors)
                     yield Yield(P115Path(self, attr), identity=True)
                 offset = payload["offset"] = offset + resp["page_size"]
                 if offset >= resp["count"]:
@@ -3897,7 +3927,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         is_dir: bool = False, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def touch(
@@ -3908,7 +3938,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         is_dir: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def touch(
         self, 
@@ -3918,7 +3948,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         is_dir: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         """检查路径是否存在，当不存在时，如果 is_dir 是 False 时，则创建空文件，否则创建空目录
         """
         def gen_step():
@@ -3947,7 +3977,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def upload(
@@ -3961,7 +3991,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def upload(
         self, 
@@ -3974,7 +4004,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "上传文件"
         def gen_step():
             nonlocal path, pid
@@ -3983,7 +4013,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             name = ""
             if isinstance(path, int):
                 attr = yield partial(self.attr, path, async_=async_)
-            elif isinstance(path, AttrDict):
+            elif isinstance(path, AttrDictWithAncestors):
                 attr = path
             elif isinstance(path, path_class):
                 attr = path.attr
@@ -4050,9 +4080,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         remove_done: bool = False, 
         predicate: None | Callable[[Path], bool] = None, 
         onerror: None | bool | Callable[[OSError], bool] = True, 
-    ) -> Iterator[AttrDict]:
+    ) -> Iterator[AttrDictWithAncestors]:
         "上传到路径"
-        remote_path_attr_map: None | dict[str, AttrDict] = None
+        remote_path_attr_map: None | dict[str, AttrDictWithAncestors] = None
         try:
             attr = self.attr(path, pid=pid)
         except FileNotFoundError:
@@ -4192,7 +4222,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def write_bytes(
@@ -4203,7 +4233,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def write_bytes(
         self, 
@@ -4213,7 +4243,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "向文件写入二进制数据，如果文件已存在则替换"
         return self.upload(data, id_or_path, pid=pid, overwrite=True, async_=async_)
 
@@ -4229,7 +4259,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         newline: None | str = None, 
         *, 
         async_: Literal[False] = False, 
-    ) -> AttrDict:
+    ) -> AttrDictWithAncestors:
         ...
     @overload
     def write_text(
@@ -4243,7 +4273,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         newline: None | str = None, 
         *, 
         async_: Literal[True], 
-    ) -> Coroutine[Any, Any, AttrDict]:
+    ) -> Coroutine[Any, Any, AttrDictWithAncestors]:
         ...
     def write_text(
         self, 
@@ -4256,7 +4286,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         newline: None | str = None, 
         *, 
         async_: Literal[False, True] = False, 
-    ) -> AttrDict | Coroutine[Any, Any, AttrDict]:
+    ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "向文件写入文本数据，如果文件已存在则替换"
         bio = BytesIO()
         if text:

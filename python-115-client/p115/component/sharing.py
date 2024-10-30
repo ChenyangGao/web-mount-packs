@@ -403,6 +403,49 @@ class P115Sharing:
         return request()
 
     @overload
+    def list_fs(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> list[P115ShareFileSystem]:
+        ...
+    @overload
+    def list_fs(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, list[P115ShareFileSystem]]:
+        ...
+    def list_fs(
+        self, 
+        /, 
+        offset: int = 0, 
+        limit: int = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> list[P115ShareFileSystem] | Coroutine[Any, Any, list[P115ShareFileSystem]]:
+        "获取分享信息列表"
+        def gen_step():
+            ls = yield self.list(offset, limit, async_=async_)
+            client = self.client
+            request = self.request
+            async_request = self.async_request
+            return [P115ShareFileSystem(
+                client, 
+                info["share_code"], 
+                info["receive_code"], 
+                request=request, 
+                async_request=async_request, 
+            ) for info in ls]
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
     def list(
         self, 
         /, 
@@ -447,41 +490,6 @@ class P115Sharing:
                 async_=async_, 
             )
             return check_response(resp)["list"]
-        return run_gen_step(gen_step, async_=async_)
-
-    @overload
-    def list_fs(
-        self, 
-        /, 
-        offset: int = 0, 
-        limit: int = 0, 
-        *, 
-        async_: Literal[False] = False, 
-    ) -> list[P115ShareFileSystem]:
-        ...
-    @overload
-    def list_fs(
-        self, 
-        /, 
-        offset: int = 0, 
-        limit: int = 0, 
-        *, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, list[P115ShareFileSystem]]:
-        ...
-    def list_fs(
-        self, 
-        /, 
-        offset: int = 0, 
-        limit: int = 0, 
-        *, 
-        async_: Literal[False, True] = False, 
-    ) -> list[P115ShareFileSystem] | Coroutine[Any, Any, list[P115ShareFileSystem]]:
-        "获取分享信息列表"
-        def gen_step():
-            ls = yield self.list(offset, limit, async_=async_)
-            client = self.client
-            return [P115ShareFileSystem(client, info["share_code"], info["receive_code"]) for info in ls]
         return run_gen_step(gen_step, async_=async_)
 
     @overload

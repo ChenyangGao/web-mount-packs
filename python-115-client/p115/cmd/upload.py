@@ -27,7 +27,7 @@ from typing import NamedTuple, TypedDict
 class Task:
     src_attr: Mapping
     dst_pid: int
-    dst_attr: str | Mapping
+    dst_attr: None | str | Mapping = None
     times: int = 0
     reasons: list[BaseException] = field(default_factory=list)
 
@@ -88,7 +88,7 @@ def main(argv: None | list[str] | Namespace = None, /):
     from hashtools import file_digest
     from p115 import check_response, MultipartUploadAbort, MultipartResumeData
     from p115.component import P115Client
-    from posixpatht import escape, split, normpath as pnormpath
+    from posixpatht import escape, joinpath as pjoinpath, normpath as pnormpath, split as psplit, path_is_dir_form
     from rich.progress import (
         Progress, DownloadColumn, FileSizeColumn, MofNCompleteColumn, SpinnerColumn, 
         TimeElapsedColumn, TransferSpeedColumn, 
@@ -105,12 +105,13 @@ def main(argv: None | list[str] | Namespace = None, /):
 
     src_path = args.src_path
     dst_path = args.dst_path
+    part_size = args.part_size
     use_request = args.use_request
     max_workers = args.max_workers
     max_retries = args.max_retries
     resume = args.resume
     remove_done = args.remove_done
-    no_root = args.no_root
+    with_root = args.with_root
 
     if max_workers <= 0:
         max_workers = 1
@@ -312,23 +313,31 @@ def main(argv: None | list[str] | Namespace = None, /):
     def work(task: Task, submit):
         src_attr, dst_pid, dst_attr = task.src_attr, task.dst_pid, task.dst_attr
         src_path = src_attr["path"]
-        name = dst_attr if isinstance(dst_attr, str) else dst_attr["name"]
+        if dst_attr is None:
+            name: None | str = None
+        elif isinstance(dst_attr, str):
+            name = dst_attr
+        else:
+            name = cast(str, dst_attr["name"])
         try:
             task.times += 1
             if src_attr["is_directory"]:
                 subdattrs: None | dict = None
-                try:
-                    if isinstance(dst_attr, str):
-                        resp = check_response(fs.fs_mkdir(name, dst_pid))
-                        name = resp["file_name"]
-                        dst_id = int(resp["file_id"])
-                        task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
-                        subdattrs = {}
-                        console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
-                except FileExistsError:
-                    dst_attr = task.dst_attr = fs.attr([name], pid=dst_pid, ensure_dir=True)
+                if not name:
+                    dst_id = dst_pid
+                else:
+                    try:
+                        if isinstance(dst_attr, str):
+                            resp = check_response(fs.fs_mkdir(name, dst_pid))
+                            name = cast(str, resp["file_name"])
+                            dst_id = int(resp["file_id"])
+                            task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
+                            subdattrs = {}
+                            console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
+                    except FileExistsError:
+                        dst_attr = task.dst_attr = fs.attr([name], pid=dst_pid, ensure_dir=True)
+                        dst_id = dst_attr["id"]
                 if subdattrs is None:
-                    dst_id = cast(Mapping, dst_attr)["id"]
                     subdattrs = {
                         (attr["name"], attr["is_directory"]): attr 
                         for attr in fs.listdir_attr(dst_id)
@@ -387,14 +396,16 @@ def main(argv: None | list[str] | Namespace = None, /):
     ├ reason = [red]{type(e).__module__}.{type(e).__qualname__}[/red]: {e}""")
                 update_success(1)
             else:
+                if not name:
+                    name = src_attr["name"]
                 kwargs: dict = {}
                 if src_attr["size"] <= 1 << 30: # 1 GB
                     # NOTE: 1 GB 以内使用网页版上传接口，这个接口的优势是上传完成后会自动产生 115 生活事件
                     kwargs["upload_directly"] = None
                 elif src_attr["size"] > 1 << 34: # 16 GB
-                    # NOTE: 介于 1 GB 和 16 GB 时直接流式上传，超过 16 GB 时，使用分块上传，分块大小 1 GB
-                    kwargs["partsize"] = 1 << 30
-
+                    # NOTE: 介于 1 GB 和 16 GB 时直接流式上传，超过 16 GB 时，使用分块上传
+                    kwargs["partsize"] = part_size
+                # TODO: 如果 115 GB < src_attr["size"] <= 500 GB，则计算 ed2k 后离线下载
                 filesize, filehash = hash_report(src_attr)
                 console_print(f"[bold green][HASH][/bold green] 🧠 计算哈希: sha1([blue underline]{src_path!r}[/blue underline]) = {filehash.hexdigest()!r}")
                 kwargs["filesize"] = filesize
@@ -419,6 +430,7 @@ def main(argv: None | list[str] | Namespace = None, /):
                         ticket = kwargs["multipart_resume_data"] = e.ticket
                 else:
                     raise exc
+                check_response(resp)
                 if resp.get("status") == 2 and resp.get("statuscode") == 0:
                     prompt = "秒传文件"
                 else:
@@ -466,10 +478,9 @@ def main(argv: None | list[str] | Namespace = None, /):
                     raise
                 else:
                     raise BaseExceptionGroup("max retries exceed", task.reasons)
-
     src_attr = get_path_attr(normpath(src_path))
-    dst_attr = None
-    name = src_attr["name"]
+    dst_attr: None | dict = None
+    name: str = src_attr["name"]
     is_directory = src_attr["is_directory"]
     with Progress(
         SpinnerColumn(), 
@@ -482,42 +493,53 @@ def main(argv: None | list[str] | Namespace = None, /):
     ) as progress:
         console_print = lambda msg: progress.console.print(f"[bold][[cyan]{datetime.now()}[/cyan]][/bold]", msg)
         if isinstance(dst_path, str):
-            if dst_path == "0" or not pnormpath(dst_path).strip("/"):
-                dst_id = 0
+            if dst_path == "0" or pnormpath(dst_path) in ("", "/"):
+                dst_pid = 0
+                dst_path = "/" + name
             elif not dst_path.startswith("0") and dst_path.isascii() and dst_path.isdecimal():
-                dst_id = int(dst_path)
+                dst_pid = int(dst_path)
             elif is_directory:
-                dst_attr = fs.makedirs(dst_path, exist_ok=True)
-                dst_path = dst_attr["path"]
-                dst_id = dst_attr["id"]
+                dst_attr = fs.makedirs(dst_path, pid=0, exist_ok=True)
+                dst_pid = dst_attr["id"]
+            elif with_root or path_is_dir_form(dst_path):
+                dst_attr = fs.makedirs(dst_path, pid=0, exist_ok=True)
+                dst_pid = dst_attr["id"]
+                dst_path = dst_attr["path"] + "/" + name
             else:
-                dst_dir, dst_name = split(dst_path)
-                dst_attr = fs.makedirs(dst_dir, exist_ok=True)
-                dst_path = dst_attr["path"] + "/" + escape(dst_name)
-                dst_id = dst_attr["id"]
+                dst_path = pnormpath("/" + dst_path)
+                dst_dir, dst_name = psplit(dst_path)
+                try:
+                    dst_attr = fs.attr(dst_path)
+                except FileNotFoundError:
+                    dst_attr = fs.makedirs(dst_dir, pid=0, exist_ok=True)
+                    dst_pid = dst_attr["id"]
+                    name = dst_name
+                else:
+                    if dst_attr["is_directory"]:
+                        dst_pid = dst_attr["id"]
+                        dst_path += "/" + name
+                    else:
+                        dst_pid = dst_attr["parent_id"]
+                        name = dst_name
         else:
-            dst_id = dst_path
-        if name and is_directory and not no_root:
-            dst_attr = fs.makedirs([name], pid=dst_id, exist_ok=True)
-            dst_path = dst_attr["path"]
-            dst_id = dst_attr["id"]
-        if not dst_attr:
-            dst_attr = fs.attr(dst_id)
-            dst_path = cast(str, dst_attr["path"])
-            if is_directory:
-                if not dst_attr["is_directory"]:
-                    raise NotADirectoryError(errno.ENOTDIR, dst_attr)
-            elif dst_attr["is_directory"]:
-                dst_path = dst_path + "/" + escape(name)
-            else:
-                fs.remove(dst_attr["id"])
-                dst_id = dst_attr["parent_id"]
-                name = dst_attr["name"]
+            dst_pid = dst_path
         if is_directory:
-            task = Task(src_attr, dst_id, dst_attr)
-        else:
-            task = Task(src_attr, dst_id, name)
-
+            if with_root and name:
+                dst_attr = fs.makedirs(name, pid=dst_pid, exist_ok=True)
+                dst_pid = dst_attr["id"]
+            elif not dst_attr:
+                dst_attr = fs.attr(dst_pid)
+                if not dst_attr["is_directory"]:
+                    raise NotADirectoryError(errno.ENOTDIR, dst_path)
+            dst_path = dst_attr["path"]
+        elif dst_pid and not dst_attr:
+            dst_attr = fs.attr(dst_pid)
+            if dst_attr["is_directory"]:
+                dst_path = dst_attr["path"] + "/" + name
+            else:
+                dst_pid = dst_attr["parent_id"]
+                dst_path = dst_attr["path"]
+        task = Task(src_attr, dst_pid, None if is_directory else name)
         unfinished_tasks: dict[str, Task] = {src_attr["path"]: task}
         success_tasks: dict[str, Task] = {}
         failed_tasks: dict[str, Task] = {}
@@ -543,10 +565,45 @@ def main(argv: None | list[str] | Namespace = None, /):
     return Result(stats, all_tasks)
 
 
+parser.epilog = """\
+-------------------------
+
+🏫 上传方式说明：
+- 当文件 >= 1 GB 时，使用网页版接口上传
+- 当文件 > 1 GB 且 <= 16 GB 时，使用普通上传
+- 当文件 > 16 GB 时，使用分块上传
+
+🛣️ 路径解析说明：
+如果指定的网盘路径以斜杠 "/" 结尾，则视为目录
+
+目录的合并上传，是指把本地目录不包括自身上传到网盘目录中，属于自己的一级目录，就会是属于网盘目录的一级目录。而普通的上传，是指在网盘目录下，创建一个和本地目录同名的目录，然后把本地目录合并上传到这个目录中
+
+如果本地路径或 id 是一个文件
+    1. 如果 with_root 为 False（默认）
+        - 如果网盘路径不存在，则上传文件到此路径
+        - 如果网盘路径或 id 是一个文件，则上传到此文件相同路径下
+        - 如果网盘路径或 id 是一个目录，则上传到此文件到此目录下
+    2. 如果 with_root 为 True，或者网盘路径以斜杠 "/" 结尾
+        - 如果网盘路径不存在，则上传文件到此目录下
+        - 如果网盘路径或 id 是一个文件，则上传到此文件相同路径下
+        - 如果网盘路径或 id 是一个目录，则上传到此文件到此目录下
+如果本地路径是一个目录
+    1. 如果 with_root 为 False（默认）
+        - 如果网盘路径不存在，则把本地目录合并上传到此目录下
+        - 如果网盘路径或 id 是一个文件，则报错 NotADirectoryError
+        - 如果网盘路径或 id 是一个目录，则把本地目录合并上传到此目录下
+    2. 如果 with_root 为 True
+        - 如果网盘路径不存在，则把本地目录上传到此目录下
+        - 如果网盘路径或 id 是一个文件，则报错 NotADirectoryError
+        - 如果网盘路径或 id 是一个目录，则把本地目录上传到此目录下
+"""
 parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
 parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径，默认为当前工作目录下的 115-cookies.txt")
 parser.add_argument("-p", "--src-path", default=".", help="本地的路径，默认是当前工作目录")
-parser.add_argument("-t", "--dst-path", default="/", help="115 网盘中的文件或目录的 id 或路径，默认值：'/'")
+parser.add_argument("-t", "--dst-path", default="/", help="""115 网盘中的文件或目录的 id 或路径，默认值："/"
+如果想要把本地文件上传到网盘目录中，且指定了路径而不是 id，则最好在路径尾部加一个斜杠 "/" """)
+parser.add_argument("-ps", "--part-size", default=1 << 30, type=int, help="分块上传时的分块大小，单位是 Byte，默认为 1073741824，即 1GB")
+
 parser.add_argument("-m", "--max-workers", default=1, type=int, help="并发线程数，默认值 1")
 parser.add_argument("-mr", "--max-retries", default=-1, type=int, 
                     help="""最大重试次数。
@@ -554,7 +611,7 @@ parser.add_argument("-mr", "--max-retries", default=-1, type=int,
     - 如果等于 0，则发生错误就抛出
     - 如果大于 0（实际执行 1+n 次，第一次不叫重试），则对所有错误等类齐观，只要次数到达此数值就抛出""")
 parser.add_argument("-ur", "--use-request", choices=("httpx", "requests", "urllib3", "urlopen"), default="httpx", help="选择一个网络请求模块，默认值：httpx")
-parser.add_argument("-n", "--no-root", action="store_true", help="上传目录时，直接合并到目标目录，而不是到与源目录同名的子目录")
+parser.add_argument("-wr", "--with-root", action="store_true", help="上传时，把 -t/--dst-path 视为要上传到的父目录，而不是默认为根目录")
 parser.add_argument("-r", "--resume", action="store_true", help="断点续传")
 parser.add_argument("-rm", "--remove-done", action="store_true", help="上传成功后，删除本地文件")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
@@ -566,9 +623,7 @@ if __name__ == "__main__":
 
 # TODO: statistics 行要有更详细的信息，如果一行不够，就再加一行
 # TODO: 以后要支持断点续传，可用 分块上传 和 本地保存进度
-# TODO: 任务可能要执行很久，允许中途删除文件，则自动跳过此任务
-# TODO: 这个模块应可以单独运行，也可以被 import
-# TODO: 支持在上传的时候，改变文件的名字，特别是改变了扩展名，则直接利用秒传实现
+# TODO: 支持在上传的时候，改变文件的名字，特别是改变了扩展名
 # TODO: 如果文件大于特定大小，就不能秒传，需要直接报错（而不需要进行尝试）
 # TODO: 支持把一个目录上传到另一个目录（如果扩展名没改，就直接复制，然后改名，否则就秒传）
 # TODO: 支持直接从一个115网盘直接上传到另一个115网盘
