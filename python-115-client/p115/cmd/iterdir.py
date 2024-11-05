@@ -20,7 +20,6 @@ from collections import UserString
 from collections.abc import Callable
 from functools import partial
 from hashlib import algorithms_available
-from os import environ
 from sys import path, stderr, stdout
 from typing import Final
 
@@ -69,7 +68,6 @@ def main(argv: None | list[str] | Namespace = None, /):
         else:
             cookies = Path("115-cookies.txt")
     client = P115Client(cookies, check_for_relogin=True)
-    environ["WEBAPI_BASE_URL"] = ""
 
     do_request: None | Callable
     match args.use_request:

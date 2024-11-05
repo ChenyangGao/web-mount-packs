@@ -26,41 +26,51 @@ PACKAGE CONTENTS
 FUNCTIONS
     make_application(base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, project: None | collections.abc.Callable[[dict], typing.Any] = None, methods: list[str] = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'CONNECT', 'OPTIONS', 'TRACE', 'PATCH', 'MKCOL', 'COPY', 'MOVE', 'PROPFIND', 'PROPPATCH', 'LOCK', 'UNLOCK', 'REPORT', 'ACL'], threaded: bool = False) -> blacksheep.server.application.Application
         创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
-        
+
+        :param alist_token: alist 的 token，提供此参数可在 115 网盘遭受 405 风控时自动扫码刷新 cookies
         :param base_url: alist 的 base_url
         :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
+        :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
         :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
         :param methods: 需要监听的 HTTP 方法集
         :param threaded: collect 和 project，如果不是 async 函数，就放到单独的线程中运行
-        
+
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
-    
-    make_application_with_fs_event_stream(alist_token: str, base_url: str = 'http://localhost:5244', redis_host: str = 'localhost', redis_port: int = 6379, redis_key: str = 'alist:fs')
+
+    make_application_with_fs_event_stream(alist_token: str, base_url: str = 'http://localhost:5244', db_uri: str = 'sqlite')
         只收集和文件系统操作有关的事件，存储到 redis streams，并且可以通过 websocket 拉取
         
         :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
         :param base_url: alist 的 base_url
-        :param redis_host: redis 服务所在的主机
-        :param redis_port: redis 服务的端口
-        :param redis_key: redis streams 的键名
-        
+        :param db_uri: 数据库连接的 URI，格式为 "{dbtype}://{host}:{port}/{path}
+
+            - dbtype: 数据库类型，目前仅支持 "sqlite"、"mongodb" 和 "redis"
+            - host: （非 "sqlite"）ip 或 hostname，如果忽略，则用 "localhost"
+            - port: （非 "sqlite"）端口号，如果忽略，则自动使用此数据库的默认端口号
+            - path: （限 "sqlite"）文件路径，如果忽略，则为 ""（会使用一个临时文件）
+
+            如果你只输入 dbtype 的名字，则视为 "{dbtype}://"
+            如果你输入了值，但不能被视为 dbtype，则自动视为 path，即 "sqlite:///{path}"
+        :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
+
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
-    
+
     make_application_with_fs_events(alist_token: str, base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, threaded: bool = False) -> blacksheep.server.application.Application
         只收集和文件系统操作有关的事件
         
         :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
         :param base_url: alist 的 base_url
         :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
+        :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
         :param threaded: collect 如果不是 async 函数，就放到单独的线程中运行
-        
+
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
 
 DATA
     __all__ = ['make_application', 'make_application_with_fs_events', 'make_application_with_fs_event_stream']
 
 VERSION
-    (0, 0, 4)
+    (0, 0, 8)
 
 AUTHOR
     ChenyangGao <https://chenyanggao.github.io>
@@ -70,30 +80,33 @@ AUTHOR
 
 ```console
 $ alist-proxy -h
-usage: alist-proxy [-h] [-H HOST] [-p PORT] [-b BASE_URL] [-t TOKEN] [-nr] [-rh REDIS_HOST] [-rp REDIS_PORT] [-rk REDIS_KEY] [-d] [-v]
+usage: alist-proxy [-h] [-H HOST] [-P PORT] [-b BASE_URL] [-t TOKEN] [-u DB_URI] [-d] [-v]
 
 		🌍🚢 alist 网络代理抓包 🕷️🕸️
 
 options:
   -h, --help            show this help message and exit
   -H HOST, --host HOST  ip 或 hostname，默认值：'0.0.0.0'
-  -p PORT, --port PORT  端口号，默认值：5245
+  -P PORT, --port PORT  端口号，默认值：5245
   -b BASE_URL, --base-url BASE_URL
                         被代理的 alist 服务的 base_url，默认值：'http://localhost:5244'
   -t TOKEN, --token TOKEN
                         alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
-  -nr, --no-redis       不使用 redis，直接输出到控制台，主要用于调试
-  -rh REDIS_HOST, --redis-host REDIS_HOST
-                        redis 服务所在的主机，默认值: 'localhost'
-  -rp REDIS_PORT, --redis-port REDIS_PORT
-                        redis 服务的端口，默认值: 6379
-  -rk REDIS_KEY, --redis-key REDIS_KEY
-                        redis streams 的键名，默认值: 'alist:fs'
+  -u DB_URI, --db-uri DB_URI
+                        数据库连接的 URI，格式为 "{dbtype}://{host}:{port}/{path}"
+                            - dbtype: 数据库类型，目前仅支持 "sqlite"、"mongodb" 和 "redis"
+                            - host: （非 "sqlite"）ip 或 hostname，如果忽略，则用 "localhost"
+                            - port: （非 "sqlite"）端口号，如果忽略，则自动使用此数据库的默认端口号
+                            - path: （限 "sqlite"）文件路径，如果忽略，则为 ""（会使用一个临时文件）
+                        如果你只输入 dbtype 的名字，则视为 "{dbtype}://"
+                        如果你输入了值，但不能被视为 dbtype，则自动视为 path，即 "sqlite:///{path}"
+  -w [webhook ...], --webhooks [webhook ...]
+                        一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
   -d, --debug           启用 debug 模式（会输出更详细的信息）
   -v, --version         输出版本号
 
 $ alist-proxy
-INFO:     Started server process [62319]
+INFO:     Started server process [64373]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:5245 (Press CTRL+C to quit)
@@ -103,15 +116,58 @@ INFO:     Uvicorn running on http://0.0.0.0:5245 (Press CTRL+C to quit)
 
 首先要求有一个正在运行中的 alist 服务，假设地址为 http://localhost:5244
 
-再有一个正在运行中的 redis 服务，假设地址为 http://localhost:6379
+然后在命令行中运行
 
-然后启动此程序的命令行，然后在浏览器或 webdav 挂载软件访问 http://localhost:5245 ，就会自动往 redis 服务上，一个键为 'alist:fs' 的 streams 上实时添加数据。
+```console
+alist-proxy --base-url http://localhost:5244
+```
 
-在命令行中提供 alist 的 token 是很有必要的，这样就可以监控后台的 复制、上传、离线下载转存 的事件。
+就可以开始代理监听了。如果 --base-url 就是默认地址 http://localhost:5244，是可以省略的。
+
+如果你还需要监听后台的 **复制**、**上传**、**离线下载转存** 事件，则需要在命令行中提供 alist 的 token。
+
+```console
+ALIST_TOKEN='alist-xxxx'
+alist-proxy --token "$ALIST_TOKEN"
+```
+
+如果你需要使用 webhook，则需要指定 -w/--webhooks 参数。
+
+如果你需要使用 websocket，则需要指定 --db-uri 参数，以将数据存储到数据库，目前只支持 sqlite、mongodb 和 redis。
+
+#### webhook 接口
+
+如果你指定了 -w/--webhooks 参数，就会发送事件到指定的这组链接上
+
+```console
+alist-proxy -w http://localhost:8888/webhook
+```
+
+客户端代码
+
+```python
+from flask import request, Flask
+
+app = Flask(__name__)
+
+@app.route("/webhook", methods=["POST"])
+def handle_post():
+    data = request.get_json()
+    print(f"Received: {data}")
+    return "", 200
+
+app.run(port=8888, threaded=True)
+```
 
 #### websocket 接口
 
-如果你在命令行指定了 -nr/--no-redis 参数，则不会把数据推送到 redis，而是直接输出到控制台（命令行），这便于你在没有部署好 redis 的情况下做一些观察实验。但只有当启用了 redis （默认行为），才可以通过 websocket 访问 <kbd>/pull</kbd> 接口，例如
+如果你指定了 -u/--db-uri 参数，就可以使用 websocket 接口 <kbd>/pull</kbd>
+
+```console
+alist-proxy -u sqlite
+```
+
+客户端代码
 
 ```python
 from asyncio import run
@@ -129,11 +185,27 @@ async def pull():
 run(pull())
 ```
 
-这个 <kbd>/pull</kbd> 接口支持 3 个查询参数，均可省略
+##### redis
+
+<kbd>/pull</kbd> 接口支持 3 个查询参数，均可省略，省略则从当前开始拉取最新数据
 
 - `lastid`: 从这个 id（不含）开始读取。省略时，如果指定了非空的 `group`，则继续这个组的读取进度，否则从当前开始（不管以前）读取。如果要从头开始读取，指定 '0' 即可
 - `group`: 组名称。如果组不存在，则自动创建。
 - `name`: 消费者名称。
+
+##### mongodb
+
+<kbd>/pull</kbd> 接口支持 3 个查询参数，均可省略，省略则从当前开始拉取最新数据
+
+- `lastid`: 从这个 id（不含）开始读取，是一个字符串，表示 UUID。
+- `from_datetime`: 从这个时间点开始，是一个字符串。
+
+##### sqlite
+
+<kbd>/pull</kbd> 接口支持 3 个查询参数，均可省略，省略则从当前开始拉取最新数据
+
+- `lastid`: 从这个 id（不含）开始读取，是一个整数，表示自增主键。
+- `from_datetime`: 从这个时间点开始，是一个字符串。
 
 #### 事件说明
 

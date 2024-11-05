@@ -87,7 +87,11 @@ def alist_batch_add_115_share_links(
         mount_root = "/" + mount_root
     for link in share_links:
         fs = P115ShareFileSystem("", link)
-        get_files = retry(fs.fs_files, retry_times=5, suppress_exceptions=TimeoutError)
+        get_files = retry(
+            fs.fs_files, # type: ignore
+            retry_times=5, 
+            suppress_exceptions=TimeoutError, 
+        )
         try:
             files: dict = get_files({"limit": 1}) # type: ignore
         except Exception as e:

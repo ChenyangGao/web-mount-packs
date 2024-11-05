@@ -76,7 +76,7 @@ def main(argv: None | list[str] | Namespace = None, /):
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from os import environ, fspath, remove, removedirs, scandir, stat
+    from os import fspath, remove, removedirs, scandir, stat
     from os.path import dirname, normpath
     from textwrap import indent
     from threading import Lock
@@ -101,7 +101,6 @@ def main(argv: None | list[str] | Namespace = None, /):
         else:
             cookies = Path("115-cookies.txt")
     client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app="qandroid")
-    environ["WEBAPI_BASE_URL"] = ""
 
     src_path = args.src_path
     dst_path = args.dst_path
@@ -334,6 +333,8 @@ def main(argv: None | list[str] | Namespace = None, /):
                             task.dst_attr = {"id": dst_id, "parent_id": dst_pid, "name": name, "is_directory": True}
                             subdattrs = {}
                             console_print(f"[bold green][GOOD][/bold green] 📂 创建目录: [blue underline]{src_path!r}[/blue underline] ➜ [blue underline]{name!r}[/blue underline] in {dst_pid}")
+                        else:
+                            dst_id = cast(Mapping, dst_attr)["id"]
                     except FileExistsError:
                         dst_attr = task.dst_attr = fs.attr([name], pid=dst_pid, ensure_dir=True)
                         dst_id = dst_attr["id"]
@@ -569,7 +570,7 @@ parser.epilog = """\
 -------------------------
 
 🏫 上传方式说明：
-- 当文件 >= 1 GB 时，使用网页版接口上传
+- 当文件 <= 1 GB 时，使用网页版接口上传
 - 当文件 > 1 GB 且 <= 16 GB 时，使用普通上传
 - 当文件 > 16 GB 时，使用分块上传
 
@@ -578,7 +579,7 @@ parser.epilog = """\
 
 目录的合并上传，是指把本地目录不包括自身上传到网盘目录中，属于自己的一级目录，就会是属于网盘目录的一级目录。而普通的上传，是指在网盘目录下，创建一个和本地目录同名的目录，然后把本地目录合并上传到这个目录中
 
-如果本地路径或 id 是一个文件
+如果本地路径是一个文件
     1. 如果 with_root 为 False（默认）
         - 如果网盘路径不存在，则上传文件到此路径
         - 如果网盘路径或 id 是一个文件，则上传到此文件相同路径下

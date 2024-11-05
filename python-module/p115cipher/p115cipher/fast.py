@@ -19,23 +19,19 @@ from .const import AES_KEY, AES_IV, MD5_SALT, RSA_PUBKEY_PAIR
 from .common import Buffer, gen_key, from_bytes, to_bytes, xor
 
 
-def pad_pkcs1_v1_5(message: Buffer, keysize: int = 128) -> int:
-    pad = b"\x00" + b"\x02" * (keysize - len(message) - 2) + b"\x00"
-    return from_bytes(pad + message)
+def pad_pkcs1_v1_5(message: Buffer, /) -> int:
+    return from_bytes(b"\x00" + b"\x02" * (126 - len(message)) + b"\x00" + message)
 
 
 def rsa_encode(data: Buffer, /) -> bytes:
     "把数据用 RSA 公钥加密"
-    xor_text: Buffer = bytearray(16)
+    xor_text = bytearray(16)
     tmp = memoryview(xor(data, b"\x8d\xa5\xa5\x8d"))[::-1]
     xor_text += xor(tmp, b"x\x06\xadL3\x86]\x18L\x01?F")
     cipher_data = bytearray()
-    xor_text = memoryview(xor_text)
-    keysize = RSA_PUBKEY_PAIR[0].bit_length() // 8
-    for l, r, _ in acc_step(0, len(xor_text), 117):
-        s = pad_pkcs1_v1_5(xor_text[l:r], keysize)
-        p = pow(s, RSA_PUBKEY_PAIR[1], RSA_PUBKEY_PAIR[0])
-        cipher_data += to_bytes(p, keysize)
+    view = memoryview(xor_text)
+    for l, r, _ in acc_step(0, len(view), 117):
+        cipher_data += to_bytes(pow(pad_pkcs1_v1_5(view[l:r]), RSA_PUBKEY_PAIR[1], RSA_PUBKEY_PAIR[0]), 128)
     return b64encode(cipher_data)
 
 

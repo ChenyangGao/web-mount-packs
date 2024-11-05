@@ -35,6 +35,7 @@ from http.client import InvalidURL
 from itertools import count
 from json import dumps as json_dumps
 from os import fsencode, PathLike
+from platform import system
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from posixpath import join as joinpath, split as splitpath, splitext
 from stat import S_IFDIR, S_IFREG
@@ -44,6 +45,7 @@ from _thread import start_new_thread, allocate_lock
 from time import sleep, time
 from typing import cast, Any, Concatenate, Final, IO, ParamSpec
 from unicodedata import normalize
+from urllib.parse import quote
 
 from alist import AlistFileSystem, AlistPath
 from filewrap import Buffer
@@ -57,6 +59,7 @@ from .log import logger
 Args = ParamSpec("Args")
 
 urllib3_request = partial(request, pool=PoolManager(64))
+PLATFORM = system()
 
 
 def _get_process():
@@ -100,7 +103,7 @@ def readdir_future_wrapper(
                         if cooldown_pool is not None and future.exception() is None:
                             cooldown_pool[path] = None
                         pop_task(path, None)
-                    future = task_pool[path] = submit(readdir, self, path, fh)
+                    future = task_pool[path] = submit(readdir, self, path, fh) # type: ignore
                     future.add_done_callback(done_callback)
         if result is None:
             return future.result()
@@ -243,27 +246,37 @@ class AlistFuseOperations(Operations):
             raise FileNotFoundError(errno.ENOENT, path) from e
 
     def getxattr(self, /, path: str, name: str, position: int = 0):
+        """获取扩展属性的值，返回值会被序列化为 JSON，所以需要进行反序列化解析
+
+        - Linux 系统使用 `os.getxattr(path, attr)` 获取
+        - 其它系统使用 `xattr.getxattr(path, attr)` 获取（https://pypi.org/project/xattr/）
+        """
         if path == "/":
             return b""
         fuse_attr = self.getattr(path)
         attr      = fuse_attr["_attr"]
         pathobj   = fuse_attr["_path"]
-        match name:
-            case "attr":
-                return fsencode(json_dumps(attr, ensure_ascii=False))
-            case "sign" | "thumb" | "type" | "hashinfo":
-                return fsencode(str(attr[name]))
-            case "url":
-                if pathobj.is_dir():
-                    raise IsADirectoryError(errno.EISDIR, path)
-                return fsencode(pathobj.get_url())
-            case _:
-                raise OSError(93, name)
+        if name == "attr":
+            return fsencode(json_dumps(attr, ensure_ascii=False))
+        elif name == "url":
+            if pathobj.is_dir():
+                raise IsADirectoryError(errno.EISDIR, path)
+            return fsencode(json_dumps(pathobj.get_url()))
+        elif name in attr:
+            return fsencode(json_dumps(attr[name]))
+        else:
+            raise OSError(93, name)
 
     def listxattr(self, /, path: str):
+        """罗列扩展属性
+
+        - Linux 系统使用 `os.listxattr(path)` 获取
+        - 其它系统使用 `xattr.listxattr(path)` 获取（https://pypi.org/project/xattr/）
+        """
         if path == "/":
             return ()
-        return ("attr", "sign", "thumb", "type", "hashinfo", "url")
+        return ("attr", "url", "name", "size", "is_dir", "modified", "created", "sign", "thumb", 
+                "type", "hashinfo", "hash_info", "ctime", "mtime", "path", "password")
 
     def open(self, /, path: str, flags: int = 0) -> int:
         self._log(logging.INFO, "open(path=\x1b[4;34m%r\x1b[0m, flags=%r) by \x1b[3;4m%s\x1b[0m", path, flags, PROCESS_STR)
@@ -279,8 +292,17 @@ class AlistFuseOperations(Operations):
                 ):
                     process.kill()
                     def push():
-                        sleep(.01)
-                        run([exe, self.fs.get_url(path.lstrip("/"))])
+                        sign = self.getattr(path)["_attr"].get("sign")
+                        url = self.fs.get_url(path.lstrip("/"), ensure_ascii=False)
+                        if sign:
+                            url += "?sign=" + quote(sign)
+                        sleep(0.01)
+                        if PLATFORM == "Darwin":
+                            run(["open", "-a", exe, url])
+                        elif PLATFORM == "Windows":
+                            run(["start", path, exe, url])
+                        else:
+                            run([exe, url])
                     start_new_thread(push, ())
                     return 0
             except Exception as e:
@@ -461,3 +483,4 @@ class AlistFuseOperations(Operations):
     def run(self, /, *args, **kwds):
         return FUSE(self, *args, **kwds)
 
+# TODO: 支持写入操作，而不是只读

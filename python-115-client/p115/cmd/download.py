@@ -75,7 +75,7 @@ def main(argv: None | list[str] | Namespace = None, /):
     from contextlib import contextmanager
     from datetime import datetime
     from functools import partial
-    from os import environ, makedirs, scandir, stat
+    from os import makedirs, scandir, stat
     from os.path import dirname, exists, expanduser, isdir, join as joinpath, normpath, realpath
     from platform import system
     from shutil import COPY_BUFSIZE # type: ignore
@@ -101,7 +101,6 @@ def main(argv: None | list[str] | Namespace = None, /):
         else:
             cookies = Path("115-cookies.txt")
     client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app="qandroid")
-    environ["WEBAPI_BASE_URL"] = ""
 
     src_path = args.src_path
     dst_path = args.dst_path

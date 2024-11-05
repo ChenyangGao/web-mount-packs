@@ -960,9 +960,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         def gen_step():
-            resp = yield partial(
-                self.client.fs_file, 
+            resp = yield self.client.fs_file(
                 {"file_id": id}, 
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -1006,6 +1006,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             resp = yield partial(
                 self.client.fs_file_skim, 
                 id, 
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -1052,7 +1053,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         def gen_step():
             resp = yield self.client.fs_files(
                 payload, 
-                base_url=None, 
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -3497,10 +3498,11 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 elif status == 1 and statuscode == 0:
                     warn(f"wrong sha1 {src_attr['sha1']!r} found, will attempt to upload directly: {src_attr!r}")
                     resp = yield partial(
-                        self.client.upload_file_sample, 
+                        self.client.upload_file, 
                         self.open(src_attr, "rb", buffering=0), 
                         dst_name, 
                         pid=dst_pid, 
+                        upload_directly=True, 
                         request=self.async_request if async_ else self.request, 
                         async_=async_, 
                     )

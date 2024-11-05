@@ -153,7 +153,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "share_code": self.share_code, 
                 "receive_code": self.receive_code, 
             }, 
-            base_url=None, 
+            base_url=True, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
@@ -659,6 +659,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     "file_id": id, 
                 }, 
                 headers=headers, 
+                use_web_api=attr.get("violated", False) and attr["size"] < 1024 * 1024 * 115, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             ))
@@ -673,6 +674,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
+        refresh: bool = False, 
         *, 
         async_: Literal[False] = False, 
         **payload, 
@@ -687,6 +689,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
+        refresh: bool = False, 
         *, 
         async_: Literal[True], 
         **payload, 
@@ -700,6 +703,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         start: int = 0, 
         stop: None | int = None, 
         page_size: int = 1_000, 
+        refresh: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
         **payload, 
@@ -750,6 +754,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
             ancestors = attr["ancestors"]
             children: Sequence[AttrDict]
             try:
+                if refresh:
+                    raise KeyError
                 children = self.pid_to_children[id]
             except KeyError:
                 payload["cid"] = id

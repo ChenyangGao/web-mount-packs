@@ -839,9 +839,10 @@ class P115Offline:
                 except:
                     name = f"{sha}.torrent"
                     check_response((yield partial(
-                        self.client.upload_file_sample, 
+                        self.client.upload_file, 
                         torrent, 
                         filename=name, 
+                        upload_directly=True, 
                         request=self.async_request if async_ else self.request, 
                         async_=async_, 
                     )))

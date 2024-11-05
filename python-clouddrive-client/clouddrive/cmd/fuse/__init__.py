@@ -246,7 +246,7 @@ def main(args):
         direct_open_names = set(direct_open_names).__contains__
 
     if direct_open_exes := args.direct_open_exes:
-        direct_open_exes = set(direct_open_names).__contains__
+        direct_open_exes = set(direct_open_exes).__contains__
 
     from os.path import exists, abspath
 

@@ -453,7 +453,7 @@ class AlistPath(Mapping, PathLike[str]):
         /, 
         ensure_ascii: bool = True, 
     ) -> str:
-        return self.fs.get_url(self, ensure_ascii=ensure_ascii)
+        return self.fs.get_url(self, sign=self["sign"], ensure_ascii=ensure_ascii)
 
     @overload
     def glob(
@@ -4863,7 +4863,7 @@ class AlistFileSystem:
             url, 
             start=start, 
             seek_threshold=seek_threshold, 
-            async_=async_, 
+            async_=async_, # type: ignore
             **request_kwargs, 
         ).wrap(
             text_mode="b" not in mode, 
