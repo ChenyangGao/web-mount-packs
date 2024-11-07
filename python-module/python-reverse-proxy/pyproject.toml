@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "httpx_request"
-version = "0.0.9"
-description = "httpx request extension."
+name = "python-reverse-proxy"
+version = "0.0.3"
+description = "Python reverse proxy."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/httpx_request"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/httpx_request"
-keywords = ["httpx", "request"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-reverse-proxy"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-reverse-proxy"
+keywords = ["reverse proxy"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,12 +27,17 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+blacksheep = "*"
 httpx = "*"
-python-argtools = "*"
+uvicorn = "*"
+
+[tool.poetry.scripts]
+reverse-proxy = "reverse_proxy.__main__:main"
+python-reverse-proxy = "reverse_proxy.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "httpx_request"
+include = "reverse_proxy"

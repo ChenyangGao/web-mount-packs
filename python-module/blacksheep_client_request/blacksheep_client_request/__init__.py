@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["request"]
 
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
@@ -12,6 +12,7 @@ from gzip import decompress as decompress_gzip
 from inspect import isawaitable
 from json import loads
 from re import compile as re_compile
+from types import EllipsisType
 from typing import Any, Literal
 from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
@@ -108,7 +109,7 @@ async def request(
     data: Any = None, 
     json: Any = None, 
     headers: None | Mapping | Iterable[tuple[Any, Any]] = None, 
-    parse: Literal[None, ...] | bool | Callable = None, # type: ignore
+     parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | ClientSession = None, 
 ):

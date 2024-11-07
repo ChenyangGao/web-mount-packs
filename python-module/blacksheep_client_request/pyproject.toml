@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "blacksheep_client_request"
-version = "0.0.1"
+version = "0.0.2"
 description = "blacksheep request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

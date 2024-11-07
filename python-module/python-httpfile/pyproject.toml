@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-httpfile"
-version = "0.0.4.4"
+version = "0.0.5"
 description = "Python httpfile."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

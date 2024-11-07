@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = ["HTTPFileReader", "AsyncHTTPFileReader"]
 
 import errno
@@ -1119,8 +1119,55 @@ if find_spec("aiohttp"):
 if find_spec("httpx"):
     from filewrap import bytes_iter_to_reader, bytes_iter_to_async_reader
 
-    _httpx_urlopen = None
-    _httpx_urlopen_async = None
+    def httpx_request(
+        url, 
+        method: str = "GET", 
+        auth = None, 
+        follow_redirects: bool = True, 
+        stream: bool = True, 
+        session = None, 
+        **request_kwargs, 
+    ):
+        if session is None:
+            from httpx import Client
+            if "__del__" not in Client.__dict__:
+                setattr(Client, "__del__", lambda self: self.close())
+            session = Client()
+        return session.send(
+            request=session.build_request(
+                method=method, 
+                url=url, 
+                **request_kwargs, 
+            ), 
+            auth=auth, 
+            follow_redirects=follow_redirects, 
+            stream=stream, 
+        )
+
+    async def httpx_request_async(
+        url, 
+        method: str = "GET", 
+        auth = None, 
+        follow_redirects: bool = True, 
+        stream: bool = True, 
+        session = None, 
+        **request_kwargs, 
+    ):
+        if session is None:
+            from httpx import AsyncClient
+            if "__del__" not in AsyncClient.__dict__:
+                setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
+            session = AsyncClient()
+        return await session.send(
+            request=session.build_request(
+                method=method, 
+                url=url, 
+                **request_kwargs, 
+            ), 
+            auth=auth, 
+            follow_redirects=follow_redirects, 
+            stream=stream, 
+        )
 
     class HttpxFileReader(HTTPFileReader):
 
@@ -1133,24 +1180,14 @@ if find_spec("httpx"):
             seek_threshold: int = 1 << 20, 
             urlopen = None, 
         ):
-            global _httpx_urlopen
-            from httpx import stream, Client
+            from httpx import Client
 
-            if isinstance(urlopen, Client):
-                urlopen = partial(urlopen.stream, "GET")
-            elif urlopen is None:
-                if _httpx_urlopen is None:
-                    if "__del__" not in Client.__dict__:
-                        setattr(Client, "__del__", lambda self: self.close())
-                    urlopen = _httpx_urlopen = partial(stream, "GET")
-                else:
-                    urlopen = _httpx_urlopen
+            if urlopen is None or isinstance(urlopen, Client):
+                urlopen = partial(httpx_request, session=urlopen)
 
             def urlopen_wrapper(url: str, headers: None | Mapping = headers):
-                context = urlopen(url, headers=headers)
-                resp = context.__enter__()
+                resp = urlopen(url, headers=headers)
                 resp.raise_for_status()
-                resp.context = context
                 file = bytes_iter_to_reader(resp.iter_raw())
                 self.__dict__["file"] = file
                 return resp
@@ -1178,64 +1215,14 @@ if find_spec("httpx"):
             seek_threshold: int = 1 << 20, 
             urlopen = None, 
         ):
-            global _httpx_urlopen_async
             from httpx import AsyncClient
 
-            if isinstance(urlopen, AsyncClient):
-                urlopen = partial(urlopen.stream, "GET")
-            elif urlopen is None:
-                if _httpx_urlopen_async is None:
-                    if "__del__" not in AsyncClient.__dict__:
-                       setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
-                    def async_stream(
-                        method, 
-                        url, 
-                        params = None, 
-                        content = None, 
-                        data = None, 
-                        files = None, 
-                        json = None, 
-                        headers = None, 
-                        cookies = None, 
-                        auth = None, 
-                        proxy = None, 
-                        proxies = None, 
-                        timeout = 5.0, 
-                        follow_redirects = False, 
-                        verify = True, 
-                        cert = None, 
-                        trust_env = True, 
-                    ):
-                        client = AsyncClient(
-                            cookies=cookies,
-                            proxy=proxy,
-                            proxies=proxies,
-                            cert=cert,
-                            verify=verify,
-                            timeout=timeout,
-                            trust_env=trust_env,
-                        )
-                        return client.stream(
-                            method=method,
-                            url=url,
-                            content=content,
-                            data=data,
-                            files=files,
-                            json=json,
-                            params=params,
-                            headers=headers,
-                            auth=auth,
-                            follow_redirects=follow_redirects,
-                        )
-                    urlopen = _httpx_urlopen_async = partial(async_stream, "GET")
-                else:
-                    urlopen = _httpx_urlopen_async
+            if urlopen is None or isinstance(urlopen, AsyncClient):
+                urlopen = partial(httpx_request_async, session=urlopen)
 
             async def urlopen_wrapper(url: str, headers: None | Mapping = headers):
-                context = urlopen(url, headers=headers)
-                resp = await context.__aenter__()
+                resp = await urlopen(url, headers=headers)
                 resp.raise_for_status()
-                resp.context = context
                 file = bytes_iter_to_async_reader(resp.aiter_raw())
                 self.__dict__["file"] = file
                 return resp
@@ -1257,3 +1244,4 @@ if find_spec("httpx"):
 
 # TODO: 增加 blacksheep 的 HTTPFileReader
 # TODO: 设计实现一个 HTTPFileWriter，用于实现上传，关闭后视为上传完成
+# TODO: httpx 重新实现 stream 和 async_stream 方法，确保不需要用上下文管理器，如此才能真的简化

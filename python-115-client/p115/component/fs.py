@@ -170,9 +170,9 @@ class Ancestor(dict[str, int | str]):
 
     @property
     def ancestors(self, /) -> list[Self]:
-        if self["id"] == 0:
+        if self["id"] == 0 or self.parent is None:
             return [self]
-        ancestors = self.parent.ancestors # type: ignore
+        ancestors = self.parent.ancestors
         ancestors.append(self)
         return ancestors
 
@@ -182,13 +182,13 @@ class Ancestor(dict[str, int | str]):
 
     @property
     def path(self, /) -> str:
-        if self["id"] == 0:
+        if self["id"] == 0 or self.parent is None:
             return "/"
         return joins(self.patht)
 
     @property
     def patht(self, /) -> list[str]:
-        if self["id"] == 0:
+        if self["id"] == 0 or self.parent is None:
             return [""]
         return [a["name"] for a in self.ancestors]
 
@@ -207,8 +207,12 @@ class P115AncestorPath(UserString):
         return getattr(self.self, attr)
 
     @property
-    def data(self, /) -> str: # type: ignore
+    def data(self, /) -> str:
         return self.self.path
+
+    @data.setter
+    def data(self, value, /):
+        raise TypeError("can't set data property")
 
 
 class P115Path(P115PathBase):

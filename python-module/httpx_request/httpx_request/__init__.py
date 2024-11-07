@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __all__ = ["request", "request_sync", "request_async"]
 
 from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe
@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import aclosing, closing
 from inspect import isawaitable
 from json import loads
+from types import EllipsisType
 from typing import cast, overload, Any, Literal, TypeVar
 
 from argtools import argcount
@@ -57,7 +58,7 @@ def request_sync(
     url: URLTypes, 
     method: str = "GET", 
     # determine how to parse response data
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     # raise for status
     raise_for_status: bool = True, 
     # pass in a custom session instance
@@ -128,7 +129,7 @@ async def request_async(
     url: URLTypes, 
     method: str = "GET", 
     # determine how to parse response data
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     # raise for status
     raise_for_status: bool = True, 
     # pass in a custom session instance
@@ -201,9 +202,10 @@ async def request_async(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
+    *, 
     async_: Literal[False] = False, 
     **request_kwargs, 
 ) -> Any:
@@ -211,10 +213,11 @@ def request(
 @overload
 def request(
     url: URLTypes, 
-    method: str, 
-    parse: Literal[None, ...] | bool | Callable, 
-    raise_for_status: bool, 
-    session: None | AsyncClient, 
+    method: str = "GET", 
+    parse: None | EllipsisType | bool | Callable = None, 
+    raise_for_status: bool = True, 
+    session: None | AsyncClient = None, 
+    *, 
     async_: Literal[True], 
     **request_kwargs, 
 ) -> Awaitable[Any]:
@@ -222,9 +225,10 @@ def request(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
+    *, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
 ):

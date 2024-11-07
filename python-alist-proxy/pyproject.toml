@@ -26,6 +26,7 @@ include = [
 ]
 
 [tool.poetry.dependencies]
+python = "^3.10"
 aiohttp = "*"
 aiosqlite = "*"
 blacksheep = "*"

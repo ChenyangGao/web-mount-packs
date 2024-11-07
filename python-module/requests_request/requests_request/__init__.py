@@ -2,11 +2,12 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = ["request"]
 
 from collections.abc import Callable
 from json import loads
+from types import EllipsisType
 from typing import Literal
 
 from argtools import argcount
@@ -26,7 +27,7 @@ adapters.DEFAULT_RETRIES = 5
 def request(
     url: str, 
     method: str = "GET", 
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Session = None, 
     stream: bool = True, 

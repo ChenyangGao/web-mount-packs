@@ -2,13 +2,14 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["request"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Callable
 from inspect import isawaitable
 from json import loads
+from types import EllipsisType
 from typing import Literal
 
 from argtools import argcount
@@ -42,7 +43,7 @@ setattr(ClientResponse, "__del__", _async_response_del)
 async def request(
     url: str, 
     method: str = "GET", 
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | ClientSession = None, 
     **request_kwargs, 

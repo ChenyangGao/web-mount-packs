@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __all__ = ["urlopen", "request", "download"]
 
 import errno
@@ -21,6 +21,7 @@ from shutil import COPY_BUFSIZE # type: ignore
 from socket import getdefaulttimeout, setdefaulttimeout
 from ssl import SSLContext, _create_unverified_context
 from string import punctuation
+from types import EllipsisType
 from typing import cast, Any, Literal
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
@@ -182,7 +183,7 @@ def urlopen(
 def request(
     url: str | Request, 
     method: str = "GET", 
-    parse: Literal[None, ...] | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     timeout: None | float = 60, 
     **request_kwargs, 
