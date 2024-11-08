@@ -24,7 +24,7 @@ from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
 from threading import Lock
 from time import time
-from typing import cast, overload, Any, Literal, Self
+from typing import cast, overload, Any, Literal, Self, SupportsIndex
 from uuid import uuid4
 from warnings import warn
 from weakref import WeakValueDictionary
@@ -101,6 +101,8 @@ class AttrDictWithAncestors(AttrDict):
 
     def __getitem__(self, key, /):
         match key:
+            case "ancestor_path":
+                return super().__getitem__("path")
             case "path":
                 return str(super().__getitem__("path"))
             case "ancestors":
@@ -143,7 +145,9 @@ class Ancestor(dict[str, int | str]):
         return self is value or super().__eq__(value)
 
     def __getitem__(self, key, /):
-        if isinstance(key, int):
+        if isinstance(key, SupportsIndex):
+            if not isinstance(key, int):
+                key = key.__index__()
             if key < 0:
                 ancestor = self
                 for _ in range(key, -1):
@@ -218,10 +222,10 @@ class P115AncestorPath(UserString):
 class P115Path(P115PathBase):
     fs: P115FileSystem
 
-    @cached_property
+    @property
     def ancestors(self, /) -> list[Ancestor]:
         try:
-            return self["path"].ancestors
+            return self["ancestors"]
         except KeyError:
             ancestors = self.fs.get_ancestors(self.id)
             self.attr["path"] = ancestors[-1].ancestor_path
@@ -230,7 +234,7 @@ class P115Path(P115PathBase):
     @property
     def path(self, /) -> str:
         try:
-            return str(self["path"])
+            return self["path"]
         except KeyError:
             return self.ancestors[-1].path
 
@@ -312,6 +316,31 @@ class P115Path(P115PathBase):
                 return None
             return type(self)(self.fs, attr)
         return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def count(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def count(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def count(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        "文件夹中的项目数（直属的文件和目录计数）"
+        if self["is_directory"]:
+            return self.fs.count(self, async_=async_)
+        else:
+            return self.fs.count(self["parent_id"], async_=async_)
 
     @overload
     def mkdir(
@@ -704,6 +733,10 @@ class P115Path(P115PathBase):
                 )), 
             )
         return run_gen_step(gen_step, async_=async_)
+
+    cp = copy
+    mv = move
+    rm = remove
 
 
 class P115FileSystem(P115FileSystemBase[P115Path]):
@@ -1149,7 +1182,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 try:
                     return (yield partial(self._attr, file_id, async_=async_))
                 except FileNotFoundError:
-                    yield partial(self.fs_files, {"cid": pid, "limit": 1}, async_=async_)
+                    yield partial(self.fs_files, {"cid": pid, "limit": 2}, async_=async_)
                     return (yield partial(self._attr, file_id, async_=async_))
             else:
                 pickcode = data["pickcode"]
@@ -1162,7 +1195,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     )
                     return (yield partial(self._attr, id, async_=async_))
                 except FileNotFoundError:
-                    yield partial(self.fs_files, {"cid": pid, "limit": 1}, async_=async_)
+                    yield partial(self.fs_files, {"cid": pid, "limit": 2}, async_=async_)
                     id = yield partial(self.get_id_from_pickcode, pickcode, async_=async_)
                     return (yield partial(self._attr, id, async_=async_))
                 except OSError:
@@ -1268,7 +1301,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 
             if id == 0:
                 resp = yield self.fs_files(
-                    {"asc": 0, "cid": 0, "custom_order": 1, "fc_mix": 1, "limit": 1, "show_dir": 1, "o": "user_utime"}, 
+                    {"asc": 0, "cid": 0, "custom_order": 1, "fc_mix": 1, "limit": 2, "show_dir": 1, "o": "user_utime"}, 
                     async_=async_, 
                 )
                 now = time()
@@ -1637,7 +1670,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     attr["path"] = ancestor.ancestor_path
                     return ancestor
             elif id:
-                resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
+                resp = yield self.fs_files({"cid": id, "limit": 2}, async_=async_)
                 return self._get_ancestors_from_response(resp, attr)
             else:
                 return self._get_ancestors_from_response(None, attr)
@@ -2289,7 +2322,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     dst_id = dst_attr["id"]
                     if src_id == dst_id:
                         raise SameFileError(src_path)
-                    elif any(a["id"] == src_id for a in dst_attr["path"].ancestors):
+                    elif any(a["id"] == src_id for a in dst_attr["ancestors"]):
                         raise PermissionError(
                             errno.EPERM, 
                             f"copy a directory as its descendant is not allowed: {src_path!r} -> {dst_path!r}", 
@@ -2333,6 +2366,49 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         async_=async_, 
                     )
             return dst_attr
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def count(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def count(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def count(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        "文件夹中的项目数（直属的文件和目录计数）"
+        def gen_step():
+            id = yield self.get_id(id_or_path, pid=pid, async_=async_)
+            resp = yield self.fs_files(
+                {"cid": id, "limit": 2, "folder_count": 1}, 
+                async_=async_, 
+            )
+            return {
+                "count": resp["count"], 
+                "file_count": resp["file_count"], 
+                "folder_count": resp["folder_count"], 
+                "path": resp["path"], 
+            }
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -2418,12 +2494,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     ) -> int | Coroutine[Any, Any, int]:
         "文件夹中的项目数（直属的文件和目录计数）"
         def gen_step():
-            id = yield self.get_id(id_or_path, pid=pid, async_=async_)
-            resp = yield self.fs_files(
-                {"cid": id, "limit": 1}, 
-                async_=async_, 
-            )
-            return resp["count"]
+            count = yield self.count(id_or_path, pid=pid, async_=async_)
+            return count["count"]
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -2457,7 +2529,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         "获取各个上级目录的少量信息（从根目录到当前目录）"
         def gen_step():
             attr = yield partial(self.attr, id_or_path, pid=pid, async_=async_)
-            return attr["path"].ancestors
+            return attr["ancestors"]
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -2616,7 +2688,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 id = id_or_path
                 ls = [""]
                 if id:
-                    resp = yield self.fs_files({"cid": id, "limit": 1}, async_=async_)
+                    resp = yield self.fs_files({"cid": id, "limit": 2}, async_=async_)
                     if int(resp["path"][-1]["cid"]) == id:
                         ls.extend(p["name"] for p in resp["path"][1:])
                     else:
@@ -2624,7 +2696,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         info = resp["data"][0]
                         pid, name = int(info["cid"]), info["n"]
                         if pid:
-                            resp = yield self.fs_files({"cid": pid, "limit": 1}, async_=async_)
+                            resp = yield self.fs_files({"cid": pid, "limit": 2}, async_=async_)
                             ls.extend(p["name"] for p in resp["path"][1:])
                         ls.append(name)
                 return ls
@@ -3229,7 +3301,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 return src_attr
             src_path = str(src_attr["path"])
             dst_path = str(dst_attr["path"])
-            if any(a["id"] == src_id for a in dst_attr["path"].ancestors):
+            if any(a["id"] == src_id for a in dst_attr["ancestors"]):
                 raise PermissionError(
                     errno.EPERM, 
                     f"move a path to its subordinate path is not allowed: {src_path!r} -> {dst_path!r}"
@@ -3344,7 +3416,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             parent = attr
             get_files = self.fs_files
             while id:
-                files = yield partial(get_files, {"cid": id, "limit": 1}, async_=async_)
+                files = yield partial(get_files, {"cid": id, "limit": 2}, async_=async_)
                 if files["count"] > 1:
                     break
                 delid = id
@@ -3823,8 +3895,10 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     attr = normalize_attr(attr, dict_cls=AttrDictWithAncestors)
                     yield Yield(P115Path(self, attr), identity=True)
                 offset = payload["offset"] = offset + resp["page_size"]
-                if offset >= resp["count"]:
+                if offset >= resp["count"] or offset >= 10_000:
                     break
+                if offset + page_size > 10_000:
+                    payload["page_size"] = 10_000 - offset
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload

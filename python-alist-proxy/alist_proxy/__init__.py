@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
@@ -17,7 +17,6 @@ from ipaddress import ip_address
 from itertools import islice
 from os.path import basename as os_basename
 from posixpath import basename, join as joinpath, split as splitpath
-from shutil import COPY_BUFSIZE # type: ignore
 from re import compile as re_compile
 from traceback import format_exc
 from typing import cast, Any
@@ -25,13 +24,13 @@ from urllib.parse import unquote, urlsplit
 from weakref import WeakValueDictionary
 from xml.etree.ElementTree import fromstring
 
-from aiohttp import ClientSession
 from alist import AlistClient
-from blacksheep import redirect, Application, Request, Response, Router, WebSocket
-from blacksheep.contents import Content, StreamedContent
-from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
+from blacksheep import redirect, Application, Request, WebSocket
+from blacksheep.contents import Content
 from cookietools import cookies_str_to_dict
+from httpx import AsyncClient
 from orjson import dumps, loads
+from reverse_proxy import make_application as make_application_base
 from yarl import URL
 
 
@@ -61,11 +60,6 @@ SSOENT_TO_APP = {
     "R2": "alipaymini",
     "S1": "harmony",
 }
-DEFAULT_METHODS = [
-    "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", 
-    "TRACE", "PATCH", "MKCOL", "COPY", "MOVE", "PROPFIND", 
-    "PROPPATCH", "LOCK", "UNLOCK", "REPORT", "ACL", 
-]
 RELOGIN_115_LOCK_STORE: WeakValueDictionary[str, Lock] = WeakValueDictionary()
 CRE_charset_search = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
 CRE_copy_name_extract = re_compile(r"^copy \[(.*?)\]\(/(.*?)\) to \[(.*?)\]\(/(.*)\)$").fullmatch
@@ -111,20 +105,18 @@ async def storage_of(client: AlistClient, path: str) -> None | dict:
     return selected_storage
 
 
-async def relogin_115(session: ClientSession, cookies: str) -> None | str:
+async def relogin_115(session: AsyncClient, cookies: str) -> None | str:
     """115 网盘，用一个被 405 风控的 cookies，获取一个新的 cookies
     """
     ssoent = cookies_str_to_dict(cookies)["UID"].split("_")[1]
     app = SSOENT_TO_APP.get(ssoent, "harmony")
 
-    request = session.request
-
     async def urlopen(url, method="GET", **request_kwargs):
-        async with request(method=method, url=url, **request_kwargs) as resp:
-            json = loads(await resp.read())
-            if not json["state"]:
-                raise OSError(json)
-            return json
+        resp = await session.request(method=method, url=url, **request_kwargs)
+        json = resp.json()
+        if not json["state"]:
+            raise OSError(json)
+        return json
 
     qrcode_token_api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
     resp = await urlopen(qrcode_token_api)
@@ -142,7 +134,7 @@ async def relogin_115(session: ClientSession, cookies: str) -> None | str:
     return "; ".join(f"{k}={v}" for k, v in resp["data"]["cookie"].items())
 
 
-async def update_115_cookies(client: AlistClient, path: str, session: ClientSession):
+async def update_115_cookies(client: AlistClient, path: str, session: AsyncClient):
     """115 网盘，更新某个路径所对应存储的 cookies，必须仅是被 405 风控
     """
     storage = await storage_of(client, path)
@@ -163,7 +155,6 @@ def make_application(
     collect: None | Callable[[dict], Any] = None, 
     webhooks: None | Sequence[str] = None, 
     project: None | Callable[[dict], None | dict] = None, 
-    methods: list[str] = DEFAULT_METHODS, 
     threaded: bool = False, 
 ) -> Application:
     """创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
@@ -173,15 +164,17 @@ def make_application(
     :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
     :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
     :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
-    :param methods: 需要监听的 HTTP 方法集
     :param threaded: collect 和 project，如果不是 async 函数，就放到单独的线程中运行
 
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
-    app = Application(router=Router())
+    app = make_application_base(base_url, False)
     app_ns = app.__dict__
     logger = getattr(app, "logger")
     logger.level = 20
+    base_url = base_url.rstrip("/")
+    if not base_url.startswith(("http://", "https://")):
+        raise ValueError("invalid base_url: not a http/https url")
     base_url_is_private = is_private(URL(base_url).host or "")
 
     if collect is None and not webhooks:
@@ -213,23 +206,13 @@ def make_application(
         elif resp["data"]["id"] != 1:
             raise ValueError("you are not admin of alist")
 
-    @app.on_middlewares_configuration
-    def configure_forwarded_headers(app: Application):
-        app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
-
     @app.on_start
     async def on_start(app: Application):
         app_ns["running"] = True
 
     @app.lifespan
-    async def register_http_client(app: Application):
-        async with ClientSession() as session:
-            app.services.register(ClientSession, instance=session)
-            yield
-
-    @app.lifespan
     async def register_task_group(app: Application):
-        session = app.services.resolve(ClientSession)
+        session = app.services.resolve(AsyncClient)
         async def work(result: dict):
             try:
                 task: None | dict = result
@@ -249,11 +232,10 @@ def make_application(
                     logger.exception(f"can't collect data: {result!r}")
             if webhooks:
                 try:
-                    data = dumps(task)
                     async with TaskGroup() as task_group:
                         create_task = task_group.create_task
                         for webhook in webhooks:
-                            create_task(session.post(webhook, data=data, headers={"Content-Type": "application/json; charset=utf-8"}))
+                            create_task(session.post(webhook, json=task))
                 except BaseException as e:
                     logger.exception(f"webhook sending failed: {e!r}")
                     pass
@@ -264,121 +246,102 @@ def make_application(
             yield
             app_ns["running"] = False
 
-    @app.router.route("/", methods=methods)  
-    @app.router.route("/<path:path>", methods=methods)
+    @app.router.route("/", methods=[""])
+    @app.router.route("/<path:path>", methods=[""])
     async def proxy(
         request: Request, 
-        session: ClientSession, 
+        session: AsyncClient, 
         task_group: TaskGroup, 
         path: str = "", 
     ):
-        proxy_base_url = f"{request.scheme}://{request.host}"
-        request_headers = [
-            (k, base_url + v[len(proxy_base_url):] if k == "destination" and v.startswith(proxy_base_url) else v)
-            for k, v in ((str(k.lower(), "latin-1"), str(v, "latin-1")) for k, v in request.headers)
-            if k != "host"
-        ]
         method = request.method.upper()
-        url_path = unquote(str(request.url))
-        payload: dict = dict(
-            method  = method, 
-            url     = base_url + url_path, 
-            headers = request_headers, 
-        )
+        proxy_base_url = f"{request.scheme}://{request.host}"
         result: dict = {
+            "base_url": base_url, 
+            "proxy_base_url": proxy_base_url, 
             "request": {
-                "url": proxy_base_url + url_path, 
-                "payload": dict(payload), 
-            }
+                "method": method, 
+                "url": str(request.url), 
+                "headers": [(str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers], 
+            }, 
         }
         try:
-            data: None | bytes
-            if method == "GET" and (url_path == "/favicon.ico" or url_path.startswith(("/d/", "/p/", "/dav/", "/images/"))):
-                if not base_url_is_private or is_private(URL(proxy_base_url).host or ""):
-                    return redirect(base_url + url_path)
+            data: None | bytes = None
+            if (method == "GET" and 
+               (path == "favicon.ico" or path.startswith(("d/", "p/", "dav/", "images/"))) and 
+               (not base_url_is_private or is_private(request.host))
+            ):
+                return redirect(base_url + str(request.url))
             content_type = str(request.headers.get_first(b"content-type") or b"", "latin-1")
             if content_type.startswith("application/json"):
-                data = payload["data"] = await request.read()
+                data = await request.read()
                 if data:
-                    result["request"]["payload"]["json"] = loads(data.decode(get_charset(content_type)))
+                    result["request"]["json"] = loads(data.decode(get_charset(content_type)))
             elif content_type.startswith(("application/xml", "text/xml", "application/x-www-form-urlencoded")):
-                data = payload["data"] = await request.read()
+                data = await request.read()
                 if data:
-                    result["request"]["payload"]["text"] = data.decode(get_charset(content_type))
-            else:
-                payload["data"] = request.stream()
-
-            while True:
-                response = await session.request(
-                    **payload, 
-                    allow_redirects=False, 
-                    raise_for_status=False, 
-                    timeout=None, 
+                    result["request"]["text"] = data.decode(get_charset(content_type))
+            def read_if(response, /):
+                content_type = response.headers.get("content-type", "")
+                return content_type and (
+                    content_type in ("text/plain", "application/json", "application/xml", "text/xml") or
+                    content_type.startswith(("text/plain;", "application/json;", "application/xml;", "text/xml;"))
                 )
-
-                response_status  = response.status
-                response_headers = [
-                    (k, proxy_base_url + v[len(base_url):] if k == "location" and v.startswith(base_url) else v)
-                    for k, v in ((k.lower(), v) for k, v in response.headers.items())
-                    if k.lower() != "date"
-                ]
+            while True:
+                http_resp = await app.methods["redirect_request"](request, data=data)
+                response_status = http_resp.status_code
                 result["response"] = {
                     "status": response_status, 
-                    "headers": response_headers, 
+                    "headers": list(http_resp.headers.items()), 
                 }
                 if method == "PROPFIND" and response_status == 404 and alist_token:
-                    path = url_path.removeprefix("/dav")
-                    try:
-                        resp = await client.fs_list({"path": path}, async_=True)
-                        if resp["code"] == 500 and "<title>405</title>" in resp["message"]:
-                            await update_115_cookies(client, path, session)
-                            continue
-                    except Exception:
-                        pass
-                content_type = response.headers.get("content-type", "")
-                if content_type.startswith(("text/plain", "application/json", "application/xml", "text/xml")):
-                    excluded_headers = ("content-encoding", "content-length", "transfer-encoding")
-                    headers          = [
-                        (bytes(k, "latin-1"), bytes(v, "latin-1")) 
-                        for k, v in response_headers if k not in excluded_headers
-                    ]
-                    content = await response.read()
-                    if content_type.startswith("application/json"):
-                        json = result["response"]["json"] = loads(content.decode(get_charset(content_type)))
-                        if url_path == "/api/fs/list":
+                    alist_path = str(request.url).removeprefix("/dav")
+                    while True:
+                        try:
+                            resp = await client.fs_list({"path": alist_path}, async_=True)
+                            if resp["code"] == 500 and "<title>405</title>" in resp["message"]:
+                                await update_115_cookies(client, alist_path, session)
+                                continue
+                        except Exception:
+                            pass
+                        break
+                response, loaded = await app.methods["make_response"](request, http_resp, read_if)
+                if loaded is not None:
+                    content_type, content = loaded
+                    text = content.decode(get_charset(content_type))
+                    if response_status == 200 and content_type.startswith("application/json"):
+                        resp = result["response"]["json"] = loads(text)
+                        if path == "api/fs/list":
                             if (
                                 alist_token and
-                                json["code"] == 500 and
-                                "<title>405</title>" in json["message"]
+                                resp["code"] == 500 and
+                                "<title>405</title>" in resp["message"]
                             ):
                                 try:
                                     await update_115_cookies(
                                         client, 
-                                        result["request"]["payload"]["json"]["path"], 
+                                        result["request"]["json"]["path"], 
                                         session, 
                                     )
                                     continue
                                 except Exception:
                                     pass
-                        elif url_path == "/api/fs/get":
-                            json = result["response"]["json"]
-                            if json["code"] == 200:
-                                raw_url = json["data"].get("raw_url") or ""
+                        elif path == "api/fs/get":
+                            if resp["code"] == 200:
+                                raw_url = resp["data"].get("raw_url") or ""
                                 if raw_url.startswith(base_url):
-                                    json["data"]["raw_url"] = proxy_base_url + raw_url[len(base_url):]
-                                    content = dumps(json)
+                                    resp["data"]["raw_url"] = proxy_base_url + raw_url[len(base_url):]
+                                    result["response"]["json"] = resp
+                                content_type = "application/json; charset=utf-8"
+                                content = dumps(resp)
                     else:
-                        result["response"]["text"] = content.decode(get_charset(content_type))
-                    return Response(response_status, headers, Content(bytes(content_type, "latin-1"), content))
-                else:
-                    headers = [(bytes(k, "latin-1"), bytes(v, "latin-1")) for k, v in response_headers]
-                    async def reader():
-                        async with response:
-                            async for chunk in response.content.iter_chunked(COPY_BUFSIZE):
-                                if await request.is_disconnected():
-                                    break
-                                yield chunk
-                    return Response(response_status, headers, StreamedContent(bytes(content_type, "latin-1"), reader))
+                        result["response"]["text"] = text
+                    headers = response.headers
+                    for h in (b"content-encoding", b"content-length", b"content-type"):
+                        if h in headers:
+                            del headers[h]
+                    response.content = Content(bytes(content_type, "latin-1"), content)
+                return response
         except BaseException as e:
             result["exception"] = {
                 "reason": f"{type(e).__module__}.{type(e).__qualname__}: {e}", 
@@ -414,7 +377,7 @@ def make_application_with_fs_events(
             return data
         if not(response := data.get("response")) or not(200 <= response["status"] < 300):
             return
-        payload = data["request"]["payload"]
+        payload = data["request"]
         url = payload["url"]
         urlp = urlsplit(url)
         path = unquote(urlp.path)

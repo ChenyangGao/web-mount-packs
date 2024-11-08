@@ -2,18 +2,21 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
-__all__ = ["make_application"]
+__version__ = (0, 0, 5)
+__all__ = ["ApplicationWithMethods", "make_application"]
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from functools import cached_property, partial
 from itertools import chain
 from sys import _getframe, maxsize
 from typing import overload, SupportsIndex, TypeVar
 
-from blacksheep import Application, Request, Response, Router
-from blacksheep.contents import Content, StreamedContent
+from blacksheep import Application, Request, Router
+from blacksheep.contents import StreamedContent
+from blacksheep.messages import Response
 from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
-from httpx import AsyncClient
+from dictattr import AttrDict
+from httpx import AsyncClient, Response as HTTPResponse
 
 
 T = TypeVar("T")
@@ -133,10 +136,31 @@ class Routers(dict):
         return ls
 
 
+class ApplicationWithMethods(Application):
+
+    @cached_property
+    def methods(self, /) -> AttrDict:
+        return AttrDict()
+
+    def add_method(self, func: None | Callable = None, /, name: str = ""):
+        if func is None:
+            return partial(self.add_method, name=name)
+        if not name:
+            name = func.__name__
+        self.methods[name] = func
+        return func
+
+    def __getattr__(self, attr, /):
+        try:
+            return self.methods[attr]
+        except KeyError as e:
+            raise AttributeError(attr) from e
+
+
 def make_application(
     base_url: str = "http://localhost", 
     custom_proxy: bool | Callable = True, 
-) -> Application:
+) -> ApplicationWithMethods:
     """创建一个 blacksheep 应用，用于反向代理 emby，以修改一些数据响应
 
     :param base_url: 被代理服务的 base_url
@@ -150,7 +174,65 @@ def make_application(
     """
     base_url = base_url.rstrip("/")
     router = Router()
-    app = Application(router=router)
+    app = ApplicationWithMethods(router=router)
+
+    @app.add_method
+    async def redirect_request(request: Request, data=None) -> HTTPResponse:
+        proxy_base_url = f"{request.scheme}://{request.host}"
+        request_headers = [
+            (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
+            for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
+            if k.lower() != "host"
+        ]
+        session = app.services.resolve(AsyncClient)
+        return await session.send(
+            request=session.build_request(
+                method=request.method, 
+                url=base_url+str(request.url), 
+                data=request.stream() if data is None else data, # type: ignore
+                headers=request_headers, 
+                timeout=None, 
+            ), 
+            follow_redirects=False, 
+            stream=True,
+        )
+
+    @app.add_method
+    async def make_response(
+        request: Request, 
+        response: HTTPResponse, 
+        read_if: None | Callable[[HTTPResponse], bool] = None, 
+    ) -> tuple[Response, None | tuple[str, bytes]]:
+        content_type = response.headers.get("content-type", "")
+        if callable(read_if) and read_if(response):
+            chunks = [chunk async for chunk in response.aiter_raw()]
+            async def get_content():
+                for chunk in chunks:
+                    yield chunk
+            data = (content_type, b"".join(map(response._get_content_decoder().decode, chunks)))
+        else:
+            get_content = response.aiter_raw
+            data = None
+        async def reader():
+            try:
+                async for chunk in get_content():
+                    if await request.is_disconnected():
+                        break
+                    yield chunk
+            finally:
+                await response.aclose()
+        return (Response(
+            status=response.status_code, 
+            headers=[
+                (
+                    bytes(k, "latin-1"), 
+                    bytes(f"{request.scheme}://{request.host}" + v[len(base_url):] if k == "location" and v.startswith(base_url) else v, "latin-1"), 
+                )
+                for k, v in ((k.lower(), v) for k, v in response.headers.items())
+                if k not in ("date", "content-type", "transfer-encoding")
+            ], 
+            content=StreamedContent(bytes(content_type, "latin-1"), reader), 
+        ), data)
 
     @app.on_middlewares_configuration
     def configure_forwarded_headers(app: Application):
@@ -165,7 +247,7 @@ def make_application(
     if callable(custom_proxy):
         router.route("/", methods=[""])(custom_proxy)
         router.route("/<path:path>", methods=[""])(custom_proxy)
-    else:
+    elif custom_proxy:
         @router.route("/", methods=[""])
         @router.route("/<path:path>", methods=[""])
         async def proxy(
@@ -173,45 +255,9 @@ def make_application(
             session: AsyncClient, 
             path: str = "", 
         ):
-            proxy_base_url = f"{request.scheme}://{request.host}"
-            request_headers = [
-                (k, base_url + v[len(proxy_base_url):] if k == "destination" and v.startswith(proxy_base_url) else v)
-                for k, v in ((str(k.lower(), "latin-1"), str(v, "latin-1")) for k, v in request.headers)
-                if k != "host"
-            ]
-            response = await session.send(
-                request=session.build_request(
-                    method=request.method, 
-                    url=base_url+str(request.url), 
-                    data=request.stream(), # type: ignore
-                    headers=request_headers, 
-                    timeout=None, 
-                ), 
-                follow_redirects=False, 
-                stream=True,
-            )
-            content_type = response.headers.get("content-type", "")
-            response_headers = [
-                (
-                    bytes(k, "latin-1"), 
-                    bytes(proxy_base_url + v[len(base_url):] if k == "location" and v.startswith(base_url) else v, "latin-1"), 
-                )
-                for k, v in ((k.lower(), v) for k, v in response.headers.items())
-                if k.lower() not in ("date", "content-type")
-            ]
-            async def reader():
-                try:
-                    async for chunk in response.aiter_raw():
-                        if await request.is_disconnected():
-                            break
-                        yield chunk
-                finally:
-                    await response.aclose()
-            return Response(
-                response.status_code, 
-                response_headers, 
-                StreamedContent(bytes(content_type, "latin-1"), reader), 
-            )
+            http_resp = await redirect_request(request)
+            response, _ = await make_response(request, http_resp)
+            return response
 
     return app
 
