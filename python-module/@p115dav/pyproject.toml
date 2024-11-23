@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-filewrap"
-version = "0.2.5"
-description = "Python file wrappers."
+name = "p115dav"
+version = "0.0.1"
+description = "115 网盘 webdav 程序."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-filewrap"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-filewrap"
-keywords = ["file", "wrapper"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115dav"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115dav"
+keywords = ["python-115", "webdav"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,13 +26,28 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-python-asynctools = ">=0.0.5"
+python = "^3.12"
+a2wsgi = ">=1.10.7"
+blacksheep = "*"
+cachetools = "*"
+httpagentparser = "*"
+orjson = "*"
+p115client = ">=0.0.3.7.9.1"
+path_predicate = ">=0.0.1.1"
+posixpatht = ">=0.0.3"
+pysubs2 = "*"
+python-dictattr = ">=0.0.4"
+python-encode_uri = ">=0.0.1"
 python-property = ">=0.0.3"
+uvicorn = "*"
+wsgidav = "*"
+
+[tool.poetry.scripts]
+p115dav = "p115dav.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "filewrap"
+include = "p115dav"

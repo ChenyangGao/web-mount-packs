@@ -1,0 +1,83 @@
+  {%- extends "base.jinja" %}
+  {%- block content %}
+  {%- for ancestor in ancestors[:-1] %}<strong><a href="/?id={{ ancestor["id"] }}&file=false" style="border: 1px solid black; text-decoration: none">{{ ancestor["name"] or "/" }}</a></strong>{{ ancestor["name"] and "/" }}{% endfor %}<strong><a href="/<list?id={{ ancestors[-1]["id"] }}" style="border: 1px solid black; text-decoration: none">{{ ancestors[-1]["name"] or "/" }}</a></strong>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 0px"></th>
+        <th style="min-width: 100px">Name</th>
+        <th>Open</th>
+        <th style="width: 100px">Size</th>
+        <th style="width: 30px">Attr</th>
+        <th style="width: 160px">Last Modified</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        {%- if ancestors.__len__() == 1 %}
+        <td><i class="file-type tp-folder-receive" folder-type="shared"></i></td>
+        <td colspan="5"><a href="/<share" style="display: block; text-align: center; text-decoration: none; font-size: 30px">分享列表</a></td>
+        {%- else %}
+        <td colspan="6"><a href="/?id={{ ancestors[-1]["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
+        {%- endif %}
+      </tr>
+      {%- set platform = user_agent.get("platform", {}).get("name", "").lower() %}
+      {%- for attr in children %}
+      <tr>
+        {%- set name = attr["name"] %}
+        {%- set url = origin + attr["url"] %}
+        {%- set thumb = attr["thumb"] %}
+        <td><i class="file-type tp-{{ attr["ico"] }}"></i></td>
+        <td style="word-wrap: break-word"><a href="{{ url | encode_uri(html_escape=True) | safe }}" style="text-decoration: none">{{ name }}</a></td>
+        <td style="min-width: 160px; max-width: 210px" {% if attr["type"] in (3, 4) %}data-attr='{{ attr | json_dumps }}'{% endif %}>
+        {%- if attr["type"] == 4 %}
+          <a class="popup play-with-artplayer" href="{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="https://artplayer.org/document/logo.png"/><span class="popuptext">Artplayer</span></a>
+        {%- endif %}
+        {%- if attr["type"] in (3, 4) %}
+          <a class="popup play-with-plyr" href="{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="/<pic/images/plyr.svg"/><span class="popuptext">plyr</span></a>
+          <a class="popup" href="iina://weblink?url={{ url | urlencode }}"><img class="icon" src="/<pic/images/iina.svg" /><span class="popuptext">IINA</span></a>
+          <a class="popup" href="potplayer://{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="/<pic/images/potplayer.svg" /><span class="popuptext">PotPlayer</span></a>
+          {%- if platform == "ios" %}
+          <a class="popup" href="vlc-x-callback://x-callback-url/stream?url={{ url | urlencode }}"><img class="icon" src="/<pic/images/vlc.svg" /><span class="popuptext">VLC</span></a>
+          {%- else %}
+          <a class="popup" href="vlc://{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="/<pic/images/vlc.svg" /><span class="popuptext">VLC</span></a>
+          {%- endif %}
+          <a class="popup" href="filebox://play?url={{ url | urlencode }}"><img class="icon" src="/<pic/images/fileball.svg" /><span class="popuptext">Fileball</span></a>
+          <a class="popup" href="intent:{{ url | encode_uri(html_escape=True) | safe }}#Intent;package=com.mxtech.videoplayer.ad;S.title={{ name }};end"><img class="icon" src="/<pic/images/mxplayer.svg" /><span class="popuptext">MX Player</span></a>
+          <a class="popup" href="intent:{{ url | encode_uri(html_escape=True) | safe }}#Intent;package=com.mxtech.videoplayer.pro;S.title={{ name }};end"><img class="icon" src="/<pic/images/mxplayer-pro.svg" /><span class="popuptext">MX Player Pro</span></a>
+          <a class="popup" href="infuse://x-callback-url/play?url={{ url | urlencode }}"><img class="icon" src="/<pic/images/infuse.svg" /><span class="popuptext">infuse</span></a>
+          {%- if platform == "mac os" %}
+          <a class="popup" href="nplayer-mac://weblink?url={{ url | urlencode }}"><img class="icon" src="/<pic/images/nplayer.svg" /><span class="popuptext">nPlayer</span></a>
+          {%- else %}
+          <a class="popup" href="nplayer-{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="/<pic/images/nplayer.svg" /><span class="popuptext">nPlayer</span></a>
+          {%- endif %}
+          <a class="popup" href="omniplayer://weblink?url={{ url | urlencode }}"><img class="icon" src="https://cdn.okaapps.com/resource/icon/app_icons/omniplayer.png" /><span class="popuptext">OmniPlayer</span></a>
+          <a class="popup" href="figplayer://weblink?url={{ url | urlencode }}"><img class="icon" src="https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f5/3b/9d/f53b9d10-b126-16ba-9f55-632135bfede3/AppIcon-0-0-85-220-0-0-4-0-2x.png/434x0w.webp" /><span class="popuptext">Fig Player</span></a>
+          <a class="popup" href="mpv://{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="/<pic/images/mpv.svg" /><span class="popuptext">MPV</span></a>
+          <a class="popup" href="stellar://play/{{ url | encode_uri(html_escape=True) | safe }}"><img class="icon" src="/<pic/images/stellarplayer.svg" /><span class="popuptext">恒星播放器</span></a>
+        {%- endif %}
+        {%- if thumb %}
+          <a 
+            class="popup is-image"
+            data-fancybox="gallery"
+            data-caption="{{ attr["name"] }}"
+            data-download-src="{{ url | encode_uri(html_escape=True) | safe }}"
+            data-src="{{ IMAGE_URL_CACHE.get(attr["pickcode"], thumb) }}"
+            data-thumb-src="{{ thumb }}"
+          >
+            <img class="icon" src="/<pic/images/fancybox.svg" /><span class="popuptext">fancybox</span>
+          </a>
+        {%- endif %}
+        </td>
+        {%- if attr["is_dir"] %}
+        <td style="text-align: center">--</td>
+        {%- else %}
+        <td style="text-align: right"><span class="popup">{{ attr["size"] | format_size }}<span class="popuptext">{{ attr["size"] }}</span></span></td>
+        {%- endif %}
+        <td style="text-align: center"><a href="/<attr?id={{ attr["id"] }}">attr</a></td>
+        <td style="text-align: center">{{ (attr.get("mtime") or attr["time"]) | format_timestamp }}</td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  {%- endblock %}

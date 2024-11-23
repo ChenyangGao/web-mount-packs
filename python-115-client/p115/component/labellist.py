@@ -388,11 +388,12 @@ class P115LabelList:
             async def request():
                 count = 0
                 while True:
-                    resp = await check_response(fs_label_list(
+                    resp = await fs_label_list(
                         payload, 
                         request=self.async_request, 
                         async_=True, 
-                    ))
+                    )
+                    check_response(resp)
                     total = resp["data"]["total"]
                     if count == 0:
                         count = total

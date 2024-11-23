@@ -77,10 +77,9 @@ class MapAttr(Generic[K, V]):
         d: None | dict[K, V] = None, 
         /, 
     ) -> Self:
-        if d is None:
-            return cls()
-        self = __class__.__new__(cls) # type: ignore
-        self.__dict__ = d
+        self = cls.__new__(cls)
+        if d is not None:
+            self.__dict__ = d
         return self
 
 

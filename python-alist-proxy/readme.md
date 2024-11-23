@@ -24,38 +24,37 @@ PACKAGE CONTENTS
     __main__
 
 FUNCTIONS
-    make_application(base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, project: None | collections.abc.Callable[[dict], typing.Any] = None, methods: list[str] = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'CONNECT', 'OPTIONS', 'TRACE', 'PATCH', 'MKCOL', 'COPY', 'MOVE', 'PROPFIND', 'PROPPATCH', 'LOCK', 'UNLOCK', 'REPORT', 'ACL'], threaded: bool = False) -> blacksheep.server.application.Application
+    make_application(alist_token: str = '', base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, webhooks: None | collections.abc.Sequence[str] = None, project: None | collections.abc.Callable[[dict], None | dict] = None, threaded: bool = False) -> blacksheep.server.application.Application
         创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
-
+        
         :param alist_token: alist 的 token，提供此参数可在 115 网盘遭受 405 风控时自动扫码刷新 cookies
         :param base_url: alist 的 base_url
         :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
         :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
         :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
-        :param methods: 需要监听的 HTTP 方法集
         :param threaded: collect 和 project，如果不是 async 函数，就放到单独的线程中运行
-
+        
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
-
-    make_application_with_fs_event_stream(alist_token: str, base_url: str = 'http://localhost:5244', db_uri: str = 'sqlite')
+    
+    make_application_with_fs_event_stream(alist_token: str, base_url: str = 'http://localhost:5244', db_uri: str = 'sqlite', webhooks: None | collections.abc.Sequence[str] = None)
         只收集和文件系统操作有关的事件，存储到 redis streams，并且可以通过 websocket 拉取
         
         :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
         :param base_url: alist 的 base_url
         :param db_uri: 数据库连接的 URI，格式为 "{dbtype}://{host}:{port}/{path}
-
+        
             - dbtype: 数据库类型，目前仅支持 "sqlite"、"mongodb" 和 "redis"
             - host: （非 "sqlite"）ip 或 hostname，如果忽略，则用 "localhost"
             - port: （非 "sqlite"）端口号，如果忽略，则自动使用此数据库的默认端口号
             - path: （限 "sqlite"）文件路径，如果忽略，则为 ""（会使用一个临时文件）
-
+        
             如果你只输入 dbtype 的名字，则视为 "{dbtype}://"
             如果你输入了值，但不能被视为 dbtype，则自动视为 path，即 "sqlite:///{path}"
         :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
-
+        
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
 
-    make_application_with_fs_events(alist_token: str, base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, threaded: bool = False) -> blacksheep.server.application.Application
+    make_application_with_fs_events(alist_token: str = '', base_url: str = 'http://localhost:5244', collect: None | collections.abc.Callable[[dict], typing.Any] = None, webhooks: None | collections.abc.Sequence[str] = None, threaded: bool = False) -> blacksheep.server.application.Application
         只收集和文件系统操作有关的事件
         
         :param alist_token: alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
@@ -63,14 +62,11 @@ FUNCTIONS
         :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
         :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
         :param threaded: collect 如果不是 async 函数，就放到单独的线程中运行
-
+        
         :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
 
-DATA
-    __all__ = ['make_application', 'make_application_with_fs_events', 'make_application_with_fs_event_stream']
-
 VERSION
-    (0, 0, 8)
+    (0, 0, 9)
 
 AUTHOR
     ChenyangGao <https://chenyanggao.github.io>
@@ -80,7 +76,7 @@ AUTHOR
 
 ```console
 $ alist-proxy -h
-usage: alist-proxy [-h] [-H HOST] [-P PORT] [-b BASE_URL] [-t TOKEN] [-u DB_URI] [-d] [-v]
+usage: alist_proxy [-h] [-H HOST] [-P PORT] [-b BASE_URL] [-t TOKEN] [-u DB_URI] [-w [webhook ...]] [-d] [-v]
 
 		🌍🚢 alist 网络代理抓包 🕷️🕸️
 
@@ -91,7 +87,7 @@ options:
   -b BASE_URL, --base-url BASE_URL
                         被代理的 alist 服务的 base_url，默认值：'http://localhost:5244'
   -t TOKEN, --token TOKEN
-                        alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）
+                        alist 的 token，用来追踪后台任务列表和更新某些 cookies
   -u DB_URI, --db-uri DB_URI
                         数据库连接的 URI，格式为 "{dbtype}://{host}:{port}/{path}"
                             - dbtype: 数据库类型，目前仅支持 "sqlite"、"mongodb" 和 "redis"
@@ -103,7 +99,7 @@ options:
   -w [webhook ...], --webhooks [webhook ...]
                         一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
   -d, --debug           启用 debug 模式（会输出更详细的信息）
-  -v, --version         输出版本号
+  -v, --version         输出版本
 
 $ alist-proxy
 INFO:     Started server process [64373]
@@ -195,14 +191,14 @@ run(pull())
 
 ##### mongodb
 
-<kbd>/pull</kbd> 接口支持 3 个查询参数，均可省略，省略则从当前开始拉取最新数据
+<kbd>/pull</kbd> 接口支持 2 个查询参数，均可省略，省略则从当前开始拉取最新数据
 
 - `lastid`: 从这个 id（不含）开始读取，是一个字符串，表示 UUID。
 - `from_datetime`: 从这个时间点开始，是一个字符串。
 
 ##### sqlite
 
-<kbd>/pull</kbd> 接口支持 3 个查询参数，均可省略，省略则从当前开始拉取最新数据
+<kbd>/pull</kbd> 接口支持 2 个查询参数，均可省略，省略则从当前开始拉取最新数据
 
 - `lastid`: 从这个 id（不含）开始读取，是一个整数，表示自增主键。
 - `from_datetime`: 从这个时间点开始，是一个字符串。

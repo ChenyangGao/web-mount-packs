@@ -15,7 +15,7 @@ from collections.abc import (
 )
 from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper
-from itertools import accumulate, islice
+from itertools import accumulate, cycle, islice
 from json import JSONDecodeError
 from os import path as ospath, fsdecode, fspath, makedirs, remove, rmdir, scandir, stat_result, PathLike
 from pathlib import Path
@@ -979,6 +979,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id: int, 
         /, 
+        *, 
         async_: Literal[False] = False, 
     ) -> dict:
         ...
@@ -987,6 +988,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id: int, 
         /, 
+        *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
         ...
@@ -994,12 +996,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id: int, 
         /, 
+        *, 
+        _g = cycle((True, False)).__next__, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         def gen_step():
             resp = yield self.client.fs_file(
                 {"file_id": id}, 
-                base_url=True, 
+                base_url=_g(), 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -1022,6 +1026,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id: int, 
         /, 
+        *, 
         async_: Literal[False] = False, 
     ) -> dict:
         ...
@@ -1030,6 +1035,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id: int, 
         /, 
+        *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, dict]:
         ...
@@ -1037,13 +1043,15 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id: int, 
         /, 
+        *, 
+        _g = cycle((True, False)).__next__, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         def gen_step():
             resp = yield partial(
                 self.client.fs_file_skim, 
                 id, 
-                base_url=True, 
+                base_url=_g(), 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -1077,6 +1085,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: None | int | dict = None, 
         /, 
         *, 
+        _g = cycle((True, False)).__next__, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if payload is None:
@@ -1090,7 +1099,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         def gen_step():
             resp = yield self.client.fs_files(
                 payload, 
-                base_url=True, 
+                base_url=_g(), 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -4388,3 +4397,4 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
 # TODO: 上传和下载都返回一个 Future 对象，可以获取信息和完成情况，以及可以重试等操作
 # TODO: 为 path_to_id 的更新，设计更完备的算法
 # TODO: 基于 fs_search 实现 search，但可用的参数更少，另外其实 如果 fs_files 指定 type、suffix 这类的，那么相当于是 search
+# TODO: 移除 path_to_id 映射，以简化缓存更新策略，以后只保留 id_to_ancestor 这类的缓存 

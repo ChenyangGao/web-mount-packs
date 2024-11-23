@@ -134,6 +134,7 @@ async def relogin_115(session: AsyncClient, cookies: str) -> None | str:
     return "; ".join(f"{k}={v}" for k, v in resp["data"]["cookie"].items())
 
 
+# TODO: 需要进一步优化，加快执行速度
 async def update_115_cookies(client: AlistClient, path: str, session: AsyncClient):
     """115 网盘，更新某个路径所对应存储的 cookies，必须仅是被 405 风控
     """

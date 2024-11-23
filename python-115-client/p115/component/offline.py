@@ -641,11 +641,12 @@ class P115Offline:
                 nonlocal page
                 count = 0 
                 while True:
-                    resp = await check_response(method(
+                    resp = await method(
                         page, 
                         async_=True, 
                         request=self.async_request, 
-                    ))
+                    )
+                    check_response(resp)
                     if not count:
                         count = resp["count"]
                     elif count != resp["count"]:

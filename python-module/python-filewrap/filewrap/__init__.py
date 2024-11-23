@@ -7,7 +7,7 @@
 # TODO: AsyncTextIOWrapper.readline 有大量的字符串拼接操作，效率极低，需用 str.joins 方法优化
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 3)
+__version__ = (0, 2, 5)
 __all__ = [
     "Buffer", "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", 
@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 from asyncio import to_thread, Lock as AsyncLock
-from collections.abc import Awaitable, AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
+from collections.abc import Awaitable, AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sized
 from functools import update_wrapper
 from io import BufferedIOBase, BufferedReader, BytesIO, RawIOBase, TextIOWrapper
 from inspect import isawaitable, iscoroutinefunction, isasyncgen, isgenerator
@@ -52,7 +52,7 @@ except ImportError:
     Buffer.register(array)
 
 from asynctools import async_chain, ensure_async, ensure_aiter, run_async
-from property import staticproperty
+from property import funcproperty
 
 
 Args = ParamSpec("Args")
@@ -630,7 +630,9 @@ class AsyncTextIOWrapper(TextIOWrapper):
             data = await read(-1)
         else:
             data = await read(size)
-        if size < 0 or len(data) < size:
+        if not isinstance(data, Sized):
+            data = memoryview(data)
+        if size < 0 or len(cast(Sized, data)) < size:
             text = str(data, encoding, errors)
             if newline is None:
                 text = CRE_NOT_UNIX_NEWLINES_sub("\n", text)
@@ -645,8 +647,10 @@ class AsyncTextIOWrapper(TextIOWrapper):
 
         ls_parts: list[str] = []
         add_part = ls_parts.append
-        cache = data
-        while size and len(data) == size:
+        if not isinstance(data, Sized):
+            data = memoryview(data)
+        cache = bytes(data)
+        while size and len(cast(Sized, data)) == size:
             while cache:
                 try:
                     size -= process_part(cache)
@@ -685,6 +689,8 @@ class AsyncTextIOWrapper(TextIOWrapper):
                     size -= process_part(cache[start:stop], errors)
                     cache = cache[stop:]
             data = await read(size)
+            if not isinstance(data, Sized):
+                data = memoryview(data)
             cache += data
         if cache:
             process_part(cache, errors)
@@ -731,12 +737,15 @@ class AsyncTextIOWrapper(TextIOWrapper):
                             break
                         elif buf.endswith(crb):
                             peek_maybe_lfb = await read(lfb_len)
+                            if not isinstance(peek_maybe_lfb, Sized):
+                                peek_maybe_lfb = memoryview(peek_maybe_lfb)
                             if peek_maybe_lfb == lfb:
                                 buf += lfb
                             elif peek_maybe_lfb:
                                 # TODO: 这是一个提前量，未必需要立即往回 seek，因为转换为 str 后可能尾部不是 \r（因为可以和前面的符号结合），所以这个可能可以被复用，如果需要优化，可以在程序结束时的 finally 部分最终执行 seek（可能最终字符被消耗所以不需要 seek）
-                                await seek(-len(peek_maybe_lfb), 1)
-                                if len(peek_maybe_lfb) < lfb_len:
+                                o = len(cast(Sized, peek_maybe_lfb))
+                                await seek(-o, 1)
+                                if o < lfb_len:
                                     reach_end = True
                             break
                     else:
@@ -840,11 +849,14 @@ class AsyncTextIOWrapper(TextIOWrapper):
                             break
                         elif buf.endswith(crb):
                             peek_maybe_lfb = await read(lfb_len)
+                            if not isinstance(peek_maybe_lfb, Sized):
+                                peek_maybe_lfb = memoryview(peek_maybe_lfb)
                             if peek_maybe_lfb == lfb:
                                 buf += lfb
                             elif peek_maybe_lfb:
-                                await seek(-len(peek_maybe_lfb), 1)
-                                if len(peek_maybe_lfb) < lfb_len:
+                                o = len(cast(Sized, peek_maybe_lfb))
+                                await seek(-o, 1)
+                                if o < lfb_len:
                                     reach_end = True
                             break
                     else:
@@ -952,13 +964,13 @@ class AsyncTextIOWrapper(TextIOWrapper):
         self.newline = newline
 
     async def seek(self, target: int, whence: int = 0, /) -> int: # type: ignore
-        return await ensure_async(self.buffer.seek, threaded=True)(target, whence)
+        return await ensure_async(getattr(self.buffer, "seek"), threaded=True)(target, whence)
 
     def tell(self, /) -> int:
-        return self.buffer.tell()
+        return getattr(self.buffer, "tell")()
 
     async def truncate(self, pos: None | int = None, /) -> int: # type: ignore
-        return await ensure_async(self.buffer.truncate, threaded=True)(pos)
+        return await ensure_async(getattr(self.buffer, "truncate"), threaded=True)(pos)
 
     async def write(self, text: str, /) -> int: # type: ignore
         match self.newline:
@@ -1331,7 +1343,8 @@ def bytes_iter_skip(
         return it
     if not callable(callback):
         callback = None
-    for m in map(memoryview, it):
+    m: memoryview
+    for m in map(memoryview, it): # type: ignore
         l = len(m)
         if callback:
             callback(min(l, size))
@@ -1517,7 +1530,7 @@ def bytes_iter_to_reader(
         "__next__": staticmethod(__next__), 
         "__repr__": staticmethod(lambda: reprs), 
         "close": staticmethod(close), 
-        "closed": staticproperty(lambda: at_end), 
+        "closed": funcproperty(staticmethod(lambda: at_end)), 
         "peek": staticmethod(peek), 
         "read": staticmethod(read), 
         "readinto": staticmethod(readinto), 
@@ -1698,7 +1711,7 @@ def bytes_iter_to_async_reader(
         "__repr__": staticmethod(lambda: reprs), 
         "close": staticmethod(close), 
         "aclose": staticmethod(aclose), 
-        "closed": staticproperty(lambda: at_end), 
+        "closed": funcproperty(staticmethod(lambda: at_end)), 
         "peek": staticmethod(peek), 
         "read": staticmethod(read), 
         "readinto": staticmethod(readinto), 

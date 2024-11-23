@@ -45,7 +45,12 @@ def main(argv: None | list[str] | Namespace = None, /):
                 cookies = open("115-cookies.txt").read()
         except FileNotFoundError:
             cookies = None
-    client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app=args.app)
+    app = args.app
+    if app == "desktop":
+        app = "web"
+    client = P115Client(cookies, check_for_relogin=True, ensure_cookies=True, app=app)
+    if client.login_app() != app:
+        client = client.login_another_app(app)
     if outfile := args.output_file:
         try:
             file: TextIO = open(outfile, "w")

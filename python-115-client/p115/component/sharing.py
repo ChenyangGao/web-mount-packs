@@ -370,11 +370,12 @@ class P115Sharing:
             async def request():
                 count = 0
                 while True:
-                    resp = await check_response(self.client.share_list(
+                    resp = await self.client.share_list(
                         payload, 
                         request=self.async_request, 
                         async_=True, 
-                    ))
+                    )
+                    check_response(resp)
                     if count == 0:
                         count = resp["count"]
                     elif count != resp["count"]:

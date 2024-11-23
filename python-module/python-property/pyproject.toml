@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-property"
-version = "0.0.2"
+version = "0.0.3"
 description = "Python property discriptors"
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

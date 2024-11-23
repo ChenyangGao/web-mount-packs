@@ -14,7 +14,7 @@ def main():
     parser.add_argument("-P", "--port", default=5245, type=int, help="端口号，默认值：5245")
     parser.add_argument("-b", "--base-url", default="http://localhost:5244", 
                         help="被代理的 alist 服务的 base_url，默认值：'http://localhost:5244'")
-    parser.add_argument("-t", "--token", default="", help="alist 的 token，用来追踪后台任务列表（若不提供，则不追踪任务列表）")
+    parser.add_argument("-t", "--token", default="", help="alist 的 token，用来追踪后台任务列表和更新某些 cookies")
     parser.add_argument("-u", "--db-uri", default="", help="""数据库连接的 URI，格式为 "{dbtype}://{host}:{port}/{path}"
     - dbtype: 数据库类型，目前仅支持 "sqlite"、"mongodb" 和 "redis"
     - host: （非 "sqlite"）ip 或 hostname，如果忽略，则用 "localhost"
