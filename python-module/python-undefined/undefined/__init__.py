@@ -4,29 +4,27 @@
 from __future__ import annotations
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 3)
 __all__ = ["Undefined", "undefined"]
 
-from typing import final, Never
+from typing import final, Never, Self
 
 
-@final
 class Undefined:
+    """Just like `None` and `NoneType`, which are used to mark missing values.
+    """
     __slots__: tuple[str, ...] = ()
-    __instance__: Undefined
+    __instance__: Self
 
-    def __new__(cls, /) -> Undefined:
+    def __new__(cls, /) -> Self:
         try:
-            return cls.__instance__
-        except AttributeError:
+            return cls.__dict__["__instance__"]
+        except KeyError:
             inst = cls.__instance__ = super().__new__(cls)
             return inst
 
-    def __init_subclass__(cls, /, **kwargs) -> Never:
-        raise TypeError("'Undefined' is not an acceptable base class")
-
-    __bool__ = staticmethod(lambda: False) # type: ignore
-    __eq__ = lambda self, other, /: self is other
+    __bool__ = staticmethod(lambda: False)
+    __eq__ = lambda self, other, /: self is other or NotImplemented
     __hash__ = staticmethod(lambda: 0) # type: ignore
     __repr__ = staticmethod(lambda: "undefined") # type: ignore
 

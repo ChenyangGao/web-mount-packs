@@ -2,18 +2,21 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "run_async", "as_thread", "ensure_async", "ensure_await", 
     "ensure_coroutine", "ensure_aiter", "async_map", "async_filter", 
-    "async_reduce", "async_zip", "async_chain", 
-    "async_all", "async_any", "call_as_aiter", "to_list", 
+    "async_reduce", "async_zip", "async_chain", "async_all", "async_any", 
+    "call_as_aiter", "to_list", "collect", 
 ]
 
 from asyncio import create_task, get_running_loop, run, to_thread
-from collections.abc import Awaitable, AsyncIterable, AsyncIterator, Callable, Coroutine, Iterable, Iterator
+from collections.abc import (
+    Awaitable, AsyncIterable, AsyncIterator, Callable, Collection, Coroutine, 
+    Iterable, Iterator, MutableSequence, MutableSet
+)
 from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
-from typing import cast, Any, ParamSpec, TypeVar
+from typing import cast, overload, Any, ParamSpec, TypeVar
 
 from decotools import decorated
 from undefined import undefined
@@ -286,5 +289,36 @@ async def to_list(
     /, 
     threaded: bool = False, 
 ) -> list[T]:
+    if type(it) is list:
+        return it # type: ignore
     return [e async for e in ensure_aiter(it, threaded=threaded)]
+
+
+async def collect(
+    it: Iterable[T] | AsyncIterable[T], 
+    /, 
+    rettype: Callable[[list[T]], Collection[T]] = list, 
+    threaded: bool = False, 
+) -> Collection[T]:
+    if type(it) is rettype:
+        return it # type: ignore
+    it = ensure_aiter(it, threaded=threaded)
+    if isinstance(rettype, type):
+        if issubclass(rettype, MutableSequence):
+            if rettype is list:
+                return [e async for e in it]
+            ls = rettype()
+            add = ls.append
+            async for e in it:
+                add(e)
+            return ls
+        elif issubclass(rettype, MutableSet):
+            if rettype is set:
+                return {e async for e in it}
+            st = rettype()
+            add = st.add
+            async for e in it:
+                add(e)
+            return st
+    return rettype([e async for e in it])
 

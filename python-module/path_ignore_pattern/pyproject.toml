@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "path_ignore_pattern"
-version = "0.0.1"
+version = "0.0.1.1"
 description = "Python path ignore pattern."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-glob_pattern = "*"
+glob_pattern = ">=0.0.2"
 
 [build-system]
 requires = ["poetry-core"]

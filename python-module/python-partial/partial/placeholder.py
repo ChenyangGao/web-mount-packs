@@ -8,27 +8,17 @@ __all__ = ["Placeholder", "_"]
 
 from typing import final, Never
 
-from undefined import undefined
+from undefined import Undefined, undefined
 
 
 @final
-class Placeholder:
-    __slots__ = ()
-    __instance__: Placeholder
-
-    def __new__(cls, /) -> Placeholder:
-        try:
-            return cls.__instance__
-        except AttributeError:
-            inst = cls.__instance__ = super().__new__(cls)
-            return inst
+class Placeholder(Undefined):
+    __slots__: tuple[str, ...] = ()
 
     def __init_subclass__(cls, /, **kwargs) -> Never:
         raise TypeError("Subclassing is not allowed")
 
-    __bool__ = staticmethod(lambda: False)
-    __eq__ = lambda self, other, /: self is other or other is undefined
-    __hash__ = staticmethod(lambda: 0) # type: ignore
+    __eq__ = lambda self, other, /: self is other or other is undefined # type: ignore
     __repr__ = staticmethod(lambda: "_") # type: ignore
 
 

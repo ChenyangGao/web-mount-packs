@@ -59,7 +59,7 @@ def extended_pattern_translate(pattern: str, /) -> str:
         case ":":
             return re_escape(rest)
         case ";":
-            return f"(?:^|(?<=\s)){re_escape(rest)}(?:$|(?=\s))"
+            return f"(?:^|(?<=\\s)){re_escape(rest)}(?:$|(?=\\s))"
         case ",":
             return f"(?:^|(?<=,)){re_escape(rest)}(?:$|(?=,))"
         case "<":

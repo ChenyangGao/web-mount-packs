@@ -233,3 +233,5 @@ WHERE parent_id = (SELECT id FROM data WHERE path = ? LIMIT 1) AND name NOT IN (
     def run(self, /, *args, **kwds):
         return FUSE(self, *args, **kwds)
 
+# TODO: 支持小文件缓存
+# TODO: 支持 xattr

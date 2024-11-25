@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["translate_iter", "translate"]
 
 from collections.abc import Iterator
@@ -62,7 +62,7 @@ def translate_iter(
 ) -> Iterator[tuple[str, str, str]]:
     last_type = ""
     if allow_escaped_slash:
-        ls, _ = splits(pattern, parse_dots=False, do_unescape=False)
+        ls, _ = splits(pattern, parse_dots=False, unescape=None)
     else:
         ls = pattern.split("/")
     for part in ls:
@@ -93,6 +93,5 @@ def translate(
     allow_escaped_slash: bool = False, 
 ) -> str:
     return "/".join(part for part, *_ in translate_iter(pattern, allow_escaped_slash))
-
 
 # TODO: support for ntpath, etc.

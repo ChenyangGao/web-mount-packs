@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-concurrenttools"
-version = "0.0.3.1"
+version = "0.0.4"
 description = "Python concurrent tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,9 +26,10 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 python-argtools = "*"
-python-decotools = "*"
+python-asynctools = ">=0.0.6.1"
+python-decotools = ">=0.0.1.2"
 
 [build-system]
 requires = ["poetry-core"]

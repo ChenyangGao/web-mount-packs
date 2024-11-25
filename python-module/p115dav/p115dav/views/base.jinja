@@ -275,9 +275,9 @@ document.addEventListener('DOMContentLoaded', function () {
           const sharecode = attr.share_code;
           const prefix = attr.name.slice(0, attr.name.lastIndexOf("."));
           if (sharecode) {
-            const resp = await fetch(`/<share?id=${attr.parent_id}&share_code=${sharecode}&method=list`);
+            const resp = await fetch(`/<share/<list?id=${attr.parent_id}&share_code=${sharecode}`);
             const filelist = await resp.json();
-            for (const {name, url} of filelist) {
+            for (const {name, url} of filelist.children) {
               if (/(?i:.ass|.srt|.ssa|.vtt)$/.test(name) && name.startsWith(prefix)) {
                 const type = name.slice(name.lastIndexOf(".") + 1);
                 subtitles.push({

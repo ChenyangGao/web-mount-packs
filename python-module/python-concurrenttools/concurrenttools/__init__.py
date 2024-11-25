@@ -2,21 +2,28 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
-__all__ = ["thread_batch", "thread_pool_batch", "async_batch", "threaded", "run_as_thread"]
+__version__ = (0, 0, 4)
+__all__ = [
+    "thread_batch", "thread_pool_batch", "async_batch", 
+    "threaded", "run_as_thread", "asynchronized", "run_as_async", 
+]
 
-from asyncio import CancelledError, Semaphore as AsyncSemaphore, TaskGroup
+from asyncio import (
+    ensure_future, get_event_loop, BaseEventLoop, CancelledError, 
+    Future as AsyncFuture, Semaphore as AsyncSemaphore, TaskGroup, 
+)
 from collections.abc import Callable, Coroutine, Iterable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
-from inspect import isawaitable
+from inspect import isawaitable, iscoroutinefunction
 from os import cpu_count
 from queue import Queue, Empty
 from _thread import start_new_thread
 from threading import Event, Lock, Semaphore, Thread
-from typing import cast, Any, ContextManager, Optional, ParamSpec, TypeVar
+from typing import cast, Any, ContextManager, Literal, ParamSpec, TypeVar
 
 from argtools import argcount
+from asynctools import ensure_coroutine
 from decotools import optional
 
 
@@ -28,8 +35,8 @@ V = TypeVar("V")
 def thread_batch(
     work: Callable[[T], V] | Callable[[T, Callable], V], 
     tasks: Iterable[T], 
-    callback: Optional[Callable[[V], Any]] = None, 
-    max_workers: Optional[int] = None, 
+    callback: None | Callable[[V], Any] = None, 
+    max_workers: None | int = None, 
 ):
     ac = argcount(work)
     if ac < 1:
@@ -90,8 +97,8 @@ def thread_batch(
 def thread_pool_batch(
     work: Callable[[T], V] | Callable[[T, Callable], V], 
     tasks: Iterable[T], 
-    callback: Optional[Callable[[V], Any]] = None, 
-    max_workers: Optional[int] = None, 
+    callback: None | Callable[[V], Any] = None, 
+    max_workers: None | int = None, 
 ):
     ac = argcount(work)
     if ac < 1:
@@ -139,8 +146,8 @@ def thread_pool_batch(
 async def async_batch(
     work: Callable[[T], Coroutine[None, None, V]] | Callable[[T, Callable], Coroutine[None, None, V]], 
     tasks: Iterable[T], 
-    callback: Optional[Callable[[V], Any]] = None, 
-    sema: Optional[AsyncSemaphore] = None, 
+    callback: None | Callable[[V], Any] = None, 
+    sema: None | AsyncSemaphore = None, 
 ):
     ac = argcount(work)
     if ac < 1:
@@ -177,14 +184,14 @@ async def async_batch(
 
 @optional
 def threaded(
-    func: Callable[Args, Any], 
+    func: Callable[Args, T], 
     /, 
     lock: None | int | ContextManager = None, 
     **thread_init_kwds, 
-) -> Callable[Args, Future]:
+) -> Callable[Args, Future[T]]:
     if isinstance(lock, int):
         lock = Semaphore(lock)
-    def wrapper(*args: Args.args, **kwds: Args.kwargs) -> Future[V]:
+    def wrapper(*args: Args.args, **kwds: Args.kwargs) -> Future[T]:
         if lock is None:
             def asfuture():
                 try: 
@@ -198,7 +205,7 @@ def threaded(
                         fu.set_result(func(*args, **kwds))
                     except BaseException as e:
                         fu.set_exception(e)
-        fu: Future[V] = Future()
+        fu: Future[T] = Future()
         thread = fu.thread = Thread(target=asfuture, **thread_init_kwds) # type: ignore
         thread.start()
         return fu
@@ -212,4 +219,39 @@ def run_as_thread(
     **kwargs: Args.kwargs, 
 ) -> Future[T]:
     return getattr(threaded, "__wrapped__")(func)(*args, **kwargs)
+
+
+@optional
+def asynchronized(
+    func: Callable[Args, T], 
+    /, 
+    loop: None | BaseEventLoop = None, 
+    executor: Literal[False, None] | Executor = None, 
+) -> Callable[Args, AsyncFuture[T]]:
+    def run_in_thread(loop, future, args, kwargs, /):
+        try:
+            loop.call_soon_threadsafe(future.set_result, func(*args, **kwargs))
+        except BaseException as e:
+            loop.call_soon_threadsafe(future.set_exception, e)
+    def wrapper(*args: Args.args, **kwargs: Args.kwargs) -> AsyncFuture[T]:
+        nonlocal loop
+        if iscoroutinefunction(func):
+            return ensure_future(func(*args, **kwargs), loop=loop)
+        if loop is None:
+            loop = cast(BaseEventLoop, get_event_loop())
+        if executor is False:
+            future = loop.create_future()
+            start_new_thread(run_in_thread, (loop, future, args, kwargs))
+            return future
+        return loop.run_in_executor(executor, partial(func, *args, **kwargs))
+    return wrapper
+
+
+def run_as_async(
+    func: Callable[Args, T], 
+    /, 
+    *args: Args.args, 
+    **kwargs: Args.kwargs, 
+) -> AsyncFuture[T]:
+    return getattr(asynchronized, "__wrapped__")(func)(*args, **kwargs)
 

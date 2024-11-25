@@ -1,6 +1,20 @@
   {%- extends "base.jinja" %}
   {%- block content %}
-  <strong><a href="/?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>{% if share_code %}<strong><a href="/<share?share_code=&id=0" style="border: 1px solid black; text-decoration: none">&lt;share</a></strong>/{% if ancestors.__len__() == 1 %}<strong><a href="/<share/<list?share_code={{ share_code }}&id=0" style="border: 1px solid black; text-decoration: none">{{ share_code }}</a></strong>{% else %}<strong><a href="/<share?file=false&share_code={{ share_code }}&id=0" style="border: 1px solid black; text-decoration: none">{{ share_code }}</a></strong>{% for ancestor in ancestors[1:-1] %}/<strong><a href="/<share?file=false&share_code={{ share_code }}&id={{ ancestor["id"] }}" style="border: 1px solid black; text-decoration: none">{{ ancestor["name"] }}</a></strong>{% endfor %}/<strong><a href="/<share/<list?share_code={{ share_code }}&id={{ ancestors[-1]["id"] }}" style="border: 1px solid black; text-decoration: none">{{ ancestors[-1]["name"] }}</a></strong>{% endif %}{% else %}<strong><a href="/<share/<list?share_code=" style="border: 1px solid black; text-decoration: none">&lt;share</a></strong>{% endif %}
+  <strong><a href="/?id=0" style="border: 1px solid black; text-decoration: none">/</a></strong>
+  {%- if share_code -%}
+    <strong><a href="/<share?share_code=&id=0" style="border: 1px solid black; text-decoration: none">&lt;share</a></strong>/
+    {%- if ancestors.__len__() == 1 -%}
+      <strong><a href="/<share/<list?share_code={{ share_code }}&id=0" style="border: 1px solid black; text-decoration: none">{{ share_code }}</a></strong>
+    {%- else -%}
+      <strong><a href="/<share?file=false&share_code={{ share_code }}&id=0" style="border: 1px solid black; text-decoration: none">{{ share_code }}</a></strong>
+      {%- for ancestor in ancestors[1:-1] -%}
+        /<strong><a href="/<share?file=false&share_code={{ share_code }}&id={{ ancestor["id"] }}" style="border: 1px solid black; text-decoration: none">{{ ancestor["name"] }}</a></strong>
+      {%- endfor -%}
+      /<strong><a href="/<share/<list?share_code={{ share_code }}&id={{ ancestors[-1]["id"] }}" style="border: 1px solid black; text-decoration: none">{{ ancestors[-1]["name"] }}</a></strong>
+    {%- endif -%}
+  {%- else -%}
+    <strong><a href="/<share/<list?share_code=" style="border: 1px solid black; text-decoration: none">&lt;share</a></strong>
+  {%- endif -%}
   <table>
     <thead>
       <tr>
@@ -16,13 +30,13 @@
       <tr>
         {%- if not share_code %}
         <td colspan="6"><a href="/" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
-        {%- elif attr["id"] == 0 %}
+        {%- elif ancestors.__len__() == 1 %}
         <td colspan="6"><a href="/<share" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
         {%- else %}
-        <td colspan="6"><a href="/<share?share_code={{ attr["share_code"] }}&id={{ attr["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
+        <td colspan="6"><a href="/<share?share_code={{ share_code }}&id={{ ancestors[-1]["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
         {%- endif %}
       </tr>
-      {%- set platform = user_agent.get("platform", {}).get("name", "").lower() %}
+      {%- set platform = (user_agent.get("platform", {}).get("name") or "").lower() %}
       {%- for attr in children %}
       <tr>
         {%- set name = attr["name"] %}

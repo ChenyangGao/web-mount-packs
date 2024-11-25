@@ -18,7 +18,7 @@ from time import gmtime, strftime, strptime, time
 from typing import cast, Any
 
 
-CRE_COOKIE_SEP_split = re_compile(";\s*").split
+CRE_COOKIE_SEP_split = re_compile(r";\s*").split
 
 
 def create_cookie(

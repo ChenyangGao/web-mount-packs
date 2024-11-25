@@ -21,7 +21,7 @@
         <td colspan="6"><a href="/?id={{ ancestors[-1]["parent_id"] }}" style="display: block; text-align: center; text-decoration: none; font-size: 30px">..</a></td>
         {%- endif %}
       </tr>
-      {%- set platform = user_agent.get("platform", {}).get("name", "").lower() %}
+      {%- set platform = (user_agent.get("platform", {}).get("name") or "").lower() %}
       {%- for attr in children %}
       <tr>
         {%- set name = attr["name"] %}

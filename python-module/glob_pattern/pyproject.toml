@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "glob_pattern"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python shell glob pattern."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-posixpatht = "*"
+posixpatht = ">=0.0.3"
 
 [build-system]
 requires = ["poetry-core"]

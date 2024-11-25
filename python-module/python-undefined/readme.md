@@ -11,5 +11,5 @@ pip install -U python-undefined
 ## Usage
 
 ```python
-from undefined import undefined
+from undefined import undefined, Undefined
 ```
