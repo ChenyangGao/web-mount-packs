@@ -96,6 +96,7 @@ def _init():
     if _INITIALIZED:
         return
 
+    from blacksheep.server import asgi
     from blacksheep.server.rendering.jinja2 import JinjaRenderer
     from blacksheep.settings.html import html_settings
     from blacksheep.settings.json import json_settings
@@ -107,6 +108,23 @@ def _init():
     from blacksheep.server.responses import view_async
 
     globals().update(locals())
+
+    from inspect import getsource
+
+    get_request_url_from_scope = asgi.get_request_url_from_scope
+    source = getsource(get_request_url_from_scope)
+    repl_code = '        host, port = scope["server"]'
+    if repl_code in source:
+        exec(getsource(get_request_url_from_scope).replace(repl_code, """\
+        for key, val in scope["headers"]:
+            key = key.lower()
+            if key in (b"host", b"x-forwarded-host", b"x-original-host"):
+                host = val.decode("latin-1")
+                port = 80 if protocol == "http" else 443
+                break
+        else:
+            host, port = scope["server"]"""), asgi.__dict__)
+        get_request_url_from_scope.__code__ = asgi.get_request_url_from_scope.__code__
 
     from encode_uri import encode_uri, encode_uri_component_loose
     from orjson import dumps as json_dumps, loads as json_loads
@@ -653,31 +671,31 @@ LIMIT 1;""", (share_code, id))
         children = file_list["children"]
         remains = len(children)
         if count:
+            if remains:
+                mtime_groups: dict[int, dict[str, AttrDict]] = {}
+                for a in children:
+                    try:
+                        mtime_groups[a["mtime"]][a["id"]] = a
+                    except KeyError:
+                        mtime_groups[a["mtime"]] = {a["id"]: a}
+                his_it = iter(sorted(mtime_groups.items(), reverse=True))
+                his_mtime, his_items = next(his_it)
             try:
-                if remains:
-                    mtime_groups: dict[int, dict[str, AttrDict]] = {}
-                    for a in children:
-                        try:
-                            mtime_groups[a["mtime"]][a["id"]] = a
-                        except KeyError:
-                            mtime_groups[a["mtime"]] = {a["id"]: a}
-                    his_it = iter(sorted(mtime_groups.items(), reverse=True))
-                    children = []
-                    children_add = children.append
-                    his_mtime, his_items = next(his_it)
-                    n = 0
-                    async for attr in it:
+                n = 0
+                children = []
+                children_add = children.append
+                async for attr in it:
+                    children_add(attr)
+                    if remains:
                         n += 1
-                        children_add(attr)
                         cur_id = attr["id"]
                         cur_mtime = attr["mtime"]
-                        while his_mtime > cur_mtime:
-                            remains -= len(his_items)
-                            if not remains:
-                                async for attr in it:
-                                    children_add(attr)
-                                raise StopIteration
-                            his_mtime, his_items = next(his_it)
+                        try:
+                            while his_mtime > cur_mtime:
+                                remains -= len(his_items)
+                                his_mtime, his_items = next(his_it)
+                        except StopIteration:
+                            continue
                         if his_mtime == cur_mtime:
                             if cur_id in his_items:
                                 his_items.pop(cur_id)
@@ -687,14 +705,10 @@ LIMIT 1;""", (share_code, id))
                                     children_extend(his_items.values())
                                     for his_mtime, his_items in his_it:
                                         children_extend(his_items.values())
-                                    raise StopIteration
-                async for attr in it:
-                    children_add(attr)
+                                    break
             except FileNotFoundError:
                 put_task(("UPDATE data SET parent_id=NULL WHERE id=?;", cid))
                 raise
-            except StopIteration:
-                pass
             children.sort(key=lambda a: (not a["is_dir"], a["name"]))
             file_list["children"][:] = children
         else:
@@ -1093,6 +1107,7 @@ END;
                 return make_response_for_exception(exc, 503) # Service Unavailable
 
     @app.router.get("/%3Cid")
+    @app.router.get("/%3Cid/*")
     async def get_id(
         id: int = -1, 
         pickcode: str = "", 
@@ -1136,6 +1151,7 @@ END;
                     ])
 
     @app.router.get("/%3Cpickcode")
+    @app.router.get("/%3Cpickcode/*")
     async def get_pickcode(
         id: int = -1, 
         pickcode: str = "", 
@@ -1181,6 +1197,7 @@ END;
     _get_attr_g = cycle([True, False]).__next__
 
     @app.router.get("/%3Cattr")
+    @app.router.get("/%3Cattr/*")
     async def get_attr(
         id: int = -1, 
         pickcode: str = "", 
@@ -1208,6 +1225,7 @@ END;
         return attr
 
     @app.router.get("/%3Clist")
+    @app.router.get("/%3Clist/*")
     async def get_list(
         id: int = -1, 
         pickcode: str = "", 
@@ -1218,6 +1236,7 @@ END;
         return await get_file_list(id)
 
     @app.router.get("/%3Cm3u8")
+    @app.router.get("/%3Cm3u8/*")
     async def get_m3u8(pickcode: str = ""):
         """获取 m3u8 文件链接
         """
@@ -1235,6 +1254,7 @@ END;
         return data["video_url"]
 
     @app.router.get("/%3Csubtitles")
+    @app.router.get("/%3Csubtitles/*")
     async def get_subtitles(pickcode: str):
         """获取字幕（随便提供此文件夹内的任何一个文件的提取码即可）
         """
@@ -1254,6 +1274,7 @@ END;
         return data
 
     @app.router.get("/%3Curl")
+    @app.router.get("/%3Curl/*")
     async def get_url(
         request: Request, 
         pickcode: str, 
@@ -1442,6 +1463,7 @@ END;
             raise ValueError("has no thumb picture")
 
     @app.router.get("/%3Cshare/%3Curl")
+    @app.router.get("/%3Cshare/%3Curl/*")
     async def get_share_url(
         request: Request, 
         share_code: str, 
@@ -1478,6 +1500,7 @@ END;
         return {"type": "file", "url": url, "headers": url.get("headers")}
 
     @app.router.get("/%3Cshare/%3Cid")
+    @app.router.get("/%3Cshare/%3Cid/*")
     async def get_share_id(
         share_code: str, 
         id: int = -1, 
@@ -1530,6 +1553,7 @@ END;
         return 0
 
     @app.router.get("/%3Cshare/%3Cattr")
+    @app.router.get("/%3Cshare/%3Cattr/*")
     async def get_share_attr(
         share_code: str, 
         id: int = -1, 
@@ -1586,6 +1610,7 @@ END;
         return ID_TO_ATTR[(share_code, id)]
 
     @app.router.get("/%3Cshare/%3Clist")
+    @app.router.get("/%3Cshare/%3Clist/*")
     async def get_share_list(
         share_code: str = "", 
         id: int = -1, 
@@ -1687,12 +1712,8 @@ END;
         )
 
     @app.router.route("/%3Cdownload", methods=["GET", "HEAD", "POST"])
-    @app.router.route("/%3Cdownload/<path:name>", methods=["GET", "HEAD", "POST"])
-    async def do_download(
-        request: Request, 
-        url: str, 
-        name: str = "", 
-    ) -> Response:
+    @app.router.route("/%3Cdownload/*", methods=["GET", "HEAD", "POST"])
+    async def do_download(request: Request, url: str) -> Response:
         """打开某个下载链接后，对数据流进行转发
 
         :param url: 下载链接
@@ -1736,8 +1757,8 @@ END;
         )
 
     @app.router.route("/%3Credirect", methods=["GET", "HEAD", "POST"])
-    @app.router.route("/%3Credirect/<path:name>", methods=["GET", "HEAD", "POST"])
-    async def do_redirect(url: str, name: str = "") -> Response:
+    @app.router.route("/%3Credirect/*", methods=["GET", "HEAD", "POST"])
+    async def do_redirect(url: str) -> Response:
         """对给定的链接进行 302 重定向，可用于某些通过链接中的路径部分来进行判断，但原来的链接缺乏必要信息的情况
 
         :param url: 下载链接
@@ -1745,13 +1766,8 @@ END;
         return redirect(url)
 
     @app.router.route("/%3Csub2ass", methods=["GET", "HEAD", "POST"])
-    @app.router.route("/%3Csub2ass/<path:name>", methods=["GET", "HEAD", "POST"])
-    async def sub2ass(
-        request: Request, 
-        url: str, 
-        format: str = "srt", 
-        name: str = "", 
-    ) -> str:
+    @app.router.route("/%3Csub2ass/*", methods=["GET", "HEAD", "POST"])
+    async def sub2ass(request: Request, url: str, format: str = "srt") -> str:
         """把字幕转换为 ASS 格式
 
         :param url: 下载链接
@@ -1937,7 +1953,7 @@ END;
                 except FileNotFoundError:
                     raise DAVError(404, dir_)
                 for attr in file_list["children"]:
-                    name = attr["name"]
+                    name = attr["name"].replace("/", "|")
                     is_strm = False
                     is_dir = attr["is_dir"]
                     if not is_dir and strm_predicate and strm_predicate(MappingPath(attr)):
@@ -1986,17 +2002,19 @@ END;
             path = "/" + path.strip("/")
             if not strm_origin:
                 origin = environ["STRM_ORIGIN"] = f"{environ['wsgi.url_scheme']}://{environ['HTTP_HOST']}"
+            will_get_from_list = "|" in path
+            dir_, name = splitpath(path)
             if not is_dir:
                 if inst := DAV_FILE_CACHE.get(path):
                     if not strm_origin and origin != inst.origin:
                         inst = FileResource(path, environ, inst.attr, is_strm=inst.is_strm)
                     return inst
-                if path.endswith(".strm"):
-                    dir_, name = splitpath(path)
-                    inst = self.get_resource_inst(dir_, environ)
-                    if not isinstance(inst, FolderResource):
-                        raise DAVError(404, path)
-                    return inst.get_member(name)
+                will_get_from_list = will_get_from_list or path.endswith(".strm")
+            if will_get_from_list:
+                inst = self.get_resource_inst(dir_ + "/", environ)
+                if not isinstance(inst, FolderResource):
+                    raise DAVError(404, path)
+                return inst.get_member(name)
             if path == "/<share":
                 return FolderResource("/<share", environ, {"id": 0, "name": "<share", "size": 0})
             else:

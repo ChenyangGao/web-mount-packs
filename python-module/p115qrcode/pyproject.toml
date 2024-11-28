@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-reverse-proxy"
-version = "0.0.6"
-description = "Python reverse proxy."
+name = "p115qrcode"
+version = "0.0.1"
+description = "115 网盘二维码扫码登录."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-reverse-proxy"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-reverse-proxy"
-keywords = ["reverse proxy"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115qrcode"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115qrcode"
+keywords = ["python-115", "qrcode"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,19 +26,16 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-blacksheep = "*"
+python = "^3.11"
+orjson = "*"
 httpx = "*"
-uvicorn = "*"
-python-dictattr = ">=0.0.4"
-
-[tool.poetry.scripts]
-reverse-proxy = "reverse_proxy.__main__:main"
-python-reverse-proxy = "reverse_proxy.__main__:main"
+httpx_request = ">=0.0.9"
+python-startfile = ">=0.0.2"
+qrcode = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "reverse_proxy"
+include = "p115qrcode"

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = ["ApplicationWithMethods", "make_application"]
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -221,16 +221,19 @@ def make_application(
                     yield chunk
             finally:
                 await response.aclose()
+        headers = [
+            (
+                bytes(k, "latin-1"), 
+                bytes(f"{request.scheme}://{request.host}" + v[len(base_url):] if k == "location" and v.startswith(base_url) else v, "latin-1"), 
+            )
+            for k, v in ((k.lower(), v) for k, v in response.headers.items())
+            if k not in ("access-control-allow-methods", "access-control-allow-origin", "date", "content-type", "transfer-encoding")
+        ]
+        headers.append((b"access-control-allow-methods", b"PUT, GET, HEAD, POST, DELETE, OPTIONS"))
+        headers.append((b"access-control-allow-origin", b"*"))
         return (Response(
             status=response.status_code, 
-            headers=[
-                (
-                    bytes(k, "latin-1"), 
-                    bytes(f"{request.scheme}://{request.host}" + v[len(base_url):] if k == "location" and v.startswith(base_url) else v, "latin-1"), 
-                )
-                for k, v in ((k.lower(), v) for k, v in response.headers.items())
-                if k not in ("date", "content-type", "transfer-encoding")
-            ], 
+            headers=headers, 
             content=StreamedContent(bytes(content_type, "latin-1"), reader), 
         ), data)
 
@@ -243,6 +246,48 @@ def make_application(
         async with AsyncClient() as session:
             app.services.register(AsyncClient, instance=session)
             yield
+
+    @router.route("/_redirect", methods=[""])
+    async def redirect(
+        request: Request, 
+        session: AsyncClient, 
+        url: str, 
+        timeout: None | float = None, 
+    ):
+        resp = await session.send(
+            request=session.build_request(
+                method=request.method, 
+                url=url, 
+                data=request.stream(), # type: ignore
+                headers=[
+                    (k, v)
+                    for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
+                    if k.lower() != "host"
+                ], 
+                timeout=timeout, 
+            ), 
+            stream=True, 
+        )
+        async def reader():
+            try:
+                async for chunk in resp.aiter_raw():
+                    if await request.is_disconnected():
+                        break
+                    yield chunk
+            finally:
+                await resp.aclose()
+        content_type = resp.headers.get("content-type", "")
+        headers = [
+            (bytes(k, "latin-1"), bytes(v, "latin-1")) for k, v in resp.headers.items()
+            if k not in ("access-control-allow-methods", "access-control-allow-origin", "date", "content-type", "transfer-encoding")
+        ]
+        headers.append((b"access-control-allow-methods", b"PUT, GET, HEAD, POST, DELETE, OPTIONS"))
+        headers.append((b"access-control-allow-origin", b"*"))
+        return Response(
+            status=resp.status_code, 
+            headers=headers, 
+            content=StreamedContent(bytes(content_type, "latin-1"), reader), 
+        )
 
     if callable(custom_proxy):
         router.route("/", methods=[""])(custom_proxy)

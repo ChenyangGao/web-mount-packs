@@ -8,6 +8,7 @@ __all__ = ["make_application"]
 
 from collections.abc import Callable
 from functools import partial
+from inspect import getsource
 from io import BytesIO
 from os import fsdecode, PathLike
 from pathlib import Path
@@ -17,8 +18,10 @@ from threading import Lock
 from typing import Literal
 from urllib.parse import quote
 
+from a2wsgi import WSGIMiddleware
 from blacksheep import redirect, Application, Request
 from blacksheep.client import ClientSession
+from blacksheep.server import asgi
 from blacksheep.server.compression import use_gzip_compression
 from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
 from blacksheep_client_request import request as blacksheep_request
@@ -27,13 +30,27 @@ from p115client import P115Client
 from path_predicate import MappingPath
 from property import locked_cacheproperty
 from urllib3.poolmanager import PoolManager
-from uvicorn.middleware.wsgi import WSGIMiddleware
 from wsgidav.wsgidav_app import WsgiDAVApp # type: ignore
 from wsgidav.dav_error import DAVError # type: ignore
 from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider # type: ignore
 from yaml import load, Loader
 
 from .lrudict import LRUDict
+
+
+get_request_url_from_scope = asgi.get_request_url_from_scope
+source = getsource(get_request_url_from_scope)
+repl_code = '        host, port = scope["server"]'
+if repl_code in source:
+    exec(getsource(get_request_url_from_scope).replace(repl_code, """\
+        for key, val in scope["headers"]:
+            if key.lower() in (b"host", b"x-forwarded-host", b"x-original-host"):
+                host = val.decode("latin-1")
+                port = 80 if protocol == "http" else 443
+                break
+        else:
+            host, port = scope["server"]"""), asgi.__dict__)
+    get_request_url_from_scope.__code__ = asgi.get_request_url_from_scope.__code__
 
 
 def make_application(

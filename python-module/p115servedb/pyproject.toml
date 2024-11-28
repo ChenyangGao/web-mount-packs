@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "p115servedb"
-version = "0.0.1.3"
+version = "0.0.2"
 description = "115 网盘基于 updatedb.py 的列表服务."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,13 +27,14 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
+a2wsgi = ">=1.10.7"
 blacksheep = "*"
 blacksheep_client_request = ">=0.0.2"
 fusepy = "*"
 python-encode_uri = ">=0.0.1"
 python-httpfile = ">=0.0.5"
 python-property = ">=0.0.3"
-p115client = ">=0.0.3.7.9.1"
+p115client = ">=0.0.3.7.12"
 path_predicate = ">=0.0.1.1"
 pyyaml = "*"
 urllib3 = "*"
