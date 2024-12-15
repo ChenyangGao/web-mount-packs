@@ -2,11 +2,12 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 7)
 __all__ = ["request"]
 
 from collections.abc import Buffer, Callable, ItemsView, Iterable, Mapping, Sequence
 from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from re import compile as re_compile
 from types import EllipsisType
 from typing import cast, runtime_checkable, Any, Protocol
@@ -15,6 +16,7 @@ from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request
 
 from argtools import argcount
+from cookietools import extract_cookies
 from urllib3 import HTTPHeaderDict, Retry, Timeout
 from urllib3.exceptions import MaxRetryError
 from urllib3.poolmanager import PoolManager
@@ -108,7 +110,7 @@ def request(
     params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
     data: None | Buffer | str | Mapping | Sequence[tuple[Any, Any]] | Iterable[Buffer] = None, 
     headers: None | Mapping[str, str] | Iterable[tuple[str, str]] = None, 
-    cookies: None | CookieJar = None, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     parse: None | EllipsisType | bool | Callable = None, 
     redirect: bool = True, 
     timeout: None | float | Timeout = Timeout(connect=5, read=60), 
@@ -147,14 +149,23 @@ def request(
         headers = {k.lower(): v for k, v in headers}
     else:
         headers = {}
+    if cookies is None:
+        cookies = getattr(pool, "cookies", None)
     if cookies:
         headers.setdefault("cookie", "")
         netloc_endswith = urlsplit(url).netloc.endswith
-        headers["cookie"] += "; ".join(
-            f"{cookie.name}={cookie.value}"
-            for cookie in cookies 
-            if not cookie.domain or netloc_endswith(cookie.domain)
-        )
+        if isinstance(cookies, CookieJar):
+            headers["cookie"] += "; ".join(
+                f"{cookie.name}={cookie.value}"
+                for cookie in cookies 
+                if not (domain := cookie.domain) or netloc_endswith(domain)
+            )
+        else:
+            headers["cookie"] += "; ".join(
+                f"{name}={morsel.value}"
+                for name, morsel in cookies.items()
+                if not (domain := morsel.get("domain", "")) or netloc_endswith(domain)
+            )
     elif cookies is None:
         cookies = CookieJar()
     response = cast(HTTPResponse, pool.request(
@@ -168,7 +179,7 @@ def request(
         **request_kwargs, 
     ))
     setattr(response, "cookies", cookies)
-    cookies.extract_cookies(response, Request(url)) # type: ignore
+    extract_cookies(cookies, url, response) # type: ignore
     if raise_for_status and response.status >= 400:
         raise HTTPError(url, response.status, response.reason, response.headers, response) # type: ignore
     redirect_location = redirect and response.get_redirect_location()

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "urllib3_request"
-version = "0.0.5"
+version = "0.0.7"
 description = "urllib3 request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,6 +29,7 @@ include = [
 python = "^3.12"
 urllib3 = "*"
 python-argtools = "*"
+python-cookietools = ">=0.0.4"
 
 [build-system]
 requires = ["poetry-core"]

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "aiohttp_client_request"
-version = "0.0.3"
+version = "0.0.4"
 description = "aiohttp request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,9 +26,10 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.12"
 aiohttp = "*"
 python-argtools = "*"
+python-cookietools = ">=0.0.4"
 
 [build-system]
 requires = ["poetry-core"]

@@ -2,18 +2,26 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["request"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Callable
+from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from inspect import isawaitable
-from json import loads
 from types import EllipsisType
 from typing import Literal
 
 from argtools import argcount
 from aiohttp import ClientSession, ClientResponse
+from cookietools import update_cookies
+
+try:
+    from orjson import loads
+except ImportError:
+    from json import loads
+
 
 def _async_session_del(self, /):
     if not self.closed:
@@ -45,6 +53,7 @@ async def request(
     method: str = "GET", 
     parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | ClientSession = None, 
     **request_kwargs, 
 ):
@@ -55,11 +64,21 @@ async def request(
                 method, 
                 parse=parse, 
                 raise_for_status=raise_for_status, 
+                cookies=cookies, 
                 session=session, 
                 **request_kwargs, 
             )
     request_kwargs.pop("stream", None)
+    if cookies:
+        if isinstance(cookies, CookieJar):
+            request_kwargs["cookies"] = update_cookies(SimpleCookie(), cookies)
+        else:
+            request_kwargs["cookies"] = cookies
     resp = await session.request(method, url, **request_kwargs)
+    cookie_jar = session.cookie_jar
+    if cookies is not None and cookie_jar:
+        update_cookies(cookies, cookie_jar) # type: ignore
+        cookie_jar.clear()
     if raise_for_status:
         resp.raise_for_status()
     if parse is None:

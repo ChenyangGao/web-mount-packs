@@ -2,15 +2,16 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "create_cookie", "create_morsel", "cookie_to_morsel", "morsel_to_cookie", 
     "extract_cookies", "update_cookies", "cookies_str_to_dict", "cookies_dict_to_str", 
 ]
 
 from calendar import timegm
-from collections.abc import ItemsView, Iterable, Mapping
+from collections.abc import ItemsView, Iterable, Mapping, ValuesView
 from copy import copy
+from datetime import datetime
 from http.client import HTTPMessage
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel, SimpleCookie
@@ -68,7 +69,16 @@ def create_cookie(
     expires = kwargs.get("expires")
     max_age = kwargs.get("max-age")
     if expires:
-        expires = timegm(strptime(expires, "%a, %d-%b-%Y %H:%M:%S GMT"))
+        if isinstance(expires, int):
+            pass
+        elif isinstance(expires, datetime):
+            expires = expires.timestamp()
+        else:
+            if len(expires) == 27:
+                fmt = "%a, %d-%b-%y %H:%M:%S GMT"
+            else:
+                fmt = "%a, %d-%b-%Y %H:%M:%S GMT"
+            expires = timegm(strptime(expires, fmt))
     elif max_age:
         try:
             expires = int(time()) + int(max_age)
@@ -134,7 +144,10 @@ def create_morsel(
         morsel.set(name, value, value)
     expires = kwargs.get("expires")
     if expires:
-        morsel["expires"] = strftime("%a, %d-%b-%Y %H:%M:%S GMT", gmtime(expires))
+        if isinstance(expires, datetime):
+            morsel["expires"] = expires.strftime("%a, %d-%b-%Y %H:%M:%S GMT")
+        else:
+            morsel["expires"] = strftime("%a, %d-%b-%Y %H:%M:%S GMT", gmtime(expires))
     if "path" in kwargs or morsel["path"] in ("", None):
         morsel["path"] = kwargs.get("path", "/")
     if "comment" in kwargs:
@@ -162,26 +175,34 @@ def cookie_to_morsel(cookie: Cookie, /) -> Morsel:
     morsel.set(cookie.name, value, value)
     expires: Any = cookie.expires
     if expires:
-        expires = strftime("%a, %d-%b-%Y %H:%M:%S GMT", gmtime(expires))
-    rest = getattr(cookie, "_rest")
+        if isinstance(expires, datetime):
+            expires = expires.strftime("%a, %d-%b-%Y %H:%M:%S GMT")
+        else:
+            expires = strftime("%a, %d-%b-%Y %H:%M:%S GMT", gmtime(expires))
+    rest = getattr(cookie, "_rest", {})
     morsel.update({
         "expires": expires, 
         "path": cookie.path, 
-        "comment": cookie.comment or "", 
+        "comment": getattr(cookie, "comment", "") or "", 
         "domain": cookie.domain, 
-        "secure": cookie.secure, # type: ignore 
-        "httponly": rest.get("HttpOnly"), 
-        "version": cookie.version, # type: ignore 
-        "samesite": rest.get("SameSite"), 
+        "max-age": getattr(cookie, "max_age", ""), 
+        "secure": getattr(cookie, "secure", ""), 
+        "httponly": getattr(cookie, "http_only", "") or rest.get("HttpOnly", ""), 
+        "version": getattr(cookie, "version", ""), 
+        "samesite": getattr(cookie, "same_site", "") or rest.get("SameSite", ""), 
     })
     return morsel
 
 
 def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
-    expires = cookie["expires"]
-    max_age = cookie["max-age"]
+    expires = cookie["expires"] or None
+    max_age = cookie["max-age"] or None
     if expires:
-        expires = timegm(strptime(expires, "%a, %d-%b-%Y %H:%M:%S GMT"))
+        if len(expires) == 27:
+            fmt = "%a, %d-%b-%y %H:%M:%S GMT"
+        else:
+            fmt = "%a, %d-%b-%Y %H:%M:%S GMT"
+        expires = timegm(strptime(expires, fmt))
     elif max_age:
         try:
             expires = int(time()) + int(max_age)
@@ -224,12 +245,12 @@ def extract_cookies[Cookies: (CookieJar, SimpleCookie)](
                     v = str(v, "latin-1")
                 headers.add_header(k, v)
         setattr(response, "info", lambda: headers)
-    if isinstance(cookies, CookieJar):
-        cookies.extract_cookies(response, Request(url)) # type: ignore
-    else:
+    if isinstance(cookies, SimpleCookie):
         cookiejar = CookieJar()
         cookiejar.extract_cookies(response, Request(url)) # type: ignore
         cookies.update((cookie.name, cookie_to_morsel(cookie)) for cookie in cookiejar)
+    else:
+        cookies.extract_cookies(response, Request(url)) # type: ignore
     return cookies
 
 
@@ -239,18 +260,24 @@ def update_cookies[Cookies: (CookieJar, SimpleCookie)](
     /, 
 ) -> Cookies:
     if isinstance(cookies1, CookieJar):
-        if isinstance(cookies2, CookieJar):
-            cookies: Iterable[Cookie] = cookies2
+        if isinstance(cookies2, SimpleCookie):
+            cookies: Iterable[Cookie | Morsel] = cookies2.values()
+        elif isinstance(cookies2, Mapping):
+            cookies = ValuesView(cookies2)
         else:
-            cookies = map(morsel_to_cookie, cookies2.values())
+            cookies = cookies2
         set_cookie = cookies1.set_cookie
         for cookie in cookies:
+            if isinstance(cookie, Morsel):
+                cookie = morsel_to_cookie(cookie)
             set_cookie(cookie)
     else:
-        if isinstance(cookies2, CookieJar):
-            morsels: Iterable[tuple[str, Morsel]] = ((m.key, m) for m in map(cookie_to_morsel, cookies2))
+        if isinstance(cookies2, SimpleCookie):
+            morsels: Iterable[tuple[str, Morsel]] = cookies2.items()
+        elif isinstance(cookies2, Mapping):
+            morsels = ((k, v if isinstance(v, Morsel) else cookie_to_morsel(v)) for k, v in ItemsView(cookies2))
         else:
-            morsels = cookies2.items()
+            morsels = ((c.key, c) for c in (c if isinstance(c, Morsel) else cookie_to_morsel(c) for c in cookies2))
         cookies1.update(morsels)
     return cookies1
 

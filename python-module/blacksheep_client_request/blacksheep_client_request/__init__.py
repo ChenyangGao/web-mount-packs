@@ -4,27 +4,35 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["request"]
 
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from gzip import decompress as decompress_gzip
+from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from inspect import isawaitable
-from json import loads
 from re import compile as re_compile
 from types import EllipsisType
-from typing import Any, Literal
+from typing import cast, Any, Literal
+from urllib.parse import urlsplit
 from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from asynctools import run_async
 from argtools import argcount
-from filewrap import bio_chunk_async_iter
-from multidict import CIMultiDict
 from blacksheep.client import ClientSession
 from blacksheep.common.types import normalize_headers
 from blacksheep.contents import Content, FormContent, JSONContent, StreamedContent, TextContent
 from blacksheep.exceptions import HTTPException
 from blacksheep.messages import Request, Response
+from cookietools import update_cookies
+from filewrap import bio_chunk_async_iter
+from multidict import CIMultiDict
+
+try:
+    from orjson import loads
+except ImportError:
+    from json import loads
 
 
 CRE_search_charset = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
@@ -111,6 +119,7 @@ async def request(
     headers: None | Mapping | Iterable[tuple[Any, Any]] = None, 
     parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | ClientSession = None, 
 ):
     if session is None:
@@ -123,9 +132,32 @@ async def request(
                 headers=headers, 
                 parse=parse, 
                 raise_for_status=raise_for_status, 
+                cookies=cookies, 
                 session=session, 
             )
-    headers = normalize_headers(headers) if headers else None
+    headers = normalize_headers(headers) if headers else []
+    headers = cast(list[tuple[bytes, bytes]], headers)
+    if cookies:
+        netloc_endswith = urlsplit(url).netloc.endswith
+        for i, (k, v) in enumerate(headers):
+            if k.lower() == b"cookie":
+                break
+        else:
+            i = len(headers)
+            headers.append((b"cookie", b""))
+            v = b""
+        if isinstance(cookies, CookieJar):
+            headers[i] = (b"cookie", v + b"; ".join(
+                f"{cookie.name}={cookie.value}".encode("latin-1")
+                for cookie in cookies 
+                if not (domain := cookie.domain) or netloc_endswith(domain)
+            ))
+        else:
+            headers[i] = (b"cookie", v + b"; ".join(
+                f"{name}={morsel.value}".encode("latin-1")
+                for name, morsel in cookies.items()
+                if not (domain := morsel.get("domain", "")) or netloc_endswith(domain)
+            ))
     req = Request(method.upper(), session.get_url(url, params), headers)
     if json is not None and not isinstance(json, JSONContent):
         data = JSONContent(json)
@@ -150,6 +182,9 @@ async def request(
             content = FormContent(data)
         req = req.with_content(content)
     resp = ResponseWrapper(await session.send(req))
+    resp_cookies = resp.cookies
+    if cookies is not None and resp_cookies:
+        update_cookies(cookies, resp_cookies) # type: ignore
     if resp.status >= 400:
         raise HTTPException(resp.status, resp.reason)
     if parse is None or parse is ...:
