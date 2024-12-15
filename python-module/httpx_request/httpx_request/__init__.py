@@ -2,22 +2,25 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 1)
 __all__ = ["request", "request_sync", "request_async"]
 
-from asyncio import create_task, get_running_loop, run, run_coroutine_threadsafe
+from asyncio import get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing, closing
-from inspect import isawaitable
+from inspect import isawaitable, signature
 from json import loads
 from types import EllipsisType
-from typing import cast, overload, Any, Literal, TypeVar
+from typing import cast, overload, Any, Literal
 
 from argtools import argcount
 from httpx import AsyncHTTPTransport, HTTPTransport
-from httpx._types import AuthTypes, CertTypes, ProxyTypes, ProxiesTypes, SyncByteStream, URLTypes, VerifyTypes
+from httpx._types import AuthTypes, SyncByteStream, URLTypes
 from httpx._client import AsyncClient, Client, Response, UseClientDefault, USE_CLIENT_DEFAULT
 
+
+_BUILD_REQUEST_KWARGS = signature(Client.build_request).parameters.keys() - {"self"}
+_CLIENT_INIT_KWARGS = signature(Client).parameters.keys() - _BUILD_REQUEST_KWARGS
 
 if "__del__" not in Client.__dict__:
     setattr(Client, "__del__", Client.close)
@@ -58,41 +61,29 @@ def request_sync(
     url: URLTypes, 
     method: str = "GET", 
     # determine how to parse response data
-    parse: None | EllipsisType | bool | Callable = None, 
+    parse: None | bool | EllipsisType | Callable = None, 
     # raise for status
     raise_for_status: bool = True, 
-    # pass in a custom session instance
+    # pass in a Client instance
     session: None | Client = None, 
     # Client.send params
     auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
     follow_redirects: bool | UseClientDefault = True, 
-    # use Client.stream xor Client.request
     stream: bool = True, 
-    # Client.__init__ params
-    cert: None | CertTypes = None, 
-    proxy: None | ProxyTypes = None, 
-    proxies: None | ProxiesTypes = None, 
-    trust_env: bool = True, 
-    verify: VerifyTypes = True, 
     # Client.request params
     **request_kwargs, 
 ):
     if session is None:
-        session = Client(
-            cert=cert, 
-            proxy=proxy, 
-            proxies=proxies, 
-            trust_env=trust_env, 
-            verify=verify, 
-            transport=HTTPTransport(http2=True, retries=5), 
-        )
-    request = session.build_request(
-        method=method, 
-        url=url, 
-        **request_kwargs, 
-    )
+        init_kwargs = {k: v for k, v in request_kwargs.items() if k in _CLIENT_INIT_KWARGS}
+        if "transport" not in init_kwargs:
+            init_kwargs["transport"] = HTTPTransport(http2=True, retries=5)
+        session = Client(**init_kwargs)
     resp = session.send(
-        request=request, 
+        request=session.build_request(
+            method=method, 
+            url=url, 
+            **{k: v for k, v in request_kwargs.items() if k in _BUILD_REQUEST_KWARGS}, 
+        ), 
         auth=auth, 
         follow_redirects=follow_redirects, 
         stream=stream, 
@@ -129,40 +120,28 @@ async def request_async(
     url: URLTypes, 
     method: str = "GET", 
     # determine how to parse response data
-    parse: None | EllipsisType | bool | Callable = None, 
+    parse: None | bool | EllipsisType | Callable = None, 
     # raise for status
     raise_for_status: bool = True, 
-    # pass in a custom session instance
+    # pass in an AsyncClient instance
     session: None | AsyncClient = None, 
     # AsyncClient.send params
     auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
     follow_redirects: bool | UseClientDefault = True, 
-    # use AsyncClient.stream xor AsyncClient.request
     stream: bool = True, 
-    # Client.__init__ params
-    cert: None | CertTypes = None, 
-    proxy: None | ProxyTypes = None, 
-    proxies: None | ProxiesTypes = None, 
-    trust_env: bool = True, 
-    verify: VerifyTypes = True, 
     **request_kwargs, 
 ):
     if session is None:
-        session = AsyncClient(
-            cert=cert, 
-            proxy=proxy, 
-            proxies=proxies, 
-            trust_env=trust_env, 
-            verify=verify, 
-            transport=AsyncHTTPTransport(http2=True, retries=5), 
-        )
-    request = session.build_request(
-        method=method, 
-        url=url, 
-        **request_kwargs, 
-    )
+        init_kwargs = {k: v for k, v in request_kwargs.items() if k in _CLIENT_INIT_KWARGS}
+        if "transport" not in init_kwargs:
+            init_kwargs["transport"] = AsyncHTTPTransport(http2=True, retries=5)
+        session = AsyncClient(**init_kwargs)
     resp = await session.send(
-        request=request, 
+            request=session.build_request(
+            method=method, 
+            url=url, 
+            **{k: v for k, v in request_kwargs.items() if k in _BUILD_REQUEST_KWARGS}, 
+        ), 
         auth=auth, 
         follow_redirects=follow_redirects, 
         stream=stream, 
@@ -202,9 +181,9 @@ async def request_async(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: None | EllipsisType | bool | Callable = None, 
+    parse: None | bool | EllipsisType | Callable = None, 
     raise_for_status: bool = True, 
-    session: None | Client | AsyncClient = None, 
+    session: None | Client = None, 
     *, 
     async_: Literal[False] = False, 
     **request_kwargs, 
@@ -214,7 +193,7 @@ def request(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: None | EllipsisType | bool | Callable = None, 
+    parse: None | bool | EllipsisType | Callable = None, 
     raise_for_status: bool = True, 
     session: None | AsyncClient = None, 
     *, 
@@ -225,7 +204,7 @@ def request(
 def request(
     url: URLTypes, 
     method: str = "GET", 
-    parse: None | EllipsisType | bool | Callable = None, 
+    parse: None | bool | EllipsisType | Callable = None, 
     raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
     *, 

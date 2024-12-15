@@ -276,7 +276,7 @@ def make_application(
                     yield chunk
             finally:
                 await resp.aclose()
-        content_type = resp.headers.get("content-type", "")
+        content_type = resp.headers.get("content-type") or "application/octent-stream"
         headers = [
             (bytes(k, "latin-1"), bytes(v, "latin-1")) for k, v in resp.headers.items()
             if k not in ("access-control-allow-methods", "access-control-allow-origin", "date", "content-type", "transfer-encoding")

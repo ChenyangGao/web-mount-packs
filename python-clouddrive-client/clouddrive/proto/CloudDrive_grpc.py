@@ -11,6 +11,7 @@ if typing.TYPE_CHECKING:
 
 import google.protobuf.timestamp_pb2
 import google.protobuf.empty_pb2
+import google.protobuf.descriptor_pb2
 import CloudDrive_pb2
 
 
@@ -69,6 +70,18 @@ class CloudDriveFileSrvBase(abc.ABC):
         pass
 
     @abc.abstractmethod
+    async def CreateEncryptedFolder(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.CreateEncryptedFolderRequest, CloudDrive_pb2.CreateFolderResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def UnlockEncryptedFile(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.UnlockEncryptedFileRequest, CloudDrive_pb2.FileOperationResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def LockEncryptedFile(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.FileRequest, CloudDrive_pb2.FileOperationResult]') -> None:
+        pass
+
+    @abc.abstractmethod
     async def RenameFile(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.RenameFileRequest, CloudDrive_pb2.FileOperationResult]') -> None:
         pass
 
@@ -114,6 +127,10 @@ class CloudDriveFileSrvBase(abc.ABC):
 
     @abc.abstractmethod
     async def ListAllOfflineFiles(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.OfflineFileListAllRequest, CloudDrive_pb2.OfflineFileListAllResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def AddSharedLink(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.AddSharedLinkRequest, google.protobuf.empty_pb2.Empty]') -> None:
         pass
 
     @abc.abstractmethod
@@ -277,10 +294,6 @@ class CloudDriveFileSrvBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def APILoginPikPak(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.UserLoginRequest, CloudDrive_pb2.APILoginResult]') -> None:
-        pass
-
-    @abc.abstractmethod
     async def APILoginWebDav(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.LoginWebDavRequest, CloudDrive_pb2.APILoginResult]') -> None:
         pass
 
@@ -318,6 +331,10 @@ class CloudDriveFileSrvBase(abc.ABC):
 
     @abc.abstractmethod
     async def GetEffectiveDirCacheTimeSecs(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.GetEffectiveDirCacheTimeRequest, CloudDrive_pb2.GetEffectiveDirCacheTimeResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def ForceExpireDirCache(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.FileRequest, google.protobuf.empty_pb2.Empty]') -> None:
         pass
 
     @abc.abstractmethod
@@ -370,6 +387,10 @@ class CloudDriveFileSrvBase(abc.ABC):
 
     @abc.abstractmethod
     async def UpdateSystem(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, google.protobuf.empty_pb2.Empty]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def TestUpdate(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.FileRequest, google.protobuf.empty_pb2.Empty]') -> None:
         pass
 
     @abc.abstractmethod
@@ -504,6 +525,14 @@ class CloudDriveFileSrvBase(abc.ABC):
     async def KickoutDevice(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.DeviceRequest, google.protobuf.empty_pb2.Empty]') -> None:
         pass
 
+    @abc.abstractmethod
+    async def ListLogFiles(self, stream: 'grpclib.server.Stream[google.protobuf.empty_pb2.Empty, CloudDrive_pb2.ListLogFileResult]') -> None:
+        pass
+
+    @abc.abstractmethod
+    async def SyncFileChangesFromCloud(self, stream: 'grpclib.server.Stream[CloudDrive_pb2.FileRequest, CloudDrive_pb2.FileSystemChangeStatistics]') -> None:
+        pass
+
     def __mapping__(self) -> typing.Dict[str, grpclib.const.Handler]:
         return {
             '/clouddrive.CloudDriveFileSrv/GetSystemInfo': grpclib.const.Handler(
@@ -584,6 +613,24 @@ class CloudDriveFileSrvBase(abc.ABC):
                 CloudDrive_pb2.CreateFolderRequest,
                 CloudDrive_pb2.CreateFolderResult,
             ),
+            '/clouddrive.CloudDriveFileSrv/CreateEncryptedFolder': grpclib.const.Handler(
+                self.CreateEncryptedFolder,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.CreateEncryptedFolderRequest,
+                CloudDrive_pb2.CreateFolderResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/UnlockEncryptedFile': grpclib.const.Handler(
+                self.UnlockEncryptedFile,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.UnlockEncryptedFileRequest,
+                CloudDrive_pb2.FileOperationResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/LockEncryptedFile': grpclib.const.Handler(
+                self.LockEncryptedFile,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.FileRequest,
+                CloudDrive_pb2.FileOperationResult,
+            ),
             '/clouddrive.CloudDriveFileSrv/RenameFile': grpclib.const.Handler(
                 self.RenameFile,
                 grpclib.const.Cardinality.UNARY_UNARY,
@@ -655,6 +702,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 grpclib.const.Cardinality.UNARY_UNARY,
                 CloudDrive_pb2.OfflineFileListAllRequest,
                 CloudDrive_pb2.OfflineFileListAllResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/AddSharedLink': grpclib.const.Handler(
+                self.AddSharedLink,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.AddSharedLinkRequest,
+                google.protobuf.empty_pb2.Empty,
             ),
             '/clouddrive.CloudDriveFileSrv/GetFileDetailProperties': grpclib.const.Handler(
                 self.GetFileDetailProperties,
@@ -896,12 +949,6 @@ class CloudDriveFileSrvBase(abc.ABC):
                 google.protobuf.empty_pb2.Empty,
                 CloudDrive_pb2.QRCodeScanMessage,
             ),
-            '/clouddrive.CloudDriveFileSrv/APILoginPikPak': grpclib.const.Handler(
-                self.APILoginPikPak,
-                grpclib.const.Cardinality.UNARY_UNARY,
-                CloudDrive_pb2.UserLoginRequest,
-                CloudDrive_pb2.APILoginResult,
-            ),
             '/clouddrive.CloudDriveFileSrv/APILoginWebDav': grpclib.const.Handler(
                 self.APILoginWebDav,
                 grpclib.const.Cardinality.UNARY_UNARY,
@@ -961,6 +1008,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 grpclib.const.Cardinality.UNARY_UNARY,
                 CloudDrive_pb2.GetEffectiveDirCacheTimeRequest,
                 CloudDrive_pb2.GetEffectiveDirCacheTimeResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/ForceExpireDirCache': grpclib.const.Handler(
+                self.ForceExpireDirCache,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.FileRequest,
+                google.protobuf.empty_pb2.Empty,
             ),
             '/clouddrive.CloudDriveFileSrv/GetOpenFileTable': grpclib.const.Handler(
                 self.GetOpenFileTable,
@@ -1038,6 +1091,12 @@ class CloudDriveFileSrvBase(abc.ABC):
                 self.UpdateSystem,
                 grpclib.const.Cardinality.UNARY_UNARY,
                 google.protobuf.empty_pb2.Empty,
+                google.protobuf.empty_pb2.Empty,
+            ),
+            '/clouddrive.CloudDriveFileSrv/TestUpdate': grpclib.const.Handler(
+                self.TestUpdate,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.FileRequest,
                 google.protobuf.empty_pb2.Empty,
             ),
             '/clouddrive.CloudDriveFileSrv/GetMetaData': grpclib.const.Handler(
@@ -1238,6 +1297,18 @@ class CloudDriveFileSrvBase(abc.ABC):
                 CloudDrive_pb2.DeviceRequest,
                 google.protobuf.empty_pb2.Empty,
             ),
+            '/clouddrive.CloudDriveFileSrv/ListLogFiles': grpclib.const.Handler(
+                self.ListLogFiles,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                google.protobuf.empty_pb2.Empty,
+                CloudDrive_pb2.ListLogFileResult,
+            ),
+            '/clouddrive.CloudDriveFileSrv/SyncFileChangesFromCloud': grpclib.const.Handler(
+                self.SyncFileChangesFromCloud,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                CloudDrive_pb2.FileRequest,
+                CloudDrive_pb2.FileSystemChangeStatistics,
+            ),
         }
 
 
@@ -1322,6 +1393,24 @@ class CloudDriveFileSrvStub:
             CloudDrive_pb2.CreateFolderRequest,
             CloudDrive_pb2.CreateFolderResult,
         )
+        self.CreateEncryptedFolder = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/CreateEncryptedFolder',
+            CloudDrive_pb2.CreateEncryptedFolderRequest,
+            CloudDrive_pb2.CreateFolderResult,
+        )
+        self.UnlockEncryptedFile = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/UnlockEncryptedFile',
+            CloudDrive_pb2.UnlockEncryptedFileRequest,
+            CloudDrive_pb2.FileOperationResult,
+        )
+        self.LockEncryptedFile = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/LockEncryptedFile',
+            CloudDrive_pb2.FileRequest,
+            CloudDrive_pb2.FileOperationResult,
+        )
         self.RenameFile = grpclib.client.UnaryUnaryMethod(
             channel,
             '/clouddrive.CloudDriveFileSrv/RenameFile',
@@ -1393,6 +1482,12 @@ class CloudDriveFileSrvStub:
             '/clouddrive.CloudDriveFileSrv/ListAllOfflineFiles',
             CloudDrive_pb2.OfflineFileListAllRequest,
             CloudDrive_pb2.OfflineFileListAllResult,
+        )
+        self.AddSharedLink = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/AddSharedLink',
+            CloudDrive_pb2.AddSharedLinkRequest,
+            google.protobuf.empty_pb2.Empty,
         )
         self.GetFileDetailProperties = grpclib.client.UnaryUnaryMethod(
             channel,
@@ -1634,12 +1729,6 @@ class CloudDriveFileSrvStub:
             google.protobuf.empty_pb2.Empty,
             CloudDrive_pb2.QRCodeScanMessage,
         )
-        self.APILoginPikPak = grpclib.client.UnaryUnaryMethod(
-            channel,
-            '/clouddrive.CloudDriveFileSrv/APILoginPikPak',
-            CloudDrive_pb2.UserLoginRequest,
-            CloudDrive_pb2.APILoginResult,
-        )
         self.APILoginWebDav = grpclib.client.UnaryUnaryMethod(
             channel,
             '/clouddrive.CloudDriveFileSrv/APILoginWebDav',
@@ -1699,6 +1788,12 @@ class CloudDriveFileSrvStub:
             '/clouddrive.CloudDriveFileSrv/GetEffectiveDirCacheTimeSecs',
             CloudDrive_pb2.GetEffectiveDirCacheTimeRequest,
             CloudDrive_pb2.GetEffectiveDirCacheTimeResult,
+        )
+        self.ForceExpireDirCache = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/ForceExpireDirCache',
+            CloudDrive_pb2.FileRequest,
+            google.protobuf.empty_pb2.Empty,
         )
         self.GetOpenFileTable = grpclib.client.UnaryUnaryMethod(
             channel,
@@ -1776,6 +1871,12 @@ class CloudDriveFileSrvStub:
             channel,
             '/clouddrive.CloudDriveFileSrv/UpdateSystem',
             google.protobuf.empty_pb2.Empty,
+            google.protobuf.empty_pb2.Empty,
+        )
+        self.TestUpdate = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/TestUpdate',
+            CloudDrive_pb2.FileRequest,
             google.protobuf.empty_pb2.Empty,
         )
         self.GetMetaData = grpclib.client.UnaryUnaryMethod(
@@ -1975,4 +2076,16 @@ class CloudDriveFileSrvStub:
             '/clouddrive.CloudDriveFileSrv/KickoutDevice',
             CloudDrive_pb2.DeviceRequest,
             google.protobuf.empty_pb2.Empty,
+        )
+        self.ListLogFiles = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/ListLogFiles',
+            google.protobuf.empty_pb2.Empty,
+            CloudDrive_pb2.ListLogFileResult,
+        )
+        self.SyncFileChangesFromCloud = grpclib.client.UnaryUnaryMethod(
+            channel,
+            '/clouddrive.CloudDriveFileSrv/SyncFileChangesFromCloud',
+            CloudDrive_pb2.FileRequest,
+            CloudDrive_pb2.FileSystemChangeStatistics,
         )

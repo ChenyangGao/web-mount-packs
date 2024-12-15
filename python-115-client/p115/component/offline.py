@@ -17,7 +17,7 @@ from typing import overload, Any, Final, Literal, Self
 
 from asynctools import async_any, to_list
 from dictattr import AttrDict
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, YieldFrom
 from p115client import check_response
 from undefined import undefined
 
@@ -60,10 +60,9 @@ class P115OfflineClearEnum(Enum):
 
 class P115Offline:
     "离线任务列表"
-    __slots__ = "client", "_sign_time", "request", "async_request"
+    __slots__ = "client", "request", "async_request"
 
     client: P115Client
-    _sign_time: MappingProxyType
 
     def __init__(
         self, 
@@ -139,18 +138,6 @@ class P115Offline:
         return self.get_quota_package_info()
 
     @property
-    def sign_time(self, /) -> MappingProxyType:
-        "签名和时间等信息"
-        try:
-            sign_time = self._sign_time
-            if time() - sign_time["time"] < 30 * 60:
-                return sign_time
-        except AttributeError:
-            pass
-        sign_time = self._sign_time = self.get_sign_time()
-        return sign_time
-
-    @property
     def torrent_path(self, /) -> P115Path:
         "添加 BT 种子任务的默认上传路径"
         return self.get_torrent_path()
@@ -190,18 +177,17 @@ class P115Offline:
         payload: dict
         if isinstance(urls, str):
             payload = {"url": urls}
-            method = self.client.offline_add_url
+            offline_add_url = self.client.offline_add_url
         else:
             payload = {f"url[{i}]": url for i, url in enumerate(urls)}
             if not payload:
                 raise ValueError("no `url` specified")
-            method = self.client.offline_add_urls
-        payload.update(self.sign_time)
+            offline_add_url = self.client.offline_add_urls
         if pid is not None:
             payload["wp_path_id"] = pid
         if savepath:
             payload["savepath"] = savepath
-        return check_response(method( # type: ignore
+        return check_response(offline_add_url(
             payload, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
@@ -267,9 +253,7 @@ class P115Offline:
             }
             if pid is not None:
                 payload["wp_path_id"] = pid
-            payload.update(self.sign_time)
-            return check_response((yield partial(
-                self.client.offline_add_torrent, 
+            return check_response((yield self.client.offline_add_torrent(
                 payload, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -311,8 +295,9 @@ class P115Offline:
             - 全部+删除源文件: 5, 'failed_and_files', P115OfflineClearEnum.failed_and_files
         """
         flag = P115OfflineClearEnum.of(flag)
-        return check_response(self.client.offline_clear( # type: ignore
+        return check_response(self.client.offline_clear(
             flag.value, 
+            base_url=True, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
@@ -365,10 +350,10 @@ class P115Offline:
         async_: Literal[False, True] = False, 
     ) -> int | Coroutine[Any, Any, int]:
         def gen_step():
-            resp = yield partial(
-                self.client.offline_list, 
+            resp = yield self.client.offline_list(
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
-                async_=async_, 
+                async_=async_, # type: ignore
             )
             return check_response(resp)["count"]
         return run_gen_step(gen_step, async_=async_)
@@ -394,8 +379,8 @@ class P115Offline:
     ) -> list[dict] | Coroutine[Any, Any, list[dict]]:
         "离线下载的目录列表"
         def gen_step():
-            resp = yield partial(
-                self.client.offline_download_path, 
+            resp = yield self.client.offline_download_path(
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -454,7 +439,8 @@ class P115Offline:
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "获取关于离线的限制的信息"
-        return check_response(self.client.offline_info( # type: ignore
+        return check_response(self.client.offline_info(
+            base_url=True, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
@@ -479,7 +465,8 @@ class P115Offline:
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "获取当前离线配额信息（简略）"
-        return check_response(self.client.offline_quota_info( # type: ignore
+        return check_response(self.client.offline_quota_info(
+            base_url=True, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
@@ -504,35 +491,11 @@ class P115Offline:
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "获取当前离线配额信息（详细）"
-        return check_response(self.client.offline_quota_package_info( # type: ignore
+        return check_response(self.client.offline_quota_package_info(
+            base_url=True, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
-
-    @overload
-    def get_sign_time(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-    ) -> MappingProxyType:
-        ...
-    @overload
-    def get_sign_time(
-        self, 
-        /, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, MappingProxyType]:
-        ...
-    def get_sign_time(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-    ) -> MappingProxyType | Coroutine[Any, Any, MappingProxyType]:
-        "签名和时间等信息"
-        def gen_step():
-            info = yield partial(self.get_info, async_=async_)
-            return MappingProxyType({"sign": info["sign"], "time": info["time"]})
-        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def get_torrent_path(
@@ -556,8 +519,8 @@ class P115Offline:
         "添加 BT 种子任务的默认上传路径"
         client = self.client
         def gen_step():
-            resp = yield partial(
-                client.offline_upload_torrent_path, 
+            resp = yield client.offline_upload_torrent_path(
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -631,51 +594,32 @@ class P115Offline:
         """迭代获取离线任务
         :start_page: 开始页数，从 1 开始计数，迭代从这个页数开始，到最大页数结束
         """
-        if start_page < 1:
-            page = 1
-        else:
-            page = start_page
-        method = self.client.offline_list
-        if async_:
-            async def request():
-                nonlocal page
-                count = 0 
-                while True:
-                    resp = await method(
-                        page, 
-                        async_=True, 
-                        request=self.async_request, 
-                    )
-                    check_response(resp)
-                    if not count:
-                        count = resp["count"]
-                    elif count != resp["count"]:
-                        raise RuntimeError("detected count changes during iteration")
-                    if not resp["tasks"]:
-                        return
-                    for attr in resp["tasks"]:
-                        yield normalize_attr(attr)
-                    if page >= resp["page_count"]:
-                        return
-                    page += 1
-        else:
-            def request():
-                nonlocal page
-                count = 0
-                while True:
-                    resp = check_response(method(page, request=self.request))
-                    if not count:
-                        count = resp["count"]
-                    elif count != resp["count"]:
-                        raise RuntimeError("detected count changes during iteration")
-                    if not resp["tasks"]:
-                        return
-                    for attr in resp["tasks"]:
-                        yield normalize_attr(attr)
-                    if page >= resp["page_count"]:
-                        return
-                    page += 1
-        return request()
+        offline_list = partial(
+            self.client.offline_list, 
+            base_url=True, 
+            async_=async_, 
+            request=self.async_request if async_ else self.request, 
+        )
+        def gen_step():
+            if start_page < 1:
+                page = 1
+            else:
+                page = start_page
+            count = 0
+            while True:
+                resp = yield offline_list(page)
+                check_response(resp)
+                if not count:
+                    count = resp["count"]
+                elif count != resp["count"]:
+                    raise RuntimeError("detected count changes during iteration")
+                if not resp["tasks"]:
+                    return
+                yield YieldFrom(map(normalize_attr, resp["tasks"]), identity=True)
+                if page >= resp["page_count"]:
+                    return
+                page += 1
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def list(
@@ -711,9 +655,9 @@ class P115Offline:
                     return (yield partial(to_list, self.iter(async_=True)))
                 else:
                     return list(self.iter())
-            resp = yield partial(
-                self.client.offline_list, 
+            resp = yield self.client.offline_list(
                 page, 
+                base_url=True, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -761,8 +705,7 @@ class P115Offline:
                 raise ValueError("no `hash` specified")
         if remove_files:
             payload["flag"] = "1"
-        payload.update(self.sign_time)
-        return check_response(self.client.offline_remove( # type: ignore
+        return check_response(self.client.offline_remove(
             payload, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
@@ -798,6 +741,12 @@ class P115Offline:
                 - 种子文件的 sha1，但要求这个种子曾被人上传到 115
             - int: 种子文件在你的网盘上的文件 id
         """
+        get_torrent_info = partial(
+            self.client.offline_torrent_info, 
+            base_url=True, 
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+        )
         def gen_step():
             torrent = None
             if isinstance(torrent_or_magnet_or_sha1_or_fid, int):
@@ -822,37 +771,24 @@ class P115Offline:
             else:
                 sha = torrent_or_magnet_or_sha1_or_fid
             if torrent is None:
-                resp = check_response((yield partial(
-                    self.client.offline_torrent_info, 
-                    sha, 
-                    request=self.async_request if async_ else self.request, 
-                    async_=async_, 
-                )))
+                resp = yield get_torrent_info(sha)
+                check_response(resp)
             else:
                 sha = sha1(torrent).hexdigest()
                 try:
-                    resp = check_response((yield partial(
-                        self.client.offline_torrent_info, 
-                        sha, 
-                        request=self.async_request if async_ else self.request, 
-                        async_=async_, 
-                    )))
+                    resp = yield get_torrent_info(sha)
+                    check_response(resp)
                 except:
                     name = f"{sha}.torrent"
-                    check_response((yield partial(
-                        self.client.upload_file, 
+                    check_response((yield self.client.upload_file(
                         torrent, 
                         filename=name, 
                         upload_directly=True, 
                         request=self.async_request if async_ else self.request, 
                         async_=async_, 
                     )))
-                    resp = check_response((yield partial(
-                        self.client.offline_torrent_info, 
-                        sha, 
-                        request=self.async_request if async_ else self.request, 
-                        async_=async_, 
-                    )))
+                    resp = yield get_torrent_info(sha)
+                    check_response(resp)
             resp["sha1"] = sha
             return resp
         return run_gen_step(gen_step, async_=async_)

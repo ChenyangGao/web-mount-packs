@@ -11,7 +11,8 @@ import errno
 from asyncio import Lock as AsyncLock
 from collections import deque, UserString
 from collections.abc import (
-    AsyncIterator, Callable, Coroutine, ItemsView, Iterable, Iterator, Mapping, MutableMapping, Sequence, 
+    AsyncIterable, AsyncIterator, Callable, Coroutine, ItemsView, Iterable, Iterator, 
+    Mapping, MutableMapping, Sequence, 
 )
 from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper
@@ -790,8 +791,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def __setitem__(
         self, 
         id_or_path: IDOrPathType, 
-        file: ( None | str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( None | str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] ), 
         /, 
     ):
         if file is None:
@@ -1085,7 +1086,6 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         payload: None | int | dict = None, 
         /, 
         *, 
-        _g = cycle((True, False)).__next__, 
         async_: Literal[False, True] = False, 
     ) -> dict | Coroutine[Any, Any, dict]:
         if payload is None:
@@ -1097,9 +1097,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         else:
             id = int(payload["cid"])
         def gen_step():
-            resp = yield self.client.fs_files(
+            resp = yield self.client.fs_files_app(
                 payload, 
-                base_url=_g(), 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             )
@@ -1143,8 +1142,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def fs_upload(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] ), 
         name: str, 
         pid: None | int = None, 
         *, 
@@ -1155,8 +1154,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def fs_upload(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         name: str, 
         pid: None | int = None, 
         *, 
@@ -1166,8 +1165,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def fs_upload(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         name: str, 
         pid: None | int = None, 
         *, 
@@ -1317,7 +1316,9 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 if resp["count"] == 0:
                     mtime = 0
                 else:
-                    mtime = int(resp["data"][0]["te"])
+                    info = resp["data"][0]
+                    get_key = info.get
+                    mtime = int(get_key("te") or get_key("upt") or get_key("ptime") or get_key("user_ptime"))
                 attr: AttrDict = AttrDictWithAncestors(
                     is_directory=True, 
                     id=0, 
@@ -2167,14 +2168,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         filename=dst_name, 
                         filesize=src_attr["size"], 
                         filesha1=src_attr["sha1"], 
-                        read_range_bytes_or_hash=lambda rng: self.read_bytes_range(
+                        read_range_bytes_or_hash=lambda rng: self.read_bytes_range( # type: ignore
                             src_attr, 
                             bytes_range=rng, 
                             async_=async_, 
                         ), 
                         pid=dst_pid, 
                         request=self.async_request if async_ else self.request, 
-                        async_=async_, 
+                        async_=async_, # type: ignore
                     )
                     check_response(resp)
                     dst_name = resp["data"]["file_name"]
@@ -3566,14 +3567,14 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     filename=dst_name, 
                     filesize=src_attr["size"], 
                     filesha1=src_attr["sha1"], 
-                    read_range_bytes_or_hash=lambda rng: self.read_bytes_range(
+                    read_range_bytes_or_hash=lambda rng: self.read_bytes_range( # type: ignore
                         src_attr, 
                         bytes_range=rng, 
                         async_=async_, 
                     ), 
                     pid=dst_pid, 
                     request=self.async_request if async_ else self.request, 
-                    async_=async_, 
+                    async_=async_, # type: ignore
                 )
                 check_response(resp)
                 status = resp["status"]
@@ -3848,6 +3849,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         **payload, 
     ) -> Iterator[P115Path] | AsyncIterator[P115Path]:
         """搜索目录
+
         :param payload:
             - asc: 0 | 1 = <default> # 是否升序排列
             - count_folders: 0 | 1 = <default>
@@ -3865,7 +3867,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 # - 上次打开时间："user_otime"
             - offset: int = 0  # 索引偏移，索引从 0 开始计算
             - pick_code: str = <default>
-            - search_value: str = <default>
+            - search_value: str = "." # 搜索文本，可以是 sha1
             - show_dir: 0 | 1 = 1
             - source: str = <default>
             - star: 0 | 1 = <default>
@@ -3880,18 +3882,20 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 # - 压缩包: 5
                 # - 应用: 6
                 # - 书籍: 7
+                # - 仅文件: 99
         """
         if page_size <= 0:
             page_size = 1_000
         def gen_step():
             attr = yield self.attr(id_or_path, pid=pid, async_=async_)
-            payload["cid"] = attr["id"]
+            if attr["is_directory"]:
+                payload["cid"] = attr["id"]
+            else:
+                payload["cid"] = attr["parent_id"]
             payload["limit"] = page_size
             offset = int(payload.setdefault("offset", 0))
             if offset < 0:
                 payload["offset"] = 0
-            if not attr["is_directory"]:
-                payload.setdefault("search_value", attr["sha1"])
             search = self.fs_search
             while True:
                 resp = yield search(payload, async_=async_)
@@ -3900,7 +3904,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 data = resp["data"]
                 if not data:
                     return
-                for attr in resp["data"]:
+                for attr in data:
                     attr = normalize_attr(attr, dict_cls=AttrDictWithAncestors)
                     yield Yield(P115Path(self, attr), identity=True)
                 offset = payload["offset"] = offset + resp["page_size"]
@@ -4058,8 +4062,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def upload(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] ), 
         path: IDOrPathType = "", 
         pid: None | int = None, 
         overwrite: bool = False, 
@@ -4072,8 +4076,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
     def upload(
         self, 
         /, 
-        file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: IDOrPathType = "", 
         pid: None | int = None, 
         overwrite: bool = False, 
@@ -4086,7 +4090,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: IDOrPathType = "", 
         pid: None | int = None, 
         overwrite: bool = False, 
@@ -4307,7 +4311,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        data: Buffer | SupportsRead[Buffer] = b"", 
+        data: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] ) = b"", 
         pid: None | int = None, 
         *, 
         async_: Literal[False] = False, 
@@ -4318,7 +4323,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        data: Buffer | SupportsRead[Buffer] = b"", 
+        data: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ) = b"", 
         pid: None | int = None, 
         *, 
         async_: Literal[True], 
@@ -4328,13 +4334,20 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
         self, 
         id_or_path: IDOrPathType, 
         /, 
-        data: Buffer | SupportsRead[Buffer] = b"", 
+        data: ( str | PathLike | URL | SupportsGeturl | Buffer | 
+                SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ) = b"", 
         pid: None | int = None, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> AttrDictWithAncestors | Coroutine[Any, Any, AttrDictWithAncestors]:
         "向文件写入二进制数据，如果文件已存在则替换"
-        return self.upload(data, id_or_path, pid=pid, overwrite=True, async_=async_)
+        return self.upload(
+            data, # type: ignore
+            id_or_path, 
+            pid=pid, 
+            overwrite=True, 
+            async_=async_, # type: ignore
+        )
 
     @overload
     def write_text(

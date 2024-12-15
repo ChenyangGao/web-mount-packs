@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 1)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
@@ -30,6 +30,7 @@ from blacksheep.contents import Content
 from cookietools import cookies_str_to_dict
 from httpx import AsyncClient
 from orjson import dumps, loads
+from p115qrcode import qrcode_token, qrcode_scan, qrcode_scan_confirm, qrcode_result
 from reverse_proxy import make_application as make_application_base
 from yarl import URL
 
@@ -60,13 +61,15 @@ SSOENT_TO_APP = {
     "R2": "alipaymini",
     "S1": "harmony",
 }
-RELOGIN_115_LOCK_STORE: WeakValueDictionary[str, Lock] = WeakValueDictionary()
+USERID_TO_UID: dict[str, str] = {}
+USERID_AND_SSOENT_TO_COOKIES: dict[tuple[str, str], tuple[int, str, dict[str, str]]] = {}
+RELOGIN_115_LOCK_STORE: WeakValueDictionary[tuple[str, str], Lock] = WeakValueDictionary()
 CRE_charset_search = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
 CRE_copy_name_extract = re_compile(r"^copy \[(.*?)\]\(/(.*?)\) to \[(.*?)\]\(/(.*)\)$").fullmatch
 CRE_upload_name_extract = re_compile(r"^upload (.*?) to \[(.*?)\]\(/(.*)\)$").fullmatch
 CRE_transfer_name_extract = re_compile(r"^transfer (.*?) to \[(.*)\]$").fullmatch
 logging.basicConfig(format="[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) "
-                            "\x1b[0m\x1b[1;35malist-proxy\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s")
+                           "\x1b[0m\x1b[1;35malist-proxy\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s")
 
 
 def get_charset(content_type: str, default: str = "utf-8") -> str:
@@ -108,46 +111,62 @@ async def storage_of(client: AlistClient, path: str) -> None | dict:
 async def relogin_115(session: AsyncClient, cookies: str) -> None | str:
     """115 网盘，用一个被 405 风控的 cookies，获取一个新的 cookies
     """
-    ssoent = cookies_str_to_dict(cookies)["UID"].split("_")[1]
-    app = SSOENT_TO_APP.get(ssoent, "harmony")
+    cookies_dict = cookies_str_to_dict(cookies)
+    if "UID" not in cookies_dict:
+        return None
+    user_id, ssoent, mtime_str = cookies_dict["UID"].split("_")
+    mtime = int(mtime_str)
+    app = SSOENT_TO_APP.get(ssoent, "alipaymini")
+    uid = USERID_TO_UID.get(user_id, "")
+    if (user_id, ssoent) in USERID_AND_SSOENT_TO_COOKIES:
+        mtime0, cookies0, cookies_dict0 = USERID_AND_SSOENT_TO_COOKIES[(user_id, ssoent)]
+        if mtime < mtime0:
+            return cookies0
+    resp: dict = {}
+    if uid:
+        try:
+            resp = await qrcode_result(uid, app, session=session, async_=True)
+        except OSError:
+            pass
+    if not resp:
+        token = await qrcode_token(session=session, async_=True)
+        uid = token["uid"]
+        await qrcode_scan(uid, cookies, session=session, async_=True)
+        await qrcode_scan_confirm(uid, cookies, session=session, async_=True)
+        USERID_TO_UID[user_id] = uid
+        resp = await qrcode_result(uid, app, session=session, async_=True)
+    cookies_dict = resp["cookie"]
+    cookies = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
+    user_id, ssoent, mtime_str = cookies_dict["UID"].split("_")
+    USERID_AND_SSOENT_TO_COOKIES[(user_id, ssoent)] = (int(mtime_str), cookies, cookies_dict)
+    return cookies
 
-    async def urlopen(url, method="GET", **request_kwargs):
-        resp = await session.request(method=method, url=url, **request_kwargs)
-        json = resp.json()
-        if not json["state"]:
-            raise OSError(json)
-        return json
 
-    qrcode_token_api = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
-    resp = await urlopen(qrcode_token_api)
-    uid = resp["data"]["uid"]
-
-    qrcode_scan_api = f"https://qrcodeapi.115.com/api/2.0/prompt.php?uid={uid}"
-    await urlopen(qrcode_scan_api, headers={"Cookie": cookies})
-
-    qrcode_confirm_api = "https://hnqrcodeapi.115.com/api/2.0/slogin.php"
-    await urlopen(qrcode_confirm_api, params={"key": uid, "uid": uid, "client": 0}, headers={"Cookie": cookies})
-
-    qrcode_result_api = f"https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/"
-    resp = await urlopen(qrcode_result_api, "POST", data={"account": uid})
-
-    return "; ".join(f"{k}={v}" for k, v in resp["data"]["cookie"].items())
-
-
-# TODO: 需要进一步优化，加快执行速度
-async def update_115_cookies(client: AlistClient, path: str, session: AsyncClient):
+async def update_115_cookies(
+    client: AlistClient, 
+    path: str, 
+    session: AsyncClient, 
+) -> bool:
     """115 网盘，更新某个路径所对应存储的 cookies，必须仅是被 405 风控
     """
     storage = await storage_of(client, path)
-    if not storage or storage["driver"] != "115 Cloud":
-        return
+    if not storage or storage["driver"] not in ("115 Cloud", "115 Share"):
+        return False
     addition = loads(storage["addition"])
     cookies = addition["cookie"]
-    async with RELOGIN_115_LOCK_STORE.setdefault(storage["mount_path"], Lock()):
-        if cookies == addition["cookie"]:
-            addition["cookie"] = await relogin_115(session, addition["cookie"])
-            storage["addition"] = dumps(addition).decode("utf-8")
-            client.admin_storage_update(storage)
+    cookies_dict = cookies_str_to_dict(cookies)
+    if "UID" not in cookies_dict:
+        return False
+    user_id, ssoent, _ = cookies_dict["UID"].split("_")
+    async with RELOGIN_115_LOCK_STORE.setdefault((user_id, ssoent), Lock()):
+        cookies = await relogin_115(session, cookies)
+        if not cookies:
+            return False
+        addition["cookie"] = cookies
+        storage["addition"] = dumps(addition).decode("utf-8")
+        storage.pop("status", None)
+        client.admin_storage_update(storage)
+        return True
 
 
 def make_application(
@@ -301,8 +320,9 @@ def make_application(
                         try:
                             resp = await client.fs_list({"path": alist_path}, async_=True)
                             if resp["code"] == 500 and "<title>405</title>" in resp["message"]:
-                                await update_115_cookies(client, alist_path, session)
-                                continue
+                                if await update_115_cookies(client, alist_path, session):
+                                    continue
+                                break
                         except Exception:
                             pass
                         break
@@ -319,12 +339,12 @@ def make_application(
                                 "<title>405</title>" in resp["message"]
                             ):
                                 try:
-                                    await update_115_cookies(
+                                    if await update_115_cookies(
                                         client, 
                                         result["request"]["json"]["path"], 
                                         session, 
-                                    )
-                                    continue
+                                    ):
+                                        continue
                                 except Exception:
                                     pass
                         elif path == "api/fs/get":

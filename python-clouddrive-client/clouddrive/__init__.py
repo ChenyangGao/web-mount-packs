@@ -11,7 +11,7 @@ This is a web API wrapper works with the running "CloudDrive" server, and provid
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 12, 3)
+__version__ = (0, 0, 12, 4)
 __all__ = [
     "CLOUDDRIVE_API_MAP", "CloudDriveClient", "CloudDrivePath", "CloudDriveFileSystem", 
     "CloudDriveDownloadTaskList", "CloudDriveUploadTaskList", 

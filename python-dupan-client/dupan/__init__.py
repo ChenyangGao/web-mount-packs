@@ -708,6 +708,7 @@ class DuPanClient:
         data:
             - fsidlist: str # JSON array
             - path: str = "/"
+            - type: int = 1
         """
         api = "https://pan.baidu.com/share/transfer"
         sl = DuPanShareList(url)
@@ -725,19 +726,19 @@ class DuPanClient:
             **params, 
         }
         if data is None:
-            fsidlist = "[%s]" % ",".join(f["fs_id"] for f in sl.list_index())
-            data = {"fsidlist": fsidlist, "path": "/"}
+            data = {"fsidlist": "[%s]" % ",".join(f["fs_id"] for f in sl.list_index())}
         elif isinstance(data, str):
-            data = {"fsidlist": data, "path": "/"}
+            data = {"fsidlist": data}
         elif isinstance(data, int):
-            data = {"fsidlist": "[%s]" % data, "path": "/"}
+            data = {"fsidlist": "[%s]" % data}
         elif isinstance(data, (list, tuple)):
-            data = {"fsidlist": "[%s]" % ",".join(map(str, data)), "path": "/"}
-        else:
-            if "fsidlist" not in data:
-                data["fsidlist"] = "[%s]" % ",".join(f["fs_id"] for f in sl.list_index())
-            elif isinstance(data["fsidlist"], (list, tuple)):
-                data["fsidlist"] = "[%s]" % ",".join(map(str, data["fsidlist"]))
+            data = {"fsidlist": "[%s]" % ",".join(map(str, data))}
+        elif "fsidlist" not in data:
+            data["fsidlist"] = "[%s]" % ",".join(f["fs_id"] for f in sl.list_index())
+        elif isinstance(data["fsidlist"], (list, tuple)):
+            data["fsidlist"] = "[%s]" % ",".join(map(str, data["fsidlist"]))
+        data.setdefault("path", "/")
+        data.setdefault("type", 1)
         request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), "Referer": url}
         return self.request(api, "POST", params=params, data=data, **request_kwargs)
 

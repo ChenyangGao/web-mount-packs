@@ -16,13 +16,12 @@ from hashlib import sha256
 from hmac import new as hmac_new
 from http.cookiejar import CookieJar
 from inspect import iscoroutinefunction
-from json import loads
 from os import fsdecode, fstat, PathLike
 from typing import overload, Any, Literal, Self
 from urllib.parse import quote
 
 from asynctools import ensure_aiter, to_list
-from Crypto.Hash.MD4 import MD4Hash
+from ed2k import ed2k_hash, ed2k_hash_async
 from filewrap import (
     bio_chunk_iter, bio_chunk_async_iter, 
     bytes_to_chunk_iter, bytes_to_chunk_async_iter, 
@@ -35,47 +34,12 @@ from httpx import AsyncClient, Client, Cookies, AsyncHTTPTransport, HTTPTranspor
 from httpx_request import request
 from iterutils import run_gen_step
 from multidict import CIMultiDict
+from orjson import loads
 from yarl import URL
 
 
 parse_json = lambda _, content: loads(content)
 httpx_request = partial(request, timeout=(5, 60, 60, 5))
-
-
-def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
-    block_size = 1024 * 9500
-    if hasattr(file, "getbuffer"):
-        file = file.getbuffer()
-    if isinstance(file, Buffer):
-        chunk_iter = bytes_to_chunk_iter(block_size, chunksize=block_size)
-    else:
-        chunk_iter = bio_chunk_iter(file, chunksize=block_size, can_buffer=True)
-    block_hashes = bytearray()
-    filesize = 0
-    for chunk in chunk_iter:
-        block_hashes += MD4Hash(chunk).digest()
-        filesize += len(chunk)
-    if not filesize % block_size:
-        block_hashes += MD4Hash().digest()
-    return filesize, MD4Hash(block_hashes).hexdigest()
-
-
-async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
-    block_size = 1024 * 9500
-    if hasattr(file, "getbuffer"):
-        file = file.getbuffer()
-    if isinstance(file, Buffer):
-        chunk_iter = bytes_to_chunk_async_iter(block_size, chunksize=block_size)
-    else:
-        chunk_iter = bio_chunk_async_iter(file, chunksize=block_size, can_buffer=True)
-    block_hashes = bytearray()
-    filesize = 0
-    async for chunk in chunk_iter:
-        block_hashes += MD4Hash(chunk).digest()
-        filesize += len(chunk)
-    if not filesize % block_size:
-        block_hashes += MD4Hash().digest()
-    return filesize, MD4Hash(block_hashes).hexdigest()
 
 
 @overload

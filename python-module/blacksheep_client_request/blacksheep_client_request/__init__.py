@@ -109,7 +109,7 @@ async def request(
     data: Any = None, 
     json: Any = None, 
     headers: None | Mapping | Iterable[tuple[Any, Any]] = None, 
-     parse: None | EllipsisType | bool | Callable = None, 
+    parse: None | EllipsisType | bool | Callable = None, 
     raise_for_status: bool = True, 
     session: None | ClientSession = None, 
 ):

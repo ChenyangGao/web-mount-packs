@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["encode_uri", "encode_uri_component", "encode_uri_component_loose"]
 
 from urllib.parse import quote
@@ -50,9 +50,9 @@ def encode_uri_component(
             safe += safe_extra
         return quote(uri, safe)
     if html_escape:
-        transtab = TRANSTAB_ESCAPE4_AND_HTML
+        transtab = TRANSTAB_ESCAPE5_AND_HTML
     else:
-        transtab = TRANSTAB_ESCAPE4
+        transtab = TRANSTAB_ESCAPE5
     if safe_extra:
         transtab = transtab | {c: f"%{c:02x}" for c in map(ord, safe_extra)}
     return translate(uri, transtab)

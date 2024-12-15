@@ -50,9 +50,9 @@ from collections import deque
 from re import compile as re_compile, MULTILINE
 from textwrap import dedent, indent
 
-CRE_message_finditer = re_compile("(?P<comment>(?:^//.*\n)*)^(?P<type>message|enum) (?P<name>\w+)", MULTILINE).finditer
+CRE_message_finditer = re_compile("(?P<comment>(?:^//.*\n)*)^(?P<type>message|enum) (?P<name>\\w+)", MULTILINE).finditer
 
-CRE_rpc_finditer = re_compile("(?P<comment>(?:^[ \t]*//.*\n)*)^[ \t]*rpc[ \t](?P<method>\w+)\((?:(?P<argspec>\w+)[ \t]+)?(?P<argtype>[^)]+)\)[^(]+\((?:(?P<retspec>\w+)[ \t]+)?(?P<rettype>[^)]+)\)[^}]+\}", MULTILINE).finditer
+CRE_rpc_finditer = re_compile("(?P<comment>(?:^[ \t]*//.*\n)*)^[ \t]*rpc[ \t](?P<method>\\w+)\\((?:(?P<argspec>\\w+)[ \t]+)?(?P<argtype>[^)]+)\\)[^(]+\\((?:(?P<retspec>\\w+)[ \t]+)?(?P<rettype>[^)]+)\\)[^}]+\\}", MULTILINE).finditer
 CRE_field_finditer = re_compile(r'^[ \t]*(?:(?P<spec>\w+)\s+)?(?P<type>[^=;]+)\s+(?P<name>\w+)(?:\s*=\s*(?P<value>\d+))?\s*;', MULTILINE).finditer
 CRE_decorative_line_sub = re_compile("^[ \t]*//.*\n|^[ \t]*\n", MULTILINE).sub
 CRE_comment_prefix_sub = re_compile("^ *// *", MULTILINE).sub

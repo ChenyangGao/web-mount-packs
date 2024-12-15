@@ -1,5 +1,0 @@
-cheroot
-python-115
-PyYAML
-watchdog
-WsgiDAV

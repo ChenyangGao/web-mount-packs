@@ -1,4 +1,4 @@
-// 0.7.10
+// 0.8.5
 
 syntax = "proto3";
 
@@ -8,6 +8,14 @@ option csharp_namespace = "CloudDriveSrv.Protos";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
+import "google/protobuf/descriptor.proto";
+
+// Define a custom option for versioning.
+extend google.protobuf.FileOptions {
+  string version = 50001;
+}
+
+option (version) = "0.8.5";
 
 service CloudDriveFileSrv {
   // public methods, no authorization is required
@@ -40,6 +48,12 @@ service CloudDriveFileSrv {
   rpc FindFileByPath(FindFileByPathRequest) returns (CloudDriveFile) {}
   // create a folder under path
   rpc CreateFolder(CreateFolderRequest) returns (CreateFolderResult) {}
+  // create an encrypted folder under path
+  rpc CreateEncryptedFolder(CreateEncryptedFolderRequest) returns (CreateFolderResult) {}
+  // unlock an encrypted folder/file by setting password
+  rpc UnlockEncryptedFile(UnlockEncryptedFileRequest) returns (FileOperationResult) {}
+  // lock an encrypted folder/file by clearing password
+  rpc LockEncryptedFile(FileRequest) returns (FileOperationResult) {}
   // rename a single file
   rpc RenameFile(RenameFileRequest) returns (FileOperationResult) {}
   // batch rename files
@@ -67,6 +81,8 @@ service CloudDriveFileSrv {
   // list all offline files of a cloud with pagination
   rpc ListAllOfflineFiles(OfflineFileListAllRequest)
       returns (OfflineFileListAllResult) {}
+  // add shared link to a folder
+  rpc AddSharedLink(AddSharedLinkRequest) returns (google.protobuf.Empty) {}
   // get folder properties, applies only with folders with hasDetailProperties
   // is true
   rpc GetFileDetailProperties(FileRequest) returns (FileDetailProperties) {}
@@ -176,7 +192,7 @@ service CloudDriveFileSrv {
   rpc APILogin189QRCode(google.protobuf.Empty)
       returns (stream QRCodeScanMessage) {}
   // add PikPak cloud with username and password
-  rpc APILoginPikPak(UserLoginRequest) returns (APILoginResult) {}
+  // rpc APILoginPikPak(UserLoginRequest) returns (APILoginResult) {}
   // add webdav
   rpc APILoginWebDav(LoginWebDavRequest) returns (APILoginResult) {}
   // add local folder
@@ -199,7 +215,9 @@ service CloudDriveFileSrv {
       returns (google.protobuf.Empty) {}
   // get dir cache time in effect (default value will be returned)
   rpc GetEffectiveDirCacheTimeSecs(GetEffectiveDirCacheTimeRequest)
-      returns (GetEffectiveDirCacheTimeResult) {}
+  returns (GetEffectiveDirCacheTimeResult) {}
+  // force expire dir cache recursively
+  rpc ForceExpireDirCache(FileRequest) returns (google.protobuf.Empty) {}
   // get open file table
   rpc GetOpenFileTable(GetOpenFileTableRequest) returns (OpenFileTable) {}
   // get dir cache table
@@ -231,6 +249,8 @@ service CloudDriveFileSrv {
   rpc DownloadUpdate(google.protobuf.Empty) returns (google.protobuf.Empty) {}
   // update to newest version
   rpc UpdateSystem(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  // test update process
+  rpc TestUpdate(FileRequest) returns (google.protobuf.Empty) {}
   // get file metadata
   rpc GetMetaData(FileRequest) returns (FileMetaData) {}
   // get file's original path from search result
@@ -306,6 +326,10 @@ service CloudDriveFileSrv {
   rpc GetOnlineDevices(google.protobuf.Empty) returns (OnlineDevices) {}
   // kickout a device
   rpc KickoutDevice(DeviceRequest) returns (google.protobuf.Empty) {} // kickout a device with deviceId
+  // list log file names
+  rpc ListLogFiles(google.protobuf.Empty) returns (ListLogFileResult) {}
+  // sync file changes from cloud
+  rpc SyncFileChangesFromCloud(FileRequest) returns (FileSystemChangeStatistics) {}
 }
 message GetTokenRequest {
   string userName = 1;
@@ -350,7 +374,7 @@ message RemoveOfflineFilesRequest {
 }
 message AddSharedLinkRequest {
   string sharedLinkUrl = 1;
-  string sharedPassword = 2;
+  optional string sharedPassword = 2;
   string toFolder = 3;
 }
 message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
@@ -362,6 +386,17 @@ message FindFileByPathRequest {
 message CreateFolderRequest {
   string parentPath = 1;
   string folderName = 2;
+}
+message CreateEncryptedFolderRequest {
+  string parentPath = 1;
+  string folderName = 2;
+  string password = 3;
+  bool savePassword = 4; //if true, password will be saved to db, else unlock is required after restart
+}
+message UnlockEncryptedFileRequest {
+  string path = 1;
+  string password = 2;
+  bool permanentUnlock = 3; //if true, password will be saved to db, else unlock is required after restart
 }
 message CreateFolderResult {
   CloudDriveFile folderCreated = 1;
@@ -375,8 +410,14 @@ message CreateFileRequest {
 message CreateFileResult { uint64 fileHandle = 1; }
 message CloseFileRequest { uint64 fileHandle = 1; }
 message MoveFileRequest {
+  enum ConflictPolicy {
+    Overwrite = 0;
+    Rename = 1;
+    Skip = 2;
+  }
   repeated string theFilePaths = 1;
   string destPath = 2;
+  optional ConflictPolicy conflictPolicy = 3;
 }
 message CopyFileRequest {
   repeated string theFilePaths = 1;
@@ -440,6 +481,15 @@ message CloudDriveFile {
     PikPakSha1 = 3;
   }
   map<uint32, string> fileHashes = 70;
+  enum FileEncryptionType {
+    None = 0; // not encrypted
+    Encrypted = 1; // encrypted, password not provided, a password is required to unlock the file 
+    Unlocked = 2; // encrypted but but password is provided, can access the file
+  }
+  FileEncryptionType fileEncryptionType = 71;
+  bool CanCreateEncryptedFolder = 72;
+  bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+  bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
 }
 
 message SpaceInfo {
@@ -453,6 +503,9 @@ message CloudAPI {
   string nickName = 3;
   bool isLocked = 4; // isLocked means the cloudAPI is set to can't open files,
                      // due to user's membership issue
+  bool supportMultiThreadUploading = 5;
+  bool supportQpsLimit = 6;
+  bool isCloudEventListenerRunning = 7;
 }
 message CloudMembership {
   string identity = 1;
@@ -584,7 +637,9 @@ message FileSystemChange {
   bool isDirectory = 2;
   string path = 3;
   //only used for RENAME type
-  string newPath = 4;
+  optional string newPath = 4;
+  //not available for DELETE type
+  optional CloudDriveFile theFile = 5;
 }
 message UpdateStatus {
   enum UpdatePhase {
@@ -621,6 +676,16 @@ message ExitedMessage {
 message FileSystemChangeList {
   repeated FileSystemChange fileSystemChanges = 1;
 }
+message MountPointChange {
+  enum ActionType {
+    MOUNT = 0;
+    UNMOUNT = 1;
+  }
+  ActionType actionType = 1;
+  string mountPoint = 2;
+  bool success = 3;
+  string failReason = 4;
+}
 message CloudDrivePushMessage {
   enum MessageType {
     DOWNLOADER_COUNT = 0;
@@ -628,13 +693,15 @@ message CloudDrivePushMessage {
     UPDATE_STATUS = 2;
     FORCE_EXIT = 3;
     FILE_SYSTEM_CHANGE = 4;
+    MOUNT_POINT_CHANGE = 5;
   }
   MessageType messageType = 1;
   oneof data {
     TransferTaskStatus transferTaskStatus = 2;
     UpdateStatus updateStatus = 3;
     ExitedMessage exitedMessage = 4;
-    FileSystemChangeList fileSystemChanges = 5;
+    FileSystemChange fileSystemChange = 5;
+    MountPointChange mountPointChange = 6;
   }
 }
 message GetDownloadFileCountResult { uint32 fileCount = 1; }
@@ -645,6 +712,7 @@ message DownloadFileInfo {
   uint32 downloadThreadCount = 4;
   repeated string process = 5;
   string detailDownloadInfo = 6;
+  optional string lastDownloadError = 7;
 }
 message GetDownloadFileListResult {
   double globalBytesPerSecond = 1;
@@ -757,6 +825,7 @@ message CloudAPIConfig {
   optional ProxyInfo apiProxy = 8;
   optional ProxyInfo dataProxy = 9;
   optional string customUserAgent = 10;
+  optional uint32 maxUploadThreads = 11;
 }
 message SetCloudAPIConfigRequest {
   string cloudName = 1;
@@ -783,6 +852,13 @@ enum UpdateChannel {
   Release = 0;
   Beta = 1;
 }
+enum LogLevel {
+  Trace = 0;
+  Debug = 1;
+  Info = 2;
+  Warn = 3;
+  Error = 4;
+}
 message SystemSettings {
   // 0 means never expire, will live forever
   optional uint64 dirCacheTimeToLiveSecs = 1;
@@ -802,6 +878,9 @@ message SystemSettings {
   optional string deviceName = 13;
   optional bool dirCachePersistence = 14;
   optional string dirCacheDbLocation = 15;
+  optional LogLevel fileLogLevel = 16;
+  optional LogLevel terminalLogLevel = 17;
+  optional LogLevel backupLogLevel = 18;
 }
 message SetDirCacheTimeRequest {
   string path = 1;
@@ -857,6 +936,9 @@ message PaymentInfo {
   string user_id = 1;
   string plan_id = 2;
   map<string, string> paymentMethods = 3;
+  optional string coupon_code = 4;
+  optional string machine_id = 5;
+  optional string check_code = 6;
 }
 message JoinPlanResult {
   bool success = 1;
@@ -1068,4 +1150,17 @@ message OnlineDevices {
 }
 message DeviceRequest {
   string deviceId = 1;
+}
+message LogFileRecord {
+  string fileName = 1;
+  google.protobuf.Timestamp lastModifiedTime = 2;
+  uint64 fileSize = 3;
+}
+message ListLogFileResult {
+  repeated LogFileRecord logFiles = 1;
+}
+message FileSystemChangeStatistics {
+  uint64 createCount = 1;
+  uint64 deleteCount = 2;
+  uint64 renameCount = 3;
 }

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "alist_proxy"
-version = "0.0.9.1"
+version = "0.1"
 description = "Python alist proxy and monitor."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,19 +26,20 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 aiosqlite = "*"
 blacksheep = "*"
 httpx = "*"
 orjson = "*"
 motor = "*"
+p115qrcode = ">=0.0.2"
+python-alist = ">=0.0.13.6"
+python-reverse-proxy = ">=0.0.6"
+python-cookietools = ">=0.0.2"
+python-dateutil = "*"
 redis = "*"
 uvicorn = "*"
 yarl = "*"
-python-alist = ">=0.0.13"
-python-reverse-proxy = ">=0.0.5"
-python-cookietools = ">=0.0.2"
-python-dateutil = "*"
 
 [tool.poetry.scripts]
 alist-proxy = "alist_proxy.__main__:main"

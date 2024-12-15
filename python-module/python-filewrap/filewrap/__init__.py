@@ -7,7 +7,7 @@
 # TODO: AsyncTextIOWrapper.readline 有大量的字符串拼接操作，效率极低，需用 str.joins 方法优化
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 5)
+__version__ = (0, 2, 6)
 __all__ = [
     "Buffer", "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", 
@@ -22,6 +22,7 @@ __all__ = [
     "copyfileobj", "copyfileobj_async", 
 ]
 
+from array import array
 from asyncio import to_thread, Lock as AsyncLock
 from collections.abc import Awaitable, AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sized
 from functools import update_wrapper
@@ -69,6 +70,19 @@ class VirtualBufferedReader:
 CRE_NOT_UNIX_NEWLINES_sub = re_compile("\r\n|\r").sub
 
 
+def buffer_length(b: Buffer, /) -> int:
+    if isinstance(b, Sized):
+        return len(b)
+    else:
+        return len(memoryview(b))
+
+
+def ensure_bytes(b: Buffer, /) -> array | bytes | bytearray | memoryview:
+    if isinstance(b, (array, bytes, bytearray, memoryview)):
+        return b
+    return memoryview(b)
+
+
 @runtime_checkable
 class SupportsRead(Protocol[_T_co]):
     def read(self, /, __length: int = ...) -> _T_co: ...
@@ -92,9 +106,9 @@ class SupportsSeek(Protocol):
 # TODO: 一些特定编码的 bom 用字典写死，编码名可以规范化，用 codecs.lookup(encoding).name
 def get_bom(encoding: str) -> bytes:
     code = memoryview(bytes("a", encoding))
-    if len(code) == 1:
+    if buffer_length(code) == 1:
         return b""
-    for i in range(1, len(code)):
+    for i in range(1, buffer_length(code)):
         try:
             str(code[:i], encoding)
             return code[:i].tobytes()
@@ -227,13 +241,13 @@ class AsyncBufferedReader(BufferedReader):
             self._pos += buf_size
             buf_size += await self.readinto(buffer_view[buf_size:])
             return buffer_view[:buf_size].tobytes()
-        BUFSIZE = len(buf_view)
+        BUFSIZE = buffer_length(buf_view)
         read = ensure_async(self.raw.read, threaded=True)
         buffer = bytearray(buf_view[buf_pos:buf_stop])
         try:
             while data := await read(BUFSIZE):
                 buffer += data
-                length = len(data)
+                length = buffer_length(data)
                 self._pos += length
                 if BUFSIZE == length:
                     buf_view[:] = data
@@ -279,9 +293,9 @@ class AsyncBufferedReader(BufferedReader):
             raise
         prev_data = buf_view[buf_pos:buf_stop].tobytes()
         if data:
-            BUFSIZE = len(buf_view)
-            length = len(data)
-            self._pos += len(prev_data) + length
+            BUFSIZE = buffer_length(buf_view)
+            length = buffer_length(data)
+            self._pos += buffer_length(prev_data) + length
             if BUFSIZE <= length:
                 buf_view[:] = memoryview(data)[-BUFSIZE:]
                 self._buf_pos = self._buf_stop = BUFSIZE
@@ -302,7 +316,7 @@ class AsyncBufferedReader(BufferedReader):
     async def readinto(self, buffer, /) -> int: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        size = len(buffer)
+        size = buffer_length(buffer)
         if size == 0:
             return 0
         buf_view = self._buf_view
@@ -320,14 +334,14 @@ class AsyncBufferedReader(BufferedReader):
         except AttributeError:
             read = ensure_async(self.raw.read, threaded=True)
             async def readinto(buffer, /) -> int:
-                data = await read(len(buffer))
+                data = await read(buffer_length(buffer))
                 if data:
-                    size = len(data)
+                    size = buffer_length(data)
                     buffer[:size] = data
                     return size
                 else:
                     return 0
-        BUFSIZE = len(buf_view)
+        BUFSIZE = buffer_length(buf_view)
         buffer_view = memoryview(buffer)
         buffer_view[:buf_size] = buf_view[buf_pos:buf_stop]
         buf_pos = self._buf_pos = buf_stop
@@ -350,7 +364,7 @@ class AsyncBufferedReader(BufferedReader):
                         break
                     if length < BUFSIZE:
                         part1, part2 = buf_view[length:].tobytes(), buf_view[:length].tobytes()
-                        index = len(part1)
+                        index = buffer_length(part1)
                         buf_view[:index] = part1
                         buf_view[index:] = part2
                         running = False
@@ -374,7 +388,7 @@ class AsyncBufferedReader(BufferedReader):
     async def readinto1(self, buffer, /) -> int: # type: ignore
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        size = len(buffer)
+        size = buffer_length(buffer)
         if size == 0:
             return 0
         buf_view = self._buf_view
@@ -392,14 +406,14 @@ class AsyncBufferedReader(BufferedReader):
         except AttributeError:
             read = ensure_async(self.raw.read, threaded=True)
             async def readinto(buffer, /) -> int:
-                data = await read(len(buffer))
+                data = await read(buffer_length(buffer))
                 if data:
-                    size = len(data)
+                    size = buffer_length(data)
                     buffer[:size] = data
                     return size
                 else:
                     return 0
-        BUFSIZE = len(buf_view)
+        BUFSIZE = buffer_length(buf_view)
         buffer_view = memoryview(buffer)
         buffer_view[:buf_size] = buf_view[buf_pos:buf_stop]
         buf_pos = self._buf_pos = buf_stop
@@ -412,7 +426,7 @@ class AsyncBufferedReader(BufferedReader):
             self.calibrate()
             raise
         if length:
-            BUFSIZE = len(buf_view)
+            BUFSIZE = buffer_length(buf_view)
             buffer_pos += length
             self._pos += length
             if BUFSIZE <= buffer_pos:
@@ -486,10 +500,10 @@ class AsyncBufferedReader(BufferedReader):
             self.calibrate()
             raise
         buf_view = self._buf_view
-        BUFSIZE = len(buf_view)
-        length = len(data)
+        BUFSIZE = buffer_length(buf_view)
+        length = buffer_length(data)
         prev_data = buf_view[buf_pos:buf_stop].tobytes()
-        self._pos += len(prev_data) + length
+        self._pos += buffer_length(prev_data) + length
         if BUFSIZE <= length:
             buf_view[:] = memoryview(data)[-BUFSIZE:]
             self._buf_pos = self._buf_stop = BUFSIZE
@@ -517,7 +531,7 @@ class AsyncBufferedReader(BufferedReader):
         else:
             while hint > 0 and (line := await readline()):
                 append(line)
-                hint -= len(line)
+                hint -= buffer_length(line)
         return lines
 
     async def seek(self, target: int, whence: int = 0, /) -> int: # type: ignore
@@ -632,7 +646,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
             data = await read(size)
         if not isinstance(data, Sized):
             data = memoryview(data)
-        if size < 0 or len(cast(Sized, data)) < size:
+        if size < 0 or buffer_length(data) < size:
             text = str(data, encoding, errors)
             if newline is None:
                 text = CRE_NOT_UNIX_NEWLINES_sub("\n", text)
@@ -650,7 +664,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
         if not isinstance(data, Sized):
             data = memoryview(data)
         cache = bytes(data)
-        while size and len(cast(Sized, data)) == size:
+        while size and buffer_length(data) == size:
             while cache:
                 try:
                     size -= process_part(cache)
@@ -660,11 +674,11 @@ class AsyncTextIOWrapper(TextIOWrapper):
                     if start:
                         size -= process_part(cache[:start])
                     if e.reason == "truncated data":
-                        if stop == len(cache):
+                        if stop == buffer_length(cache):
                             cache = cache[start:]
                             break
                         else:
-                            while stop < len(cache):
+                            while stop < buffer_length(cache):
                                 stop += 1
                                 try:
                                     size -= process_part(cache[start:stop])
@@ -675,13 +689,13 @@ class AsyncTextIOWrapper(TextIOWrapper):
                                     e = exc
                                     if e.reason != "truncated data":
                                         break
-                                    if stop == len(cache):
+                                    if stop == buffer_length(cache):
                                         cache = cache[start:]
                                         break_this_loop = True
                                         break
                             if break_this_loop:
                                 break
-                    elif e.reason == "unexpected end of data" and stop == len(cache):
+                    elif e.reason == "unexpected end of data" and stop == buffer_length(cache):
                         cache = cache[start:]
                         break
                     if errors == "strict":
@@ -721,7 +735,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
             if bom := self._bom:
                 crb = crb.removeprefix(bom)
                 lfb = lfb.removeprefix(bom)
-            lfb_len = len(lfb)
+            lfb_len = buffer_length(lfb)
         buf = bytearray()
         text = ""
         reach_end = False
@@ -743,7 +757,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
                                 buf += lfb
                             elif peek_maybe_lfb:
                                 # TODO: 这是一个提前量，未必需要立即往回 seek，因为转换为 str 后可能尾部不是 \r（因为可以和前面的符号结合），所以这个可能可以被复用，如果需要优化，可以在程序结束时的 finally 部分最终执行 seek（可能最终字符被消耗所以不需要 seek）
-                                o = len(cast(Sized, peek_maybe_lfb))
+                                o = buffer_length(peek_maybe_lfb)
                                 await seek(-o, 1)
                                 if o < lfb_len:
                                     reach_end = True
@@ -752,23 +766,23 @@ class AsyncTextIOWrapper(TextIOWrapper):
                         reach_end = True
                 else:
                     while True:
-                        buf_stop = len(buf)
+                        buf_stop = buffer_length(buf)
                         peek_b = peek()
                         if peek_b:
                             buf += peek_b
                         if newline:
                             if (idx := buf.find(sepb)) > -1:
-                                idx += len(sepb)
+                                idx += buffer_length(sepb)
                                 await read(idx - buf_stop)
                                 del buf[idx:]
                                 break
                         elif (idx := buf.find(lfb)) > -1:
-                            idx += len(lfb)
+                            idx += buffer_length(lfb)
                             await read(idx - buf_stop)
                             del buf[idx:]
                             break
                         elif (idx := buf.find(crb)) > -1:
-                            idx += len(crb)
+                            idx += buffer_length(crb)
                             await read(idx - buf_stop)
                             if buf.startswith(lfb, idx):
                                 await read(lfb_len)
@@ -777,7 +791,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
                                 del buf[idx:]
                             break
                         if peek_b:
-                            await read(len(peek_b))
+                            await read(buffer_length(peek_b))
                         c = await read(1)
                         if not c:
                             reach_end = True
@@ -792,11 +806,11 @@ class AsyncTextIOWrapper(TextIOWrapper):
                         if start:
                             text += str(buf[:start], encoding)
                         if e.reason == "truncated data":
-                            if stop == len(buf):
+                            if stop == buffer_length(buf):
                                 buf = buf[start:]
                                 break
                             else:
-                                while stop < len(buf):
+                                while stop < buffer_length(buf):
                                     stop += 1
                                     try:
                                         text += str(buf[start:stop], encoding)
@@ -807,13 +821,13 @@ class AsyncTextIOWrapper(TextIOWrapper):
                                         e = exc
                                         if e.reason != "truncated data":
                                             break
-                                        if stop == len(buf):
+                                        if stop == buffer_length(buf):
                                             buf = buf[start:]
                                             break_this_loop = True
                                             break
                                 if break_this_loop:
                                     break
-                        if e.reason == "unexpected end of data" and stop == len(buf):
+                        if e.reason == "unexpected end of data" and stop == buffer_length(buf):
                             buf = buf[start:]
                             break
                         if errors == "strict":
@@ -854,7 +868,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
                             if peek_maybe_lfb == lfb:
                                 buf += lfb
                             elif peek_maybe_lfb:
-                                o = len(cast(Sized, peek_maybe_lfb))
+                                o = buffer_length(peek_maybe_lfb)
                                 await seek(-o, 1)
                                 if o < lfb_len:
                                     reach_end = True
@@ -863,15 +877,15 @@ class AsyncTextIOWrapper(TextIOWrapper):
                         reach_end = True
                 else:
                     while rem:
-                        buf_stop = len(buf)
+                        buf_stop = buffer_length(buf)
                         peek_b = peek()
                         if peek_b:
-                            if len(peek_b) >= rem:
+                            if buffer_length(peek_b) >= rem:
                                 buf += peek_b[:rem]
                                 rem = 0
                             else:
                                 buf += peek_b
-                                rem -= len(peek_b)
+                                rem -= buffer_length(peek_b)
                         if newline:
                             if (idx := buf.find(sepb)) > -1:
                                 idx += 1
@@ -907,7 +921,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
                         start, stop = e.start, e.end
                         if start:
                             text += str(buf[:start], encoding)
-                        if e.reason in ("unexpected end of data", "truncated data") and stop == len(buf):
+                        if e.reason in ("unexpected end of data", "truncated data") and stop == buffer_length(buf):
                             buf = buf[start:]
                             break
                         if errors == "strict":
@@ -1028,7 +1042,7 @@ def bio_chunk_iter(
                 length = readinto(buf)
                 if callback:
                     callback(length)
-                if length < len(buf):
+                if length < buffer_length(buf):
                     del buf[length:]
                     yield buf
                     break
@@ -1048,7 +1062,7 @@ def bio_chunk_iter(
             while size:
                 readsize = min(chunksize, size)
                 chunk = read(readsize)
-                length = len(chunk)
+                length = buffer_length(chunk)
                 if callback:
                     callback(length)
                 yield chunk
@@ -1058,12 +1072,12 @@ def bio_chunk_iter(
         elif size < 0:
             while (chunk := read(chunksize)):
                 if callback:
-                    callback(len(chunk))
+                    callback(buffer_length(chunk))
                 yield chunk
 
 
 async def bio_chunk_async_iter(
-    bio: SupportsRead[Buffer] | SupportsReadinto | Callable[[int], Buffer | Awaitable[Buffer]], 
+    bio: SupportsRead[Buffer] | SupportsRead[Awaitable[Buffer]] | SupportsReadinto | Callable[[int], Buffer | Awaitable[Buffer]], 
     /, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
@@ -1096,7 +1110,7 @@ async def bio_chunk_async_iter(
                 length = await readinto(buf)
                 if callback:
                     await callback(length)
-                if length < len(buf):
+                if length < buffer_length(buf):
                     del buf[length:]
                     yield buf
                     break
@@ -1116,7 +1130,7 @@ async def bio_chunk_async_iter(
             while size:
                 readsize = min(chunksize, size)
                 chunk = await read(readsize)
-                length = len(chunk)
+                length = buffer_length(chunk)
                 if callback:
                     await callback(length)
                 yield chunk
@@ -1126,7 +1140,7 @@ async def bio_chunk_async_iter(
         elif size < 0:
             while (chunk := (await read(chunksize))):
                 if callback:
-                    await callback(len(chunk))
+                    await callback(buffer_length(chunk))
                 yield chunk
 
 
@@ -1183,7 +1197,7 @@ def bio_skip_iter(
         if size > 0:
             while size:
                 readsize = min(chunksize, size)
-                length = len(read(readsize))
+                length = buffer_length(read(readsize))
                 if callback:
                     callback(length)
                 yield length
@@ -1191,7 +1205,7 @@ def bio_skip_iter(
                     break
                 size -= readsize
         else:
-            while (length := len(read(chunksize))):
+            while (length := buffer_length(read(chunksize))):
                 if callback:
                     callback(length)
                 yield length
@@ -1202,7 +1216,7 @@ def bio_skip_iter(
 
 
 async def bio_skip_async_iter(
-    bio: SupportsRead[Buffer] | SupportsReadinto | Callable[[int], Buffer | Awaitable[Buffer]], 
+    bio: SupportsRead[Buffer] | SupportsRead[Awaitable[Buffer]] | SupportsReadinto | Callable[[int], Buffer | Awaitable[Buffer]], 
     /, 
     size: int = -1, 
     chunksize: int = COPY_BUFSIZE, 
@@ -1253,7 +1267,7 @@ async def bio_skip_async_iter(
         if size > 0:
             while size:
                 readsize = min(chunksize, size)
-                length = len(await read(readsize))
+                length = buffer_length(await read(readsize))
                 if callback:
                     await callback(length)
                 yield length
@@ -1261,7 +1275,7 @@ async def bio_skip_async_iter(
                     break
                 size -= readsize
         else:
-            while (length := len(await read(chunksize))):
+            while (length := buffer_length(await read(chunksize))):
                 if callback:
                     await callback(length)
                 yield length
@@ -1284,7 +1298,7 @@ def bytes_iter(
     elif size == 0:
         return
     for b in it:
-        l = len(b)
+        l = buffer_length(b)
         if l <= size:
             yield b
             if callback is not None:
@@ -1316,7 +1330,7 @@ async def bytes_async_iter(
         return
     callback = ensure_async(callback) if callable(callback) else None
     async for b in it:
-        l = len(b)
+        l = buffer_length(b)
         if l <= size:
             yield b
             if callback is not None:
@@ -1345,7 +1359,7 @@ def bytes_iter_skip(
         callback = None
     m: memoryview
     for m in map(memoryview, it): # type: ignore
-        l = len(m)
+        l = buffer_length(m)
         if callback:
             callback(min(l, size))
         if l == size:
@@ -1370,7 +1384,7 @@ async def bytes_async_iter_skip(
     callback = ensure_async(callback) if callable(callback) else None
     async for b in it:
         m = memoryview(b)
-        l = len(m)
+        l = buffer_length(m)
         if callback:
             await callback(min(l, size))
         if l == size:
@@ -1419,23 +1433,23 @@ def bytes_iter_to_reader(
                     while True:
                         unconsumed += getnext()
                 else:
-                    while n > len(unconsumed):
+                    while n > buffer_length(unconsumed):
                         unconsumed += getnext()
                     b, unconsumed = unconsumed[:n], unconsumed[n:]
-                    pos += len(b)
+                    pos += buffer_length(b)
                     return b
             except StopIteration:
                 at_end = True
                 b = unconsumed[:]
                 del unconsumed[:]
-                pos += len(b)
+                pos += buffer_length(b)
                 return b
     def readinto(buf, /) -> int:
         nonlocal pos, at_end, unconsumed
-        if at_end or not (bufsize := len(buf)):
+        if at_end or not (bufsize := buffer_length(buf)):
             return 0
         with lock:
-            n = len(unconsumed)
+            n = buffer_length(unconsumed)
             if bufsize <= n:
                 buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
                 pos += bufsize
@@ -1444,10 +1458,10 @@ def bytes_iter_to_reader(
             del unconsumed[:]
             try:
                 while True:
-                    b = getnext()
+                    b = ensure_bytes(getnext())
                     if not b:
                         continue
-                    m = n + len(b)
+                    m = n + buffer_length(b)
                     if m >= bufsize:
                         buf[n:] = b[:bufsize-n]
                         unconsumed += b[bufsize-n:]
@@ -1455,7 +1469,7 @@ def bytes_iter_to_reader(
                         return bufsize
                     else:
                         buf[n:m] = b
-                        pos += len(b)
+                        pos += buffer_length(b)
                         n = m
             except StopIteration:
                 at_end = True
@@ -1475,12 +1489,12 @@ def bytes_iter_to_reader(
                         b, unconsumed = unconsumed[:idx], unconsumed[idx:]
                         pos += idx
                         return b
-                if n > 0 and len(unconsumed) >= n:
+                if n > 0 and buffer_length(unconsumed) >= n:
                     b, unconsumed = unconsumed[:n], unconsumed[n:]
                     pos += n
                     return b
             try:
-                start = len(unconsumed)
+                start = buffer_length(unconsumed)
                 while True:
                     r = getnext()
                     if not r:
@@ -1492,7 +1506,7 @@ def bytes_iter_to_reader(
                             b, unconsumed = unconsumed[:idx], unconsumed[idx:]
                             pos += idx
                             return b
-                    start = len(unconsumed)
+                    start = buffer_length(unconsumed)
                     if n > 0 and start >= n:
                         b, unconsumed = unconsumed[:n], unconsumed[n:]
                         pos += n
@@ -1502,7 +1516,7 @@ def bytes_iter_to_reader(
                 if unconsumed:
                     b = unconsumed[:]
                     del unconsumed[:]
-                    pos += len(b)
+                    pos += buffer_length(b)
                     return b
                 raise
     def readlines(hint: int = -1, /) -> list[bytearray]:
@@ -1516,7 +1530,7 @@ def bytes_iter_to_reader(
         else:
             while hint > 0 and (line := readline()):
                 append(line)
-                hint -= len(line)
+                hint -= buffer_length(line)
         return lines
     def __next__() -> bytearray:
         if at_end or not (b := readline()):
@@ -1546,7 +1560,7 @@ def bytes_iter_to_async_reader(
     it: Iterable[Buffer] | AsyncIterable[Buffer], 
     /, 
     threaded: bool = True, 
-) -> SupportsRead[bytearray]:
+) -> SupportsRead[Awaitable[bytearray]]:
     if isinstance(it, AsyncIterable):
         getnext = aiter(it).__anext__
     else:
@@ -1596,23 +1610,23 @@ def bytes_iter_to_async_reader(
                     while True:
                         unconsumed += await getnext()
                 else:
-                    while n > len(unconsumed):
+                    while n > buffer_length(unconsumed):
                         unconsumed += await getnext()
                     b, unconsumed = unconsumed[:n], unconsumed[n:]
-                    pos += len(b)
+                    pos += buffer_length(b)
                     return b
             except (StopIteration, StopAsyncIteration):
                 at_end = True
                 b = unconsumed[:]
                 del unconsumed[:]
-                pos += len(b)
+                pos += buffer_length(b)
                 return b
     async def readinto(buf, /) -> int:
         nonlocal pos, at_end, unconsumed
-        if at_end or not (bufsize := len(buf)):
+        if at_end or not (bufsize := buffer_length(buf)):
             return 0
         async with lock:
-            n = len(unconsumed)
+            n = buffer_length(unconsumed)
             if bufsize <= n:
                 buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
                 pos += bufsize
@@ -1621,10 +1635,10 @@ def bytes_iter_to_async_reader(
             del unconsumed[:]
             try:
                 while True:
-                    b = await getnext()
+                    b = ensure_bytes(await getnext())
                     if not b:
                         continue
-                    m = n + len(b)
+                    m = n + buffer_length(b)
                     if m >= bufsize:
                         buf[n:] = b[:bufsize-n]
                         unconsumed += b[bufsize-n:]
@@ -1632,7 +1646,7 @@ def bytes_iter_to_async_reader(
                         return bufsize
                     else:
                         buf[n:m] = b
-                        pos += len(b)
+                        pos += buffer_length(b)
                         n = m
             except (StopIteration, StopAsyncIteration):
                 at_end = True
@@ -1652,12 +1666,12 @@ def bytes_iter_to_async_reader(
                         b, unconsumed = unconsumed[:idx], unconsumed[idx:]
                         pos += idx
                         return b
-                if n > 0 and len(unconsumed) >= n:
+                if n > 0 and buffer_length(unconsumed) >= n:
                     b, unconsumed = unconsumed[:n], unconsumed[n:]
                     pos += n
                     return b
             try:
-                start = len(unconsumed)
+                start = buffer_length(unconsumed)
                 while True:
                     r = await getnext()
                     if not r:
@@ -1669,7 +1683,7 @@ def bytes_iter_to_async_reader(
                             b, unconsumed = unconsumed[:idx], unconsumed[idx:]
                             pos += idx
                             return b
-                    start = len(unconsumed)
+                    start = buffer_length(unconsumed)
                     if n > 0 and start >= n:
                         b, unconsumed = unconsumed[:n], unconsumed[n:]
                         pos += n
@@ -1679,7 +1693,7 @@ def bytes_iter_to_async_reader(
                 if unconsumed:
                     b = unconsumed[:]
                     del unconsumed[:]
-                    pos += len(b)
+                    pos += buffer_length(b)
                     return b
                 raise
     async def readlines(hint: int = -1, /) -> list[bytearray]:
@@ -1696,7 +1710,7 @@ def bytes_iter_to_async_reader(
             else:
                 while hint > 0 and (line := await readline()):
                     append(line)
-                    hint -= len(line)
+                    hint -= buffer_length(line)
         return lines
     async def __anext__() -> bytearray:
         if at_end or not (b := await readline()):
@@ -1729,7 +1743,7 @@ def bytes_to_chunk_iter(
     chunksize: int = COPY_BUFSIZE, 
 ) -> Iterator[memoryview]:
     m = memoryview(b)
-    for i in range(0, len(m), chunksize):
+    for i in range(0, buffer_length(m), chunksize):
         yield m[i:i+chunksize]
 
 
@@ -1739,7 +1753,7 @@ async def bytes_to_chunk_async_iter(
     chunksize: int = COPY_BUFSIZE, 
 ) -> AsyncIterator[memoryview]:
     m = memoryview(b)
-    for i in range(0, len(m), chunksize):
+    for i in range(0, buffer_length(m), chunksize):
         yield m[i:i+chunksize]
 
 
@@ -1751,7 +1765,7 @@ def bytes_ensure_part_iter(
     n = partsize
     for b in it:
         m = memoryview(b)
-        l = len(m)
+        l = buffer_length(m)
         if l <= n:
             yield b
             if l == n:
@@ -1761,12 +1775,12 @@ def bytes_ensure_part_iter(
         else:
             yield m[:n]
             m = m[n:]
-            while len(m) >= partsize:
+            while buffer_length(m) >= partsize:
                 yield m[:partsize]
                 m = m[partsize:]
             if m:
                 yield m
-                n = partsize - len(m)
+                n = partsize - buffer_length(m)
             else:
                 n = partsize
 
@@ -1779,7 +1793,7 @@ async def bytes_ensure_part_async_iter(
     n = partsize
     async for b in ensure_aiter(it):
         m = memoryview(b)
-        l = len(m)
+        l = buffer_length(m)
         if l <= n:
             yield b
             if l == n:
@@ -1789,12 +1803,12 @@ async def bytes_ensure_part_async_iter(
         else:
             yield m[:n]
             m = m[n:]
-            while len(m) >= partsize:
+            while buffer_length(m) >= partsize:
                 yield m[:partsize]
                 m = m[partsize:]
             if m:
                 yield m
-                n = partsize - len(m)
+                n = partsize - buffer_length(m)
             else:
                 n = partsize
 
@@ -1823,7 +1837,7 @@ def progress_bytes_iter(
         if callable(update_progress):
             for chunk in it:
                 yield chunk
-                update_progress(len(chunk))
+                update_progress(buffer_length(chunk))
         else:
             for chunk in it:
                 yield chunk
@@ -1842,7 +1856,7 @@ async def progress_bytes_async_iter(
     update_progress: None | Callable = None
     close_progress: None | Callable = None
     if callable(it):
-        async def wrapiter(it) -> Buffer:
+        async def wrapiter(it) -> AsyncIterator[Buffer]:
             while True:
                 chunk = it()
                 if isawaitable(chunk):
@@ -1870,7 +1884,7 @@ async def progress_bytes_async_iter(
             update_progress = ensure_async(update_progress)
             async for chunk in it:
                 yield chunk
-                await update_progress(len(chunk))
+                await update_progress(buffer_length(chunk))
         else:
             async for chunk in it:
                 yield chunk

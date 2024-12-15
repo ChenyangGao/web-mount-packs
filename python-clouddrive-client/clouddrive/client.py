@@ -37,6 +37,9 @@ CLOUDDRIVE_API_MAP = {
     "GetSearchResults": {"argument": clouddrive.pb2.SearchRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
     "FindFileByPath": {"argument": clouddrive.pb2.FindFileByPathRequest, "return": clouddrive.pb2.CloudDriveFile}, 
     "CreateFolder": {"argument": clouddrive.pb2.CreateFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
+    "CreateEncryptedFolder": {"argument": clouddrive.pb2.CreateEncryptedFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
+    "UnlockEncryptedFile": {"argument": clouddrive.pb2.UnlockEncryptedFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "LockEncryptedFile": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
     "RenameFile": {"argument": clouddrive.pb2.RenameFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
     "RenameFiles": {"argument": clouddrive.pb2.RenameFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
     "MoveFile": {"argument": clouddrive.pb2.MoveFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
@@ -49,6 +52,7 @@ CLOUDDRIVE_API_MAP = {
     "RemoveOfflineFiles": {"argument": clouddrive.pb2.RemoveOfflineFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
     "ListOfflineFilesByPath": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.OfflineFileListResult}, 
     "ListAllOfflineFiles": {"argument": clouddrive.pb2.OfflineFileListAllRequest, "return": clouddrive.pb2.OfflineFileListAllResult}, 
+    "AddSharedLink": {"argument": clouddrive.pb2.AddSharedLinkRequest}, 
     "GetFileDetailProperties": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileDetailProperties}, 
     "GetSpaceInfo": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.SpaceInfo}, 
     "GetCloudMemberships": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.CloudMemberships}, 
@@ -89,7 +93,6 @@ CLOUDDRIVE_API_MAP = {
     "ApiLoginXunleiOAuth": {"argument": clouddrive.pb2.LoginXunleiOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
     "ApiLogin123panOAuth": {"argument": clouddrive.pb2.Login123panOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
     "APILogin189QRCode": {"return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
-    "APILoginPikPak": {"argument": clouddrive.pb2.UserLoginRequest, "return": clouddrive.pb2.APILoginResult}, 
     "APILoginWebDav": {"argument": clouddrive.pb2.LoginWebDavRequest, "return": clouddrive.pb2.APILoginResult}, 
     "APIAddLocalFolder": {"argument": clouddrive.pb2.AddLocalFolderRequest, "return": clouddrive.pb2.APILoginResult}, 
     "RemoveCloudAPI": {"argument": clouddrive.pb2.RemoveCloudAPIRequest, "return": clouddrive.pb2.FileOperationResult}, 
@@ -100,6 +103,7 @@ CLOUDDRIVE_API_MAP = {
     "SetSystemSettings": {"argument": clouddrive.pb2.SystemSettings}, 
     "SetDirCacheTimeSecs": {"argument": clouddrive.pb2.SetDirCacheTimeRequest}, 
     "GetEffectiveDirCacheTimeSecs": {"argument": clouddrive.pb2.GetEffectiveDirCacheTimeRequest, "return": clouddrive.pb2.GetEffectiveDirCacheTimeResult}, 
+    "ForceExpireDirCache": {"argument": clouddrive.pb2.FileRequest}, 
     "GetOpenFileTable": {"argument": clouddrive.pb2.GetOpenFileTableRequest, "return": clouddrive.pb2.OpenFileTable}, 
     "GetDirCacheTable": {"return": clouddrive.pb2.DirCacheTable}, 
     "GetReferencedEntryPaths": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringList}, 
@@ -113,6 +117,7 @@ CLOUDDRIVE_API_MAP = {
     "CheckUpdate": {"return": clouddrive.pb2.UpdateResult}, 
     "DownloadUpdate": {}, 
     "UpdateSystem": {}, 
+    "TestUpdate": {"argument": clouddrive.pb2.FileRequest}, 
     "GetMetaData": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileMetaData}, 
     "GetOriginalPath": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringResult}, 
     "ChangePassword": {"argument": clouddrive.pb2.ChangePasswordRequest, "return": clouddrive.pb2.FileOperationResult}, 
@@ -146,6 +151,8 @@ CLOUDDRIVE_API_MAP = {
     "GetMachineId": {"return": clouddrive.pb2.StringResult}, 
     "GetOnlineDevices": {"return": clouddrive.pb2.OnlineDevices}, 
     "KickoutDevice": {"argument": clouddrive.pb2.DeviceRequest}, 
+    "ListLogFiles": {"return": clouddrive.pb2.ListLogFileResult}, 
+    "SyncFileChangesFromCloud": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileSystemChangeStatistics}, 
 }
 
 
@@ -727,6 +734,15 @@ class Client:
             PikPakSha1 = 3;
           }
           map<uint32, string> fileHashes = 70;
+          enum FileEncryptionType {
+            None = 0; // not encrypted
+            Encrypted = 1; // encrypted, password not provided, a password is required to unlock the file 
+            Unlocked = 2; // encrypted but but password is provided, can access the file
+          }
+          FileEncryptionType fileEncryptionType = 71;
+          bool CanCreateEncryptedFolder = 72;
+          bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+          bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
         }
         message ListSubFileRequest {
           string path = 1;
@@ -817,6 +833,15 @@ class Client:
             PikPakSha1 = 3;
           }
           map<uint32, string> fileHashes = 70;
+          enum FileEncryptionType {
+            None = 0; // not encrypted
+            Encrypted = 1; // encrypted, password not provided, a password is required to unlock the file 
+            Unlocked = 2; // encrypted but but password is provided, can access the file
+          }
+          FileEncryptionType fileEncryptionType = 71;
+          bool CanCreateEncryptedFolder = 72;
+          bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+          bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
         }
         message SearchRequest {
           string path = 1;
@@ -869,6 +894,9 @@ class Client:
           string nickName = 3;
           bool isLocked = 4; // isLocked means the cloudAPI is set to can't open files,
                              // due to user's membership issue
+          bool supportMultiThreadUploading = 5;
+          bool supportQpsLimit = 6;
+          bool isCloudEventListenerRunning = 7;
         }
         message CloudDriveFile {
           string id = 1;
@@ -915,6 +943,15 @@ class Client:
             PikPakSha1 = 3;
           }
           map<uint32, string> fileHashes = 70;
+          enum FileEncryptionType {
+            None = 0; // not encrypted
+            Encrypted = 1; // encrypted, password not provided, a password is required to unlock the file 
+            Unlocked = 2; // encrypted but but password is provided, can access the file
+          }
+          FileEncryptionType fileEncryptionType = 71;
+          bool CanCreateEncryptedFolder = 72;
+          bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+          bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
         }
         message FileDetailProperties {
           int64 totalFileCount = 1;
@@ -1011,6 +1048,15 @@ class Client:
             PikPakSha1 = 3;
           }
           map<uint32, string> fileHashes = 70;
+          enum FileEncryptionType {
+            None = 0; // not encrypted
+            Encrypted = 1; // encrypted, password not provided, a password is required to unlock the file 
+            Unlocked = 2; // encrypted but but password is provided, can access the file
+          }
+          FileEncryptionType fileEncryptionType = 71;
+          bool CanCreateEncryptedFolder = 72;
+          bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+          bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
         }
         message CreateFolderRequest {
           string parentPath = 1;
@@ -1030,6 +1076,206 @@ class Client:
             return self.async_stub.CreateFolder(arg, metadata=self.metadata)
         else:
             return self.stub.CreateFolder(arg, metadata=self.metadata)
+
+    @overload
+    def CreateEncryptedFolder(
+        self, 
+        arg: clouddrive.pb2.CreateEncryptedFolderRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.CreateFolderResult:
+        ...
+    @overload
+    def CreateEncryptedFolder(
+        self, 
+        arg: clouddrive.pb2.CreateEncryptedFolderRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
+        ...
+    def CreateEncryptedFolder(
+        self, 
+        arg: clouddrive.pb2.CreateEncryptedFolderRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.CreateFolderResult | Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
+        """
+        create an encrypted folder under path
+
+        ------------------- protobuf rpc definition --------------------
+
+        // create an encrypted folder under path
+        rpc CreateEncryptedFolder(CreateEncryptedFolderRequest) returns (CreateFolderResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message CloudDriveFile {
+          string id = 1;
+          string name = 2;
+          string fullPathName = 3;
+          int64 size = 4;
+          enum FileType {
+            Directory = 0;
+            File = 1;
+            Other = 2;
+          }
+          FileType fileType = 5;
+          google.protobuf.Timestamp createTime = 6;
+          google.protobuf.Timestamp writeTime = 7;
+          google.protobuf.Timestamp accessTime = 8;
+          CloudAPI CloudAPI = 9;
+          string thumbnailUrl = 10;
+          string previewUrl = 11;
+          string originalPath = 14;
+
+          bool isDirectory = 30;
+          bool isRoot = 31;
+          bool isCloudRoot = 32;
+          bool isCloudDirectory = 33;
+          bool isCloudFile = 34;
+          bool isSearchResult = 35;
+          bool isForbidden = 36;
+          bool isLocal = 37;
+
+          bool canMount = 60;
+          bool canUnmount = 61;
+          bool canDirectAccessThumbnailURL = 62;
+          bool canSearch = 63;
+          bool hasDetailProperties = 64;
+          FileDetailProperties detailProperties = 65;
+          bool canOfflineDownload = 66;
+          bool canAddShareLink = 67;
+          optional uint64 dirCacheTimeToLiveSecs = 68;
+          bool canDeletePermanently = 69;
+          enum HashType {
+            Unknown = 0;
+            Md5 = 1;
+            Sha1 = 2;
+            PikPakSha1 = 3;
+          }
+          map<uint32, string> fileHashes = 70;
+          enum FileEncryptionType {
+            None = 0; // not encrypted
+            Encrypted = 1; // encrypted, password not provided, a password is required to unlock the file 
+            Unlocked = 2; // encrypted but but password is provided, can access the file
+          }
+          FileEncryptionType fileEncryptionType = 71;
+          bool CanCreateEncryptedFolder = 72;
+          bool CanLock = 73; // An unlocked encrypted file/folder can be locked
+          bool CanSyncFileChangesFromCloud = 74; // File change can be synced from cloud
+        }
+        message CreateEncryptedFolderRequest {
+          string parentPath = 1;
+          string folderName = 2;
+          string password = 3;
+          bool savePassword = 4; //if true, password will be saved to db, else unlock is required after restart
+        }
+        message CreateFolderResult {
+          CloudDriveFile folderCreated = 1;
+          FileOperationResult result = 2;
+        }
+        message FileOperationResult {
+          bool success = 1;
+          string errorMessage = 2;
+          repeated string resultFilePaths = 3;
+        }
+        """
+        if async_:
+            return self.async_stub.CreateEncryptedFolder(arg, metadata=self.metadata)
+        else:
+            return self.stub.CreateEncryptedFolder(arg, metadata=self.metadata)
+
+    @overload
+    def UnlockEncryptedFile(
+        self, 
+        arg: clouddrive.pb2.UnlockEncryptedFileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def UnlockEncryptedFile(
+        self, 
+        arg: clouddrive.pb2.UnlockEncryptedFileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def UnlockEncryptedFile(
+        self, 
+        arg: clouddrive.pb2.UnlockEncryptedFileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        """
+        unlock an encrypted folder/file by setting password
+
+        ------------------- protobuf rpc definition --------------------
+
+        // unlock an encrypted folder/file by setting password
+        rpc UnlockEncryptedFile(UnlockEncryptedFileRequest) returns (FileOperationResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message FileOperationResult {
+          bool success = 1;
+          string errorMessage = 2;
+          repeated string resultFilePaths = 3;
+        }
+        message UnlockEncryptedFileRequest {
+          string path = 1;
+          string password = 2;
+          bool permanentUnlock = 3; //if true, password will be saved to db, else unlock is required after restart
+        }
+        """
+        if async_:
+            return self.async_stub.UnlockEncryptedFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.UnlockEncryptedFile(arg, metadata=self.metadata)
+
+    @overload
+    def LockEncryptedFile(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileOperationResult:
+        ...
+    @overload
+    def LockEncryptedFile(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        ...
+    def LockEncryptedFile(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
+        """
+        lock an encrypted folder/file by clearing password
+
+        ------------------- protobuf rpc definition --------------------
+
+        // lock an encrypted folder/file by clearing password
+        rpc LockEncryptedFile(FileRequest) returns (FileOperationResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message FileOperationResult {
+          bool success = 1;
+          string errorMessage = 2;
+          repeated string resultFilePaths = 3;
+        }
+        message FileRequest { string path = 1; }
+        """
+        if async_:
+            return self.async_stub.LockEncryptedFile(arg, metadata=self.metadata)
+        else:
+            return self.stub.LockEncryptedFile(arg, metadata=self.metadata)
 
     @overload
     def RenameFile(
@@ -1164,8 +1410,14 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         message MoveFileRequest {
+          enum ConflictPolicy {
+            Overwrite = 0;
+            Rename = 1;
+            Skip = 2;
+          }
           repeated string theFilePaths = 1;
           string destPath = 2;
+          optional ConflictPolicy conflictPolicy = 3;
         }
         """
         if async_:
@@ -1621,6 +1873,53 @@ class Client:
             return self.async_stub.ListAllOfflineFiles(arg, metadata=self.metadata)
         else:
             return self.stub.ListAllOfflineFiles(arg, metadata=self.metadata)
+
+    @overload
+    def AddSharedLink(
+        self, 
+        arg: clouddrive.pb2.AddSharedLinkRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def AddSharedLink(
+        self, 
+        arg: clouddrive.pb2.AddSharedLinkRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def AddSharedLink(
+        self, 
+        arg: clouddrive.pb2.AddSharedLinkRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
+        """
+        add shared link to a folder
+
+        ------------------- protobuf rpc definition --------------------
+
+        // add shared link to a folder
+        rpc AddSharedLink(AddSharedLinkRequest) returns (google.protobuf.Empty) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message AddSharedLinkRequest {
+          string sharedLinkUrl = 1;
+          optional string sharedPassword = 2;
+          string toFolder = 3;
+        }
+        """
+        if async_:
+            async def request():
+                await self.async_stub.AddSharedLink(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.AddSharedLink(arg, metadata=self.metadata)
+            return None
 
     @overload
     def GetFileDetailProperties(
@@ -2464,6 +2763,7 @@ class Client:
           uint32 downloadThreadCount = 4;
           repeated string process = 5;
           string detailDownloadInfo = 6;
+          optional string lastDownloadError = 7;
         }
         message GetDownloadFileListResult {
           double globalBytesPerSecond = 1;
@@ -3431,79 +3731,36 @@ class Client:
             return self.stub.APILogin189QRCode(Empty(), metadata=self.metadata)
 
     @overload
-    def APILoginPikPak(
+    def APILoginWebDav(
         self, 
-        arg: clouddrive.pb2.UserLoginRequest, 
+        arg: clouddrive.pb2.LoginWebDavRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
         ...
     @overload
-    def APILoginPikPak(
+    def APILoginWebDav(
         self, 
-        arg: clouddrive.pb2.UserLoginRequest, 
+        arg: clouddrive.pb2.LoginWebDavRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
-    def APILoginPikPak(
+    def APILoginWebDav(
         self, 
-        arg: clouddrive.pb2.UserLoginRequest, 
+        arg: clouddrive.pb2.LoginWebDavRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         """
         add PikPak cloud with username and password
-
-        ------------------- protobuf rpc definition --------------------
-
-        // add PikPak cloud with username and password
         rpc APILoginPikPak(UserLoginRequest) returns (APILoginResult) {}
-
-        ------------------- protobuf type definition -------------------
-
-        message APILoginResult {
-          bool success = 1;
-          string errorMessage = 2;
-        }
-        message UserLoginRequest {
-          string userName = 1;
-          string password = 2;
-          bool synDataToCloud = 3;
-        }
-        """
-        if async_:
-            return self.async_stub.APILoginPikPak(arg, metadata=self.metadata)
-        else:
-            return self.stub.APILoginPikPak(arg, metadata=self.metadata)
-
-    @overload
-    def APILoginWebDav(
-        self, 
-        arg: clouddrive.pb2.LoginWebDavRequest, 
-        /, 
-        async_: Literal[False] = False, 
-    ) -> clouddrive.pb2.APILoginResult:
-        ...
-    @overload
-    def APILoginWebDav(
-        self, 
-        arg: clouddrive.pb2.LoginWebDavRequest, 
-        /, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
-        ...
-    def APILoginWebDav(
-        self, 
-        arg: clouddrive.pb2.LoginWebDavRequest, 
-        /, 
-        async_: Literal[False, True] = False, 
-    ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
-        """
         add webdav
 
         ------------------- protobuf rpc definition --------------------
 
+        // add PikPak cloud with username and password
+        // rpc APILoginPikPak(UserLoginRequest) returns (APILoginResult) {}
         // add webdav
         rpc APILoginWebDav(LoginWebDavRequest) returns (APILoginResult) {}
 
@@ -3650,6 +3907,9 @@ class Client:
           string nickName = 3;
           bool isLocked = 4; // isLocked means the cloudAPI is set to can't open files,
                              // due to user's membership issue
+          bool supportMultiThreadUploading = 5;
+          bool supportQpsLimit = 6;
+          bool isCloudEventListenerRunning = 7;
         }
         message CloudAPIList { repeated CloudAPI apis = 1; }
         """
@@ -3701,6 +3961,7 @@ class Client:
           optional ProxyInfo apiProxy = 8;
           optional ProxyInfo dataProxy = 9;
           optional string customUserAgent = 10;
+          optional uint32 maxUploadThreads = 11;
         }
         message GetCloudAPIConfigRequest {
           string cloudName = 1;
@@ -3763,6 +4024,7 @@ class Client:
           optional ProxyInfo apiProxy = 8;
           optional ProxyInfo dataProxy = 9;
           optional string customUserAgent = 10;
+          optional uint32 maxUploadThreads = 11;
         }
         message SetCloudAPIConfigRequest {
           string cloudName = 1;
@@ -3808,6 +4070,13 @@ class Client:
 
         ------------------- protobuf type definition -------------------
 
+        enum LogLevel {
+          Trace = 0;
+          Debug = 1;
+          Info = 2;
+          Warn = 3;
+          Error = 4;
+        }
         message StringList { repeated string values = 1; }
         message SystemSettings {
           // 0 means never expire, will live forever
@@ -3828,6 +4097,9 @@ class Client:
           optional string deviceName = 13;
           optional bool dirCachePersistence = 14;
           optional string dirCacheDbLocation = 15;
+          optional LogLevel fileLogLevel = 16;
+          optional LogLevel terminalLogLevel = 17;
+          optional LogLevel backupLogLevel = 18;
         }
         enum UpdateChannel {
           Release = 0;
@@ -3871,6 +4143,13 @@ class Client:
 
         ------------------- protobuf type definition -------------------
 
+        enum LogLevel {
+          Trace = 0;
+          Debug = 1;
+          Info = 2;
+          Warn = 3;
+          Error = 4;
+        }
         message StringList { repeated string values = 1; }
         message SystemSettings {
           // 0 means never expire, will live forever
@@ -3891,6 +4170,9 @@ class Client:
           optional string deviceName = 13;
           optional bool dirCachePersistence = 14;
           optional string dirCacheDbLocation = 15;
+          optional LogLevel fileLogLevel = 16;
+          optional LogLevel terminalLogLevel = 17;
+          optional LogLevel backupLogLevel = 18;
         }
         enum UpdateChannel {
           Release = 0;
@@ -3983,7 +4265,7 @@ class Client:
 
         // get dir cache time in effect (default value will be returned)
         rpc GetEffectiveDirCacheTimeSecs(GetEffectiveDirCacheTimeRequest)
-            returns (GetEffectiveDirCacheTimeResult) {}
+        returns (GetEffectiveDirCacheTimeResult) {}
 
         ------------------- protobuf type definition -------------------
 
@@ -3994,6 +4276,49 @@ class Client:
             return self.async_stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
         else:
             return self.stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
+
+    @overload
+    def ForceExpireDirCache(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def ForceExpireDirCache(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def ForceExpireDirCache(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
+        """
+        force expire dir cache recursively
+
+        ------------------- protobuf rpc definition --------------------
+
+        // force expire dir cache recursively
+        rpc ForceExpireDirCache(FileRequest) returns (google.protobuf.Empty) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message FileRequest { string path = 1; }
+        """
+        if async_:
+            async def request():
+                await self.async_stub.ForceExpireDirCache(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.ForceExpireDirCache(arg, metadata=self.metadata)
+            return None
 
     @overload
     def GetOpenFileTable(
@@ -4245,13 +4570,15 @@ class Client:
             UPDATE_STATUS = 2;
             FORCE_EXIT = 3;
             FILE_SYSTEM_CHANGE = 4;
+            MOUNT_POINT_CHANGE = 5;
           }
           MessageType messageType = 1;
           oneof data {
             TransferTaskStatus transferTaskStatus = 2;
             UpdateStatus updateStatus = 3;
             ExitedMessage exitedMessage = 4;
-            FileSystemChangeList fileSystemChanges = 5;
+            FileSystemChange fileSystemChange = 5;
+            MountPointChange mountPointChange = 6;
           }
         }
         message ExitedMessage {
@@ -4266,8 +4593,29 @@ class Client:
           ExitReason exitReason = 1;
           string message = 2; 
         }
-        message FileSystemChangeList {
-          repeated FileSystemChange fileSystemChanges = 1;
+        message FileSystemChange {
+          enum ChangeType {
+            CREATE = 0;
+            DELETE = 1;
+            RENAME = 2;
+          }
+          ChangeType changeType = 1;
+          bool isDirectory = 2;
+          string path = 3;
+          //only used for RENAME type
+          optional string newPath = 4;
+          //not available for DELETE type
+          optional CloudDriveFile theFile = 5;
+        }
+        message MountPointChange {
+          enum ActionType {
+            MOUNT = 0;
+            UNMOUNT = 1;
+          }
+          ActionType actionType = 1;
+          string mountPoint = 2;
+          bool success = 3;
+          string failReason = 4;
         }
         message UpdateStatus {
           enum UpdatePhase {
@@ -4546,6 +4894,49 @@ class Client:
             return request()
         else:
             self.stub.UpdateSystem(Empty(), metadata=self.metadata)
+            return None
+
+    @overload
+    def TestUpdate(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> None:
+        ...
+    @overload
+    def TestUpdate(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, None]:
+        ...
+    def TestUpdate(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> None | Coroutine[Any, Any, None]:
+        """
+        test update process
+
+        ------------------- protobuf rpc definition --------------------
+
+        // test update process
+        rpc TestUpdate(FileRequest) returns (google.protobuf.Empty) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message FileRequest { string path = 1; }
+        """
+        if async_:
+            async def request():
+                await self.async_stub.TestUpdate(arg, metadata=self.metadata)
+                return None
+            return request()
+        else:
+            self.stub.TestUpdate(arg, metadata=self.metadata)
             return None
 
     @overload
@@ -5033,6 +5424,9 @@ class Client:
           string user_id = 1;
           string plan_id = 2;
           map<string, string> paymentMethods = 3;
+          optional string coupon_code = 4;
+          optional string machine_id = 5;
+          optional string check_code = 6;
         }
         """
         if async_:
@@ -5319,6 +5713,9 @@ class Client:
           string user_id = 1;
           string plan_id = 2;
           map<string, string> paymentMethods = 3;
+          optional string coupon_code = 4;
+          optional string machine_id = 5;
+          optional string check_code = 6;
         }
         message StringValue { string value = 1; }
         """
@@ -6260,4 +6657,91 @@ class Client:
         else:
             self.stub.KickoutDevice(arg, metadata=self.metadata)
             return None
+
+    @overload
+    def ListLogFiles(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.ListLogFileResult:
+        ...
+    @overload
+    def ListLogFiles(
+        self, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.ListLogFileResult]:
+        ...
+    def ListLogFiles(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.ListLogFileResult | Coroutine[Any, Any, clouddrive.pb2.ListLogFileResult]:
+        """
+        list log file names
+
+        ------------------- protobuf rpc definition --------------------
+
+        // list log file names
+        rpc ListLogFiles(google.protobuf.Empty) returns (ListLogFileResult) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message ListLogFileResult {
+          repeated LogFileRecord logFiles = 1;
+        }
+        message LogFileRecord {
+          string fileName = 1;
+          google.protobuf.Timestamp lastModifiedTime = 2;
+          uint64 fileSize = 3;
+        }
+        """
+        if async_:
+            return self.async_stub.ListLogFiles(Empty(), metadata=self.metadata)
+        else:
+            return self.stub.ListLogFiles(Empty(), metadata=self.metadata)
+
+    @overload
+    def SyncFileChangesFromCloud(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> clouddrive.pb2.FileSystemChangeStatistics:
+        ...
+    @overload
+    def SyncFileChangesFromCloud(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, clouddrive.pb2.FileSystemChangeStatistics]:
+        ...
+    def SyncFileChangesFromCloud(
+        self, 
+        arg: clouddrive.pb2.FileRequest, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> clouddrive.pb2.FileSystemChangeStatistics | Coroutine[Any, Any, clouddrive.pb2.FileSystemChangeStatistics]:
+        """
+        sync file changes from cloud
+
+        ------------------- protobuf rpc definition --------------------
+
+        // sync file changes from cloud
+        rpc SyncFileChangesFromCloud(FileRequest) returns (FileSystemChangeStatistics) {}
+
+        ------------------- protobuf type definition -------------------
+
+        message FileRequest { string path = 1; }
+        message FileSystemChangeStatistics {
+          uint64 createCount = 1;
+          uint64 deleteCount = 2;
+          uint64 renameCount = 3;
+        }
+        """
+        if async_:
+            return self.async_stub.SyncFileChangesFromCloud(arg, metadata=self.metadata)
+        else:
+            return self.stub.SyncFileChangesFromCloud(arg, metadata=self.metadata)
 

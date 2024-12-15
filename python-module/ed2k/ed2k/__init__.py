@@ -3,8 +3,9 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["Ed2kHash", "ed2k_hash", "ed2k_hash_async"]
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 
+from collections.abc import AsyncIterator, Awaitable, Iterator, Sized
 from typing import Final
 
 from filewrap import (
@@ -19,6 +20,19 @@ MD4_BLOCK_SIZE: Final = 1024 * 9500
 MD4_EMPTY_HASH: Final = b"1\xd6\xcf\xe0\xd1j\xe91\xb7<Y\xd7\xe0\xc0\x89\xc0"
 
 
+def buffer_length(b: Buffer, /) -> int:
+    if isinstance(b, Sized):
+        return len(b)
+    else:
+        return len(memoryview(b))
+
+
+def ensure_bytes(b: Buffer, /) -> bytes | bytearray | memoryview:
+    if isinstance(b, (bytes, bytearray, memoryview)):
+        return b
+    return memoryview(b)
+
+
 class Ed2kHash:
 
     def __init__(self, b: Buffer = b"", /):
@@ -28,7 +42,7 @@ class Ed2kHash:
         self.update(b)
 
     def update(self, b: Buffer, /):
-        size = len(b)
+        size = buffer_length(b)
         if not size:
             return
         block_hashes = self.block_hashes
@@ -48,7 +62,7 @@ class Ed2kHash:
         self._last_hashobj = last_hashobj
 
     def digest(self, /) -> bytes:
-        block_hashes: Buffer = self.block_hashes
+        block_hashes = self.block_hashes
         if not self._remainder:
             block_hashes = block_hashes + MD4_EMPTY_HASH
         return MD4Hash(block_hashes).digest()
@@ -57,16 +71,16 @@ class Ed2kHash:
         return self.digest().hex()
 
 
-def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+def ed2k_hash(file: Buffer | SupportsRead[Buffer]) -> tuple[int, str]:
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
     if isinstance(file, Buffer):
-        chunk_iter = bytes_to_chunk_iter(file, chunksize=MD4_BLOCK_SIZE)
+        chunk_iter: Iterator[Buffer] = bytes_to_chunk_iter(file, chunksize=MD4_BLOCK_SIZE)
     else:
         chunk_iter = bio_chunk_iter(file, chunksize=MD4_BLOCK_SIZE, can_buffer=True)
     block_hashes = bytearray()
     filesize = 0
-    for chunk in chunk_iter:
+    for chunk in map(ensure_bytes, chunk_iter):
         block_hashes += MD4Hash(chunk).digest()
         filesize += len(chunk)
     if not filesize % MD4_BLOCK_SIZE:
@@ -74,16 +88,17 @@ def ed2k_hash(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
     return filesize, MD4Hash(block_hashes).hexdigest()
 
 
-async def ed2k_hash_async(file: Buffer | SupportsRead[bytes]) -> tuple[int, str]:
+async def ed2k_hash_async(file: Buffer | SupportsRead[Buffer] | SupportsRead[Awaitable[Buffer]]) -> tuple[int, str]:
     if hasattr(file, "getbuffer"):
         file = file.getbuffer()
     if isinstance(file, Buffer):
-        chunk_iter = bytes_to_chunk_async_iter(file, chunksize=MD4_BLOCK_SIZE)
+        chunk_iter: AsyncIterator[Buffer] = bytes_to_chunk_async_iter(file, chunksize=MD4_BLOCK_SIZE)
     else:
         chunk_iter = bio_chunk_async_iter(file, chunksize=MD4_BLOCK_SIZE, can_buffer=True)
     block_hashes = bytearray()
     filesize = 0
     async for chunk in chunk_iter:
+        chunk = ensure_bytes(chunk)
         block_hashes += MD4Hash(chunk).digest()
         filesize += len(chunk)
     if not filesize % MD4_BLOCK_SIZE:

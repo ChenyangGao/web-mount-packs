@@ -6,10 +6,11 @@ import functools
 
 
 class PipeMeta(type):
-    __ror__ = type.__call__
+    __or__ = __ror__ = type.__call__
 
 
 class PIPE(metaclass=PipeMeta):
+
     def __init__(self, val=None):
         self.val = val
 
@@ -31,9 +32,12 @@ class PIPE(metaclass=PipeMeta):
 
 
 class T_PIPE(PIPE):
+
     __gt__ = PIPE.__or__
 
     def __or__(self, func):
+        if func is None:
+            return self.val
         self.val = func(self.val)
         return self
 
@@ -49,6 +53,7 @@ class NT_PIPE(N_PIPE, T_PIPE): pass
 
 
 class PipeChain:
+
     def __init__(self, *functions):
         self.functions = functions
 

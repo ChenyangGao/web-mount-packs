@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "p115dav"
-version = "0.0.2.4"
-description = "115 网盘 WebDAV 和 302 直链程序."
+name = "sqlitetools"
+version = "0.0.1.4"
+description = "Python sqlite3 tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115dav"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115dav"
-keywords = ["python-115", "webdav"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/sqlitetools"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/sqlitetools"
+keywords = ["sqlite3", "tools"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,28 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-a2wsgi = ">=1.10.7"
-blacksheep = "*"
-cachetools = "*"
-httpagentparser = "*"
-orjson = "*"
-p115client = ">=0.0.3.7.12"
-path_predicate = ">=0.0.1.1"
-posixpatht = ">=0.0.3"
-pysubs2 = "*"
-pyyaml = "*"
-python-dictattr = ">=0.0.4"
-python-encode_uri = ">=0.0.1"
-python-property = ">=0.0.3"
-uvicorn = "*"
-wsgidav = "*"
-
-[tool.poetry.scripts]
-p115dav = "p115dav.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "p115dav"
+include = "sqlitetools"

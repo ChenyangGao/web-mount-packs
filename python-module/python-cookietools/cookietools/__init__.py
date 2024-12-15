@@ -2,23 +2,31 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "create_cookie", "create_morsel", "cookie_to_morsel", "morsel_to_cookie", 
-    "cookies_str_to_dict", "cookies_dict_to_str", 
+    "extract_cookies", "update_cookies", "cookies_str_to_dict", "cookies_dict_to_str", 
 ]
 
 from calendar import timegm
-from collections.abc import Mapping
+from collections.abc import ItemsView, Iterable, Mapping
 from copy import copy
-from http.cookiejar import Cookie
-from http.cookies import Morsel
+from http.client import HTTPMessage
+from http.cookiejar import Cookie, CookieJar
+from http.cookies import Morsel, SimpleCookie
 from re import compile as re_compile
 from time import gmtime, strftime, strptime, time
-from typing import cast, Any
+from typing import cast, Any, Protocol
+from urllib.request import Request
 
 
 CRE_COOKIE_SEP_split = re_compile(r";\s*").split
+
+
+class HasHeaders[AnyStr: (bytes, str)](Protocol):
+    @property
+    def headers(self, /) -> HTTPMessage | Mapping[AnyStr, AnyStr] | Iterable[tuple[AnyStr, AnyStr]]:
+        ...
 
 
 def create_cookie(
@@ -195,6 +203,56 @@ def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
         value=cookie.value, 
         version=cookie["version"] or 0, 
     )
+
+
+def extract_cookies[Cookies: (CookieJar, SimpleCookie)](
+    cookies: Cookies, 
+    url: str, 
+    response: HasHeaders, 
+) -> Cookies:
+    if not hasattr(response, "info"):
+        headers = response.headers
+        if not isinstance(headers, HTTPMessage):
+            headers_old = headers
+            headers = HTTPMessage()
+            if isinstance(headers_old, Mapping):
+                headers_old = ItemsView(headers_old)
+            for k, v in headers_old:
+                if isinstance(k, bytes):
+                    k = str(k, "latin-1")
+                if isinstance(v, bytes):
+                    v = str(v, "latin-1")
+                headers.add_header(k, v)
+        setattr(response, "info", lambda: headers)
+    if isinstance(cookies, CookieJar):
+        cookies.extract_cookies(response, Request(url)) # type: ignore
+    else:
+        cookiejar = CookieJar()
+        cookiejar.extract_cookies(response, Request(url)) # type: ignore
+        cookies.update((cookie.name, cookie_to_morsel(cookie)) for cookie in cookiejar)
+    return cookies
+
+
+def update_cookies[Cookies: (CookieJar, SimpleCookie)](
+    cookies1: Cookies, 
+    cookies2: CookieJar | SimpleCookie, 
+    /, 
+) -> Cookies:
+    if isinstance(cookies1, CookieJar):
+        if isinstance(cookies2, CookieJar):
+            cookies: Iterable[Cookie] = cookies2
+        else:
+            cookies = map(morsel_to_cookie, cookies2.values())
+        set_cookie = cookies1.set_cookie
+        for cookie in cookies:
+            set_cookie(cookie)
+    else:
+        if isinstance(cookies2, CookieJar):
+            morsels: Iterable[tuple[str, Morsel]] = ((m.key, m) for m in map(cookie_to_morsel, cookies2))
+        else:
+            morsels = cookies2.items()
+        cookies1.update(morsels)
+    return cookies1
 
 
 def cookies_str_to_dict(cookies: str, /) -> dict[str, str]:

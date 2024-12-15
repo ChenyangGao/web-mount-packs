@@ -1,113 +1,113 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-"""
-4 decorators (as below) are provided to implement `currying` for Python functions:
-    - currying 👍
-    - partial_currying
-    - fast_currying
-    - Currying 👍
-"""
-
-__author__  = "ChenyangGao <https://chenyanggao.github.io/>"
+__author__  = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 1)
-__all__ = ["currying", "partial_currying", "fast_currying", "Args", "Currying"]
-
-import inspect
+__all__ = ["currying", "fast_currying", "partialize"]
 
 from functools import partial, update_wrapper
-from inspect import signature
-from types import MappingProxyType
+from inspect import _empty as empty, signature
+from typing import Any
 
+def make_idfn(func, /):
+    last_kind = -1
+    ls: list[str] = []
+    ns: dict[str, Any] = {}
+    add = ls.append
+    for name, param in signature(func).parameters.items():
+        kind = param.kind
+        default = param.default
+        if kind != last_kind:
+            if last_kind == 0:
+                add("/")
+            if kind == 3 and last_kind != 2:
+                add("*")
+        if kind == 2:
+            add("*"+name)
+        elif kind == 4:
+            add("**"+name)
+        elif default is empty:
+            add(name)
+        else:
+            ns[name] = default
+            add(f"{name}={name}")
+        last_kind = kind
+    idfn = eval("lambda %s: None" % ", ".join(ls), ns)
+    if isinstance(func, partial):
+        func = func.func
+    if name := getattr(func, "__qualname__", ""):
+        idfn.__qualname__ = name
+    return idfn
 
-def currying(func, /):
-    bind = signature(func).bind
-    attrs = [(attr, getattr(func, attr))
-             for attr in ("__module__", "__name__", "__qualname__", 
-                          "__doc__", "__annotations__")
-             if hasattr(func, attr)]
+def update_partialed_wrapper(wrapper, wrapped):
+    if isinstance(wrapped, partial):
+        update_wrapper(wrapper, wrapped.func)
+        wrapper.__wrapped__ = wrapped
+        return wrapper
+    else:
+        return update_wrapper(wrapper, wrapped)
 
-    def wrap(_pf, /):
+def currying(func, /, *args, **kwargs):
+    pf = partial(func, *args, **kwargs)
+    def wrap(pf, /):
+        idfn = make_idfn(pf)
+        sentinel = idfn.__qualname__ + "() missing "
         def wrapper(*args, **kwargs):
-            args = _pf.args + args
-            kwargs = {**_pf.keywords, **kwargs}
             try:
-                bind(*args, **kwargs)
+                idfn(*args, **kwargs)
             except TypeError as exc:
-                if (exc.args 
-                    and isinstance(exc.args[0], str)
-                    and exc.args[0].startswith("missing a required argument:")
+                if (exc.args and isinstance(exc.args[0], str)
+                    and exc.args[0].startswith(sentinel)
                 ):
-                    return wrap(partial(func, *args, **kwargs))
+                    if not args and not kwargs:
+                        return wrapper
+                    return wrap(partial(pf, *args, **kwargs))
                 raise
-            else:
-                return func(*args, **kwargs)
+            return pf(*args, **kwargs)
+        return update_partialed_wrapper(wrapper, pf)
+    return wrap(pf)
 
-        _pf.__dict__.update(attrs)
-        wrapper.args = _pf.args
-        wrapper.kwargs = _pf.keywords
-        wrapper.keywords = _pf.keywords
+def fast_currying(func, /, *args, **kwargs):
+    pf = partial(func, *args, **kwargs)
+    name = pf.func.__qualname__
+    sentinel = (f"{name}() missing ", f"{name} expected ", f"{name}() must have ")
+    def wrapper(*args, **kwargs):
+        args = pf.args + args
+        kwargs = {**pf.keywords, **kwargs}
+        try:
+            return func(*args, **kwargs)
+        except TypeError as exc:
+            if (exc.args and isinstance(exc.args[0], str)
+                and exc.args[0].startswith(sentinel)
+            ):
+                if not args and not kwargs:
+                    return wrapper
+                return fast_currying(func, *args, **kwargs)
+            raise
+    return update_partialed_wrapper(wrapper, pf)
 
-        return update_wrapper(wrapper, _pf)
-
-    return wrap(partial(func))
-
-
-def partial_currying(func, /):
-    bind = signature(func).bind
-
+def partialize(func, /, *args, **kwargs):
+    idfn = make_idfn(func)
+    sentinel = f"{idfn.__qualname__}() missing "
     def wrapper(*args, **kwargs):
         try:
-            bind(*args, **kwargs)
+            idfn(*args, **kwargs)
         except TypeError as exc:
-            if (exc.args 
-                and isinstance(exc.args[0], str)
-                and exc.args[0].startswith("missing a required argument:")
+            if (exc.args and isinstance(exc.args[0], str)
+                and exc.args[0].startswith(sentinel)
             ):
                 return partial(wrapper, *args, **kwargs)
-            raise
-
+            raise 
         return func(*args, **kwargs)
-
-    return update_wrapper(wrapper, func)
-
-
-def fast_currying(func, /, _args=(), _kwargs={}, _idfn=None):
-    if _idfn is None:
-        _sig_str = str(inspect.Signature([
-            p.replace(annotation=inspect._empty) 
-            for p in signature(func).parameters.values()
-        ]))[1:-1]
-        _idfn = eval(f"lambda %s: None" % _sig_str)
-
-    def wrapper(*args, **kwargs):
-        args = _args + args
-        kwargs = {**_kwargs, **kwargs}
-
-        try:
-            _idfn(*args, **kwargs)
-        except TypeError as exc:
-            if (exc.args 
-                and isinstance(exc.args[0], str)
-                and exc.args[0].startswith("<lambda>() missing ")
-            ):
-                return fast_currying(func, args, kwargs, _idfn)
-            raise
-        else:
-            return func(*args, **kwargs)
-
-    wrapper.args = _args
-    wrapper.kwargs = _kwargs
-    wrapper.keywords = _kwargs
-
-    return update_wrapper(wrapper, func)
+    update_partialed_wrapper(wrapper, func)
+    return partial(wrapper, *args, **kwargs)
 
 
 class Args:
 
     def __init__(self, *args, **kwargs):
         self._args = args
-        self._kwds = MappingProxyType(kwargs)
+        self._kwds = kwargs
 
     @property
     def args(self):

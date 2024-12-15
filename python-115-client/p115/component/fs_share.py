@@ -24,7 +24,7 @@ from time import time
 from typing import cast, overload, Any, Literal, Never, Self
 
 from dictattr import AttrDict
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, Yield
 from p115client import check_response, normalize_attr, P115URL
 from posixpatht import escape, joins, splits, path_is_dir_form
 
@@ -38,6 +38,47 @@ CRE_SHARE_LINK_search2 = re_compile(r"(?P<share_code>[a-z0-9]+)-(?P<receive_code
 
 class P115SharePath(P115PathBase):
     fs: P115ShareFileSystem
+
+    @property
+    def ancestors(self, /) -> list[dict]:
+        try:
+            return self["ancestors"]
+        except KeyError:
+            ancestors = self.fs.get_ancestors(self.id)
+            self.attr["path"] = joins([a["name"] for a in ancestors])
+            return ancestors
+
+    @property
+    def path(self, /) -> str:
+        try:
+            return self["path"]
+        except KeyError:
+            self.ancestors
+            return self.attr["path"]
+
+    @overload
+    def search(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **payload, 
+    ) -> Iterator[P115SharePath]:
+        ...
+    @overload
+    def search(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **payload, 
+    ) -> AsyncIterator[P115SharePath]:
+        ...
+    def search(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **payload, 
+    ) -> Iterator[P115SharePath] | AsyncIterator[P115SharePath]:
+        return self.fs.search(self, async_=async_, **payload)
 
 
 class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
@@ -111,54 +152,6 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
         raise TypeError("can't set attributes")
 
     @overload
-    def fs_files(
-        self, 
-        /, 
-        payload: dict, 
-        async_: Literal[False] = False, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_files(
-        self, 
-        /, 
-        payload: dict, 
-        async_: Literal[True], 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_files(
-        self, 
-        /, 
-        payload: dict, 
-        async_: Literal[False, True] = False, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
-        :param payload:
-            - id: int | str = 0
-            - limit: int = 32
-            - offset: int = 0
-            - asc: 0 | 1 = <default> # 是否升序排列
-            - o: str = <default>
-                # 用某字段排序：
-                # - 文件名："file_name"
-                # - 文件大小："file_size"
-                # - 文件种类："file_type"
-                # - 修改时间："user_utime"
-                # - 创建时间："user_ptime"
-                # - 上次打开时间："user_otime"
-        """
-        return check_response(self.client.share_snap( # type: ignore
-            {
-                **payload, 
-                "share_code": self.share_code, 
-                "receive_code": self.receive_code, 
-            }, 
-            base_url=True, 
-            request=self.async_request if async_ else self.request, 
-            async_=async_, 
-        ))
-
-    @overload
     def downlist(
         self, 
         /, 
@@ -191,6 +184,83 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 "receive_code": self.receive_code, 
                 "cid": id, 
             }, 
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+        ))
+
+    @overload
+    def fs_files(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_files(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_files(
+        self, 
+        /, 
+        payload: dict, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取分享链接的某个文件夹中的文件和子文件夹的列表（包含详细信息）
+        :param payload:
+            - id: int | str = 0
+            - limit: int = 32
+            - offset: int = 0
+            - asc: 0 | 1 = <default> # 是否升序排列
+            - o: str = <default>
+                # 用某字段排序：
+                # - "file_name": 文件名
+                # - "file_size": 文件大小
+                # - "user_ptime": 创建时间/修改时间
+        """
+        return check_response(self.client.share_snap( # type: ignore
+            {
+                **payload, 
+                "share_code": self.share_code, 
+                "receive_code": self.receive_code, 
+            }, 
+            base_url=True, 
+            request=self.async_request if async_ else self.request, 
+            async_=async_, 
+        ))
+
+    @overload
+    def fs_search(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_search(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_search(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        if isinstance(payload, str):
+            payload = {"share_code": self.share_code, "receive_code": self.receive_code, "cid": self.id, "search_value": payload}
+        else:
+            payload = {"share_code": self.share_code, "receive_code": self.receive_code, "cid": self.id, **payload}
+        return check_response(self.client.share_search( # type: ignore
+            payload, 
             request=self.async_request if async_ else self.request, 
             async_=async_, 
         ))
@@ -874,6 +944,89 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                 async_=async_, 
             ))
         return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def search(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        page_size: int = 1_000, 
+        *, 
+        async_: Literal[False] = False, 
+        **payload, 
+    ) -> Iterator[P115SharePath]:
+        ...
+    @overload
+    def search(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        page_size: int = 1_000, 
+        *, 
+        async_: Literal[True], 
+        **payload, 
+    ) -> AsyncIterator[P115SharePath]:
+        ...
+    def search(
+        self, 
+        id_or_path: IDOrPathType = "", 
+        /, 
+        pid: None | int = None, 
+        page_size: int = 1_000, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **payload, 
+    ) -> Iterator[P115SharePath] | AsyncIterator[P115SharePath]:
+        """搜索目录
+
+        :param payload:
+            - share_code: str = <default>   💡 分享码
+            - receive_code: str = <default> 💡 接收码（即密码）
+            - limit: int = 32    💡 一页大小，意思就是 page_size
+            - offset: int = 0         💡 索引偏移，索引从 0 开始计算
+            - search_value: str = "." 💡 搜索文本，仅支持搜索文件名
+            - suffix: str = <default> 💡 文件后缀（扩展名），优先级高于 `type`
+            - type: int = <default>   💡 文件类型
+
+              - 0: 全部
+              - 1: 文档
+              - 2: 图片
+              - 3: 音频
+              - 4: 视频
+              - 5: 压缩包
+              - 6: 应用
+              - 7: 书籍
+              - 99: 仅文件
+        """
+        if page_size <= 0:
+            page_size = 1_000
+        def gen_step():
+            attr = yield self.attr(id_or_path, pid=pid, async_=async_)
+            if attr["is_directory"]:
+                payload["cid"] = attr["id"]
+            else:
+                payload["cid"] = attr["parent_id"]
+            payload["limit"] = page_size
+            offset = int(payload.setdefault("offset", 0))
+            if offset < 0:
+                payload["offset"] = 0
+            search = self.fs_search
+            while True:
+                resp = yield search(payload, async_=async_)
+                ls = resp["data"]["list"]
+                if not ls:
+                    return
+                for attr in ls:
+                    attr = normalize_attr(attr)
+                    yield Yield(P115SharePath(self, attr), identity=True)
+                offset = payload["offset"] = offset + resp["page_size"]
+                if offset >= resp["count"] or offset >= 10_000:
+                    break
+                if offset + page_size > 10_000:
+                    payload["page_size"] = 10_000 - offset
+        return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
     def stat(

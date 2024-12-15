@@ -53,7 +53,7 @@ T = TypeVar("T")
 IDOrPathType: TypeAlias = int | str | PathLike[str] | Sequence[str] | AttrDict
 P115FSType = TypeVar("P115FSType", bound="P115FileSystemBase")
 P115PathType = TypeVar("P115PathType", bound="P115PathBase")
-CRE_115URL_EXPIRE_TS_search = re_compile("(?<=\?t=)[0-9]+").search
+CRE_115URL_EXPIRE_TS_search = re_compile(r"(?<=\?t=)[0-9]+").search
 
 
 class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):

@@ -11,7 +11,7 @@ which refer to `os`, `posixpath`, `pathlib.Path` and `shutil` modules.
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 13, 5)
+__version__ = (0, 0, 13, 6)
 
 from warnings import filterwarnings
 

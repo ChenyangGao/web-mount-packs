@@ -55,7 +55,7 @@ def main(argv: None | list[str] | Namespace = None, /):
         try:
             file: TextIO = open(outfile, "w")
         except OSError as e:
-            print("Error occured:", repr(e))
+            print(f"error occured: {e!r}")
             from sys import stdout as file
     else:
         from sys import stdout as file
@@ -64,11 +64,11 @@ def main(argv: None | list[str] | Namespace = None, /):
 
 from p115 import AVAILABLE_APPS
 
-parser.add_argument("app", nargs="?", default="qandroid", choices=AVAILABLE_APPS,        
-                    help="选择一个 app 进行登录，默认值 'qandroid'，注意：这会把已经登录的相同 app 踢下线")
+parser.add_argument("app", nargs="?", default="alipaymini", choices=AVAILABLE_APPS, 
+                    help="选择一个 app 进行登录，默认值 'alipaymini'")
 parser.add_argument("-o", "--output-file", help="保存到文件，未指定时输出到 stdout")
-parser.add_argument("-c", "--cookies", help="115 登录 cookies，优先级高于 -cp/--cookies-path")
-parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径")
+parser.add_argument("-c", "--cookies", help="115 登录 cookies，使用后可以自动扫码，优先级高于 -cp/--cookies-path")
+parser.add_argument("-cp", "--cookies-path", help="cookies 文件保存路径，使用后可以自动扫码")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
 parser.set_defaults(func=main)
 

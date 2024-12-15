@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "altsep", "curdir", "extsep", "pardir", "pathsep", "sep", "abspath", "basename", "commonpath", 
     "commonpatht", "commonprefix", "dirname", "isabs", "iter_split", "join", "joinpath", "joins", 
@@ -11,6 +11,7 @@ __all__ = [
 ]
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from functools import partial
 from posixpath import altsep, curdir, extsep, pardir, pathsep, sep, commonprefix, normcase, splitdrive
 from re import compile as re_compile, Match
 from typing import cast, Final
@@ -34,15 +35,15 @@ def path_is_dir_form(
         return path.endswith(("/", "/.", "/.."))
 
 
-def escape(name: str, /) -> str:
-    if name in (".", ".."):
+def escape(name: str, /, parse_dots: bool = True) -> str:
+    if parse_dots and name in (".", ".."):
         return "\\" + name
     else:
         return name.replace("\\", r"\\").replace("/", r"\/")
 
 
-def unescape(name: str, /) -> str:
-    if name.startswith(r"\."):
+def unescape(name: str, /, parse_dots: bool = True) -> str:
+    if parse_dots and name in (r"\.", r"\.."):
         name = name[1:]
     return name.replace(r"\/", "/").replace(r"\\", "\\")
 
@@ -126,6 +127,8 @@ def iter_split(
     parse_dots: bool = True, 
     slash_escaped: bool = True, 
 ) -> Iterator[tuple[str, str]]:
+    if unescape is globals()["unescape"]:
+        unescape = partial(unescape, parse_dots=parse_dots) # type: ignore
     skip = 0
     if slash_escaped:
         matches = tuple(CRE_PART_finditer(path))
@@ -307,6 +310,8 @@ def splits(
     parse_dots: bool = True, 
     slash_escaped: bool = True, 
 ) -> tuple[list[str], int]:
+    if unescape is globals()["unescape"]:
+        unescape = partial(unescape, parse_dots=parse_dots) # type: ignore
     parts: list[str] = []
     add_part = parts.append
     is_absolute = path.startswith("/")
@@ -343,13 +348,14 @@ def relpath(
     /, 
     start: None | str = None, 
     dirname: str = "/", 
+    parse_dots: bool = True, 
     slash_escaped: bool = True, 
 ) -> str:
     if not start:
         return path
-    patht, parents = splits(path, unescape=None, slash_escaped=slash_escaped)
-    start_patht, start_parents = splits(start, unescape=None, slash_escaped=slash_escaped)
-    dirname_patht, _ = splits("/" + dirname, unescape=None, slash_escaped=slash_escaped)
+    patht, parents = splits(path, unescape=None, parse_dots=parse_dots, slash_escaped=slash_escaped)
+    start_patht, start_parents = splits(start, unescape=None, parse_dots=parse_dots, slash_escaped=slash_escaped)
+    dirname_patht, _ = splits("/" + dirname, unescape=None, parse_dots=parse_dots, slash_escaped=slash_escaped)
     if path.startswith("/") ^ start.startswith("/"):
         if path.startswith("/"):
             start_parents = 0

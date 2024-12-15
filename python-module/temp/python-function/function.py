@@ -10,7 +10,7 @@ import traceback
 import wrapt
 
 
-__author__ = '高晨阳<gaocy@qeek.cc>'
+
 __version__ = '0.1'
 __all__ = []
 reg = wrapt.register(__all__)

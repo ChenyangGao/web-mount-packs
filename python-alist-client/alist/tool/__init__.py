@@ -20,20 +20,43 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, aclosing
 from functools import partial
 from inspect import isawaitable
-from json import dumps, loads
 from os import makedirs, remove, scandir, stat
 from os.path import abspath, dirname, join as joinpath, normpath, sep, splitext
+from re import compile as re_compile
 from shutil import rmtree
 from typing import cast, overload, Any, Literal
 
 from alist.component import AlistClient, AlistPath
+from orjson import dumps, loads
 from httpx import TimeoutException
 
 
+CRE_USERID_search = re_compile(r"(?<=\bUID=)[0-9]+").search
 logging.basicConfig(format="[\x1b[1m%(asctime)s\x1b[0m] (\x1b[1;36m%(levelname)s\x1b[0m) \x1b[1;34m%(name)s\x1b[0m"
                            " @ \x1b[0m\x1b[1;3;35m%(funcName)s\x1b[0m \x1b[5;31m➜\x1b[0m %(message)s")
 logger = logging.getLogger("alist")
 logger.setLevel(logging.DEBUG)
+
+
+def storage_of(
+    client: str | AlistClient, 
+    path: str, 
+) -> None | dict:
+    """从 alist 获取某个路径所属的存储
+    """
+    if isinstance(client, str):
+        client = AlistClient.from_auth(client)
+    path = path.rstrip("/")
+    resp = client.admin_storage_list()
+    storages = resp["data"]["content"]
+    selected_storage = None
+    for storage in storages:
+        if storage["mount_path"] == path:
+            return storage
+        elif path.startswith(storage["mount_path"] + "/"):
+            if not selected_storage or len(selected_storage["mount_path"]) < storage["mount_path"]:
+                selected_storage = storage
+    return selected_storage
 
 
 def alist_update_115_cookies(
@@ -43,17 +66,29 @@ def alist_update_115_cookies(
 ):
     """更新 alist 中有关 115 的存储的 cookies
     """
+    m = CRE_USERID_search(cookies)
+    if m is None:
+        raise ValueError(f"invalid cookies: {cookies!r}")
+    user_id = m[0]
     if isinstance(client, str):
         client = AlistClient.from_auth(client)
     storages = client.admin_storage_list()["data"]["content"]
     for storage in storages:
-        if storage["driver"] in ("115 Cloud", "115 Share"):
+        driver = storage["driver"]
+        if driver in ("115 Cloud", "115 Share"):
             if only_not_work and storage["status"] == "work":
                 continue
             addition = loads(storage["addition"])
+            if driver == "115 Cloud":
+                cookies_old = addition.get("cookie", "")
+                m = CRE_USERID_search(cookies_old)
+                if m is not None and m[0] != user_id:
+                    continue
             addition["cookie"] = cookies
-            storage["addition"] = dumps(addition)
+            storage["addition"] = dumps(addition).decode("utf-8")
+            storage.pop("status", None)
             client.admin_storage_update(storage)
+            logger.debug("update 115 cookies: %r", storage)
 
 
 def alist_batch_add_115_share_links(
@@ -129,7 +164,7 @@ def alist_batch_add_115_share_links(
                 'share_code': fs.share_code, 
                 'receive_code': fs.receive_code, 
                 'root_folder_id': root_id, 
-            })
+            }).decode("utf-8")
         }
         print("-" * 40)
         print(client.admin_storage_create(payload))

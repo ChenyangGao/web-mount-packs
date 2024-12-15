@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "python-alist"
-version = "0.0.13.5.7"
+version = "0.0.13.6"
 description = "Python wrapper for alist."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
 homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-alist-client"
 repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-alist-client"
-keywords = ["alist"]
+keywords = ["alist", "client"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 4 - Beta",
@@ -27,22 +27,24 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
+ed2k = ">=0.0.1.1"
 glob_pattern = "*"
 http_response = "*"
 httpx = "*"
-httpx_request = ">=0.0.8.2"
+httpx_request = ">=0.1"
 multidict = "*"
+orjson = "*"
+p115qrcode = ">=0.0.2"
 path_ignore_pattern = "*"
-pycryptodome = "*"
 python-argtools = "*"
 python-asynctools = ">=0.0.4"
 python-dateutil = "*"
-python-dictattr = ">=0.0.1"
+python-dictattr = ">=0.0.4"
 python-download = ">=0.0.3"
-python-filewrap = ">=0.1.4"
-python-httpfile = ">=0.0.2"
+python-filewrap = ">=0.2.5"
+python-httpfile = ">=0.0.5"
 python-http_request = ">=0.0.6"
-python-iterutils = ">=0.0.7"
+python-iterutils = ">=0.0.8"
 python-undefined = "*"
 yarl = "*"
 

@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "p115qrcode"
+name = "sqlite_logger"
 version = "0.0.1"
-description = "115 网盘二维码扫码登录."
+description = "Write logs to SQLite db file."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115qrcode"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/p115qrcode"
-keywords = ["python-115", "qrcode"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/sqlite_logger"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/sqlite_logger"
+keywords = ["sqlite", "logger"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,16 +26,11 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
-orjson = "*"
-httpx = "*"
-httpx_request = ">=0.0.9"
-python-startfile = ">=0.0.2"
-qrcode = "*"
+python = "^3.12"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "p115qrcode"
+include = "sqlite_logger"
