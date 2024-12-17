@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __all__ = ["request"]
 
 from collections.abc import Buffer, Callable, ItemsView, Iterable, Mapping, Sequence
@@ -16,7 +16,7 @@ from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request
 
 from argtools import argcount
-from cookietools import extract_cookies
+from cookietools import extract_cookies, cookies_dict_to_str, cookies_str_to_dict
 from urllib3 import HTTPHeaderDict, Retry, Timeout
 from urllib3.exceptions import MaxRetryError
 from urllib3.poolmanager import PoolManager
@@ -152,20 +152,22 @@ def request(
     if cookies is None:
         cookies = getattr(pool, "cookies", None)
     if cookies:
-        headers.setdefault("cookie", "")
         netloc_endswith = urlsplit(url).netloc.endswith
+        cookies_dict = cookies_str_to_dict(headers.get("cookie", ""))
         if isinstance(cookies, CookieJar):
-            headers["cookie"] += "; ".join(
-                f"{cookie.name}={cookie.value}"
+            cookies_dict.update(
+                (cookie.name, val)
                 for cookie in cookies 
-                if not (domain := cookie.domain) or netloc_endswith(domain)
+                if (val := cookie.value) and (domain := cookie.domain) and not netloc_endswith(domain)
             )
         else:
-            headers["cookie"] += "; ".join(
-                f"{name}={morsel.value}"
+            cookies_dict.update(
+                (name, val)
                 for name, morsel in cookies.items()
-                if not (domain := morsel.get("domain", "")) or netloc_endswith(domain)
+                if (val := morsel.value) and (not (domain := morsel.get("domain", "")) or netloc_endswith(domain))
             )
+        if cookies_dict:
+            headers["cookie"] = cookies_dict_to_str(cookies_dict)
     elif cookies is None:
         cookies = CookieJar()
     response = cast(HTTPResponse, pool.request(
@@ -184,7 +186,7 @@ def request(
         raise HTTPError(url, response.status, response.reason, response.headers, response) # type: ignore
     redirect_location = redirect and response.get_redirect_location()
     if not redirect_location:
-        return parse_response(response)
+        return parse_response(response, parse)
     redirect_location = redirect_location
     redirect_location = cast(str, urljoin(url, redirect_location))
     if response.status == 303:
@@ -200,7 +202,7 @@ def request(
             if retries.raise_on_redirect:
                 response.drain_conn()
                 raise
-            return parse_response(response)
+            return parse_response(response, parse)
     response.drain_conn()
     return request(
         redirect_location, 

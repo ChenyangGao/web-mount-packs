@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["request"]
 
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
@@ -25,7 +25,7 @@ from blacksheep.common.types import normalize_headers
 from blacksheep.contents import Content, FormContent, JSONContent, StreamedContent, TextContent
 from blacksheep.exceptions import HTTPException
 from blacksheep.messages import Request, Response
-from cookietools import update_cookies
+from cookietools import update_cookies, cookies_dict_to_str, cookies_str_to_dict
 from filewrap import bio_chunk_async_iter
 from multidict import CIMultiDict
 
@@ -144,20 +144,26 @@ async def request(
                 break
         else:
             i = len(headers)
-            headers.append((b"cookie", b""))
             v = b""
+        cookies_dict = cookies_str_to_dict(v.decode("latin-1"))
         if isinstance(cookies, CookieJar):
-            headers[i] = (b"cookie", v + b"; ".join(
-                f"{cookie.name}={cookie.value}".encode("latin-1")
+            cookies_dict.update(
+                (cookie.name, val)
                 for cookie in cookies 
-                if not (domain := cookie.domain) or netloc_endswith(domain)
-            ))
+                if (val := cookie.value) and (not (domain := cookie.domain) or netloc_endswith(domain))
+            )
         else:
-            headers[i] = (b"cookie", v + b"; ".join(
-                f"{name}={morsel.value}".encode("latin-1")
+            cookies_dict.update(
+                (name, val)
                 for name, morsel in cookies.items()
-                if not (domain := morsel.get("domain", "")) or netloc_endswith(domain)
-            ))
+                if (val := morsel.value) and (not (domain := morsel.get("domain", "")) or netloc_endswith(domain))
+            )
+        if cookies_dict:
+            header = (b"cookie", cookies_dict_to_str(cookies_dict).encode("latin-1"))
+            if len(header) == i:
+                headers.append(header)
+            else:
+                headers[i] = header
     req = Request(method.upper(), session.get_url(url, params), headers)
     if json is not None and not isinstance(json, JSONContent):
         data = JSONContent(json)

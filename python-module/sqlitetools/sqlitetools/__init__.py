@@ -95,6 +95,7 @@ def execute(
     /, 
     sql: str, 
     params: Any = None, 
+    executemany: bool = False, 
     commit: bool = False, 
 ) -> Cursor:
     """执行一个 sql 语句
@@ -102,6 +103,7 @@ def execute(
     :param con: 数据库连接或游标
     :param sql: sql 语句
     :param params: 参数，用于填充 sql 中的占位符，会根据具体情况选择使用 execute 或 executemany
+    :param executemany: 强制使用 executemany
     :param commit: 是否在执行成功后进行 commit
 
     :return: 游标
@@ -112,7 +114,9 @@ def execute(
         cur = con
         con = cur.connection
     is_iter = lambda x: isinstance(x, Iterable) and not isinstance(x, (str, Buffer))
-    if params is None:
+    if executemany:
+        cur.executemany(sql, params)
+    elif params is None:
         cur.execute(sql)
     elif isinstance(params, (tuple, dict)):
         cur.execute(sql, params)
@@ -188,6 +192,7 @@ def upsert_items(
 
     :return: 游标
     """
+    executemany = not isinstance(items, dict)
     if isinstance(items, dict):
         items = items,
     elif not items:
@@ -203,5 +208,5 @@ def upsert_items(
 INSERT INTO {table}({",".join(fields)})
 VALUES ({",".join(map(":".__add__, fields))})
 ON CONFLICT DO UPDATE SET {",".join(map("{0}=excluded.{0}".format, fields))}"""
-    return execute(con, sql, items, commit=commit)
+    return execute(con, sql, items, executemany=executemany, commit=commit)
 

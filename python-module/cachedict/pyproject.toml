@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "urllib3_request"
-version = "0.0.8.1"
-description = "urllib3 request extension."
+name = "cachedict"
+version = "0.0.1"
+description = "Python cache dict."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/urllib3_request"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/urllib3_request"
-keywords = ["urllib3", "request"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/cachedict"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/cachedict"
+keywords = ["cache", "dict"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,13 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-urllib3 = "*"
-python-argtools = "*"
-python-cookietools = ">=0.0.4"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "urllib3_request"
+include = "cachedict"
