@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "AutoCloseConnection", "AutoCloseCursor", "enclose", 
     "transact", "execute", "query", "find", "upsert_items", 
@@ -192,7 +192,6 @@ def upsert_items(
 
     :return: 游标
     """
-    executemany = not isinstance(items, dict)
     if isinstance(items, dict):
         items = items,
     elif not items:
@@ -208,5 +207,5 @@ def upsert_items(
 INSERT INTO {table}({",".join(fields)})
 VALUES ({",".join(map(":".__add__, fields))})
 ON CONFLICT DO UPDATE SET {",".join(map("{0}=excluded.{0}".format, fields))}"""
-    return execute(con, sql, items, executemany=executemany, commit=commit)
+    return execute(con, sql, items, executemany=True, commit=commit)
 

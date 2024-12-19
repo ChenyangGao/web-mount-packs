@@ -11,5 +11,5 @@ pip install -U cachedict
 ## Usage
 
 ```python
-from cachedict import LRUDict, TTLDict
+from cachedict import FIFODict, LRUDict, LFUDict, TTLDict
 ```

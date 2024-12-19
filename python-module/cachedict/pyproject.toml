@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cachedict"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python cache dict."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,6 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
+python-undefined = ">=0.0.3"
 
 [build-system]
 requires = ["poetry-core"]
