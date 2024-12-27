@@ -2195,7 +2195,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     ))
                 else:
                     resp = yield partial(self.fs_mkdir, str(uuid4()), async_=async_)
-                    tempdir_id = int(resp["id"])
+                    tempdir_id = int(resp["cid"])
                     try:
                         yield partial(self.fs_copy, src_id, tempdir_id, async_=async_)
                         dst_id = (yield partial(

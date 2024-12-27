@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1)
+__version__ = (0, 1, 1)
 __all__ = ["request", "request_sync", "request_async"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
@@ -25,8 +25,8 @@ _CLIENT_INIT_KWARGS = signature(Client).parameters.keys() - _BUILD_REQUEST_KWARG
 if "__del__" not in Client.__dict__:
     setattr(Client, "__del__", Client.close)
 
-if "__del__" not in AsyncClient.__dict__:
-    def __del__(self, /):
+if "close" not in AsyncClient.__dict__:
+    def close(self, /):
         try:
             try:
                 loop = get_running_loop()
@@ -36,7 +36,10 @@ if "__del__" not in AsyncClient.__dict__:
                 run_coroutine_threadsafe(self.aclose(), loop)
         except Exception:
             pass
-    setattr(Client, "__del__", __del__)
+    setattr(AsyncClient, "close", close)
+if "__del__" not in AsyncClient.__dict__:
+    setattr(AsyncClient, "__del__", close)
+
 
 if "__del__" not in Response.__dict__:
     def __del__(self, /):
@@ -88,7 +91,7 @@ def request_sync(
         follow_redirects=follow_redirects, 
         stream=stream, 
     )
-    if raise_for_status:
+    if resp.status_code >= 400 and raise_for_status:
         resp.raise_for_status()
     if parse is None:
         return resp
@@ -146,7 +149,7 @@ async def request_async(
         follow_redirects=follow_redirects, 
         stream=stream, 
     )
-    if raise_for_status:
+    if resp.status_code >= 400 and raise_for_status:
         resp.raise_for_status()
     if parse is None:
         return resp

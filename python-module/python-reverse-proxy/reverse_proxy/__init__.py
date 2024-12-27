@@ -2,21 +2,25 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = ["ApplicationWithMethods", "make_application"]
 
+from asyncio import gather
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import cached_property, partial
 from itertools import chain
 from sys import _getframe, maxsize
 from typing import overload, SupportsIndex, TypeVar
 
-from blacksheep import Application, Request, Router
+from blacksheep import Application, Request, Router, WebSocket
 from blacksheep.contents import StreamedContent
 from blacksheep.messages import Response
 from blacksheep.server.remotes.forwarding import ForwardedHeadersMiddleware
+from blacksheep.server.websocket import WebSocketDisconnectError
 from dictattr import AttrDict
 from httpx import AsyncClient, Response as HTTPResponse
+from websockets import connect as websocket_connect
+from websockets.exceptions import ConnectionClosed
 
 
 T = TypeVar("T")
@@ -160,6 +164,8 @@ class ApplicationWithMethods(Application):
 def make_application(
     base_url: str = "http://localhost", 
     custom_proxy: bool | Callable = True, 
+    duplex_ws: None | bool = False, 
+    debug: bool = False, 
 ) -> ApplicationWithMethods:
     """创建一个 blacksheep 应用，用于反向代理 emby，以修改一些数据响应
 
@@ -170,11 +176,22 @@ def make_application(
         - 如果为 True，则提供一个默认的方法，会被绑定 "/" 和 "/<path:path>" 路由路径到任何请求方法
         - 如果为 Callable，会被绑定 "/" 和 "/<path:path>" 路由路径到任何请求方法
 
+    :param duplex_ws: 是否为双向 websocket
+
+        - 如果为 None，则不代理 websocket
+        - 如果为 False，则代理为单向 websocket，只进行接收
+        - 如果为 True，则代理为双向 websocket，会进行接收和发送
+
+    :param debug: 启用调试，会输出 DEBUG 级别日志，也会产生更详细的报错信息
+
     :return: 一个 blacksheep 应用，你可以 2 次扩展，并用 uvicorn 运行
     """
     base_url = base_url.rstrip("/")
     router = Router()
-    app = ApplicationWithMethods(router=router)
+    app = ApplicationWithMethods(router=router, show_error_details=debug)
+
+    if debug:
+        getattr(app, "logger").level = 10
 
     @app.add_method
     async def redirect_request(request: Request, data=None) -> HTTPResponse:
@@ -288,6 +305,47 @@ def make_application(
             headers=headers, 
             content=StreamedContent(bytes(content_type, "latin-1"), reader), 
         )
+
+    if duplex_ws is not None:
+        @router.ws("/")
+        @router.ws("/<path:path>")
+        async def proxy(
+            request: Request, 
+            ws_to: WebSocket, 
+            path: str = "", 
+        ):
+            await ws_to.accept()
+            proxy_base_url = f"{request.scheme.replace('ws', 'http')}://{request.host}"
+            async with websocket_connect(
+                "ws" + base_url.removeprefix("http") + str(request.url), 
+                additional_headers=[
+                    (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
+                    for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
+                    if k.lower() not in ("host", "sec-websocket-key")
+                ], 
+            ) as ws_from:
+                exc_cls = (WebSocketDisconnectError, ConnectionClosed)
+                async def recv():
+                    try:
+                        send = ws_to.send_bytes
+                        async for msg in ws_from:
+                            await send(msg) # type: ignore
+                    except Exception as e:
+                        if not (isinstance(e, exc_cls) or isinstance(e.__cause__, exc_cls)):
+                            raise
+                if duplex_ws:
+                    async def send():
+                        try:
+                            recv, send = ws_to.receive_bytes, ws_from.send
+                            while True:
+                                msg = await recv()
+                                await send(msg)
+                        except Exception as e:
+                            if not (isinstance(e, exc_cls) or isinstance(e.__cause__, exc_cls)):
+                                raise
+                    await gather(recv(), send())
+                else:
+                    await recv()
 
     if callable(custom_proxy):
         router.route("/", methods=[""])(custom_proxy)

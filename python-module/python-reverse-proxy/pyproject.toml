@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-reverse-proxy"
-version = "0.0.6"
+version = "0.0.7.2"
 description = "Python reverse proxy."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,8 +29,9 @@ include = [
 python = "^3.10"
 blacksheep = "*"
 httpx = "*"
-uvicorn = "*"
 python-dictattr = ">=0.0.4"
+uvicorn = "*"
+websockets = "*"
 
 [tool.poetry.scripts]
 reverse-proxy = "reverse_proxy.__main__:main"

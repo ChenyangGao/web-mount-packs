@@ -26,9 +26,10 @@ from .fs import P115Path
 
 
 STATUS_MAP: Final[dict[int, str]] = {
+   -1: "failed", 
+    0: "stopped", 
     1: "running", 
     2: "success", 
-    -1: "failed", 
 }
 
 
