@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import cached_property, partial
 from itertools import chain
 from sys import _getframe, maxsize
-from typing import overload, SupportsIndex, TypeVar
+from typing import overload, Literal, SupportsIndex, TypeVar
 
 from blacksheep import Application, Request, Router, WebSocket
 from blacksheep.contents import StreamedContent
@@ -164,7 +164,7 @@ class ApplicationWithMethods(Application):
 def make_application(
     base_url: str = "http://localhost", 
     custom_proxy: bool | Callable = True, 
-    duplex_ws: None | bool = False, 
+    ws_mode: None | Literal["", "r", "w", "rw"] = None, 
     debug: bool = False, 
 ) -> ApplicationWithMethods:
     """创建一个 blacksheep 应用，用于反向代理 emby，以修改一些数据响应
@@ -176,11 +176,12 @@ def make_application(
         - 如果为 True，则提供一个默认的方法，会被绑定 "/" 和 "/<path:path>" 路由路径到任何请求方法
         - 如果为 Callable，会被绑定 "/" 和 "/<path:path>" 路由路径到任何请求方法
 
-    :param duplex_ws: 是否为双向 websocket
+    :param ws_mode: websocket 的读写模式
 
-        - 如果为 None，则不代理 websocket
-        - 如果为 False，则代理为单向 websocket，只进行接收
-        - 如果为 True，则代理为双向 websocket，会进行接收和发送
+        - 如果为 None 或 ""，则不代理 websocket
+        - 如果为 "r"，则代理为单向 websocket，只进行接收（读）
+        - 如果为 "r"，则代理为单向 websocket，只进行发送（写）
+        - 如果为 "rw"，则代理为双向 websocket，会进行接收（读）和发送（写）
 
     :param debug: 启用调试，会输出 DEBUG 级别日志，也会产生更详细的报错信息
 
@@ -306,7 +307,7 @@ def make_application(
             content=StreamedContent(bytes(content_type, "latin-1"), reader), 
         )
 
-    if duplex_ws is not None:
+    if ws_mode:
         @router.ws("/")
         @router.ws("/<path:path>")
         async def proxy(
@@ -324,28 +325,23 @@ def make_application(
                     if k.lower() not in ("host", "sec-websocket-key")
                 ], 
             ) as ws_from:
-                exc_cls = (WebSocketDisconnectError, ConnectionClosed)
-                async def recv():
+                async def redirect(recv, send):
                     try:
-                        send = ws_to.send_bytes
-                        async for msg in ws_from:
-                            await send(msg) # type: ignore
+                        while True:
+                            await send(await recv())
                     except Exception as e:
+                        exc_cls = (WebSocketDisconnectError, ConnectionClosed)
                         if not (isinstance(e, exc_cls) or isinstance(e.__cause__, exc_cls)):
                             raise
-                if duplex_ws:
-                    async def send():
-                        try:
-                            recv, send = ws_to.receive_bytes, ws_from.send
-                            while True:
-                                msg = await recv()
-                                await send(msg)
-                        except Exception as e:
-                            if not (isinstance(e, exc_cls) or isinstance(e.__cause__, exc_cls)):
-                                raise
-                    await gather(recv(), send())
+                if ws_mode == "r":
+                    await redirect(ws_from.recv, ws_to.send_bytes)
+                elif ws_mode == "w":
+                    await redirect(ws_to.receive_bytes, ws_from.send)
                 else:
-                    await recv()
+                    await gather(
+                        redirect(ws_from.recv, ws_to.send_bytes), 
+                        redirect(ws_to.receive_bytes, ws_from.send), 
+                    )
 
     if callable(custom_proxy):
         router.route("/", methods=[""])(custom_proxy)
@@ -364,3 +360,5 @@ def make_application(
 
     return app
 
+# TODO: 再实现一个版本，用 fastapi，因为这个框架更新较频繁，可以在 python 3.13 上稳定运行，也可以在多种设备上编译成功
+# TODO: 再实现一个版本，用 emmett

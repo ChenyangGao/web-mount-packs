@@ -13,7 +13,7 @@ parser.add_argument(metavar="base-url", dest="base_url", nargs="?", default="htt
                     help="被代理的服务的 base_url，默认值：'http://localhost'")
 parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
 parser.add_argument("-P", "--port", default=8888, type=int, help="端口号，默认值：8888，如果为 0 则自动确定")
-parser.add_argument("-f", "--full-duplex-websocket", action="store_true", help="代理全双工 websocket，否则为只读")
+parser.add_argument("-m", "--ws-mode", choices=("", "r", "w", "rw"), help="websocket 的读写模式，'r' 为可读，'w' 为可写")
 parser.add_argument("-d", "--debug", action="store_true", help="启用 debug 模式（会输出更详细的信息）")
 parser.add_argument("-c", "--config", help="将被作为 JSON 解析然后作为关键字参数传给 `uvicorn.run`")
 parser.add_argument("-v", "--version", action="store_true", help="输出版本号")
@@ -38,7 +38,7 @@ def main(argv: None | list[str] | Namespace = None, /):
 
     app = make_application(
         base_url=args.base_url, 
-        duplex_ws=args.full_duplex_websocket, 
+        ws_mode=args.ws_mode, 
         debug=args.debug, 
     )
 
