@@ -235,11 +235,20 @@ def make_application(
         getattr(app, "logger").level = 10
 
     @app.add_method
-    def can_redirect(request: Request) -> bool:
+    def can_redirect(request: Request, url: str = "") -> bool:
         remote_hostname = urlsplit("http://" + request.host).hostname or "localhost"
-        if base_url_is_localhost:
+        if url:
+            url_hostname = urlsplit(url).hostname
+            if not url_hostname:
+                return True
+            url_is_localhost = is_localhost(url_hostname)
+            url_is_private = is_private(url_hostname)
+        else:
+            url_is_localhost = base_url_is_localhost
+            url_is_private = base_url_is_private
+        if url_is_localhost:
             return is_private(remote_hostname) if resolve_localhost else is_localhost(remote_hostname)
-        elif base_url_is_private:
+        elif url_is_private:
             return is_private(remote_hostname)
         return True
 
@@ -253,7 +262,7 @@ def make_application(
         request_headers = [
             (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
             for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
-            if k.lower() != "host"
+            if k.lower() not in ("host", "x-forwarded-proto")
         ]
         session = app.services.resolve(AsyncClient)
         return await session.send(
@@ -331,7 +340,7 @@ def make_application(
                 headers=[
                     (k, v)
                     for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
-                    if k.lower() != "host"
+                    if k.lower() not in ("host", "x-forwarded-proto")
                 ], 
                 timeout=timeout, 
             ), 
@@ -371,7 +380,7 @@ def make_application(
             additional_headers=[
                 (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
                 for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
-                if k.lower() not in ("host", "sec-websocket-key")
+                if k.lower() not in ("host", "sec-websocket-key", "x-forwarded-proto")
             ], 
         ) as ws_from:
             async def redirect(recv, send):

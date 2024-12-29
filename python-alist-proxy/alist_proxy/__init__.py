@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
@@ -24,7 +24,7 @@ from weakref import WeakValueDictionary
 from xml.etree.ElementTree import fromstring
 
 from alist import AlistClient
-from blacksheep import redirect, Application, Request, WebSocket
+from blacksheep import redirect, Application, Request, Response, WebSocket
 from blacksheep.contents import Content
 from cookietools import cookies_str_to_dict
 from httpx import AsyncClient
@@ -184,6 +184,8 @@ def make_application(
             raise ValueError(resp)
         elif resp["data"]["id"] != 1:
             raise ValueError("you are not admin of alist")
+    else:
+        client = AlistClient.from_auth("", base_url)
 
     @app.on_start
     async def on_start(app: Application):
@@ -233,6 +235,7 @@ def make_application(
         task_group: TaskGroup, 
         path: str = "", 
     ):
+        nonlocal alist_token
         method = request.method.upper()
         proxy_base_url = f"{request.scheme}://{request.host}"
         result: dict = {
@@ -245,6 +248,42 @@ def make_application(
             }, 
         }
         try:
+            if alist_token and method == "GET" and path.startswith(("d/", "p/", "dav/")):
+                path = path[path.find("/"):]
+                storage = await storage_of(client, path)
+                if storage and storage["driver"] == "WebDav":
+                    config = loads(storage["addition"])
+                    urlp = URL(config["address"])
+                    username = config["username"]
+                    if username:
+                        urlp = urlp.with_user(username)
+                    password = config["password"]
+                    if password:
+                        urlp = urlp.with_password(password)
+                    url = str(urlp) + config["root_folder_path"].rstrip("/") + path.removeprefix(storage["mount_path"])
+                    request_headers = [
+                        (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
+                        for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
+                        if k.lower() not in ("host", "x-forwarded-proto")
+                    ]
+                    while True:
+                        http_resp = await session.send(
+                            request=session.build_request(
+                                method="GET", 
+                                url=url, 
+                                headers=request_headers, 
+                                timeout=None, 
+                            ), 
+                            follow_redirects=False, 
+                            stream=True, 
+                        )
+                        if http_resp.status_code in (301, 302, 303, 307, 308):
+                            await http_resp.aclose()
+                            url = http_resp.headers["location"]
+                            if not url.startswith(("http://", "https://")) or app.can_redirect(request, url):
+                                return Response(http_resp.status_code, [(b"Location", bytes(url, "latin-1"))])
+                    resp, _ = await app.make_response(request, http_resp)
+                    return resp
             data: None | bytes = None
             if (app.can_redirect(request) and 
                (path == "favicon.ico" or path.startswith(("d/", "p/", "dav/", "images/")))
@@ -290,7 +329,14 @@ def make_application(
                     text = content.decode(get_charset(content_type))
                     if response_status == 200 and content_type.startswith("application/json"):
                         resp = result["response"]["json"] = loads(text)
-                        if path == "api/fs/list":
+                        if path == "api/admin/setting/list" and resp["code"] == 200:
+                            for item in resp["data"]:
+                                if item["key"] == "token":
+                                    alist_token = client.headers["Authorization"] = item["value"]
+                                    break
+                        elif path == "api/admin/setting/reset_token" and resp["code"] == 200:
+                            alist_token = client.headers["Authorization"] = item["data"]
+                        elif path == "api/fs/list":
                             if (
                                 alist_token and
                                 resp["code"] == 500 and
@@ -768,3 +814,7 @@ CREATE INDEX IF NOT EXISTS "idx_alist:fs_datetime" ON "alist:fs"(datetime);
                     await async_sleep(0.01)
     return app
 
+# TODO: 支持直接从数据库获取数据，而不是调用接口
+# get token: SELECT value FROM x_setting_items WHERE key='token'
+# get storages: SELECT * FROM x_storages
+# get tasks: SELECT * FROM x_task_items

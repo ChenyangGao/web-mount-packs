@@ -2,14 +2,14 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __license__ = "GPLv3 <https://www.gnu.org/licenses/gpl-3.0.txt>"
 __all__ = ["make_application"]
 
 from contextlib import suppress
 from urllib.parse import urlsplit
 
-from blacksheep import redirect, Request
+from blacksheep import redirect, Request, Response
 from httpx import AsyncClient, ReadTimeout
 from reverse_proxy import make_application as make_application_base, ApplicationWithMethods
 
@@ -52,13 +52,39 @@ def make_application(
                     resp = await client.post(f"{base_url}/Items/{item_id}/PlaybackInfo?X-Emby-Token={api_key}", timeout=3)
                     json = resp.json()
             for item in json["MediaSources"]:
+                url = item["Path"]
                 if (
                     (
-                        (MediaSourceId and "Id" in item and MediaSourceId == item["Id"]) or 
-                        ("ItemId" in item and item["ItemId"] == item_id)
-                    ) and item["Path"].startswith(("http://", "https://"))
+                        (MediaSourceId and MediaSourceId == item.get("Id")) or 
+                        item.get("ItemId") == item_id
+                    ) and url.startswith(("http://", "https://"))
                 ):
-                    return redirect(item["Path"])
+                    if not url.startswith(("http://", "https://")) or app.can_redirect(request, url):
+                        return redirect(url)
+                    proxy_base_url = f"{request.scheme}://{request.host}"
+                    request_headers = [
+                        (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
+                        for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
+                        if k.lower() not in ("host", "x-forwarded-proto")
+                    ]
+                    while True:
+                        http_resp = await client.send(
+                            request=client.build_request(
+                                method="GET", 
+                                url=url, 
+                                headers=request_headers, 
+                                timeout=None, 
+                            ), 
+                            follow_redirects=False, 
+                            stream=True, 
+                        )
+                        if http_resp.status_code in (301, 302, 303, 307, 308):
+                            await http_resp.aclose()
+                            url = http_resp.headers["location"]
+                            if not url.startswith(("http://", "https://")) or app.can_redirect(request, url):
+                                return Response(http_resp.status_code, [(b"Location", bytes(url, "latin-1"))])
+                    resp, _ = await app.make_response(request, http_resp)
+                    return resp
         return await app.redirect(request, redirect_first=True)
 
     return app
