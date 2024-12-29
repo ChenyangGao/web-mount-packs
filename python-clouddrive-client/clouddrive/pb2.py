@@ -3,5 +3,6 @@
 
 from .proto.CloudDrive_pb2 import *
 
-def __getattr__(name):
-    raise NameError(name)
+if False:
+    def __getattr__(name):
+        ...

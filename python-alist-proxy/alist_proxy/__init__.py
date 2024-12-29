@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1)
+__version__ = (0, 1, 1)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import partial
 from inspect import isawaitable, iscoroutinefunction
-from ipaddress import ip_address
 from itertools import islice
 from os.path import basename as os_basename
 from posixpath import basename, join as joinpath, split as splitpath
@@ -30,37 +29,11 @@ from blacksheep.contents import Content
 from cookietools import cookies_str_to_dict
 from httpx import AsyncClient
 from orjson import dumps, loads
-from p115qrcode import qrcode_token, qrcode_scan, qrcode_scan_confirm, qrcode_result
+from p115qrcode import qrcode_token, qrcode_scan, qrcode_scan_confirm, qrcode_result, SSOENT_TO_APP
 from reverse_proxy import make_application as make_application_base
 from yarl import URL
 
 
-# NOTE: 115 的 ssoent 对应的 app，与扫码登录有关
-SSOENT_TO_APP = {
-    "A1": "web",
-    "A2": "android",
-    "A3": "ios",
-    "A4": "115ipad",
-    "B1": "android",
-    "D1": "ios",
-    "D2": "ios",
-    "D3": "115ios",
-    "F1": "android",
-    "F2": "android",
-    "F3": "115android",
-    "H1": "115ipad",
-    "H2": "115ipad",
-    "H3": "115ipad",
-    "I1": "tv",
-    "M1": "qandroid",
-    "N1": "ios",
-    "P1": "windows",
-    "P2": "mac",
-    "P3": "linux",
-    "R1": "wechatmini",
-    "R2": "alipaymini",
-    "S1": "harmony",
-}
 USERID_TO_UID: dict[str, str] = {}
 USERID_AND_SSOENT_TO_COOKIES: dict[tuple[str, str], tuple[int, str, dict[str, str]]] = {}
 RELOGIN_115_LOCK_STORE: WeakValueDictionary[tuple[str, str], Lock] = WeakValueDictionary()
@@ -79,17 +52,6 @@ def get_charset(content_type: str, default: str = "utf-8") -> str:
     if match is None:
         return "utf-8"
     return match["charset"]
-
-
-def is_private(host: str, /) -> bool:
-    """判断一个主机是不是局域网的
-    """
-    if host == "localhost" or host.endswith(".local"):
-        return True
-    try:
-        return ip_address(host).is_private
-    except ValueError:
-        return False
 
 
 async def storage_of(client: AlistClient, path: str) -> None | dict:
@@ -175,6 +137,7 @@ def make_application(
     collect: None | Callable[[dict], Any] = None, 
     webhooks: None | Sequence[str] = None, 
     project: None | Callable[[dict], None | dict] = None, 
+    debug: bool = False, 
     threaded: bool = False, 
 ) -> Application:
     """创建一个 blacksheep 应用，用于反向代理 alist，并持续收集每个请求事件的消息
@@ -184,18 +147,14 @@ def make_application(
     :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
     :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
     :param project: 调用以对请求事件的消息进行映射处理，如果结果为 None，则丢弃此消息
+    :param debug: 启用调试，会输出 DEBUG 级别日志，也会产生更详细的报错信息
     :param threaded: collect 和 project，如果不是 async 函数，就放到单独的线程中运行
 
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
-    app = make_application_base(base_url, False)
+    app = make_application_base(base_url, False, debug=debug)
     app_ns = app.__dict__
     logger = getattr(app, "logger")
-    logger.level = 20
-    base_url = base_url.rstrip("/")
-    if not base_url.startswith(("http://", "https://")):
-        raise ValueError("invalid base_url: not a http/https url")
-    base_url_is_private = is_private(URL(base_url).host or "")
 
     if collect is None and not webhooks:
         collect = cast(
@@ -287,9 +246,8 @@ def make_application(
         }
         try:
             data: None | bytes = None
-            if (method == "GET" and 
-               (path == "favicon.ico" or path.startswith(("d/", "p/", "dav/", "images/"))) and 
-               (not base_url_is_private or is_private(request.host))
+            if (app.can_redirect(request) and 
+               (path == "favicon.ico" or path.startswith(("d/", "p/", "dav/", "images/")))
             ):
                 return redirect(base_url + str(request.url))
             content_type = str(request.headers.get_first(b"content-type") or b"", "latin-1")
@@ -308,7 +266,7 @@ def make_application(
                     content_type.startswith(("text/plain;", "application/json;", "application/xml;", "text/xml;"))
                 )
             while True:
-                http_resp = await app.methods["redirect_request"](request, data=data)
+                http_resp = await app.redirect_request(request, data=data)
                 response_status = http_resp.status_code
                 result["response"] = {
                     "status": response_status, 
@@ -326,7 +284,7 @@ def make_application(
                         except Exception:
                             pass
                         break
-                response, loaded = await app.methods["make_response"](request, http_resp, read_if)
+                response, loaded = await app.make_response(request, http_resp, read_if)
                 if loaded is not None:
                     content_type, content = loaded
                     text = content.decode(get_charset(content_type))
@@ -380,6 +338,7 @@ def make_application_with_fs_events(
     base_url: str = "http://localhost:5244", 
     collect: None | Callable[[dict], Any] = None, 
     webhooks: None | Sequence[str] = None, 
+    debug: bool = False, 
     threaded: bool = False, 
 ) -> Application:
     """只收集和文件系统操作有关的事件
@@ -388,6 +347,7 @@ def make_application_with_fs_events(
     :param base_url: alist 的 base_url
     :param collect: 调用以收集 alist 请求事件的消息（在 project 调用之后），如果为 None，则输出到日志
     :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
+    :param debug: 启用调试，会输出 DEBUG 级别日志，也会产生更详细的报错信息
     :param threaded: collect 如果不是 async 函数，就放到单独的线程中运行
 
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
@@ -471,6 +431,7 @@ def make_application_with_fs_events(
         collect=collect, 
         webhooks=webhooks, 
         project=project, 
+        debug=debug, 
         threaded=threaded, 
     )
     app_ns = app.__dict__
@@ -573,6 +534,7 @@ def make_application_with_fs_event_stream(
     base_url: str = "http://localhost:5244", 
     db_uri: str = "sqlite", 
     webhooks: None | Sequence[str] = None, 
+    debug: bool = False, 
 ):
     """只收集和文件系统操作有关的事件，存储到 redis streams，并且可以通过 websocket 拉取
 
@@ -588,6 +550,7 @@ def make_application_with_fs_event_stream(
         如果你只输入 dbtype 的名字，则视为 "{dbtype}://"
         如果你输入了值，但不能被视为 dbtype，则自动视为 path，即 "sqlite:///{path}"
     :param webhooks: 一组 webhook 的链接，事件会用 POST 请求发送给每一个链接，响应头为 {"Content-type": "application/json; charset=utf-8"}
+    :param debug: 启用调试，会输出 DEBUG 级别日志，也会产生更详细的报错信息
 
     :return: 一个 blacksheep 应用，你可以二次扩展，并用 uvicorn 运行
     """
@@ -596,6 +559,7 @@ def make_application_with_fs_event_stream(
             alist_token=alist_token, 
             base_url=base_url, 
             webhooks=webhooks, 
+            debug=debug, 
         )
 
     match db_uri:
@@ -639,6 +603,7 @@ def make_application_with_fs_event_stream(
             base_url=base_url, 
             collect=lambda data: redis.xadd("alist:fs", {"data": dumps(data)}), 
             webhooks=webhooks, 
+            debug=debug, 
         )
         app_ns = app.__dict__
 
@@ -685,6 +650,7 @@ def make_application_with_fs_event_stream(
             base_url=base_url, 
             collect=lambda data: mongo_col.insert_one({"data": data}), 
             webhooks=webhooks, 
+            debug=debug, 
         )
         app_ns = app.__dict__
 
@@ -748,6 +714,7 @@ def make_application_with_fs_event_stream(
             base_url=base_url, 
             collect=collect, 
             webhooks=webhooks, 
+            debug=debug, 
         )
         app_ns = app.__dict__
         sqlite: Any = None

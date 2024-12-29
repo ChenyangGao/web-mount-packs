@@ -46,7 +46,6 @@ from typing import cast, Any, Concatenate, Final, IO, ParamSpec
 from unicodedata import normalize
 
 from clouddrive import CloudDriveFileSystem, CloudDrivePath
-from filewrap import Buffer
 from httpfile import HTTPFileReader
 from http_request import SupportsGeturl
 from yarl import URL
@@ -73,7 +72,7 @@ if not hasattr(ThreadPoolExecutor, "__del__"):
 
 def readdir_future_wrapper(
     self, 
-    submit: Callable[Concatenate[Callable[Args, Any], Args], Future], 
+    submit: Callable[..., Future], 
     cooldown: int | float = 30, 
 ):
     readdir = type(self).readdir
@@ -165,7 +164,7 @@ class CloudDriveFuseOperations(Operations):
         else:
             self.temp_cache = LRUCache(128)
         self.cache: MutableMapping = cache
-        self._fh_to_file: dict[int, tuple[IO[Buffer], bytes]] = {}
+        self._fh_to_file: dict[int, tuple[IO[bytes], bytes]] = {}
         def close_all():
             popitem = self._fh_to_file.popitem
             while True:
@@ -291,12 +290,12 @@ class CloudDriveFuseOperations(Operations):
         path = attr["_path"]["path"]
         if attr.get("_data") is not None:
             return None, attr["_data"]
-        file: None | IO[Buffer]
+        file: None | IO[bytes]
         if self.open_file is None:
             file = cast(IO[bytes], attr["_path"].open("rb"))
         else:
             rawfile = self.open_file(attr["_path"])
-            if isinstance(rawfile, Buffer):
+            if isinstance(rawfile, bytes):
                 return None, rawfile
             elif isinstance(rawfile, str) and rawfile.startswith(("http://", "https://")) or isinstance(rawfile, (SupportsGeturl, URL)):
                 if isinstance(rawfile, str):
@@ -309,7 +308,7 @@ class CloudDriveFuseOperations(Operations):
             elif isinstance(rawfile, (str, PathLike)):
                 file = open(rawfile, "rb")
             else:
-                file = cast(IO[Buffer], rawfile)
+                file = cast(IO[bytes], rawfile)
         if attr["st_size"] <= 2048:
             return None, file.read()
         if start == 0:

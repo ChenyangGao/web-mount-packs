@@ -1605,7 +1605,7 @@ class CloudDriveFileSystem:
             headers=headers, 
             start=start, 
             seek_threshold=seek_threshold, 
-        ).wrap(
+        ).wrap( # type: ignore
             text_mode="b" not in mode, 
             buffering=buffering, 
             encoding=encoding, 

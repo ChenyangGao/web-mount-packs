@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-reverse-proxy"
-version = "0.0.9.2"
-description = "Python reverse proxy."
+name = "python-emby-proxy"
+version = "0.0.1.2"
+description = "Python emby reverse proxy."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-reverse-proxy"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-reverse-proxy"
-keywords = ["reverse proxy"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-emby-proxy"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-emby-proxy"
+keywords = ["emby", "reverse proxy"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -29,17 +29,17 @@ include = [
 python = "^3.10"
 blacksheep = "*"
 httpx = "*"
-python-dictattr = ">=0.0.4"
+python-reverse-proxy = ">=0.0.9.2"
+pyyaml = "*"
 uvicorn = "*"
-websockets = "*"
 
 [tool.poetry.scripts]
-reverse-proxy = "reverse_proxy.__main__:main"
-python-reverse-proxy = "reverse_proxy.__main__:main"
+python-emby-proxy = "emby_proxy.__main__:main"
+emby-proxy = "emby_proxy.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "reverse_proxy"
+include = "emby_proxy"

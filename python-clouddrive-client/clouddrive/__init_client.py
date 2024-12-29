@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).parent
 PROTO_DIR = PROJECT_DIR / "proto"
 PROTO_FILE = PROTO_DIR / "CloudDrive.proto"
-PROTO_PYFILE = PROTO_DIR / "clouddrive.pb2.py"
+PROTO_PYFILE = PROTO_DIR / "clouddrive_pb2.py"
 
 need_make_pyproto = False
 
@@ -167,11 +167,11 @@ else:
         if argtype not in messages:
             raise NotImplementedError(meta)
         if not argspec:
-            arg_anno = f"clouddrive.pb2.{argtype}"
+            arg_anno = f"dict | clouddrive.pb2.{argtype}"
         elif argspec == "repeated":
-            arg_anno = f"list[clouddrive.pb2.{argtype}]"
+            arg_anno = f"list[dict | clouddrive.pb2.{argtype}]"
         elif argspec == "stream":
-            arg_anno = f"Sequence[clouddrive.pb2.{argtype}]"
+            arg_anno = f"Sequence[dict | clouddrive.pb2.{argtype}]"
         else:
             raise NotImplementedError(meta)
         refs.add(argtype)
@@ -210,7 +210,11 @@ else:
     self.stub.{name}(arg, metadata=self.metadata)
     return None"""
         else:
-            method_body = f"""\
+            if argspec:
+                method_body = f"arg = [to_message(clouddrive.pb2.{argtype}, a) for a in arg]"
+            else:
+                method_body = f"arg = to_message(clouddrive.pb2.{argtype}, arg)"
+            method_body += f"""
 if async_:
     return self.async_stub.{name}(arg, metadata=self.metadata)
 else:
@@ -253,6 +257,8 @@ from typing import overload, Any, Iterable, Literal, Never, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
+from google.protobuf.json_format import ParseDict # type: ignore
+from google.protobuf.message import Message # type: ignore
 from grpc import insecure_channel, Channel # type: ignore
 from grpclib.client import Channel as AsyncChannel # type: ignore
 from yarl import URL
@@ -269,6 +275,17 @@ from .proto import CloudDrive_grpc, CloudDrive_pb2_grpc
 CLOUDDRIVE_API_MAP = {
 """ + "\n".join(f'    "{k}": {v}, ' for k, v in method_map.items()) + """
 }
+
+
+def to_message(cls, o, /) -> Message:
+    if isinstance(o, Message):
+        return o
+    elif type(o) is dict:
+        return ParseDict(o, cls())
+    elif type(o) is tuple:
+        return cls(**{f.name: a for f, a in zip(cls.DESCRIPTOR.fields, o)})
+    else:
+        return cls(**{cls.DESCRIPTOR.fields[0].name: o})
 
 
 class Client:

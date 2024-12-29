@@ -2,15 +2,18 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 9)
 __all__ = ["ApplicationWithMethods", "make_application"]
 
 from asyncio import gather
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequence
+from ipaddress import ip_address
 from functools import cached_property, partial
 from itertools import chain
+from socket import socket, AF_INET, SOCK_DGRAM
 from sys import _getframe, maxsize
 from typing import overload, Literal, SupportsIndex, TypeVar
+from urllib.parse import urlsplit, urlunsplit
 
 from blacksheep import Application, Request, Router, WebSocket
 from blacksheep.contents import StreamedContent
@@ -34,6 +37,29 @@ def __setattr__(self, attr, val, /, _set=Router.__setattr__):
     return _set(self, attr, val)
 
 setattr(Router, "__setattr__", __setattr__)
+
+
+def get_local_ip() -> str:
+    with socket(AF_INET, SOCK_DGRAM) as sock:
+        #sock.connect(("8.8.8.8", 80))
+        sock.connect(("192.168.1.1", 80))
+        try:
+            return sock.getsockname()[0]
+        except:
+            return ""
+
+
+def is_localhost(host: str, /) -> bool:
+    return host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+
+def is_private(host: str, /) -> bool:
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    try:
+        return ip_address(host).is_private
+    except ValueError:
+        return False
 
 
 class ChainedList(list[T]):
@@ -165,6 +191,7 @@ def make_application(
     base_url: str = "http://localhost", 
     custom_proxy: bool | Callable = True, 
     ws_mode: None | Literal["", "r", "w", "rw"] = None, 
+    resolve_localhost: bool = False, 
     debug: bool = False, 
 ) -> ApplicationWithMethods:
     """创建一个 blacksheep 应用，用于反向代理 emby，以修改一些数据响应
@@ -183,11 +210,24 @@ def make_application(
         - 如果为 "r"，则代理为单向 websocket，只进行发送（写）
         - 如果为 "rw"，则代理为双向 websocket，会进行接收（读）和发送（写）
 
+    :param resolve_localhost: 如果 base_url 为 localhost 地址，是否获取其实际局域网地址
     :param debug: 启用调试，会输出 DEBUG 级别日志，也会产生更详细的报错信息
 
     :return: 一个 blacksheep 应用，你可以 2 次扩展，并用 uvicorn 运行
     """
+    if not base_url.startswith(("http://", "https://")):
+        raise ValueError(f"not a valid http/https base_url: {base_url!r}")
     base_url = base_url.rstrip("/")
+    base_urlp = urlsplit(base_url)
+    base_url_hostname = base_urlp.hostname or "localhost"
+    base_url_is_localhost = is_localhost(base_url_hostname)
+    base_url_is_private = base_url_is_localhost or is_private(base_url_hostname)
+    if base_url_is_localhost and resolve_localhost:
+        base_url_hostname = get_local_ip()
+        base_url_port = (base_urlp.netloc or "").removeprefix(base_urlp.hostname or "")
+        base_urlp = base_urlp._replace(netloc=base_url_hostname + base_url_port)
+        base_url = urlunsplit(base_urlp)
+
     router = Router()
     app = ApplicationWithMethods(router=router, show_error_details=debug)
 
@@ -195,7 +235,20 @@ def make_application(
         getattr(app, "logger").level = 10
 
     @app.add_method
-    async def redirect_request(request: Request, data=None) -> HTTPResponse:
+    def can_redirect(request: Request) -> bool:
+        remote_hostname = urlsplit("http://" + request.host).hostname or "localhost"
+        if base_url_is_localhost:
+            return is_private(remote_hostname) if resolve_localhost else is_localhost(remote_hostname)
+        elif base_url_is_private:
+            return is_private(remote_hostname)
+        return True
+
+    @app.add_method
+    async def redirect_request(
+        request: Request, 
+        data: None | bytes | AsyncIterator[bytes] = None, 
+        timeout: None | int | float = None, 
+    ) -> HTTPResponse:
         proxy_base_url = f"{request.scheme}://{request.host}"
         request_headers = [
             (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
@@ -209,7 +262,7 @@ def make_application(
                 url=base_url+str(request.url), 
                 data=request.stream() if data is None else data, # type: ignore
                 headers=request_headers, 
-                timeout=None, 
+                timeout=timeout, 
             ), 
             follow_redirects=False, 
             stream=True,
@@ -255,23 +308,21 @@ def make_application(
             content=StreamedContent(bytes(content_type, "latin-1"), reader), 
         ), data)
 
-    @app.on_middlewares_configuration
-    def configure_forwarded_headers(app: Application):
-        app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
-
-    @app.lifespan
-    async def register_http_client(app: Application):
-        async with AsyncClient() as session:
-            app.services.register(AsyncClient, instance=session)
-            yield
-
-    @router.route("/_redirect", methods=[""])
+    @app.add_method
     async def redirect(
         request: Request, 
-        session: AsyncClient, 
-        url: str, 
-        timeout: None | float = None, 
-    ):
+        url: None | str = None, 
+        timeout: None | int | float = None, 
+        redirect_first: bool = False, 
+    ) -> Response:
+        if url is None:
+            if redirect_first and request.method.upper() in ("GET", "HEAD") and can_redirect(request):
+                from blacksheep import redirect
+                return redirect(base_url + str(request.url))
+            http_resp = await redirect_request(request, timeout=timeout)
+            response, _ = await make_response(request, http_resp)
+            return response
+        session = app.services.resolve(AsyncClient)
         resp = await session.send(
             request=session.build_request(
                 method=request.method, 
@@ -307,6 +358,50 @@ def make_application(
             content=StreamedContent(bytes(content_type, "latin-1"), reader), 
         )
 
+    @app.add_method
+    async def redirect_websocket(
+        request: Request, 
+        ws_to: WebSocket, 
+        ws_mode: Literal["r", "w", "rw"] = "rw", 
+    ):
+        await ws_to.accept()
+        proxy_base_url = f"{request.scheme.replace('ws', 'http')}://{request.host}"
+        async with websocket_connect(
+            "ws" + base_url.removeprefix("http") + str(request.url), 
+            additional_headers=[
+                (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
+                for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
+                if k.lower() not in ("host", "sec-websocket-key")
+            ], 
+        ) as ws_from:
+            async def redirect(recv, send):
+                try:
+                    while True:
+                        await send(await recv())
+                except Exception as e:
+                    exc_cls = (WebSocketDisconnectError, ConnectionClosed)
+                    if not (isinstance(e, exc_cls) or isinstance(e.__cause__, exc_cls)):
+                        raise
+            if ws_mode == "r":
+                await redirect(ws_from.recv, ws_to.send_bytes)
+            elif ws_mode == "w":
+                await redirect(ws_to.receive_bytes, ws_from.send)
+            else:
+                await gather(
+                    redirect(ws_from.recv, ws_to.send_bytes), 
+                    redirect(ws_to.receive_bytes, ws_from.send), 
+                )
+
+    @app.on_middlewares_configuration
+    def configure_forwarded_headers(app: Application):
+        app.middlewares.insert(0, ForwardedHeadersMiddleware(accept_only_proxied_requests=False))
+
+    @app.lifespan
+    async def register_http_client(app: Application):
+        async with AsyncClient() as session:
+            app.services.register(AsyncClient, instance=session)
+            yield
+
     if ws_mode:
         @router.ws("/")
         @router.ws("/<path:path>")
@@ -315,33 +410,7 @@ def make_application(
             ws_to: WebSocket, 
             path: str = "", 
         ):
-            await ws_to.accept()
-            proxy_base_url = f"{request.scheme.replace('ws', 'http')}://{request.host}"
-            async with websocket_connect(
-                "ws" + base_url.removeprefix("http") + str(request.url), 
-                additional_headers=[
-                    (k, base_url + v[len(proxy_base_url):] if k in ("destination", "origin", "referer") and v.startswith(proxy_base_url) else v)
-                    for k, v in ((str(k, "latin-1"), str(v, "latin-1")) for k, v in request.headers)
-                    if k.lower() not in ("host", "sec-websocket-key")
-                ], 
-            ) as ws_from:
-                async def redirect(recv, send):
-                    try:
-                        while True:
-                            await send(await recv())
-                    except Exception as e:
-                        exc_cls = (WebSocketDisconnectError, ConnectionClosed)
-                        if not (isinstance(e, exc_cls) or isinstance(e.__cause__, exc_cls)):
-                            raise
-                if ws_mode == "r":
-                    await redirect(ws_from.recv, ws_to.send_bytes)
-                elif ws_mode == "w":
-                    await redirect(ws_to.receive_bytes, ws_from.send)
-                else:
-                    await gather(
-                        redirect(ws_from.recv, ws_to.send_bytes), 
-                        redirect(ws_to.receive_bytes, ws_from.send), 
-                    )
+            await redirect_websocket(request, ws_to, ws_mode)
 
     if callable(custom_proxy):
         router.route("/", methods=[""])(custom_proxy)
@@ -349,14 +418,8 @@ def make_application(
     elif custom_proxy:
         @router.route("/", methods=[""])
         @router.route("/<path:path>", methods=[""])
-        async def proxy(
-            request: Request, 
-            session: AsyncClient, 
-            path: str = "", 
-        ):
-            http_resp = await redirect_request(request)
-            response, _ = await make_response(request, http_resp)
-            return response
+        async def proxy(request: Request, path: str = ""):
+            return await redirect(request)
 
     return app
 

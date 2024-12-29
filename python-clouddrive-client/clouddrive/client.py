@@ -10,6 +10,8 @@ from typing import overload, Any, Iterable, Literal, Never, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from google.protobuf.empty_pb2 import Empty # type: ignore
+from google.protobuf.json_format import ParseDict # type: ignore
+from google.protobuf.message import Message # type: ignore
 from grpc import insecure_channel, Channel # type: ignore
 from grpclib.client import Channel as AsyncChannel # type: ignore
 from yarl import URL
@@ -25,88 +27,88 @@ from .proto import CloudDrive_grpc, CloudDrive_pb2_grpc
 
 CLOUDDRIVE_API_MAP = {
     "GetSystemInfo": {"return": clouddrive.pb2.CloudDriveSystemInfo}, 
-    "GetToken": {"argument": clouddrive.pb2.GetTokenRequest, "return": clouddrive.pb2.JWTToken}, 
-    "Login": {"argument": clouddrive.pb2.UserLoginRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "Register": {"argument": clouddrive.pb2.UserRegisterRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "SendResetAccountEmail": {"argument": clouddrive.pb2.SendResetAccountEmailRequest}, 
-    "ResetAccount": {"argument": clouddrive.pb2.ResetAccountRequest}, 
+    "GetToken": {"argument": dict | clouddrive.pb2.GetTokenRequest, "return": clouddrive.pb2.JWTToken}, 
+    "Login": {"argument": dict | clouddrive.pb2.UserLoginRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "Register": {"argument": dict | clouddrive.pb2.UserRegisterRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "SendResetAccountEmail": {"argument": dict | clouddrive.pb2.SendResetAccountEmailRequest}, 
+    "ResetAccount": {"argument": dict | clouddrive.pb2.ResetAccountRequest}, 
     "SendConfirmEmail": {}, 
-    "ConfirmEmail": {"argument": clouddrive.pb2.ConfirmEmailRequest}, 
+    "ConfirmEmail": {"argument": dict | clouddrive.pb2.ConfirmEmailRequest}, 
     "GetAccountStatus": {"return": clouddrive.pb2.AccountStatusResult}, 
-    "GetSubFiles": {"argument": clouddrive.pb2.ListSubFileRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
-    "GetSearchResults": {"argument": clouddrive.pb2.SearchRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
-    "FindFileByPath": {"argument": clouddrive.pb2.FindFileByPathRequest, "return": clouddrive.pb2.CloudDriveFile}, 
-    "CreateFolder": {"argument": clouddrive.pb2.CreateFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
-    "CreateEncryptedFolder": {"argument": clouddrive.pb2.CreateEncryptedFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
-    "UnlockEncryptedFile": {"argument": clouddrive.pb2.UnlockEncryptedFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "LockEncryptedFile": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "RenameFile": {"argument": clouddrive.pb2.RenameFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "RenameFiles": {"argument": clouddrive.pb2.RenameFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "MoveFile": {"argument": clouddrive.pb2.MoveFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "CopyFile": {"argument": clouddrive.pb2.CopyFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "DeleteFile": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "DeleteFilePermanently": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "DeleteFiles": {"argument": clouddrive.pb2.MultiFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "DeleteFilesPermanently": {"argument": clouddrive.pb2.MultiFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "AddOfflineFiles": {"argument": clouddrive.pb2.AddOfflineFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "RemoveOfflineFiles": {"argument": clouddrive.pb2.RemoveOfflineFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "ListOfflineFilesByPath": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.OfflineFileListResult}, 
-    "ListAllOfflineFiles": {"argument": clouddrive.pb2.OfflineFileListAllRequest, "return": clouddrive.pb2.OfflineFileListAllResult}, 
-    "AddSharedLink": {"argument": clouddrive.pb2.AddSharedLinkRequest}, 
-    "GetFileDetailProperties": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileDetailProperties}, 
-    "GetSpaceInfo": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.SpaceInfo}, 
-    "GetCloudMemberships": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.CloudMemberships}, 
+    "GetSubFiles": {"argument": dict | clouddrive.pb2.ListSubFileRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
+    "GetSearchResults": {"argument": dict | clouddrive.pb2.SearchRequest, "return": Iterable[clouddrive.pb2.SubFilesReply]}, 
+    "FindFileByPath": {"argument": dict | clouddrive.pb2.FindFileByPathRequest, "return": clouddrive.pb2.CloudDriveFile}, 
+    "CreateFolder": {"argument": dict | clouddrive.pb2.CreateFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
+    "CreateEncryptedFolder": {"argument": dict | clouddrive.pb2.CreateEncryptedFolderRequest, "return": clouddrive.pb2.CreateFolderResult}, 
+    "UnlockEncryptedFile": {"argument": dict | clouddrive.pb2.UnlockEncryptedFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "LockEncryptedFile": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "RenameFile": {"argument": dict | clouddrive.pb2.RenameFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "RenameFiles": {"argument": dict | clouddrive.pb2.RenameFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "MoveFile": {"argument": dict | clouddrive.pb2.MoveFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "CopyFile": {"argument": dict | clouddrive.pb2.CopyFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFile": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFilePermanently": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFiles": {"argument": dict | clouddrive.pb2.MultiFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "DeleteFilesPermanently": {"argument": dict | clouddrive.pb2.MultiFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "AddOfflineFiles": {"argument": dict | clouddrive.pb2.AddOfflineFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "RemoveOfflineFiles": {"argument": dict | clouddrive.pb2.RemoveOfflineFilesRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "ListOfflineFilesByPath": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.OfflineFileListResult}, 
+    "ListAllOfflineFiles": {"argument": dict | clouddrive.pb2.OfflineFileListAllRequest, "return": clouddrive.pb2.OfflineFileListAllResult}, 
+    "AddSharedLink": {"argument": dict | clouddrive.pb2.AddSharedLinkRequest}, 
+    "GetFileDetailProperties": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileDetailProperties}, 
+    "GetSpaceInfo": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.SpaceInfo}, 
+    "GetCloudMemberships": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.CloudMemberships}, 
     "GetRuntimeInfo": {"return": clouddrive.pb2.RuntimeInfo}, 
     "GetRunningInfo": {"return": clouddrive.pb2.RunInfo}, 
-    "Logout": {"argument": clouddrive.pb2.UserLogoutRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "Logout": {"argument": dict | clouddrive.pb2.UserLogoutRequest, "return": clouddrive.pb2.FileOperationResult}, 
     "CanAddMoreMountPoints": {"return": clouddrive.pb2.FileOperationResult}, 
     "GetMountPoints": {"return": clouddrive.pb2.GetMountPointsResult}, 
-    "AddMountPoint": {"argument": clouddrive.pb2.MountOption, "return": clouddrive.pb2.MountPointResult}, 
-    "RemoveMountPoint": {"argument": clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
-    "Mount": {"argument": clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
-    "Unmount": {"argument": clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
-    "UpdateMountPoint": {"argument": clouddrive.pb2.UpdateMountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "AddMountPoint": {"argument": dict | clouddrive.pb2.MountOption, "return": clouddrive.pb2.MountPointResult}, 
+    "RemoveMountPoint": {"argument": dict | clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "Mount": {"argument": dict | clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "Unmount": {"argument": dict | clouddrive.pb2.MountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
+    "UpdateMountPoint": {"argument": dict | clouddrive.pb2.UpdateMountPointRequest, "return": clouddrive.pb2.MountPointResult}, 
     "GetAvailableDriveLetters": {"return": clouddrive.pb2.GetAvailableDriveLettersResult}, 
     "HasDriveLetters": {"return": clouddrive.pb2.HasDriveLettersResult}, 
-    "LocalGetSubFiles": {"argument": clouddrive.pb2.LocalGetSubFilesRequest, "return": Iterable[clouddrive.pb2.LocalGetSubFilesResult]}, 
+    "LocalGetSubFiles": {"argument": dict | clouddrive.pb2.LocalGetSubFilesRequest, "return": Iterable[clouddrive.pb2.LocalGetSubFilesResult]}, 
     "GetAllTasksCount": {"return": clouddrive.pb2.GetAllTasksCountResult}, 
     "GetDownloadFileCount": {"return": clouddrive.pb2.GetDownloadFileCountResult}, 
     "GetDownloadFileList": {"return": clouddrive.pb2.GetDownloadFileListResult}, 
     "GetUploadFileCount": {"return": clouddrive.pb2.GetUploadFileCountResult}, 
-    "GetUploadFileList": {"argument": clouddrive.pb2.GetUploadFileListRequest, "return": clouddrive.pb2.GetUploadFileListResult}, 
+    "GetUploadFileList": {"argument": dict | clouddrive.pb2.GetUploadFileListRequest, "return": clouddrive.pb2.GetUploadFileListResult}, 
     "CancelAllUploadFiles": {}, 
-    "CancelUploadFiles": {"argument": clouddrive.pb2.MultpleUploadFileKeyRequest}, 
+    "CancelUploadFiles": {"argument": dict | clouddrive.pb2.MultpleUploadFileKeyRequest}, 
     "PauseAllUploadFiles": {}, 
-    "PauseUploadFiles": {"argument": clouddrive.pb2.MultpleUploadFileKeyRequest}, 
+    "PauseUploadFiles": {"argument": dict | clouddrive.pb2.MultpleUploadFileKeyRequest}, 
     "ResumeAllUploadFiles": {}, 
-    "ResumeUploadFiles": {"argument": clouddrive.pb2.MultpleUploadFileKeyRequest}, 
+    "ResumeUploadFiles": {"argument": dict | clouddrive.pb2.MultpleUploadFileKeyRequest}, 
     "CanAddMoreCloudApis": {"return": clouddrive.pb2.FileOperationResult}, 
-    "APILogin115Editthiscookie": {"argument": clouddrive.pb2.Login115EditthiscookieRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "APILogin115QRCode": {"argument": clouddrive.pb2.Login115QrCodeRequest, "return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
-    "APILoginAliyundriveOAuth": {"argument": clouddrive.pb2.LoginAliyundriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "APILoginAliyundriveRefreshtoken": {"argument": clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "APILoginAliyunDriveQRCode": {"argument": clouddrive.pb2.LoginAliyundriveQRCodeRequest, "return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
-    "APILoginBaiduPanOAuth": {"argument": clouddrive.pb2.LoginBaiduPanOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "APILoginOneDriveOAuth": {"argument": clouddrive.pb2.LoginOneDriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "ApiLoginGoogleDriveOAuth": {"argument": clouddrive.pb2.LoginGoogleDriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "ApiLoginGoogleDriveRefreshToken": {"argument": clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "ApiLoginXunleiOAuth": {"argument": clouddrive.pb2.LoginXunleiOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "ApiLogin123panOAuth": {"argument": clouddrive.pb2.Login123panOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILogin115Editthiscookie": {"argument": dict | clouddrive.pb2.Login115EditthiscookieRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILogin115QRCode": {"argument": dict | clouddrive.pb2.Login115QrCodeRequest, "return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
+    "APILoginAliyundriveOAuth": {"argument": dict | clouddrive.pb2.LoginAliyundriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginAliyundriveRefreshtoken": {"argument": dict | clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginAliyunDriveQRCode": {"argument": dict | clouddrive.pb2.LoginAliyundriveQRCodeRequest, "return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
+    "APILoginBaiduPanOAuth": {"argument": dict | clouddrive.pb2.LoginBaiduPanOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APILoginOneDriveOAuth": {"argument": dict | clouddrive.pb2.LoginOneDriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLoginGoogleDriveOAuth": {"argument": dict | clouddrive.pb2.LoginGoogleDriveOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLoginGoogleDriveRefreshToken": {"argument": dict | clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLoginXunleiOAuth": {"argument": dict | clouddrive.pb2.LoginXunleiOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "ApiLogin123panOAuth": {"argument": dict | clouddrive.pb2.Login123panOAuthRequest, "return": clouddrive.pb2.APILoginResult}, 
     "APILogin189QRCode": {"return": Iterable[clouddrive.pb2.QRCodeScanMessage]}, 
-    "APILoginWebDav": {"argument": clouddrive.pb2.LoginWebDavRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "APIAddLocalFolder": {"argument": clouddrive.pb2.AddLocalFolderRequest, "return": clouddrive.pb2.APILoginResult}, 
-    "RemoveCloudAPI": {"argument": clouddrive.pb2.RemoveCloudAPIRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "APILoginWebDav": {"argument": dict | clouddrive.pb2.LoginWebDavRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "APIAddLocalFolder": {"argument": dict | clouddrive.pb2.AddLocalFolderRequest, "return": clouddrive.pb2.APILoginResult}, 
+    "RemoveCloudAPI": {"argument": dict | clouddrive.pb2.RemoveCloudAPIRequest, "return": clouddrive.pb2.FileOperationResult}, 
     "GetAllCloudApis": {"return": clouddrive.pb2.CloudAPIList}, 
-    "GetCloudAPIConfig": {"argument": clouddrive.pb2.GetCloudAPIConfigRequest, "return": clouddrive.pb2.CloudAPIConfig}, 
-    "SetCloudAPIConfig": {"argument": clouddrive.pb2.SetCloudAPIConfigRequest}, 
+    "GetCloudAPIConfig": {"argument": dict | clouddrive.pb2.GetCloudAPIConfigRequest, "return": clouddrive.pb2.CloudAPIConfig}, 
+    "SetCloudAPIConfig": {"argument": dict | clouddrive.pb2.SetCloudAPIConfigRequest}, 
     "GetSystemSettings": {"return": clouddrive.pb2.SystemSettings}, 
-    "SetSystemSettings": {"argument": clouddrive.pb2.SystemSettings}, 
-    "SetDirCacheTimeSecs": {"argument": clouddrive.pb2.SetDirCacheTimeRequest}, 
-    "GetEffectiveDirCacheTimeSecs": {"argument": clouddrive.pb2.GetEffectiveDirCacheTimeRequest, "return": clouddrive.pb2.GetEffectiveDirCacheTimeResult}, 
-    "ForceExpireDirCache": {"argument": clouddrive.pb2.FileRequest}, 
-    "GetOpenFileTable": {"argument": clouddrive.pb2.GetOpenFileTableRequest, "return": clouddrive.pb2.OpenFileTable}, 
+    "SetSystemSettings": {"argument": dict | clouddrive.pb2.SystemSettings}, 
+    "SetDirCacheTimeSecs": {"argument": dict | clouddrive.pb2.SetDirCacheTimeRequest}, 
+    "GetEffectiveDirCacheTimeSecs": {"argument": dict | clouddrive.pb2.GetEffectiveDirCacheTimeRequest, "return": clouddrive.pb2.GetEffectiveDirCacheTimeResult}, 
+    "ForceExpireDirCache": {"argument": dict | clouddrive.pb2.FileRequest}, 
+    "GetOpenFileTable": {"argument": dict | clouddrive.pb2.GetOpenFileTableRequest, "return": clouddrive.pb2.OpenFileTable}, 
     "GetDirCacheTable": {"return": clouddrive.pb2.DirCacheTable}, 
-    "GetReferencedEntryPaths": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringList}, 
+    "GetReferencedEntryPaths": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringList}, 
     "GetTempFileTable": {"return": clouddrive.pb2.TempFileTable}, 
     "PushTaskChange": {"return": Iterable[clouddrive.pb2.GetAllTasksCountResult]}, 
     "PushMessage": {"return": Iterable[clouddrive.pb2.CloudDrivePushMessage]}, 
@@ -117,43 +119,54 @@ CLOUDDRIVE_API_MAP = {
     "CheckUpdate": {"return": clouddrive.pb2.UpdateResult}, 
     "DownloadUpdate": {}, 
     "UpdateSystem": {}, 
-    "TestUpdate": {"argument": clouddrive.pb2.FileRequest}, 
-    "GetMetaData": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileMetaData}, 
-    "GetOriginalPath": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringResult}, 
-    "ChangePassword": {"argument": clouddrive.pb2.ChangePasswordRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "CreateFile": {"argument": clouddrive.pb2.CreateFileRequest, "return": clouddrive.pb2.CreateFileResult}, 
-    "CloseFile": {"argument": clouddrive.pb2.CloseFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
-    "WriteToFileStream": {"argument": Sequence[clouddrive.pb2.WriteFileRequest], "return": clouddrive.pb2.WriteFileResult}, 
-    "WriteToFile": {"argument": clouddrive.pb2.WriteFileRequest, "return": clouddrive.pb2.WriteFileResult}, 
+    "TestUpdate": {"argument": dict | clouddrive.pb2.FileRequest}, 
+    "GetMetaData": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileMetaData}, 
+    "GetOriginalPath": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.StringResult}, 
+    "ChangePassword": {"argument": dict | clouddrive.pb2.ChangePasswordRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "CreateFile": {"argument": dict | clouddrive.pb2.CreateFileRequest, "return": clouddrive.pb2.CreateFileResult}, 
+    "CloseFile": {"argument": dict | clouddrive.pb2.CloseFileRequest, "return": clouddrive.pb2.FileOperationResult}, 
+    "WriteToFileStream": {"argument": Sequence[dict | clouddrive.pb2.WriteFileRequest], "return": clouddrive.pb2.WriteFileResult}, 
+    "WriteToFile": {"argument": dict | clouddrive.pb2.WriteFileRequest, "return": clouddrive.pb2.WriteFileResult}, 
     "GetPromotions": {"return": clouddrive.pb2.GetPromotionsResult}, 
     "UpdatePromotionResult": {}, 
     "GetCloudDrivePlans": {"return": clouddrive.pb2.GetCloudDrivePlansResult}, 
-    "JoinPlan": {"argument": clouddrive.pb2.JoinPlanRequest, "return": clouddrive.pb2.JoinPlanResult}, 
-    "BindCloudAccount": {"argument": clouddrive.pb2.BindCloudAccountRequest}, 
-    "TransferBalance": {"argument": clouddrive.pb2.TransferBalanceRequest}, 
-    "ChangeEmail": {"argument": clouddrive.pb2.ChangeUserNameEmailRequest}, 
+    "JoinPlan": {"argument": dict | clouddrive.pb2.JoinPlanRequest, "return": clouddrive.pb2.JoinPlanResult}, 
+    "BindCloudAccount": {"argument": dict | clouddrive.pb2.BindCloudAccountRequest}, 
+    "TransferBalance": {"argument": dict | clouddrive.pb2.TransferBalanceRequest}, 
+    "ChangeEmail": {"argument": dict | clouddrive.pb2.ChangeUserNameEmailRequest}, 
     "GetBalanceLog": {"return": clouddrive.pb2.BalanceLogResult}, 
-    "CheckActivationCode": {"argument": clouddrive.pb2.StringValue, "return": clouddrive.pb2.CheckActivationCodeResult}, 
-    "ActivatePlan": {"argument": clouddrive.pb2.StringValue, "return": clouddrive.pb2.JoinPlanResult}, 
-    "CheckCouponCode": {"argument": clouddrive.pb2.CheckCouponCodeRequest, "return": clouddrive.pb2.CouponCodeResult}, 
+    "CheckActivationCode": {"argument": dict | clouddrive.pb2.StringValue, "return": clouddrive.pb2.CheckActivationCodeResult}, 
+    "ActivatePlan": {"argument": dict | clouddrive.pb2.StringValue, "return": clouddrive.pb2.JoinPlanResult}, 
+    "CheckCouponCode": {"argument": dict | clouddrive.pb2.CheckCouponCodeRequest, "return": clouddrive.pb2.CouponCodeResult}, 
     "GetReferralCode": {"return": clouddrive.pb2.StringValue}, 
     "BackupGetAll": {"return": clouddrive.pb2.BackupList}, 
-    "BackupAdd": {"argument": clouddrive.pb2.Backup}, 
-    "BackupRemove": {"argument": clouddrive.pb2.StringValue}, 
-    "BackupUpdate": {"argument": clouddrive.pb2.Backup}, 
-    "BackupAddDestination": {"argument": clouddrive.pb2.BackupModifyRequest}, 
-    "BackupRemoveDestination": {"argument": clouddrive.pb2.BackupModifyRequest}, 
-    "BackupSetEnabled": {"argument": clouddrive.pb2.BackupSetEnabledRequest}, 
-    "BackupSetFileSystemWatchEnabled": {"argument": clouddrive.pb2.BackupModifyRequest}, 
-    "BackupUpdateStrategies": {"argument": clouddrive.pb2.BackupModifyRequest}, 
-    "BackupRestartWalkingThrough": {"argument": clouddrive.pb2.StringValue}, 
+    "BackupAdd": {"argument": dict | clouddrive.pb2.Backup}, 
+    "BackupRemove": {"argument": dict | clouddrive.pb2.StringValue}, 
+    "BackupUpdate": {"argument": dict | clouddrive.pb2.Backup}, 
+    "BackupAddDestination": {"argument": dict | clouddrive.pb2.BackupModifyRequest}, 
+    "BackupRemoveDestination": {"argument": dict | clouddrive.pb2.BackupModifyRequest}, 
+    "BackupSetEnabled": {"argument": dict | clouddrive.pb2.BackupSetEnabledRequest}, 
+    "BackupSetFileSystemWatchEnabled": {"argument": dict | clouddrive.pb2.BackupModifyRequest}, 
+    "BackupUpdateStrategies": {"argument": dict | clouddrive.pb2.BackupModifyRequest}, 
+    "BackupRestartWalkingThrough": {"argument": dict | clouddrive.pb2.StringValue}, 
     "CanAddMoreBackups": {"return": clouddrive.pb2.FileOperationResult}, 
     "GetMachineId": {"return": clouddrive.pb2.StringResult}, 
     "GetOnlineDevices": {"return": clouddrive.pb2.OnlineDevices}, 
-    "KickoutDevice": {"argument": clouddrive.pb2.DeviceRequest}, 
+    "KickoutDevice": {"argument": dict | clouddrive.pb2.DeviceRequest}, 
     "ListLogFiles": {"return": clouddrive.pb2.ListLogFileResult}, 
-    "SyncFileChangesFromCloud": {"argument": clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileSystemChangeStatistics}, 
+    "SyncFileChangesFromCloud": {"argument": dict | clouddrive.pb2.FileRequest, "return": clouddrive.pb2.FileSystemChangeStatistics}, 
 }
+
+
+def to_message(cls, o, /) -> Message:
+    if isinstance(o, Message):
+        return o
+    elif type(o) is dict:
+        return ParseDict(o, cls())
+    elif type(o) is tuple:
+        return cls(**{f.name: a for f, a in zip(cls.DESCRIPTOR.fields, o)})
+    else:
+        return cls(**{cls.DESCRIPTOR.fields[0].name: o})
 
 
 class Client:
@@ -290,7 +303,7 @@ class Client:
     @overload
     def GetToken(
         self, 
-        arg: clouddrive.pb2.GetTokenRequest, 
+        arg: dict | clouddrive.pb2.GetTokenRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.JWTToken:
@@ -298,14 +311,14 @@ class Client:
     @overload
     def GetToken(
         self, 
-        arg: clouddrive.pb2.GetTokenRequest, 
+        arg: dict | clouddrive.pb2.GetTokenRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.JWTToken]:
         ...
     def GetToken(
         self, 
-        arg: clouddrive.pb2.GetTokenRequest, 
+        arg: dict | clouddrive.pb2.GetTokenRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.JWTToken | Coroutine[Any, Any, clouddrive.pb2.JWTToken]:
@@ -330,6 +343,7 @@ class Client:
           google.protobuf.Timestamp expiration = 4;
         }
         """
+        arg = to_message(clouddrive.pb2.GetTokenRequest, arg)
         if async_:
             return self.async_stub.GetToken(arg, metadata=self.metadata)
         else:
@@ -338,7 +352,7 @@ class Client:
     @overload
     def Login(
         self, 
-        arg: clouddrive.pb2.UserLoginRequest, 
+        arg: dict | clouddrive.pb2.UserLoginRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -346,14 +360,14 @@ class Client:
     @overload
     def Login(
         self, 
-        arg: clouddrive.pb2.UserLoginRequest, 
+        arg: dict | clouddrive.pb2.UserLoginRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def Login(
         self, 
-        arg: clouddrive.pb2.UserLoginRequest, 
+        arg: dict | clouddrive.pb2.UserLoginRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -378,6 +392,7 @@ class Client:
           bool synDataToCloud = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.UserLoginRequest, arg)
         if async_:
             return self.async_stub.Login(arg, metadata=self.metadata)
         else:
@@ -386,7 +401,7 @@ class Client:
     @overload
     def Register(
         self, 
-        arg: clouddrive.pb2.UserRegisterRequest, 
+        arg: dict | clouddrive.pb2.UserRegisterRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -394,14 +409,14 @@ class Client:
     @overload
     def Register(
         self, 
-        arg: clouddrive.pb2.UserRegisterRequest, 
+        arg: dict | clouddrive.pb2.UserRegisterRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def Register(
         self, 
-        arg: clouddrive.pb2.UserRegisterRequest, 
+        arg: dict | clouddrive.pb2.UserRegisterRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -425,6 +440,7 @@ class Client:
           string password = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.UserRegisterRequest, arg)
         if async_:
             return self.async_stub.Register(arg, metadata=self.metadata)
         else:
@@ -433,7 +449,7 @@ class Client:
     @overload
     def SendResetAccountEmail(
         self, 
-        arg: clouddrive.pb2.SendResetAccountEmailRequest, 
+        arg: dict | clouddrive.pb2.SendResetAccountEmailRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -441,14 +457,14 @@ class Client:
     @overload
     def SendResetAccountEmail(
         self, 
-        arg: clouddrive.pb2.SendResetAccountEmailRequest, 
+        arg: dict | clouddrive.pb2.SendResetAccountEmailRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def SendResetAccountEmail(
         self, 
-        arg: clouddrive.pb2.SendResetAccountEmailRequest, 
+        arg: dict | clouddrive.pb2.SendResetAccountEmailRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -477,7 +493,7 @@ class Client:
     @overload
     def ResetAccount(
         self, 
-        arg: clouddrive.pb2.ResetAccountRequest, 
+        arg: dict | clouddrive.pb2.ResetAccountRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -485,14 +501,14 @@ class Client:
     @overload
     def ResetAccount(
         self, 
-        arg: clouddrive.pb2.ResetAccountRequest, 
+        arg: dict | clouddrive.pb2.ResetAccountRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def ResetAccount(
         self, 
-        arg: clouddrive.pb2.ResetAccountRequest, 
+        arg: dict | clouddrive.pb2.ResetAccountRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -561,7 +577,7 @@ class Client:
     @overload
     def ConfirmEmail(
         self, 
-        arg: clouddrive.pb2.ConfirmEmailRequest, 
+        arg: dict | clouddrive.pb2.ConfirmEmailRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -569,14 +585,14 @@ class Client:
     @overload
     def ConfirmEmail(
         self, 
-        arg: clouddrive.pb2.ConfirmEmailRequest, 
+        arg: dict | clouddrive.pb2.ConfirmEmailRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def ConfirmEmail(
         self, 
-        arg: clouddrive.pb2.ConfirmEmailRequest, 
+        arg: dict | clouddrive.pb2.ConfirmEmailRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -660,7 +676,7 @@ class Client:
     @overload
     def GetSubFiles(
         self, 
-        arg: clouddrive.pb2.ListSubFileRequest, 
+        arg: dict | clouddrive.pb2.ListSubFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> Iterable[clouddrive.pb2.SubFilesReply]:
@@ -668,14 +684,14 @@ class Client:
     @overload
     def GetSubFiles(
         self, 
-        arg: clouddrive.pb2.ListSubFileRequest, 
+        arg: dict | clouddrive.pb2.ListSubFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
         ...
     def GetSubFiles(
         self, 
-        arg: clouddrive.pb2.ListSubFileRequest, 
+        arg: dict | clouddrive.pb2.ListSubFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> Iterable[clouddrive.pb2.SubFilesReply] | Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
@@ -751,6 +767,7 @@ class Client:
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
+        arg = to_message(clouddrive.pb2.ListSubFileRequest, arg)
         if async_:
             return self.async_stub.GetSubFiles(arg, metadata=self.metadata)
         else:
@@ -759,7 +776,7 @@ class Client:
     @overload
     def GetSearchResults(
         self, 
-        arg: clouddrive.pb2.SearchRequest, 
+        arg: dict | clouddrive.pb2.SearchRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> Iterable[clouddrive.pb2.SubFilesReply]:
@@ -767,14 +784,14 @@ class Client:
     @overload
     def GetSearchResults(
         self, 
-        arg: clouddrive.pb2.SearchRequest, 
+        arg: dict | clouddrive.pb2.SearchRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
         ...
     def GetSearchResults(
         self, 
-        arg: clouddrive.pb2.SearchRequest, 
+        arg: dict | clouddrive.pb2.SearchRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> Iterable[clouddrive.pb2.SubFilesReply] | Coroutine[Any, Any, Iterable[clouddrive.pb2.SubFilesReply]]:
@@ -851,6 +868,7 @@ class Client:
         }
         message SubFilesReply { repeated CloudDriveFile subFiles = 1; }
         """
+        arg = to_message(clouddrive.pb2.SearchRequest, arg)
         if async_:
             return self.async_stub.GetSearchResults(arg, metadata=self.metadata)
         else:
@@ -859,7 +877,7 @@ class Client:
     @overload
     def FindFileByPath(
         self, 
-        arg: clouddrive.pb2.FindFileByPathRequest, 
+        arg: dict | clouddrive.pb2.FindFileByPathRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CloudDriveFile:
@@ -867,14 +885,14 @@ class Client:
     @overload
     def FindFileByPath(
         self, 
-        arg: clouddrive.pb2.FindFileByPathRequest, 
+        arg: dict | clouddrive.pb2.FindFileByPathRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CloudDriveFile]:
         ...
     def FindFileByPath(
         self, 
-        arg: clouddrive.pb2.FindFileByPathRequest, 
+        arg: dict | clouddrive.pb2.FindFileByPathRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CloudDriveFile | Coroutine[Any, Any, clouddrive.pb2.CloudDriveFile]:
@@ -966,6 +984,7 @@ class Client:
           string path = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.FindFileByPathRequest, arg)
         if async_:
             return self.async_stub.FindFileByPath(arg, metadata=self.metadata)
         else:
@@ -974,7 +993,7 @@ class Client:
     @overload
     def CreateFolder(
         self, 
-        arg: clouddrive.pb2.CreateFolderRequest, 
+        arg: dict | clouddrive.pb2.CreateFolderRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CreateFolderResult:
@@ -982,14 +1001,14 @@ class Client:
     @overload
     def CreateFolder(
         self, 
-        arg: clouddrive.pb2.CreateFolderRequest, 
+        arg: dict | clouddrive.pb2.CreateFolderRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
         ...
     def CreateFolder(
         self, 
-        arg: clouddrive.pb2.CreateFolderRequest, 
+        arg: dict | clouddrive.pb2.CreateFolderRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CreateFolderResult | Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
@@ -1072,6 +1091,7 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.CreateFolderRequest, arg)
         if async_:
             return self.async_stub.CreateFolder(arg, metadata=self.metadata)
         else:
@@ -1080,7 +1100,7 @@ class Client:
     @overload
     def CreateEncryptedFolder(
         self, 
-        arg: clouddrive.pb2.CreateEncryptedFolderRequest, 
+        arg: dict | clouddrive.pb2.CreateEncryptedFolderRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CreateFolderResult:
@@ -1088,14 +1108,14 @@ class Client:
     @overload
     def CreateEncryptedFolder(
         self, 
-        arg: clouddrive.pb2.CreateEncryptedFolderRequest, 
+        arg: dict | clouddrive.pb2.CreateEncryptedFolderRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
         ...
     def CreateEncryptedFolder(
         self, 
-        arg: clouddrive.pb2.CreateEncryptedFolderRequest, 
+        arg: dict | clouddrive.pb2.CreateEncryptedFolderRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CreateFolderResult | Coroutine[Any, Any, clouddrive.pb2.CreateFolderResult]:
@@ -1180,6 +1200,7 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.CreateEncryptedFolderRequest, arg)
         if async_:
             return self.async_stub.CreateEncryptedFolder(arg, metadata=self.metadata)
         else:
@@ -1188,7 +1209,7 @@ class Client:
     @overload
     def UnlockEncryptedFile(
         self, 
-        arg: clouddrive.pb2.UnlockEncryptedFileRequest, 
+        arg: dict | clouddrive.pb2.UnlockEncryptedFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1196,14 +1217,14 @@ class Client:
     @overload
     def UnlockEncryptedFile(
         self, 
-        arg: clouddrive.pb2.UnlockEncryptedFileRequest, 
+        arg: dict | clouddrive.pb2.UnlockEncryptedFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def UnlockEncryptedFile(
         self, 
-        arg: clouddrive.pb2.UnlockEncryptedFileRequest, 
+        arg: dict | clouddrive.pb2.UnlockEncryptedFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1228,6 +1249,7 @@ class Client:
           bool permanentUnlock = 3; //if true, password will be saved to db, else unlock is required after restart
         }
         """
+        arg = to_message(clouddrive.pb2.UnlockEncryptedFileRequest, arg)
         if async_:
             return self.async_stub.UnlockEncryptedFile(arg, metadata=self.metadata)
         else:
@@ -1236,7 +1258,7 @@ class Client:
     @overload
     def LockEncryptedFile(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1244,14 +1266,14 @@ class Client:
     @overload
     def LockEncryptedFile(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def LockEncryptedFile(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1272,6 +1294,7 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.LockEncryptedFile(arg, metadata=self.metadata)
         else:
@@ -1280,7 +1303,7 @@ class Client:
     @overload
     def RenameFile(
         self, 
-        arg: clouddrive.pb2.RenameFileRequest, 
+        arg: dict | clouddrive.pb2.RenameFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1288,14 +1311,14 @@ class Client:
     @overload
     def RenameFile(
         self, 
-        arg: clouddrive.pb2.RenameFileRequest, 
+        arg: dict | clouddrive.pb2.RenameFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def RenameFile(
         self, 
-        arg: clouddrive.pb2.RenameFileRequest, 
+        arg: dict | clouddrive.pb2.RenameFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1319,6 +1342,7 @@ class Client:
           string newName = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.RenameFileRequest, arg)
         if async_:
             return self.async_stub.RenameFile(arg, metadata=self.metadata)
         else:
@@ -1327,7 +1351,7 @@ class Client:
     @overload
     def RenameFiles(
         self, 
-        arg: clouddrive.pb2.RenameFilesRequest, 
+        arg: dict | clouddrive.pb2.RenameFilesRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1335,14 +1359,14 @@ class Client:
     @overload
     def RenameFiles(
         self, 
-        arg: clouddrive.pb2.RenameFilesRequest, 
+        arg: dict | clouddrive.pb2.RenameFilesRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def RenameFiles(
         self, 
-        arg: clouddrive.pb2.RenameFilesRequest, 
+        arg: dict | clouddrive.pb2.RenameFilesRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1367,6 +1391,7 @@ class Client:
         }
         message RenameFilesRequest { repeated RenameFileRequest renameFiles = 1; }
         """
+        arg = to_message(clouddrive.pb2.RenameFilesRequest, arg)
         if async_:
             return self.async_stub.RenameFiles(arg, metadata=self.metadata)
         else:
@@ -1375,7 +1400,7 @@ class Client:
     @overload
     def MoveFile(
         self, 
-        arg: clouddrive.pb2.MoveFileRequest, 
+        arg: dict | clouddrive.pb2.MoveFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1383,14 +1408,14 @@ class Client:
     @overload
     def MoveFile(
         self, 
-        arg: clouddrive.pb2.MoveFileRequest, 
+        arg: dict | clouddrive.pb2.MoveFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def MoveFile(
         self, 
-        arg: clouddrive.pb2.MoveFileRequest, 
+        arg: dict | clouddrive.pb2.MoveFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1420,6 +1445,7 @@ class Client:
           optional ConflictPolicy conflictPolicy = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.MoveFileRequest, arg)
         if async_:
             return self.async_stub.MoveFile(arg, metadata=self.metadata)
         else:
@@ -1428,7 +1454,7 @@ class Client:
     @overload
     def CopyFile(
         self, 
-        arg: clouddrive.pb2.CopyFileRequest, 
+        arg: dict | clouddrive.pb2.CopyFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1436,14 +1462,14 @@ class Client:
     @overload
     def CopyFile(
         self, 
-        arg: clouddrive.pb2.CopyFileRequest, 
+        arg: dict | clouddrive.pb2.CopyFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def CopyFile(
         self, 
-        arg: clouddrive.pb2.CopyFileRequest, 
+        arg: dict | clouddrive.pb2.CopyFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1467,6 +1493,7 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.CopyFileRequest, arg)
         if async_:
             return self.async_stub.CopyFile(arg, metadata=self.metadata)
         else:
@@ -1475,7 +1502,7 @@ class Client:
     @overload
     def DeleteFile(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1483,14 +1510,14 @@ class Client:
     @overload
     def DeleteFile(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def DeleteFile(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1511,6 +1538,7 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.DeleteFile(arg, metadata=self.metadata)
         else:
@@ -1519,7 +1547,7 @@ class Client:
     @overload
     def DeleteFilePermanently(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1527,14 +1555,14 @@ class Client:
     @overload
     def DeleteFilePermanently(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def DeleteFilePermanently(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1555,6 +1583,7 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.DeleteFilePermanently(arg, metadata=self.metadata)
         else:
@@ -1563,7 +1592,7 @@ class Client:
     @overload
     def DeleteFiles(
         self, 
-        arg: clouddrive.pb2.MultiFileRequest, 
+        arg: dict | clouddrive.pb2.MultiFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1571,14 +1600,14 @@ class Client:
     @overload
     def DeleteFiles(
         self, 
-        arg: clouddrive.pb2.MultiFileRequest, 
+        arg: dict | clouddrive.pb2.MultiFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def DeleteFiles(
         self, 
-        arg: clouddrive.pb2.MultiFileRequest, 
+        arg: dict | clouddrive.pb2.MultiFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1599,6 +1628,7 @@ class Client:
         }
         message MultiFileRequest { repeated string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.MultiFileRequest, arg)
         if async_:
             return self.async_stub.DeleteFiles(arg, metadata=self.metadata)
         else:
@@ -1607,7 +1637,7 @@ class Client:
     @overload
     def DeleteFilesPermanently(
         self, 
-        arg: clouddrive.pb2.MultiFileRequest, 
+        arg: dict | clouddrive.pb2.MultiFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1615,14 +1645,14 @@ class Client:
     @overload
     def DeleteFilesPermanently(
         self, 
-        arg: clouddrive.pb2.MultiFileRequest, 
+        arg: dict | clouddrive.pb2.MultiFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def DeleteFilesPermanently(
         self, 
-        arg: clouddrive.pb2.MultiFileRequest, 
+        arg: dict | clouddrive.pb2.MultiFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1643,6 +1673,7 @@ class Client:
         }
         message MultiFileRequest { repeated string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.MultiFileRequest, arg)
         if async_:
             return self.async_stub.DeleteFilesPermanently(arg, metadata=self.metadata)
         else:
@@ -1651,7 +1682,7 @@ class Client:
     @overload
     def AddOfflineFiles(
         self, 
-        arg: clouddrive.pb2.AddOfflineFileRequest, 
+        arg: dict | clouddrive.pb2.AddOfflineFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1659,14 +1690,14 @@ class Client:
     @overload
     def AddOfflineFiles(
         self, 
-        arg: clouddrive.pb2.AddOfflineFileRequest, 
+        arg: dict | clouddrive.pb2.AddOfflineFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def AddOfflineFiles(
         self, 
-        arg: clouddrive.pb2.AddOfflineFileRequest, 
+        arg: dict | clouddrive.pb2.AddOfflineFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1692,6 +1723,7 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.AddOfflineFileRequest, arg)
         if async_:
             return self.async_stub.AddOfflineFiles(arg, metadata=self.metadata)
         else:
@@ -1700,7 +1732,7 @@ class Client:
     @overload
     def RemoveOfflineFiles(
         self, 
-        arg: clouddrive.pb2.RemoveOfflineFilesRequest, 
+        arg: dict | clouddrive.pb2.RemoveOfflineFilesRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -1708,14 +1740,14 @@ class Client:
     @overload
     def RemoveOfflineFiles(
         self, 
-        arg: clouddrive.pb2.RemoveOfflineFilesRequest, 
+        arg: dict | clouddrive.pb2.RemoveOfflineFilesRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def RemoveOfflineFiles(
         self, 
-        arg: clouddrive.pb2.RemoveOfflineFilesRequest, 
+        arg: dict | clouddrive.pb2.RemoveOfflineFilesRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -1742,6 +1774,7 @@ class Client:
           repeated string infoHashes = 4;
         }
         """
+        arg = to_message(clouddrive.pb2.RemoveOfflineFilesRequest, arg)
         if async_:
             return self.async_stub.RemoveOfflineFiles(arg, metadata=self.metadata)
         else:
@@ -1750,7 +1783,7 @@ class Client:
     @overload
     def ListOfflineFilesByPath(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.OfflineFileListResult:
@@ -1758,14 +1791,14 @@ class Client:
     @overload
     def ListOfflineFilesByPath(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.OfflineFileListResult]:
         ...
     def ListOfflineFilesByPath(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.OfflineFileListResult | Coroutine[Any, Any, clouddrive.pb2.OfflineFileListResult]:
@@ -1801,6 +1834,7 @@ class Client:
           uint32 total = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.ListOfflineFilesByPath(arg, metadata=self.metadata)
         else:
@@ -1809,7 +1843,7 @@ class Client:
     @overload
     def ListAllOfflineFiles(
         self, 
-        arg: clouddrive.pb2.OfflineFileListAllRequest, 
+        arg: dict | clouddrive.pb2.OfflineFileListAllRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.OfflineFileListAllResult:
@@ -1817,14 +1851,14 @@ class Client:
     @overload
     def ListAllOfflineFiles(
         self, 
-        arg: clouddrive.pb2.OfflineFileListAllRequest, 
+        arg: dict | clouddrive.pb2.OfflineFileListAllRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.OfflineFileListAllResult]:
         ...
     def ListAllOfflineFiles(
         self, 
-        arg: clouddrive.pb2.OfflineFileListAllRequest, 
+        arg: dict | clouddrive.pb2.OfflineFileListAllRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.OfflineFileListAllResult | Coroutine[Any, Any, clouddrive.pb2.OfflineFileListAllResult]:
@@ -1869,6 +1903,7 @@ class Client:
           uint32 total = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.OfflineFileListAllRequest, arg)
         if async_:
             return self.async_stub.ListAllOfflineFiles(arg, metadata=self.metadata)
         else:
@@ -1877,7 +1912,7 @@ class Client:
     @overload
     def AddSharedLink(
         self, 
-        arg: clouddrive.pb2.AddSharedLinkRequest, 
+        arg: dict | clouddrive.pb2.AddSharedLinkRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -1885,14 +1920,14 @@ class Client:
     @overload
     def AddSharedLink(
         self, 
-        arg: clouddrive.pb2.AddSharedLinkRequest, 
+        arg: dict | clouddrive.pb2.AddSharedLinkRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def AddSharedLink(
         self, 
-        arg: clouddrive.pb2.AddSharedLinkRequest, 
+        arg: dict | clouddrive.pb2.AddSharedLinkRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -1924,7 +1959,7 @@ class Client:
     @overload
     def GetFileDetailProperties(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileDetailProperties:
@@ -1932,14 +1967,14 @@ class Client:
     @overload
     def GetFileDetailProperties(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileDetailProperties]:
         ...
     def GetFileDetailProperties(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileDetailProperties | Coroutine[Any, Any, clouddrive.pb2.FileDetailProperties]:
@@ -1965,6 +2000,7 @@ class Client:
         }
         message FileRequest { string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.GetFileDetailProperties(arg, metadata=self.metadata)
         else:
@@ -1973,7 +2009,7 @@ class Client:
     @overload
     def GetSpaceInfo(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.SpaceInfo:
@@ -1981,14 +2017,14 @@ class Client:
     @overload
     def GetSpaceInfo(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.SpaceInfo]:
         ...
     def GetSpaceInfo(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.SpaceInfo | Coroutine[Any, Any, clouddrive.pb2.SpaceInfo]:
@@ -2009,6 +2045,7 @@ class Client:
           int64 freeSpace = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.GetSpaceInfo(arg, metadata=self.metadata)
         else:
@@ -2017,7 +2054,7 @@ class Client:
     @overload
     def GetCloudMemberships(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CloudMemberships:
@@ -2025,14 +2062,14 @@ class Client:
     @overload
     def GetCloudMemberships(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CloudMemberships]:
         ...
     def GetCloudMemberships(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CloudMemberships | Coroutine[Any, Any, clouddrive.pb2.CloudMemberships]:
@@ -2054,6 +2091,7 @@ class Client:
         message CloudMemberships { repeated CloudMembership memberships = 1; }
         message FileRequest { string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.GetCloudMemberships(arg, metadata=self.metadata)
         else:
@@ -2147,7 +2185,7 @@ class Client:
     @overload
     def Logout(
         self, 
-        arg: clouddrive.pb2.UserLogoutRequest, 
+        arg: dict | clouddrive.pb2.UserLogoutRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -2155,14 +2193,14 @@ class Client:
     @overload
     def Logout(
         self, 
-        arg: clouddrive.pb2.UserLogoutRequest, 
+        arg: dict | clouddrive.pb2.UserLogoutRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def Logout(
         self, 
-        arg: clouddrive.pb2.UserLogoutRequest, 
+        arg: dict | clouddrive.pb2.UserLogoutRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -2183,6 +2221,7 @@ class Client:
         }
         message UserLogoutRequest { bool logoutFromCloudFS = 1; }
         """
+        arg = to_message(clouddrive.pb2.UserLogoutRequest, arg)
         if async_:
             return self.async_stub.Logout(arg, metadata=self.metadata)
         else:
@@ -2280,7 +2319,7 @@ class Client:
     @overload
     def AddMountPoint(
         self, 
-        arg: clouddrive.pb2.MountOption, 
+        arg: dict | clouddrive.pb2.MountOption, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.MountPointResult:
@@ -2288,14 +2327,14 @@ class Client:
     @overload
     def AddMountPoint(
         self, 
-        arg: clouddrive.pb2.MountOption, 
+        arg: dict | clouddrive.pb2.MountOption, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         ...
     def AddMountPoint(
         self, 
-        arg: clouddrive.pb2.MountOption, 
+        arg: dict | clouddrive.pb2.MountOption, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
@@ -2325,6 +2364,7 @@ class Client:
           string failReason = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.MountOption, arg)
         if async_:
             return self.async_stub.AddMountPoint(arg, metadata=self.metadata)
         else:
@@ -2333,7 +2373,7 @@ class Client:
     @overload
     def RemoveMountPoint(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.MountPointResult:
@@ -2341,14 +2381,14 @@ class Client:
     @overload
     def RemoveMountPoint(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         ...
     def RemoveMountPoint(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
@@ -2368,6 +2408,7 @@ class Client:
           string failReason = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.MountPointRequest, arg)
         if async_:
             return self.async_stub.RemoveMountPoint(arg, metadata=self.metadata)
         else:
@@ -2376,7 +2417,7 @@ class Client:
     @overload
     def Mount(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.MountPointResult:
@@ -2384,14 +2425,14 @@ class Client:
     @overload
     def Mount(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         ...
     def Mount(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
@@ -2411,6 +2452,7 @@ class Client:
           string failReason = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.MountPointRequest, arg)
         if async_:
             return self.async_stub.Mount(arg, metadata=self.metadata)
         else:
@@ -2419,7 +2461,7 @@ class Client:
     @overload
     def Unmount(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.MountPointResult:
@@ -2427,14 +2469,14 @@ class Client:
     @overload
     def Unmount(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         ...
     def Unmount(
         self, 
-        arg: clouddrive.pb2.MountPointRequest, 
+        arg: dict | clouddrive.pb2.MountPointRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
@@ -2454,6 +2496,7 @@ class Client:
           string failReason = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.MountPointRequest, arg)
         if async_:
             return self.async_stub.Unmount(arg, metadata=self.metadata)
         else:
@@ -2462,7 +2505,7 @@ class Client:
     @overload
     def UpdateMountPoint(
         self, 
-        arg: clouddrive.pb2.UpdateMountPointRequest, 
+        arg: dict | clouddrive.pb2.UpdateMountPointRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.MountPointResult:
@@ -2470,14 +2513,14 @@ class Client:
     @overload
     def UpdateMountPoint(
         self, 
-        arg: clouddrive.pb2.UpdateMountPointRequest, 
+        arg: dict | clouddrive.pb2.UpdateMountPointRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
         ...
     def UpdateMountPoint(
         self, 
-        arg: clouddrive.pb2.UpdateMountPointRequest, 
+        arg: dict | clouddrive.pb2.UpdateMountPointRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.MountPointResult | Coroutine[Any, Any, clouddrive.pb2.MountPointResult]:
@@ -2511,6 +2554,7 @@ class Client:
           MountOption newMountOption = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.UpdateMountPointRequest, arg)
         if async_:
             return self.async_stub.UpdateMountPoint(arg, metadata=self.metadata)
         else:
@@ -2594,7 +2638,7 @@ class Client:
     @overload
     def LocalGetSubFiles(
         self, 
-        arg: clouddrive.pb2.LocalGetSubFilesRequest, 
+        arg: dict | clouddrive.pb2.LocalGetSubFilesRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> Iterable[clouddrive.pb2.LocalGetSubFilesResult]:
@@ -2602,14 +2646,14 @@ class Client:
     @overload
     def LocalGetSubFiles(
         self, 
-        arg: clouddrive.pb2.LocalGetSubFilesRequest, 
+        arg: dict | clouddrive.pb2.LocalGetSubFilesRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.LocalGetSubFilesResult]]:
         ...
     def LocalGetSubFiles(
         self, 
-        arg: clouddrive.pb2.LocalGetSubFilesRequest, 
+        arg: dict | clouddrive.pb2.LocalGetSubFilesRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> Iterable[clouddrive.pb2.LocalGetSubFilesResult] | Coroutine[Any, Any, Iterable[clouddrive.pb2.LocalGetSubFilesResult]]:
@@ -2632,6 +2676,7 @@ class Client:
         }
         message LocalGetSubFilesResult { repeated string subFiles = 1; }
         """
+        arg = to_message(clouddrive.pb2.LocalGetSubFilesRequest, arg)
         if async_:
             return self.async_stub.LocalGetSubFiles(arg, metadata=self.metadata)
         else:
@@ -2815,7 +2860,7 @@ class Client:
     @overload
     def GetUploadFileList(
         self, 
-        arg: clouddrive.pb2.GetUploadFileListRequest, 
+        arg: dict | clouddrive.pb2.GetUploadFileListRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.GetUploadFileListResult:
@@ -2823,14 +2868,14 @@ class Client:
     @overload
     def GetUploadFileList(
         self, 
-        arg: clouddrive.pb2.GetUploadFileListRequest, 
+        arg: dict | clouddrive.pb2.GetUploadFileListRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.GetUploadFileListResult]:
         ...
     def GetUploadFileList(
         self, 
-        arg: clouddrive.pb2.GetUploadFileListRequest, 
+        arg: dict | clouddrive.pb2.GetUploadFileListRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.GetUploadFileListResult | Coroutine[Any, Any, clouddrive.pb2.GetUploadFileListResult]:
@@ -2867,6 +2912,7 @@ class Client:
           string errorMessage = 6;
         }
         """
+        arg = to_message(clouddrive.pb2.GetUploadFileListRequest, arg)
         if async_:
             return self.async_stub.GetUploadFileList(arg, metadata=self.metadata)
         else:
@@ -2912,7 +2958,7 @@ class Client:
     @overload
     def CancelUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -2920,14 +2966,14 @@ class Client:
     @overload
     def CancelUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def CancelUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -2993,7 +3039,7 @@ class Client:
     @overload
     def PauseUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -3001,14 +3047,14 @@ class Client:
     @overload
     def PauseUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def PauseUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -3074,7 +3120,7 @@ class Client:
     @overload
     def ResumeUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -3082,14 +3128,14 @@ class Client:
     @overload
     def ResumeUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def ResumeUploadFiles(
         self, 
-        arg: clouddrive.pb2.MultpleUploadFileKeyRequest, 
+        arg: dict | clouddrive.pb2.MultpleUploadFileKeyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -3159,7 +3205,7 @@ class Client:
     @overload
     def APILogin115Editthiscookie(
         self, 
-        arg: clouddrive.pb2.Login115EditthiscookieRequest, 
+        arg: dict | clouddrive.pb2.Login115EditthiscookieRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3167,14 +3213,14 @@ class Client:
     @overload
     def APILogin115Editthiscookie(
         self, 
-        arg: clouddrive.pb2.Login115EditthiscookieRequest, 
+        arg: dict | clouddrive.pb2.Login115EditthiscookieRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APILogin115Editthiscookie(
         self, 
-        arg: clouddrive.pb2.Login115EditthiscookieRequest, 
+        arg: dict | clouddrive.pb2.Login115EditthiscookieRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3195,6 +3241,7 @@ class Client:
         }
         message Login115EditthiscookieRequest { string editThiscookieString = 1; }
         """
+        arg = to_message(clouddrive.pb2.Login115EditthiscookieRequest, arg)
         if async_:
             return self.async_stub.APILogin115Editthiscookie(arg, metadata=self.metadata)
         else:
@@ -3203,7 +3250,7 @@ class Client:
     @overload
     def APILogin115QRCode(
         self, 
-        arg: clouddrive.pb2.Login115QrCodeRequest, 
+        arg: dict | clouddrive.pb2.Login115QrCodeRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> Iterable[clouddrive.pb2.QRCodeScanMessage]:
@@ -3211,14 +3258,14 @@ class Client:
     @overload
     def APILogin115QRCode(
         self, 
-        arg: clouddrive.pb2.Login115QrCodeRequest, 
+        arg: dict | clouddrive.pb2.Login115QrCodeRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
         ...
     def APILogin115QRCode(
         self, 
-        arg: clouddrive.pb2.Login115QrCodeRequest, 
+        arg: dict | clouddrive.pb2.Login115QrCodeRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> Iterable[clouddrive.pb2.QRCodeScanMessage] | Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
@@ -3246,6 +3293,7 @@ class Client:
           ERROR = 4;
         }
         """
+        arg = to_message(clouddrive.pb2.Login115QrCodeRequest, arg)
         if async_:
             return self.async_stub.APILogin115QRCode(arg, metadata=self.metadata)
         else:
@@ -3254,7 +3302,7 @@ class Client:
     @overload
     def APILoginAliyundriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveOAuthRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3262,14 +3310,14 @@ class Client:
     @overload
     def APILoginAliyundriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveOAuthRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APILoginAliyundriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveOAuthRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3294,6 +3342,7 @@ class Client:
           uint64 expires_in = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginAliyundriveOAuthRequest, arg)
         if async_:
             return self.async_stub.APILoginAliyundriveOAuth(arg, metadata=self.metadata)
         else:
@@ -3302,7 +3351,7 @@ class Client:
     @overload
     def APILoginAliyundriveRefreshtoken(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3310,14 +3359,14 @@ class Client:
     @overload
     def APILoginAliyundriveRefreshtoken(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APILoginAliyundriveRefreshtoken(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3341,6 +3390,7 @@ class Client:
           bool useOpenAPI = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginAliyundriveRefreshtokenRequest, arg)
         if async_:
             return self.async_stub.APILoginAliyundriveRefreshtoken(arg, metadata=self.metadata)
         else:
@@ -3349,7 +3399,7 @@ class Client:
     @overload
     def APILoginAliyunDriveQRCode(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> Iterable[clouddrive.pb2.QRCodeScanMessage]:
@@ -3357,14 +3407,14 @@ class Client:
     @overload
     def APILoginAliyunDriveQRCode(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
         ...
     def APILoginAliyunDriveQRCode(
         self, 
-        arg: clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
+        arg: dict | clouddrive.pb2.LoginAliyundriveQRCodeRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> Iterable[clouddrive.pb2.QRCodeScanMessage] | Coroutine[Any, Any, Iterable[clouddrive.pb2.QRCodeScanMessage]]:
@@ -3392,6 +3442,7 @@ class Client:
           ERROR = 4;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginAliyundriveQRCodeRequest, arg)
         if async_:
             return self.async_stub.APILoginAliyunDriveQRCode(arg, metadata=self.metadata)
         else:
@@ -3400,7 +3451,7 @@ class Client:
     @overload
     def APILoginBaiduPanOAuth(
         self, 
-        arg: clouddrive.pb2.LoginBaiduPanOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginBaiduPanOAuthRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3408,14 +3459,14 @@ class Client:
     @overload
     def APILoginBaiduPanOAuth(
         self, 
-        arg: clouddrive.pb2.LoginBaiduPanOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginBaiduPanOAuthRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APILoginBaiduPanOAuth(
         self, 
-        arg: clouddrive.pb2.LoginBaiduPanOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginBaiduPanOAuthRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3440,6 +3491,7 @@ class Client:
           uint64 expires_in = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginBaiduPanOAuthRequest, arg)
         if async_:
             return self.async_stub.APILoginBaiduPanOAuth(arg, metadata=self.metadata)
         else:
@@ -3448,7 +3500,7 @@ class Client:
     @overload
     def APILoginOneDriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginOneDriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginOneDriveOAuthRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3456,14 +3508,14 @@ class Client:
     @overload
     def APILoginOneDriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginOneDriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginOneDriveOAuthRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APILoginOneDriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginOneDriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginOneDriveOAuthRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3488,6 +3540,7 @@ class Client:
           uint64 expires_in = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginOneDriveOAuthRequest, arg)
         if async_:
             return self.async_stub.APILoginOneDriveOAuth(arg, metadata=self.metadata)
         else:
@@ -3496,7 +3549,7 @@ class Client:
     @overload
     def ApiLoginGoogleDriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3504,14 +3557,14 @@ class Client:
     @overload
     def ApiLoginGoogleDriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def ApiLoginGoogleDriveOAuth(
         self, 
-        arg: clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginGoogleDriveOAuthRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3536,6 +3589,7 @@ class Client:
           uint64 expires_in = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginGoogleDriveOAuthRequest, arg)
         if async_:
             return self.async_stub.ApiLoginGoogleDriveOAuth(arg, metadata=self.metadata)
         else:
@@ -3544,7 +3598,7 @@ class Client:
     @overload
     def ApiLoginGoogleDriveRefreshToken(
         self, 
-        arg: clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
+        arg: dict | clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3552,14 +3606,14 @@ class Client:
     @overload
     def ApiLoginGoogleDriveRefreshToken(
         self, 
-        arg: clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
+        arg: dict | clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def ApiLoginGoogleDriveRefreshToken(
         self, 
-        arg: clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
+        arg: dict | clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3584,6 +3638,7 @@ class Client:
           string refresh_token = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginGoogleDriveRefreshTokenRequest, arg)
         if async_:
             return self.async_stub.ApiLoginGoogleDriveRefreshToken(arg, metadata=self.metadata)
         else:
@@ -3592,7 +3647,7 @@ class Client:
     @overload
     def ApiLoginXunleiOAuth(
         self, 
-        arg: clouddrive.pb2.LoginXunleiOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginXunleiOAuthRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3600,14 +3655,14 @@ class Client:
     @overload
     def ApiLoginXunleiOAuth(
         self, 
-        arg: clouddrive.pb2.LoginXunleiOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginXunleiOAuthRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def ApiLoginXunleiOAuth(
         self, 
-        arg: clouddrive.pb2.LoginXunleiOAuthRequest, 
+        arg: dict | clouddrive.pb2.LoginXunleiOAuthRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3631,6 +3686,7 @@ class Client:
           uint64 expires_in = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginXunleiOAuthRequest, arg)
         if async_:
             return self.async_stub.ApiLoginXunleiOAuth(arg, metadata=self.metadata)
         else:
@@ -3639,7 +3695,7 @@ class Client:
     @overload
     def ApiLogin123panOAuth(
         self, 
-        arg: clouddrive.pb2.Login123panOAuthRequest, 
+        arg: dict | clouddrive.pb2.Login123panOAuthRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3647,14 +3703,14 @@ class Client:
     @overload
     def ApiLogin123panOAuth(
         self, 
-        arg: clouddrive.pb2.Login123panOAuthRequest, 
+        arg: dict | clouddrive.pb2.Login123panOAuthRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def ApiLogin123panOAuth(
         self, 
-        arg: clouddrive.pb2.Login123panOAuthRequest, 
+        arg: dict | clouddrive.pb2.Login123panOAuthRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3678,6 +3734,7 @@ class Client:
           uint64 expires_in = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.Login123panOAuthRequest, arg)
         if async_:
             return self.async_stub.ApiLogin123panOAuth(arg, metadata=self.metadata)
         else:
@@ -3733,7 +3790,7 @@ class Client:
     @overload
     def APILoginWebDav(
         self, 
-        arg: clouddrive.pb2.LoginWebDavRequest, 
+        arg: dict | clouddrive.pb2.LoginWebDavRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3741,14 +3798,14 @@ class Client:
     @overload
     def APILoginWebDav(
         self, 
-        arg: clouddrive.pb2.LoginWebDavRequest, 
+        arg: dict | clouddrive.pb2.LoginWebDavRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APILoginWebDav(
         self, 
-        arg: clouddrive.pb2.LoginWebDavRequest, 
+        arg: dict | clouddrive.pb2.LoginWebDavRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3776,6 +3833,7 @@ class Client:
           string password = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.LoginWebDavRequest, arg)
         if async_:
             return self.async_stub.APILoginWebDav(arg, metadata=self.metadata)
         else:
@@ -3784,7 +3842,7 @@ class Client:
     @overload
     def APIAddLocalFolder(
         self, 
-        arg: clouddrive.pb2.AddLocalFolderRequest, 
+        arg: dict | clouddrive.pb2.AddLocalFolderRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.APILoginResult:
@@ -3792,14 +3850,14 @@ class Client:
     @overload
     def APIAddLocalFolder(
         self, 
-        arg: clouddrive.pb2.AddLocalFolderRequest, 
+        arg: dict | clouddrive.pb2.AddLocalFolderRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
         ...
     def APIAddLocalFolder(
         self, 
-        arg: clouddrive.pb2.AddLocalFolderRequest, 
+        arg: dict | clouddrive.pb2.AddLocalFolderRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.APILoginResult | Coroutine[Any, Any, clouddrive.pb2.APILoginResult]:
@@ -3819,6 +3877,7 @@ class Client:
         }
         message AddLocalFolderRequest { string localFolderPath = 1; }
         """
+        arg = to_message(clouddrive.pb2.AddLocalFolderRequest, arg)
         if async_:
             return self.async_stub.APIAddLocalFolder(arg, metadata=self.metadata)
         else:
@@ -3827,7 +3886,7 @@ class Client:
     @overload
     def RemoveCloudAPI(
         self, 
-        arg: clouddrive.pb2.RemoveCloudAPIRequest, 
+        arg: dict | clouddrive.pb2.RemoveCloudAPIRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -3835,14 +3894,14 @@ class Client:
     @overload
     def RemoveCloudAPI(
         self, 
-        arg: clouddrive.pb2.RemoveCloudAPIRequest, 
+        arg: dict | clouddrive.pb2.RemoveCloudAPIRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def RemoveCloudAPI(
         self, 
-        arg: clouddrive.pb2.RemoveCloudAPIRequest, 
+        arg: dict | clouddrive.pb2.RemoveCloudAPIRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -3867,6 +3926,7 @@ class Client:
           bool permanentRemove = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.RemoveCloudAPIRequest, arg)
         if async_:
             return self.async_stub.RemoveCloudAPI(arg, metadata=self.metadata)
         else:
@@ -3921,7 +3981,7 @@ class Client:
     @overload
     def GetCloudAPIConfig(
         self, 
-        arg: clouddrive.pb2.GetCloudAPIConfigRequest, 
+        arg: dict | clouddrive.pb2.GetCloudAPIConfigRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CloudAPIConfig:
@@ -3929,14 +3989,14 @@ class Client:
     @overload
     def GetCloudAPIConfig(
         self, 
-        arg: clouddrive.pb2.GetCloudAPIConfigRequest, 
+        arg: dict | clouddrive.pb2.GetCloudAPIConfigRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CloudAPIConfig]:
         ...
     def GetCloudAPIConfig(
         self, 
-        arg: clouddrive.pb2.GetCloudAPIConfigRequest, 
+        arg: dict | clouddrive.pb2.GetCloudAPIConfigRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CloudAPIConfig | Coroutine[Any, Any, clouddrive.pb2.CloudAPIConfig]:
@@ -3975,6 +4035,7 @@ class Client:
           optional string password = 5;
         }
         """
+        arg = to_message(clouddrive.pb2.GetCloudAPIConfigRequest, arg)
         if async_:
             return self.async_stub.GetCloudAPIConfig(arg, metadata=self.metadata)
         else:
@@ -3983,7 +4044,7 @@ class Client:
     @overload
     def SetCloudAPIConfig(
         self, 
-        arg: clouddrive.pb2.SetCloudAPIConfigRequest, 
+        arg: dict | clouddrive.pb2.SetCloudAPIConfigRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -3991,14 +4052,14 @@ class Client:
     @overload
     def SetCloudAPIConfig(
         self, 
-        arg: clouddrive.pb2.SetCloudAPIConfigRequest, 
+        arg: dict | clouddrive.pb2.SetCloudAPIConfigRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def SetCloudAPIConfig(
         self, 
-        arg: clouddrive.pb2.SetCloudAPIConfigRequest, 
+        arg: dict | clouddrive.pb2.SetCloudAPIConfigRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -4114,7 +4175,7 @@ class Client:
     @overload
     def SetSystemSettings(
         self, 
-        arg: clouddrive.pb2.SystemSettings, 
+        arg: dict | clouddrive.pb2.SystemSettings, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -4122,14 +4183,14 @@ class Client:
     @overload
     def SetSystemSettings(
         self, 
-        arg: clouddrive.pb2.SystemSettings, 
+        arg: dict | clouddrive.pb2.SystemSettings, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def SetSystemSettings(
         self, 
-        arg: clouddrive.pb2.SystemSettings, 
+        arg: dict | clouddrive.pb2.SystemSettings, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -4191,7 +4252,7 @@ class Client:
     @overload
     def SetDirCacheTimeSecs(
         self, 
-        arg: clouddrive.pb2.SetDirCacheTimeRequest, 
+        arg: dict | clouddrive.pb2.SetDirCacheTimeRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -4199,14 +4260,14 @@ class Client:
     @overload
     def SetDirCacheTimeSecs(
         self, 
-        arg: clouddrive.pb2.SetDirCacheTimeRequest, 
+        arg: dict | clouddrive.pb2.SetDirCacheTimeRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def SetDirCacheTimeSecs(
         self, 
-        arg: clouddrive.pb2.SetDirCacheTimeRequest, 
+        arg: dict | clouddrive.pb2.SetDirCacheTimeRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -4239,7 +4300,7 @@ class Client:
     @overload
     def GetEffectiveDirCacheTimeSecs(
         self, 
-        arg: clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
+        arg: dict | clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.GetEffectiveDirCacheTimeResult:
@@ -4247,14 +4308,14 @@ class Client:
     @overload
     def GetEffectiveDirCacheTimeSecs(
         self, 
-        arg: clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
+        arg: dict | clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.GetEffectiveDirCacheTimeResult]:
         ...
     def GetEffectiveDirCacheTimeSecs(
         self, 
-        arg: clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
+        arg: dict | clouddrive.pb2.GetEffectiveDirCacheTimeRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.GetEffectiveDirCacheTimeResult | Coroutine[Any, Any, clouddrive.pb2.GetEffectiveDirCacheTimeResult]:
@@ -4272,6 +4333,7 @@ class Client:
         message GetEffectiveDirCacheTimeRequest { string path = 1; }
         message GetEffectiveDirCacheTimeResult { uint64 dirCacheTimeSecs = 1; }
         """
+        arg = to_message(clouddrive.pb2.GetEffectiveDirCacheTimeRequest, arg)
         if async_:
             return self.async_stub.GetEffectiveDirCacheTimeSecs(arg, metadata=self.metadata)
         else:
@@ -4280,7 +4342,7 @@ class Client:
     @overload
     def ForceExpireDirCache(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -4288,14 +4350,14 @@ class Client:
     @overload
     def ForceExpireDirCache(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def ForceExpireDirCache(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -4323,7 +4385,7 @@ class Client:
     @overload
     def GetOpenFileTable(
         self, 
-        arg: clouddrive.pb2.GetOpenFileTableRequest, 
+        arg: dict | clouddrive.pb2.GetOpenFileTableRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.OpenFileTable:
@@ -4331,14 +4393,14 @@ class Client:
     @overload
     def GetOpenFileTable(
         self, 
-        arg: clouddrive.pb2.GetOpenFileTableRequest, 
+        arg: dict | clouddrive.pb2.GetOpenFileTableRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.OpenFileTable]:
         ...
     def GetOpenFileTable(
         self, 
-        arg: clouddrive.pb2.GetOpenFileTableRequest, 
+        arg: dict | clouddrive.pb2.GetOpenFileTableRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.OpenFileTable | Coroutine[Any, Any, clouddrive.pb2.OpenFileTable]:
@@ -4358,6 +4420,7 @@ class Client:
           uint64 localOpenFileCount = 2;
         }
         """
+        arg = to_message(clouddrive.pb2.GetOpenFileTableRequest, arg)
         if async_:
             return self.async_stub.GetOpenFileTable(arg, metadata=self.metadata)
         else:
@@ -4402,7 +4465,7 @@ class Client:
     @overload
     def GetReferencedEntryPaths(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.StringList:
@@ -4410,14 +4473,14 @@ class Client:
     @overload
     def GetReferencedEntryPaths(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.StringList]:
         ...
     def GetReferencedEntryPaths(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.StringList | Coroutine[Any, Any, clouddrive.pb2.StringList]:
@@ -4434,6 +4497,7 @@ class Client:
         message FileRequest { string path = 1; }
         message StringList { repeated string values = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.GetReferencedEntryPaths(arg, metadata=self.metadata)
         else:
@@ -4899,7 +4963,7 @@ class Client:
     @overload
     def TestUpdate(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -4907,14 +4971,14 @@ class Client:
     @overload
     def TestUpdate(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def TestUpdate(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -4942,7 +5006,7 @@ class Client:
     @overload
     def GetMetaData(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileMetaData:
@@ -4950,14 +5014,14 @@ class Client:
     @overload
     def GetMetaData(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileMetaData]:
         ...
     def GetMetaData(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileMetaData | Coroutine[Any, Any, clouddrive.pb2.FileMetaData]:
@@ -4974,6 +5038,7 @@ class Client:
         message FileMetaData { map<string, string> metadata = 1; }
         message FileRequest { string path = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.GetMetaData(arg, metadata=self.metadata)
         else:
@@ -4982,7 +5047,7 @@ class Client:
     @overload
     def GetOriginalPath(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.StringResult:
@@ -4990,14 +5055,14 @@ class Client:
     @overload
     def GetOriginalPath(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.StringResult]:
         ...
     def GetOriginalPath(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.StringResult | Coroutine[Any, Any, clouddrive.pb2.StringResult]:
@@ -5014,6 +5079,7 @@ class Client:
         message FileRequest { string path = 1; }
         message StringResult { string result = 1; }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.GetOriginalPath(arg, metadata=self.metadata)
         else:
@@ -5022,7 +5088,7 @@ class Client:
     @overload
     def ChangePassword(
         self, 
-        arg: clouddrive.pb2.ChangePasswordRequest, 
+        arg: dict | clouddrive.pb2.ChangePasswordRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -5030,14 +5096,14 @@ class Client:
     @overload
     def ChangePassword(
         self, 
-        arg: clouddrive.pb2.ChangePasswordRequest, 
+        arg: dict | clouddrive.pb2.ChangePasswordRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def ChangePassword(
         self, 
-        arg: clouddrive.pb2.ChangePasswordRequest, 
+        arg: dict | clouddrive.pb2.ChangePasswordRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -5061,6 +5127,7 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.ChangePasswordRequest, arg)
         if async_:
             return self.async_stub.ChangePassword(arg, metadata=self.metadata)
         else:
@@ -5069,7 +5136,7 @@ class Client:
     @overload
     def CreateFile(
         self, 
-        arg: clouddrive.pb2.CreateFileRequest, 
+        arg: dict | clouddrive.pb2.CreateFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CreateFileResult:
@@ -5077,14 +5144,14 @@ class Client:
     @overload
     def CreateFile(
         self, 
-        arg: clouddrive.pb2.CreateFileRequest, 
+        arg: dict | clouddrive.pb2.CreateFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CreateFileResult]:
         ...
     def CreateFile(
         self, 
-        arg: clouddrive.pb2.CreateFileRequest, 
+        arg: dict | clouddrive.pb2.CreateFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CreateFileResult | Coroutine[Any, Any, clouddrive.pb2.CreateFileResult]:
@@ -5104,6 +5171,7 @@ class Client:
         }
         message CreateFileResult { uint64 fileHandle = 1; }
         """
+        arg = to_message(clouddrive.pb2.CreateFileRequest, arg)
         if async_:
             return self.async_stub.CreateFile(arg, metadata=self.metadata)
         else:
@@ -5112,7 +5180,7 @@ class Client:
     @overload
     def CloseFile(
         self, 
-        arg: clouddrive.pb2.CloseFileRequest, 
+        arg: dict | clouddrive.pb2.CloseFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileOperationResult:
@@ -5120,14 +5188,14 @@ class Client:
     @overload
     def CloseFile(
         self, 
-        arg: clouddrive.pb2.CloseFileRequest, 
+        arg: dict | clouddrive.pb2.CloseFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
         ...
     def CloseFile(
         self, 
-        arg: clouddrive.pb2.CloseFileRequest, 
+        arg: dict | clouddrive.pb2.CloseFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileOperationResult | Coroutine[Any, Any, clouddrive.pb2.FileOperationResult]:
@@ -5148,6 +5216,7 @@ class Client:
           repeated string resultFilePaths = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.CloseFileRequest, arg)
         if async_:
             return self.async_stub.CloseFile(arg, metadata=self.metadata)
         else:
@@ -5156,7 +5225,7 @@ class Client:
     @overload
     def WriteToFileStream(
         self, 
-        arg: Sequence[clouddrive.pb2.WriteFileRequest], 
+        arg: Sequence[dict | clouddrive.pb2.WriteFileRequest], 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.WriteFileResult:
@@ -5164,14 +5233,14 @@ class Client:
     @overload
     def WriteToFileStream(
         self, 
-        arg: Sequence[clouddrive.pb2.WriteFileRequest], 
+        arg: Sequence[dict | clouddrive.pb2.WriteFileRequest], 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
         ...
     def WriteToFileStream(
         self, 
-        arg: Sequence[clouddrive.pb2.WriteFileRequest], 
+        arg: Sequence[dict | clouddrive.pb2.WriteFileRequest], 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.WriteFileResult | Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
@@ -5194,6 +5263,7 @@ class Client:
         }
         message WriteFileResult { uint64 bytesWritten = 1; }
         """
+        arg = [to_message(clouddrive.pb2.WriteFileRequest, a) for a in arg]
         if async_:
             return self.async_stub.WriteToFileStream(arg, metadata=self.metadata)
         else:
@@ -5202,7 +5272,7 @@ class Client:
     @overload
     def WriteToFile(
         self, 
-        arg: clouddrive.pb2.WriteFileRequest, 
+        arg: dict | clouddrive.pb2.WriteFileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.WriteFileResult:
@@ -5210,14 +5280,14 @@ class Client:
     @overload
     def WriteToFile(
         self, 
-        arg: clouddrive.pb2.WriteFileRequest, 
+        arg: dict | clouddrive.pb2.WriteFileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
         ...
     def WriteToFile(
         self, 
-        arg: clouddrive.pb2.WriteFileRequest, 
+        arg: dict | clouddrive.pb2.WriteFileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.WriteFileResult | Coroutine[Any, Any, clouddrive.pb2.WriteFileResult]:
@@ -5240,6 +5310,7 @@ class Client:
         }
         message WriteFileResult { uint64 bytesWritten = 1; }
         """
+        arg = to_message(clouddrive.pb2.WriteFileRequest, arg)
         if async_:
             return self.async_stub.WriteToFile(arg, metadata=self.metadata)
         else:
@@ -5379,7 +5450,7 @@ class Client:
     @overload
     def JoinPlan(
         self, 
-        arg: clouddrive.pb2.JoinPlanRequest, 
+        arg: dict | clouddrive.pb2.JoinPlanRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.JoinPlanResult:
@@ -5387,14 +5458,14 @@ class Client:
     @overload
     def JoinPlan(
         self, 
-        arg: clouddrive.pb2.JoinPlanRequest, 
+        arg: dict | clouddrive.pb2.JoinPlanRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
         ...
     def JoinPlan(
         self, 
-        arg: clouddrive.pb2.JoinPlanRequest, 
+        arg: dict | clouddrive.pb2.JoinPlanRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.JoinPlanResult | Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
@@ -5429,6 +5500,7 @@ class Client:
           optional string check_code = 6;
         }
         """
+        arg = to_message(clouddrive.pb2.JoinPlanRequest, arg)
         if async_:
             return self.async_stub.JoinPlan(arg, metadata=self.metadata)
         else:
@@ -5437,7 +5509,7 @@ class Client:
     @overload
     def BindCloudAccount(
         self, 
-        arg: clouddrive.pb2.BindCloudAccountRequest, 
+        arg: dict | clouddrive.pb2.BindCloudAccountRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -5445,14 +5517,14 @@ class Client:
     @overload
     def BindCloudAccount(
         self, 
-        arg: clouddrive.pb2.BindCloudAccountRequest, 
+        arg: dict | clouddrive.pb2.BindCloudAccountRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BindCloudAccount(
         self, 
-        arg: clouddrive.pb2.BindCloudAccountRequest, 
+        arg: dict | clouddrive.pb2.BindCloudAccountRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -5484,7 +5556,7 @@ class Client:
     @overload
     def TransferBalance(
         self, 
-        arg: clouddrive.pb2.TransferBalanceRequest, 
+        arg: dict | clouddrive.pb2.TransferBalanceRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -5492,14 +5564,14 @@ class Client:
     @overload
     def TransferBalance(
         self, 
-        arg: clouddrive.pb2.TransferBalanceRequest, 
+        arg: dict | clouddrive.pb2.TransferBalanceRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def TransferBalance(
         self, 
-        arg: clouddrive.pb2.TransferBalanceRequest, 
+        arg: dict | clouddrive.pb2.TransferBalanceRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -5531,7 +5603,7 @@ class Client:
     @overload
     def ChangeEmail(
         self, 
-        arg: clouddrive.pb2.ChangeUserNameEmailRequest, 
+        arg: dict | clouddrive.pb2.ChangeUserNameEmailRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -5539,14 +5611,14 @@ class Client:
     @overload
     def ChangeEmail(
         self, 
-        arg: clouddrive.pb2.ChangeUserNameEmailRequest, 
+        arg: dict | clouddrive.pb2.ChangeUserNameEmailRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def ChangeEmail(
         self, 
-        arg: clouddrive.pb2.ChangeUserNameEmailRequest, 
+        arg: dict | clouddrive.pb2.ChangeUserNameEmailRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -5628,7 +5700,7 @@ class Client:
     @overload
     def CheckActivationCode(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CheckActivationCodeResult:
@@ -5636,14 +5708,14 @@ class Client:
     @overload
     def CheckActivationCode(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CheckActivationCodeResult]:
         ...
     def CheckActivationCode(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CheckActivationCodeResult | Coroutine[Any, Any, clouddrive.pb2.CheckActivationCodeResult]:
@@ -5664,6 +5736,7 @@ class Client:
         }
         message StringValue { string value = 1; }
         """
+        arg = to_message(clouddrive.pb2.StringValue, arg)
         if async_:
             return self.async_stub.CheckActivationCode(arg, metadata=self.metadata)
         else:
@@ -5672,7 +5745,7 @@ class Client:
     @overload
     def ActivatePlan(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.JoinPlanResult:
@@ -5680,14 +5753,14 @@ class Client:
     @overload
     def ActivatePlan(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
         ...
     def ActivatePlan(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.JoinPlanResult | Coroutine[Any, Any, clouddrive.pb2.JoinPlanResult]:
@@ -5719,6 +5792,7 @@ class Client:
         }
         message StringValue { string value = 1; }
         """
+        arg = to_message(clouddrive.pb2.StringValue, arg)
         if async_:
             return self.async_stub.ActivatePlan(arg, metadata=self.metadata)
         else:
@@ -5727,7 +5801,7 @@ class Client:
     @overload
     def CheckCouponCode(
         self, 
-        arg: clouddrive.pb2.CheckCouponCodeRequest, 
+        arg: dict | clouddrive.pb2.CheckCouponCodeRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.CouponCodeResult:
@@ -5735,14 +5809,14 @@ class Client:
     @overload
     def CheckCouponCode(
         self, 
-        arg: clouddrive.pb2.CheckCouponCodeRequest, 
+        arg: dict | clouddrive.pb2.CheckCouponCodeRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.CouponCodeResult]:
         ...
     def CheckCouponCode(
         self, 
-        arg: clouddrive.pb2.CheckCouponCodeRequest, 
+        arg: dict | clouddrive.pb2.CheckCouponCodeRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.CouponCodeResult | Coroutine[Any, Any, clouddrive.pb2.CouponCodeResult]:
@@ -5767,6 +5841,7 @@ class Client:
           double couponDiscountAmount = 4;
         }
         """
+        arg = to_message(clouddrive.pb2.CheckCouponCodeRequest, arg)
         if async_:
             return self.async_stub.CheckCouponCode(arg, metadata=self.metadata)
         else:
@@ -5866,7 +5941,7 @@ class Client:
     @overload
     def BackupAdd(
         self, 
-        arg: clouddrive.pb2.Backup, 
+        arg: dict | clouddrive.pb2.Backup, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -5874,14 +5949,14 @@ class Client:
     @overload
     def BackupAdd(
         self, 
-        arg: clouddrive.pb2.Backup, 
+        arg: dict | clouddrive.pb2.Backup, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupAdd(
         self, 
-        arg: clouddrive.pb2.Backup, 
+        arg: dict | clouddrive.pb2.Backup, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -5955,7 +6030,7 @@ class Client:
     @overload
     def BackupRemove(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -5963,14 +6038,14 @@ class Client:
     @overload
     def BackupRemove(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupRemove(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -5998,7 +6073,7 @@ class Client:
     @overload
     def BackupUpdate(
         self, 
-        arg: clouddrive.pb2.Backup, 
+        arg: dict | clouddrive.pb2.Backup, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6006,14 +6081,14 @@ class Client:
     @overload
     def BackupUpdate(
         self, 
-        arg: clouddrive.pb2.Backup, 
+        arg: dict | clouddrive.pb2.Backup, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupUpdate(
         self, 
-        arg: clouddrive.pb2.Backup, 
+        arg: dict | clouddrive.pb2.Backup, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6087,7 +6162,7 @@ class Client:
     @overload
     def BackupAddDestination(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6095,14 +6170,14 @@ class Client:
     @overload
     def BackupAddDestination(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupAddDestination(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6166,7 +6241,7 @@ class Client:
     @overload
     def BackupRemoveDestination(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6174,14 +6249,14 @@ class Client:
     @overload
     def BackupRemoveDestination(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupRemoveDestination(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6245,7 +6320,7 @@ class Client:
     @overload
     def BackupSetEnabled(
         self, 
-        arg: clouddrive.pb2.BackupSetEnabledRequest, 
+        arg: dict | clouddrive.pb2.BackupSetEnabledRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6253,14 +6328,14 @@ class Client:
     @overload
     def BackupSetEnabled(
         self, 
-        arg: clouddrive.pb2.BackupSetEnabledRequest, 
+        arg: dict | clouddrive.pb2.BackupSetEnabledRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupSetEnabled(
         self, 
-        arg: clouddrive.pb2.BackupSetEnabledRequest, 
+        arg: dict | clouddrive.pb2.BackupSetEnabledRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6292,7 +6367,7 @@ class Client:
     @overload
     def BackupSetFileSystemWatchEnabled(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6300,14 +6375,14 @@ class Client:
     @overload
     def BackupSetFileSystemWatchEnabled(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupSetFileSystemWatchEnabled(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6371,7 +6446,7 @@ class Client:
     @overload
     def BackupUpdateStrategies(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6379,14 +6454,14 @@ class Client:
     @overload
     def BackupUpdateStrategies(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupUpdateStrategies(
         self, 
-        arg: clouddrive.pb2.BackupModifyRequest, 
+        arg: dict | clouddrive.pb2.BackupModifyRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6450,7 +6525,7 @@ class Client:
     @overload
     def BackupRestartWalkingThrough(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6458,14 +6533,14 @@ class Client:
     @overload
     def BackupRestartWalkingThrough(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def BackupRestartWalkingThrough(
         self, 
-        arg: clouddrive.pb2.StringValue, 
+        arg: dict | clouddrive.pb2.StringValue, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6616,7 +6691,7 @@ class Client:
     @overload
     def KickoutDevice(
         self, 
-        arg: clouddrive.pb2.DeviceRequest, 
+        arg: dict | clouddrive.pb2.DeviceRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> None:
@@ -6624,14 +6699,14 @@ class Client:
     @overload
     def KickoutDevice(
         self, 
-        arg: clouddrive.pb2.DeviceRequest, 
+        arg: dict | clouddrive.pb2.DeviceRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None]:
         ...
     def KickoutDevice(
         self, 
-        arg: clouddrive.pb2.DeviceRequest, 
+        arg: dict | clouddrive.pb2.DeviceRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> None | Coroutine[Any, Any, None]:
@@ -6704,7 +6779,7 @@ class Client:
     @overload
     def SyncFileChangesFromCloud(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False] = False, 
     ) -> clouddrive.pb2.FileSystemChangeStatistics:
@@ -6712,14 +6787,14 @@ class Client:
     @overload
     def SyncFileChangesFromCloud(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, clouddrive.pb2.FileSystemChangeStatistics]:
         ...
     def SyncFileChangesFromCloud(
         self, 
-        arg: clouddrive.pb2.FileRequest, 
+        arg: dict | clouddrive.pb2.FileRequest, 
         /, 
         async_: Literal[False, True] = False, 
     ) -> clouddrive.pb2.FileSystemChangeStatistics | Coroutine[Any, Any, clouddrive.pb2.FileSystemChangeStatistics]:
@@ -6740,6 +6815,7 @@ class Client:
           uint64 renameCount = 3;
         }
         """
+        arg = to_message(clouddrive.pb2.FileRequest, arg)
         if async_:
             return self.async_stub.SyncFileChangesFromCloud(arg, metadata=self.metadata)
         else:
