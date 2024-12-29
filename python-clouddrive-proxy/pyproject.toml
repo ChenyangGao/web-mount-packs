@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "python-clouddrive-proxy"
+version = "0.0.1"
+description = "Python clouddrive reverse proxy."
+authors = ["ChenyangGao <wosiwujm@gmail.com>"]
+license = "MIT"
+readme = "readme.md"
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-clouddrive-proxy"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-clouddrive-proxy"
+keywords = ["clouddrive", "reverse proxy"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+include = [
+    "LICENSE",
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+blacksheep = "*"
+clouddrive = ">=0.0.12.7.1"
+httpx = "*"
+protobuf = "*"
+python-reverse-proxy = ">=0.0.9.4"
+sqlitetools = ">=0.0.2.1"
+uvicorn = "*"
+
+[tool.poetry.scripts]
+clouddrive-proxy = "clouddrive_proxy.__main__:main"
+python-clouddrive-proxy = "clouddrive_proxy.__main__:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.packages]]
+include = "clouddrive_proxy"
