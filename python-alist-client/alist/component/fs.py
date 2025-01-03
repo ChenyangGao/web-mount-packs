@@ -1918,8 +1918,8 @@ class AlistFileSystem:
     def fs_form(
         self, 
         /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         path: PathType, 
         as_task: bool = False, 
         *, 
@@ -1930,8 +1930,8 @@ class AlistFileSystem:
     def fs_form(
         self, 
         /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: PathType, 
         as_task: bool = False, 
         *, 
@@ -1941,8 +1941,8 @@ class AlistFileSystem:
     def fs_form(
         self, 
         /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: PathType, 
         as_task: bool = False, 
         *, 
@@ -1953,12 +1953,12 @@ class AlistFileSystem:
         else:
             path = self.abspath(path)
         return check_response(
-            self.client.fs_form( # type: ignore
-                file, 
+            self.client.fs_form(
+                file, # type: ignore
                 path, 
                 as_task=as_task, 
                 request=self.async_request if async_ else self.request, 
-                async_=async_, 
+                async_=async_, # type: ignore
                 **self.request_kwargs, 
             ), 
             path=path, 
@@ -2181,8 +2181,8 @@ class AlistFileSystem:
     def fs_put(
         self, 
         /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
         path: PathType, 
         as_task: bool = False, 
         filesize: int = -1, 
@@ -2194,8 +2194,8 @@ class AlistFileSystem:
     def fs_put(
         self, 
         /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: PathType, 
         as_task: bool = False, 
         filesize: int = -1, 
@@ -2206,8 +2206,8 @@ class AlistFileSystem:
     def fs_put(
         self, 
         /, 
-        file: ( Buffer | SupportsRead[Buffer] | str | PathLike | 
-                URL | SupportsGeturl | Iterable[Buffer] | AsyncIterable[Buffer] ), 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: PathType, 
         as_task: bool = False, 
         filesize: int = -1, 
@@ -2219,13 +2219,13 @@ class AlistFileSystem:
         else:
             path = self.abspath(path)
         return check_response(
-            self.client.fs_put( # type: ignore
-                file, 
+            self.client.fs_put(
+                file, # type: ignore
                 path, 
                 as_task=as_task, 
                 filesize=filesize, 
                 request=self.async_request if async_ else self.request, 
-                async_=async_, 
+                async_=async_, # type: ignore
                 **self.request_kwargs, 
             ), 
             path=path, 
@@ -5920,7 +5920,7 @@ class AlistFileSystem:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: PathType = "", 
         password: str = "", 
         as_task: bool = False, 
@@ -5934,7 +5934,7 @@ class AlistFileSystem:
         self, 
         /, 
         file: ( str | PathLike | URL | SupportsGeturl | 
-                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ), 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ), 
         path: PathType = "", 
         password: str = "", 
         as_task: bool = False, 
@@ -5974,7 +5974,12 @@ class AlistFileSystem:
                     yield self.fs_remove(dir_, [name], async_=async_)
                 else:
                     raise FileExistsError(errno.EEXIST, path)
-            yield self.fs_form(file, path, as_task=as_task, async_=async_)
+            yield self.fs_form(
+                file, # type: ignore
+                path, 
+                as_task=as_task, 
+                async_=async_, # type: ignore
+            )
             if remove_done and isinstance(file, (str, PathLike)):
                 try:
                     remove(file)

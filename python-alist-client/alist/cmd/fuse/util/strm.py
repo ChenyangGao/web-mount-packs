@@ -27,7 +27,7 @@ from alist import AlistPath
 
 PARSERS: Final[dict[str, Callable]] = {}
 CRE_finditer_flags_count: Final[Callable[[str], Iterator[Match]]] = re_compile(
-    "(?P<range>(?P<begin>\d+)-(?P<end>\d+)(?:-(?P<step>\d+))?)|(?P<global>(?P<ge>\d*)g)|(?P<neq>(?P<sign>[<>!]?=?)(?P<num>\d+))"
+    r"(?P<range>(?P<begin>\d+)-(?P<end>\d+)(?:-(?P<step>\d+))?)|(?P<global>(?P<ge>\d*)g)|(?P<neq>(?P<sign>[<>!]?=?)(?P<num>\d+))"
 ).finditer
 CRE_match_bare_lambda: Final[Callable[[str], None | Match]] = re_compile(
     "lambda[ \t]*:"

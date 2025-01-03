@@ -29,16 +29,16 @@ usage: clouddrive_proxy [-h] -u USERNAME -p PASSWORD [-115 BASE_URL_115] [-H HOS
 ✅ 115 的下载可用 p115nano302 代理，实现 302
 
 positional arguments:
-  base-url              被代理的 clouddrive 服务的 base_url，默认值：'http://localhost:19798'
+  base-url              被代理的 clouddrive 服务的首页链接，默认值：'http://localhost:19798'
 
 options:
   -h, --help            show this help message and exit
   -u USERNAME, --username USERNAME
-                        用户名
+                        clouddrive 的用户名
   -p PASSWORD, --password PASSWORD
-                        密码
+                        clouddrive 的密码
   -115 BASE_URL_115, --base-url-115 BASE_URL_115
-                        115 代理下载链接，默认为 http://localhost:8000，请部署一个 https://pypi.org/project/p115nano302/
+                        115 代理下载服务地址，默认为 http://localhost:8000，请部署一个 https://pypi.org/project/p115nano302/
   -H HOST, --host HOST  ip 或 hostname，默认值：'0.0.0.0'
   -P PORT, --port PORT  端口号，默认值：19797
   -db DBFILE, --dbfile DBFILE

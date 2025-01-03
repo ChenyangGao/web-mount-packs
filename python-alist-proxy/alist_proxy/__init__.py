@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = ["make_application", "make_application_with_fs_events", "make_application_with_fs_event_stream"]
 
 import logging
@@ -179,7 +179,7 @@ def make_application(
 
     if alist_token:
         client = AlistClient.from_auth(alist_token, base_url)
-        resp = client.auth_me()
+        resp = client.me()
         if resp["code"] != 200:
             raise ValueError(resp)
         elif resp["data"]["id"] != 1:
@@ -485,7 +485,7 @@ def make_application_with_fs_events(
 
     if alist_token:
         client  = AlistClient.from_auth(alist_token, base_url)
-        resp    = client.auth_me()
+        resp    = client.me()
         if resp["code"] != 200:
             raise ValueError(resp)
         elif resp["data"]["id"] != 1:
@@ -502,6 +502,9 @@ def make_application_with_fs_events(
                     except BaseException as e:
                         logger.exception(e)
                     else:
+                        if not ls:
+                            await async_sleep(1)
+                            continue
                         for task in ls:
                             if task["state"] == 2:
                                 try:

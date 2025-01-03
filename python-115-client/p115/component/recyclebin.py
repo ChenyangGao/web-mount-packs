@@ -242,6 +242,8 @@ class P115Recyclebin:
                         count = int(resp["count"])
                     elif count != int(resp["count"]):
                         raise RuntimeError("detected count changes during iteration")
+                    if count == 0:
+                        return
                     for attr in resp["data"]:
                         yield attr
                     if len(resp["data"]) < resp["page_size"]:
@@ -262,6 +264,8 @@ class P115Recyclebin:
                         count = int(resp["count"])
                     elif count != int(resp["count"]):
                         raise RuntimeError("detected count changes during iteration")
+                    if count == 0:
+                        return
                     yield from resp["data"]
                     if len(resp["data"]) < resp["page_size"]:
                         return

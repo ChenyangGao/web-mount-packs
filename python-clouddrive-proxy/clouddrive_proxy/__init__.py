@@ -50,6 +50,7 @@ def make_application(
 
     if base_url_115:
         @app.router.get("/static/http/{host}/False/{path}")
+        @app.router.get("/static/https/{host}/False/{path}")
         @app.router.get("/dav/{path:path}")
         async def download(request: Request, session: AsyncClient, path: str = ""):
             if request.path.startswith("/dav"):

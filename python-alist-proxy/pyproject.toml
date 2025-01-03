@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "alist_proxy"
-version = "0.1.3"
+version = "0.1.3.2"
 description = "Python alist proxy and monitor."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -34,7 +34,7 @@ httpx = "*"
 orjson = "*"
 motor = "*"
 p115qrcode = ">=0.0.3"
-python-alist = ">=0.0.13.6"
+python-alist = ">=0.0.13.7"
 python-reverse-proxy = ">=0.0.9.4"
 python-cookietools = ">=0.0.2"
 python-dateutil = "*"

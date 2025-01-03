@@ -14,12 +14,12 @@ __doc__ = """\
 from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
 
 parser = ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-parser.add_argument("-u", "--username", required=True, help="用户名")
-parser.add_argument("-p", "--password", required=True, help="密码")
+parser.add_argument("-u", "--username", required=True, help="clouddrive 的用户名")
+parser.add_argument("-p", "--password", required=True, help="clouddrive 的密码")
 parser.add_argument(metavar="base-url", dest="base_url", nargs="?", default="http://localhost:19798", 
-                    help="被代理的 clouddrive 服务的 base_url，默认值：'http://localhost:19798'")
+                    help="被代理的 clouddrive 服务的首页链接，默认值：'http://localhost:19798'")
 parser.add_argument("-115", "--base-url-115", default="http://localhost:8000", 
-                    help="115 代理下载链接，默认为 http://localhost:8000，请部署一个 https://pypi.org/project/p115nano302/")
+                    help="115 代理下载服务地址，默认为 http://localhost:8000，请部署一个 https://pypi.org/project/p115nano302/")
 parser.add_argument("-H", "--host", default="0.0.0.0", help="ip 或 hostname，默认值：'0.0.0.0'")
 parser.add_argument("-P", "--port", default=19797, type=int, help="端口号，默认值：19797")
 parser.add_argument("-db", "--dbfile", default="", 

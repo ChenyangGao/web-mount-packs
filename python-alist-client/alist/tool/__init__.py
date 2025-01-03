@@ -29,6 +29,7 @@ from typing import cast, overload, Any, Literal
 from alist.component import AlistClient, AlistPath
 from orjson import dumps, loads
 from httpx import TimeoutException
+from retrytools import retry
 
 
 CRE_USERID_search = re_compile(r"(?<=\bUID=)[0-9]+").search
@@ -106,13 +107,11 @@ def alist_batch_add_115_share_links(
     """
     try:
         from p115 import P115ShareFileSystem
-        from retrytools import retry
     except ImportError:
         from sys import executable
         from subprocess import run
-        run([executable, "-m", "pip", "install", "-U", "python-115", "python-retrytools"], check=True)
-        from p115 import P115ShareFileSystem
-        from retrytools import retry
+        run([executable, "-m", "pip", "install", "-U", "python-115"], check=True)
+        from p115 import P115ShareFileSystem 
     if isinstance(client, str):
         client = AlistClient.from_auth(client)
     if isinstance(share_links, str):

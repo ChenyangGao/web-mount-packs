@@ -145,7 +145,7 @@ class AlistFuseOperations(Operations):
 
         fs = self.fs = AlistFileSystem.login(origin, username, password)
         if refresh:
-            me = fs.client.auth_me()["data"]
+            me = fs.client.me()["data"]
             if me["id"] > 1 and not (me["permission"] & (1 << 3)):
                 raise PermissionError(
                     errno.EPERM, 
@@ -175,7 +175,7 @@ class AlistFuseOperations(Operations):
         else:
             self.temp_cache = LRUCache(128)
         self.cache: MutableMapping = cache
-        self._fh_to_file: dict[int, tuple[IO[Buffer], bytes]] = {}
+        self._fh_to_file: dict[int, tuple[IO[bytes], bytes]] = {}
         def close_all():
             popitem = self._fh_to_file.popitem
             while True:
@@ -318,9 +318,9 @@ class AlistFuseOperations(Operations):
         path = attr["_path"]["path"]
         if attr.get("_data") is not None:
             return None, attr["_data"]
-        file: None | IO[Buffer]
+        file: None | IO[bytes]
         if self.open_file is None:
-            file = cast(IO[bytes], attr["_path"].open("rb"))
+            file = attr["_path"].open("rb")
         else:
             rawfile = self.open_file(attr["_path"])
             if isinstance(rawfile, Buffer):
@@ -336,7 +336,8 @@ class AlistFuseOperations(Operations):
             elif isinstance(rawfile, (str, PathLike)):
                 file = open(rawfile, "rb")
             else:
-                file = cast(IO[Buffer], rawfile)
+                file = cast(IO[bytes], rawfile)
+        file = cast(IO[bytes], file)
         if attr["st_size"] <= 2048:
             return None, file.read()
         if start == 0:
