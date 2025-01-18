@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __license__ = "GPLv3 <https://www.gnu.org/licenses/gpl-3.0.txt>"
 __all__ = ["make_application"]
 
@@ -27,12 +27,14 @@ def make_application(
             request.scope["path"] = path
         return await handler(request)
 
-    @app.router.route("/items/{item_id}/download", methods=["GET", "HEAD"])
-    @app.router.route("/emby/items/{item_id}/download", methods=["GET", "HEAD"])
     @app.router.route("/audio/{item_id}/{name}", methods=["GET", "HEAD"])
     @app.router.route("/emby/audio/{item_id}/{name}", methods=["GET", "HEAD"])
     @app.router.route("/videos/{item_id}/{name}", methods=["GET", "HEAD"])
     @app.router.route("/emby/videos/{item_id}/{name}", methods=["GET", "HEAD"])
+    @app.router.route("/items/{item_id}/download", methods=["GET", "HEAD"])
+    @app.router.route("/emby/items/{item_id}/download", methods=["GET", "HEAD"])
+    @app.router.route("/items/{item_id}/file", methods=["GET", "HEAD"])
+    @app.router.route("/emby/items/{item_id}/file", methods=["GET", "HEAD"])
     @app.router.route("/sync/jobitems/{item_id}/file", methods=["GET", "HEAD"])
     @app.router.route("/emby/sync/jobitems/{item_id}/file", methods=["GET", "HEAD"])
     async def download(
@@ -43,7 +45,35 @@ def make_application(
         MediaSourceId: str = "", 
         api_key: str = "", 
     ):
+        """如果文件的对应路径是一个 URL，则进行转发
+
+        .. note::
+            涉及到的一些接口:
+
+            1. 音乐下载:
+
+                - https://dev.emby.media/reference/RestAPI/AudioService.html
+                - https://dev.emby.media/reference/RestAPI/UniversalAudioService.html
+
+            2. 视频下载:
+
+                - https://dev.emby.media/reference/RestAPI/VideoService.html
+
+            3. 文件下载:
+
+                - https://dev.emby.media/reference/RestAPI/LibraryService/getItemsByIdDownload.html
+                - https://dev.emby.media/reference/RestAPI/LibraryService/getItemsByIdFile.html
+                - https://dev.emby.media/reference/RestAPI/SyncService/getSyncJobitemsByIdFile.html
+
+            4. 文件信息:
+
+                - https://dev.emby.media/reference/RestAPI/MediaInfoService.html
+        """
         if not name.endswith(".m3u8"):
+            if not api_key and (tokens := request.query.get("X-Emby-Token")):
+                api_key = tokens[0]
+            if not api_key:
+                api_key = (request.get_first_header(b"X-Emby-Token") or b"").decode("latin-1")
             json: None | dict = None
             while json is None:
                 if await request.is_disconnected():

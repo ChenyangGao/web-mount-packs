@@ -2,11 +2,11 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __all__ = [
     "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
     "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", "run_gen_step", "run_gen_step_iter", 
-    "Yield", "YieldFrom", 
+    "Return", "Yield", "YieldFrom", 
 ]
 
 from abc import ABC, abstractmethod
@@ -36,6 +36,10 @@ class YieldBase(ABC):
         ...
 
 
+class Return(YieldBase):
+    yield_type = 0
+
+
 class Yield(YieldBase):
     yield_type = 1
 
@@ -58,23 +62,23 @@ def async_iterable(it, /) -> bool:
         return False
 
 
-def foreach(ret: Callable, iterable, /, *iterables):
+def foreach(value: Callable, iterable, /, *iterables):
     if iterables:
         for args in zip(iterable, *iterables):
-            ret(*args)
+            value(*args)
     else:
         for arg in iterable:
-            ret(arg)
+            value(arg)
 
 
-async def async_foreach(ret: Callable, iterable, /, *iterables, threaded: bool = True):
-    ret = ensure_async(ret, threaded=threaded)
+async def async_foreach(value: Callable, iterable, /, *iterables, threaded: bool = True):
+    value = ensure_async(value, threaded=threaded)
     if iterables:
         async for args in async_zip(iterable, *iterables, threaded=threaded):
-            await ret(*args)
+            await value(*args)
     else:
         async for arg in ensure_aiter(iterable, threaded=threaded):
-            await ret(arg)
+            await value(arg)
 
 
 def through(it: Iterable, /, take_while: None | Callable = None):
@@ -225,27 +229,40 @@ def run_gen_step(
         async def process():
             try:
                 if threaded:
-                    ret = await to_thread(send, None)
+                    value = await to_thread(send, None)
                 else:
-                    ret = send(None)
+                    value = send(None)
                 while True:
+                    if isinstance(value, YieldBase):
+                        raise StopIteration(value)
                     try:
-                        if callable(ret):
-                            ret = ret()
-                        if isawaitable(ret):
-                            ret = await ret
+                        if callable(value):
+                            value = value()
+                        if isawaitable(value):
+                            value = await value
                     except BaseException as e:
                         if threaded:
-                            ret = await to_thread(throw, e)
+                            value = await to_thread(throw, e)
                         else:
-                            ret = throw(e)
+                            value = throw(e)
                     else:
                         if threaded:
-                            ret = await to_thread(send, ret)
+                            value = await to_thread(send, value)
                         else:
-                            ret = send(ret)
+                            value = send(value)
             except StopIteration as e:
-                return e.value
+                value = e.value
+                identity = False
+                try_call_me = True
+                if isinstance(value, YieldBase):
+                    identity = value.identity
+                    try_call_me = value.try_call_me
+                    value = value.value
+                if callable(value) and try_call_me:
+                    value = value()
+                if not identity and isawaitable(value):
+                    value = await value
+                return value
             finally:
                 if close is not None:
                     if threaded:
@@ -270,20 +287,28 @@ def run_gen_step(
         return result
     else:
         try:
-            ret = send(None)
+            value = send(None)
             while True:
+                if isinstance(value, YieldBase):
+                    raise StopIteration(value)
                 try:
-                    if callable(ret):
-                        ret = ret()
+                    if callable(value):
+                        value = value()
                 except BaseException as e:
-                    ret = throw(e)
+                    value = throw(e)
                 else:
-                    ret = send(ret)
+                    value = send(value)
         except StopIteration as e:
-            result = e.value
+            value = e.value
+            try_call_me = True
+            if isinstance(value, YieldBase):
+                try_call_me = value.try_call_me
+                value = value.value
+            if callable(value) and try_call_me:
+                value = value()
             if as_iter:
-                result = iter(result)
-            return result
+                value = iter(value)
+            return value
         finally:
             if close is not None:
                 close()
@@ -321,55 +346,52 @@ def run_gen_step_iter(
     throw = gen.throw
     if async_:
         async def process():
-            async def extract(ret):
-                yield_type = 0
+            async def extract(value):
                 identity = False
                 try_call_me = True
-                if isinstance(ret, YieldBase):
-                    identity = ret.identity
-                    try_call_me = ret.try_call_me
-                    yield_type = ret.yield_type
-                    ret = ret.value
-                if not identity:
-                    if try_call_me and callable(ret):
-                        ret = ret()
-                    if isawaitable(ret):
-                        ret = await ret
-                return yield_type, ret
+                yield_type = -1
+                if isinstance(value, YieldBase):
+                    identity = value.identity
+                    try_call_me = value.try_call_me
+                    yield_type = value.yield_type
+                    value = value.value
+                if try_call_me and callable(value):
+                    value = value()
+                if not identity and isawaitable(value):
+                    value = await value
+                return yield_type, value
             try:
                 if threaded:
-                    ret = await to_thread(send, None)
+                    value = await to_thread(send, None)
                 else:
-                    ret = send(None)
+                    value = send(None)
                 while True:
                     try:
-                        yield_type, ret = await extract(ret)
+                        yield_type, value = await extract(value)
                         match yield_type:
                             case 1:
-                                yield ret
+                                yield value
                             case 2:
-                                async for val in ensure_aiter(ret, threaded=threaded):
+                                async for val in ensure_aiter(value, threaded=threaded):
                                     yield val
                     except BaseException as e:
                         if threaded:
-                            ret = await to_thread(throw, e)
+                            value = await to_thread(throw, e)
                         else:
-                            ret = throw(e)
+                            value = throw(e)
                     else:
                         if threaded:
-                            ret = await to_thread(send, ret)
+                            value = await to_thread(send, value)
                         else:
-                            ret = send(ret)
+                            value = send(value)
             except StopIteration as e:
-                ret = e.value
-                if isinstance(ret, YieldBase):
-                    yield_type, ret = await extract(ret)
-                    match yield_type:
-                        case 1:
-                            yield ret
-                        case 2:
-                            async for val in ensure_aiter(ret, threaded=threaded):
-                                yield val
+                yield_type, value = await extract(e.value)
+                match yield_type:
+                    case 1:
+                        yield value
+                    case 2:
+                        async for val in ensure_aiter(value, threaded=threaded):
+                            yield val
             finally:
                 if close is not None:
                     if threaded:
@@ -378,41 +400,41 @@ def run_gen_step_iter(
                         close()
     else:
         def process():
-            def extract(ret):
-                yield_type = 0
-                identity = False
+            def extract(value, /):
                 try_call_me = True
-                if isinstance(ret, YieldBase):
-                    identity = ret.identity
-                    try_call_me = ret.try_call_me
-                    yield_type = ret.yield_type
-                    ret = ret.value
-                if not identity and try_call_me and callable(ret):
-                    ret = ret()
-                return yield_type, ret
+                yield_type = -1
+                if isinstance(value, YieldBase):
+                    try_call_me = value.try_call_me
+                    yield_type  = value.yield_type
+                    value       = value.value
+                if try_call_me and callable(value):
+                    value = value()
+                return yield_type, value
             try:
-                ret = send(None)
+                value = send(None)
                 while True:
                     try:
-                        yield_type, ret = extract(ret)
+                        yield_type, value = extract(value)
                         match yield_type:
+                            case 0:
+                                return value
                             case 1:
-                                yield ret
+                                yield value
                             case 2:
-                                yield from ret
+                                yield from value
                     except BaseException as e:
-                        ret = throw(e)
+                        value = throw(e)
                     else:
-                        ret = send(ret)
+                        value = send(value)
             except StopIteration as e:
-                ret = e.value
-                if isinstance(ret, YieldBase):
-                    yield_type, ret = extract(ret)
-                    match yield_type:
-                        case 1:
-                            yield ret
-                        case 2:
-                            yield from ret
+                yield_type, value = extract(e.value)
+                match yield_type:
+                    case 1:
+                        yield value
+                    case 2:
+                        yield from value
+                    case _:
+                        return value
             finally:
                 if close is not None:
                     close()

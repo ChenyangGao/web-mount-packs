@@ -2,37 +2,43 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 6)
 __all__ = [
     "thread_batch", "thread_pool_batch", "async_batch", 
     "threaded", "run_as_thread", "asynchronized", "run_as_async", 
+    "threadpool_map", "taskgroup_map", 
 ]
 
 from asyncio import (
-    ensure_future, get_event_loop, BaseEventLoop, CancelledError, 
-    Future as AsyncFuture, Semaphore as AsyncSemaphore, TaskGroup, 
+    ensure_future, get_event_loop, BaseEventLoop, CancelledError, Future as AsyncFuture, 
+    Queue as AsyncQueue, Semaphore as AsyncSemaphore, TaskGroup, 
 )
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import (
+    AsyncIterator, Awaitable, Callable, Coroutine, Iterable, 
+    Iterator, Mapping, 
+)
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from inspect import isawaitable, iscoroutinefunction
+from itertools import takewhile
 from os import cpu_count
-from queue import Queue, Empty
+from queue import Queue, SimpleQueue, Empty
 from _thread import start_new_thread
 from threading import Event, Lock, Semaphore, Thread
-from typing import cast, Any, ContextManager, Literal, ParamSpec, TypeVar
+from typing import cast, Any, ContextManager, Literal
 
 from argtools import argcount
-from asynctools import ensure_coroutine
+from asynctools import async_zip, ensure_coroutine, run_async
 from decotools import optional
 
 
-Args = ParamSpec("Args")
-T = TypeVar("T")
-V = TypeVar("V")
+if "__del__" not in ThreadPoolExecutor.__dict__:
+    setattr(ThreadPoolExecutor, "__del__", lambda self, /: self.shutdown(wait=False, cancel_futures=True))
+if "__del__" not in TaskGroup.__dict__:
+    setattr(TaskGroup, "__del__", lambda self, /: run_async(self.__aexit__(None, None, None)))
 
 
-def thread_batch(
+def thread_batch[T, V](
     work: Callable[[T], V] | Callable[[T, Callable], V], 
     tasks: Iterable[T], 
     callback: None | Callable[[V], Any] = None, 
@@ -94,7 +100,7 @@ def thread_batch(
         put(sentinal)
 
 
-def thread_pool_batch(
+def thread_pool_batch[T, V](
     work: Callable[[T], V] | Callable[[T, Callable], V], 
     tasks: Iterable[T], 
     callback: None | Callable[[V], Any] = None, 
@@ -143,7 +149,7 @@ def thread_pool_batch(
         pool.shutdown(False, cancel_futures=True)
 
 
-async def async_batch(
+async def async_batch[T, V](
     work: Callable[[T], Coroutine[None, None, V]] | Callable[[T, Callable], Coroutine[None, None, V]], 
     tasks: Iterable[T], 
     callback: None | Callable[[V], Any] = None, 
@@ -183,7 +189,7 @@ async def async_batch(
 
 
 @optional
-def threaded(
+def threaded[**Args, T](
     func: Callable[Args, T], 
     /, 
     lock: None | int | ContextManager = None, 
@@ -212,7 +218,7 @@ def threaded(
     return update_wrapper(wrapper, func)
 
 
-def run_as_thread(
+def run_as_thread[**Args, T](
     func: Callable[Args, T], 
     /, 
     *args: Args.args, 
@@ -222,7 +228,7 @@ def run_as_thread(
 
 
 @optional
-def asynchronized(
+def asynchronized[**Args, T](
     func: Callable[Args, T], 
     /, 
     loop: None | BaseEventLoop = None, 
@@ -247,11 +253,79 @@ def asynchronized(
     return wrapper
 
 
-def run_as_async(
+def run_as_async[**Args, T](
     func: Callable[Args, T], 
     /, 
     *args: Args.args, 
     **kwargs: Args.kwargs, 
 ) -> AsyncFuture[T]:
     return getattr(asynchronized, "__wrapped__")(func)(*args, **kwargs)
+
+
+def threadpool_map[T](
+    func: Callable[..., T], 
+    it, 
+    /, 
+    *its, 
+    max_workers: None | int = None, 
+    kwargs: None | Mapping = None, 
+) -> Iterator[T]:
+    if kwargs is None:
+        kwargs = {}
+    queue: SimpleQueue[None | Future] = SimpleQueue()
+    get, put = queue.get, queue.put_nowait
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    submit = executor.submit
+    running = True
+    def make_tasks():
+        try:
+            for args in takewhile(lambda _: running, zip(it, *its)):
+                try:
+                    put(submit(func, *args, **kwargs))
+                except RuntimeError:
+                    break
+        finally:
+            put(None)
+    try:
+        start_new_thread(make_tasks, ())
+        with executor:
+            while fu := get():
+                yield fu.result()
+    finally:
+        running = False
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+async def taskgroup_map[T](
+    func: Callable[..., Awaitable[T]], 
+    it, 
+    /, 
+    *its, 
+    max_workers: None | int = None, 
+    kwargs: None | Mapping = None, 
+) -> AsyncIterator[T]:
+    if max_workers is None:
+        max_workers = 20
+    if kwargs is None:
+        kwargs = {}
+    sema = AsyncSemaphore(max_workers)
+    queue: AsyncQueue[None | AsyncFuture] = AsyncQueue()
+    get, put = queue.get, queue.put_nowait
+    async def call(args):
+        async with sema:
+            return await func(*args, **kwargs)
+    async def make_tasks():
+        try:
+            async for args in async_zip(it, *its):
+                put(create_task(call(args)))
+        finally:
+            put(None)
+    try:
+        async with TaskGroup() as tg:
+            create_task = tg.create_task
+            create_task(make_tasks())
+            while task := await get():
+                yield await task
+    except *GeneratorExit:
+        pass
 

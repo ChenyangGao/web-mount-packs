@@ -9,12 +9,12 @@ __all__ = [
 ]
 
 from collections.abc import Buffer, Iterable, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from functools import partial
 from os import PathLike
 from re import compile as re_compile, IGNORECASE
 from sqlite3 import connect, Connection, Cursor
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 
 CRE_SELECT_SQL_match: Final = re_compile(r"\s*SELECT\b", IGNORECASE).match
@@ -31,7 +31,9 @@ class AutoCloseConnection(Connection):
     """会自动关闭 Connection
     """
     def __del__(self, /):
-        self.close()
+        with suppress(ProgrammingError):
+            self.commit()
+            self.close()
 
     def cursor(self, /, factory = AutoCloseCursor):
         return super().cursor(factory)
@@ -60,10 +62,15 @@ def enclose(
 
 
 @contextmanager
-def transact(con: bytes | str | PathLike | Connection | Cursor, /):
+def transact(
+    con: bytes | str | PathLike | Connection | Cursor, 
+    /, 
+    isolation_level: None | Literal["", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"] = "", 
+):
     """上下文管理器，创建一个 sqlite 数据库事务，会自动进行 commit 和 rollback
 
     :param con: 数据库连接或游标
+    :param isolation_level: 隔离级别
 
     :return: 上下文管理器，返回一个游标
     """
@@ -82,6 +89,13 @@ def transact(con: bytes | str | PathLike | Connection | Cursor, /):
         if con.autocommit == 1:
             yield cur
         else:
+            if con.isolation_level is None:
+                if isolation_level is None:
+                    yield cur
+                    return
+                cur.executescript(f"BEGIN {isolation_level};")
+            elif isolation_level:
+                cur.executescript(f"BEGIN {isolation_level};")
             try:
                 yield cur
                 con.commit()

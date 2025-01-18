@@ -2,8 +2,8 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
-__all__ = ["FIFODict", "LRUDict", "LFUDict", "TTLDict"]
+__version__ = (0, 0, 3)
+__all__ = ["FIFODict", "LRUDict", "LFUDict", "TTLDict", "TLRUDict"]
 
 from collections.abc import Callable, ItemsView, Mapping
 from heapq import nlargest, nsmallest
@@ -416,5 +416,31 @@ class TTLDict[K, V](dict[K, V]):
                 t_set(key, timer())
         if self.auto_clean:
             self.clean()
+
+
+class TLRUDict[K, V](LRUDict[K, tuple[int, V]]):
+
+    __slots__ = ("maxsize", "auto_clean")
+
+    def __contains__(self, key, /) -> bool:
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+    def __getitem__(self, key: K) -> tuple[int, V]:
+        value = expire_ts, _ = super().__getitem__(key)
+        if time() >= expire_ts:
+            self.pop(key, None)
+            raise KeyError(key)
+        return value
+
+    def setdefault(self, key: K, default: tuple[int, V], /) -> tuple[int, V]:
+        try:
+            return self[key]
+        except KeyError:
+            self[key] = default
+            return default
 
 # TODO: 参考 cachetools 和 diskcache 等第三方模块，再添加几种缓存类型

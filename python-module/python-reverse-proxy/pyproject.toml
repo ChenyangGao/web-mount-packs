@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-reverse-proxy"
-version = "0.0.9.4"
+version = "0.0.10"
 description = "Python reverse proxy."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

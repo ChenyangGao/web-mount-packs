@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __all__ = [
     "run_async", "as_thread", "ensure_async", "ensure_await", 
     "ensure_coroutine", "ensure_aiter", "async_map", "async_filter", 
@@ -16,33 +16,26 @@ from collections.abc import (
     Iterable, Iterator, MutableSequence, MutableSet
 )
 from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
-from typing import cast, overload, Any, ParamSpec, TypeVar
+from typing import cast, overload, Any
 
 from decotools import decorated
 from undefined import undefined
 
 
-Args = ParamSpec("Args")
-T = TypeVar("T")
-
-
 def run_async(obj, /):
-    try:
-        get_running_loop()
-        has_running_loop = True
-    except RuntimeError:
-        has_running_loop = False
     if isawaitable(obj):
-        if has_running_loop:
-            return create_task(ensure_coroutine(obj))
-        else:
-            return run(ensure_coroutine(obj))
+        coro = ensure_coroutine(obj)
+        try:
+            get_running_loop()
+            return create_task(coro)
+        except RuntimeError:
+            return run(coro)
     else:
         return obj
 
 
 @decorated
-def as_thread(
+def as_thread[**Args, T](
     func: Callable[Args, T], 
     /, 
     *args: Args.args, 
@@ -56,7 +49,7 @@ def as_thread(
     return to_thread(wrapfunc, *args, **kwds)
 
 
-def ensure_async(
+def ensure_async[**Args, T](
     func: Callable[Args, T | Awaitable[T]], 
     /, 
     threaded: bool = False, 
@@ -104,7 +97,7 @@ def ensure_coroutine(o, /) -> Coroutine:
     return wrapper()
 
 
-def ensure_aiter(
+def ensure_aiter[T](
     it: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
@@ -146,8 +139,8 @@ def ensure_aiter(
     return wrapper()
 
 
-async def async_map(
-    func: Callable[..., T], 
+async def async_map[T](
+    func: Callable[..., T] | Callable[..., Awaitable[T]], 
     iterable: Iterable | AsyncIterable, 
     /, 
     *iterables: Iterable | AsyncIterable, 
@@ -162,8 +155,8 @@ async def async_map(
             yield await fn(arg)
 
 
-async def async_filter(
-    func: None | Callable[[T], bool], 
+async def async_filter[T](
+    func: None | Callable[[T], bool] | Callable[[T], Awaitable[bool]], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
@@ -215,7 +208,7 @@ async def async_zip(
             pass
     else:
         async for e in iterable:
-            yield e
+            yield e,
 
 
 async def async_chain(
@@ -261,7 +254,7 @@ async def async_any(
     return False
 
 
-async def call_as_aiter(
+async def call_as_aiter[T](
     func: Callable[[], T] | Callable[[], Awaitable[T]], 
     /, 
     sentinel = undefined, 
@@ -284,7 +277,7 @@ async def call_as_aiter(
         pass
 
 
-async def to_list(
+async def to_list[T](
     it: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
@@ -294,7 +287,7 @@ async def to_list(
     return [e async for e in ensure_aiter(it, threaded=threaded)]
 
 
-async def collect(
+async def collect[T](
     it: Iterable[T] | AsyncIterable[T], 
     /, 
     rettype: Callable[[list[T]], Collection[T]] = list, 

@@ -1,16 +1,16 @@
 [tool.poetry]
-name = "python-concurrenttools"
-version = "0.0.6"
-description = "Python concurrent tools."
+name = "python-123-client"
+version = "0.0.1"
+description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-concurrenttools"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-concurrenttools"
-keywords = ["concurrent", "tools"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-123-client"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-123-client"
+keywords = ["123", "webdisk", "client"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -27,13 +27,23 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-argtools = "*"
+aiofile = "*"
+httpx = "*"
+httpx_request = ">=0.1.2"
+multidict = "*"
+orjson = "*"
 python-asynctools = ">=0.0.8.2"
-python-decotools = ">=0.0.1.2"
+python-property = ">=0.0.3"
+python-hashtools = ">=0.0.3.3"
+python-httpfile = ">=0.0.5"
+python-iterutils = ">=0.0.9"
+python-filewrap = ">=0.2.6.1"
+python-http_request = ">=0.0.6"
+yarl = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "concurrenttools"
+include = "p123"

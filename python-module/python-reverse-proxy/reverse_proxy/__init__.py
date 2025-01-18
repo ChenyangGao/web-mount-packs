@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 10)
 __all__ = ["ApplicationWithMethods", "make_application"]
 
 from asyncio import gather
@@ -13,7 +13,7 @@ from itertools import chain
 from socket import socket, AF_INET, SOCK_DGRAM
 from sys import _getframe, maxsize
 from typing import overload, Literal, SupportsIndex, TypeVar
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, ParseResult, SplitResult
 
 from blacksheep import Application, Request, Router, WebSocket
 from blacksheep.contents import StreamedContent
@@ -187,6 +187,30 @@ class ApplicationWithMethods(Application):
             raise AttributeError(attr) from e
 
 
+def with_hostname[T: (str, ParseResult, SplitResult)](url: T, hostname: str) -> T:
+    if isinstance(url, str):
+        return urlunsplit(with_hostname(urlsplit(url), hostname))
+    username, password, port = url.username, url.password, url.port
+    if username or password or port:
+        netloc_parts: list[str] = []
+        add_part = netloc_parts.append
+        if username or password:
+            if username:
+                add_part(username)
+            if password:
+                add_part(":")
+                add_part(password)
+            add_part("@")
+        add_part(hostname)
+        if port:
+            add_part(":")
+            add_part(str(port))
+        netloc = "".join(netloc_parts)
+    else:
+        netloc = hostname
+    return url._replace(netloc=netloc)
+
+
 def make_application(
     base_url: str = "http://localhost", 
     custom_proxy: bool | Callable = True, 
@@ -217,16 +241,14 @@ def make_application(
     """
     if not base_url.startswith(("http://", "https://")):
         raise ValueError(f"not a valid http/https base_url: {base_url!r}")
+    local_ip = get_local_ip()
     base_url = base_url.rstrip("/")
     base_urlp = urlsplit(base_url)
     base_url_hostname = base_urlp.hostname or "localhost"
     base_url_is_localhost = is_localhost(base_url_hostname)
     base_url_is_private = base_url_is_localhost or is_private(base_url_hostname)
     if base_url_is_localhost and resolve_localhost:
-        base_url_hostname = get_local_ip()
-        base_url_port = (base_urlp.netloc or "").removeprefix(base_urlp.hostname or "")
-        base_urlp = base_urlp._replace(netloc=base_url_hostname + base_url_port)
-        base_url = urlunsplit(base_urlp)
+        base_url = urlunsplit(with_hostname(base_urlp, local_ip))
 
     router = Router()
     app = ApplicationWithMethods(router=router, show_error_details=debug)
@@ -235,20 +257,24 @@ def make_application(
         getattr(app, "logger").level = 10
 
     @app.add_method
+    def resolve_url(url: str) -> str:
+        urlp = urlsplit(url)
+        if is_localhost(urlp.hostname or "localhost"):
+            return urlunsplit(with_hostname(urlp, local_ip))
+        return url
+
+    @app.add_method
     def can_redirect(request: Request, url: str = "") -> bool:
         remote_hostname = urlsplit("http://" + request.host).hostname or "localhost"
         if url:
-            url_hostname = urlsplit(url).hostname
-            if not url_hostname:
-                return True
-            url_is_localhost = is_localhost(url_hostname)
-            url_is_private = is_private(url_hostname)
-        else:
-            url_is_localhost = base_url_is_localhost
-            url_is_private = base_url_is_private
-        if url_is_localhost:
+            if url_hostname := urlsplit(url).hostname:
+                if is_localhost(url_hostname):
+                    return is_localhost(remote_hostname)
+                elif is_private(url_hostname):
+                    return is_private(remote_hostname)
+        elif base_url_is_localhost:
             return is_private(remote_hostname) if resolve_localhost else is_localhost(remote_hostname)
-        elif url_is_private:
+        elif base_url_is_private:
             return is_private(remote_hostname)
         return True
 
