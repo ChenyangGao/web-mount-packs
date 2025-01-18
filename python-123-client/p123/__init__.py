@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["check_response", "P123Client", "P123OSError"]
 
 from collections.abc import (
@@ -16,6 +16,7 @@ from http.cookiejar import CookieJar
 from inspect import isawaitable
 from os import fsdecode, fstat, PathLike
 from os.path import basename
+from re import compile as re_compile
 from tempfile import TemporaryFile
 from typing import cast, overload, Any, Literal, Self
 from uuid import uuid4
@@ -35,6 +36,7 @@ from yarl import URL
 
 
 TANSTAB_CLEAN_name = {c: "" for c in b"\\/:*?|><"}
+CRE_UPPER_ALPHABET_sub = re_compile("(?<!^)[A-Z]").sub
 _httpx_request = None
 
 
@@ -75,7 +77,7 @@ def check_response(resp: dict | Awaitable[dict], /) -> dict | Coroutine[Any, Any
     """检测 123 的某个接口的响应，如果成功则直接返回，否则根据具体情况抛出一个异常，基本上是 OSError 的实例
     """
     def check(resp, /) -> dict:
-        if not isinstance(resp, dict) or resp.get("code"):
+        if not isinstance(resp, dict) or resp.get("code", 0) not in (0, 200):
             raise P123OSError(EIO, resp)
         return resp
     if isawaitable(resp):
@@ -127,12 +129,12 @@ class P123Client:
         except KeyError:
             from multidict import CIMultiDict
             headers = self.__dict__["headers"] = CIMultiDict({
-                "accept": "application/json, text/plain, */*", 
+                "accept": "*/*", 
                 "accept-encoding": "gzip, deflate", 
                 "app-version": "3", 
                 "connection": "keep-alive", 
                 "platform": "web", 
-                "user-agent": "Mozilla/5.0 AppleWebKit/600 Safari/600 Chrome/124.0.0.0", 
+                "user-agent": "Mozilla/5.0 AppleWebKit/600 Safari/600 Chrome/124.0.0.0 Edg/124.0.0.0", 
             })
             return headers
 
@@ -274,6 +276,42 @@ class P123Client:
             )
 
     @overload
+    @staticmethod
+    def app_dydomain(
+        request: None | Callable = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def app_dydomain(
+        request: None | Callable = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    @staticmethod
+    def app_dydomain(
+        request: None | Callable = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取 123 网盘的各种域名
+
+        GET https://www.123pan.com/api/dydomain
+        """
+        api = "https://www.123pan.com/api/dydomain"
+        request_kwargs.setdefault("parse", default_parse)
+        if request is None:
+            return get_default_request()(url=api, method="GET", async_=async_, **request_kwargs)
+        else:
+            return request(url=api, method="GET", **request_kwargs)
+
+    @overload
     def download_info(
         self, 
         payload: int | str | dict, 
@@ -310,20 +348,20 @@ class P123Client:
             .. code:: python
 
                 payload = {
-                    "etag": "...",   # 必填，文件的 MD5
-                    "fileId": 0,     # 可以随便填
-                    "fileName": "a", # 随便填一个名字
-                    "S3KeyFlag": str # 必填，格式为 f"{UID}-0"，UID 就是用户的 UID，可从 `P115Client.user_info` 的响应中获取
-                    "size": 0,       # 可以随便填
+                    "Etag": "...",   # 必填，文件的 MD5
+                    "FileID": 0,     # 可以随便填
+                    "FileName": "a", # 随便填一个名字
+                    "S3KeyFlag": str # 必填，格式为 f"{UID}-0"，UID 就是上传此文件的用户的 UID，你自己的信息可从 `P115Client.user_info` 的响应中获取
+                    "Size": 0,       # 可以随便填
                 }
 
         :payload:
-            - etag: str 💡 文件的 MD5 散列值
-            - fileId: int | str
-            - fileName: str
-            - s3keyFlag: str
-            - size: int
-            - type: int = 0
+            - Etag: str 💡 文件的 MD5 散列值
+            - S3KeyFlag: str
+            - FileName: str = <default> 💡 默认用 Etag（即 MD5）作为文件名
+            - FileID: int | str = 0
+            - Size: int = <default>
+            - Type: int = 0
             - driveId: int | str = 0
             - ...
         """
@@ -337,11 +375,13 @@ class P123Client:
             headers["platform"] = "android"
             request_kwargs["headers"] = headers
             if not isinstance(payload, dict):
-                resp = yield self.fs_file(payload, async_=async_, **request_kwargs)
+                resp = yield self.fs_info(payload, async_=async_, **request_kwargs)
                 check_response(resp)
                 payload = resp["data"]["infoList"][0]
             payload = cast(dict, payload)
-            payload = {"driveId": 0, "type": 0, **payload}
+            payload = {"driveId": 0, "Type": 0, "FileID": 0, **payload}
+            if "FileName" not in payload:
+                payload["FileName"] = payload["Etag"]
             return self.request(url=api, json=payload, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
 
@@ -383,14 +423,14 @@ class P123Client:
                 .. code:: python
 
                     FileID = {
-                        "fileId": int | str
+                        "FileId": int | str
                     }
         """
         api = "https://www.123pan.com/a/api/file/batch_download_info"
         if isinstance(payload, (int, str)):
-            payload = {"fileIdList": [{"fileId": payload}]}
+            payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
-            payload = {"fileIdList": [{"fileId": fid} for fid in payload]}
+            payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -424,12 +464,12 @@ class P123Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """移动
+        """复制
 
         POST https://www.123pan.com/a/api/restful/goapi/v1/file/copy/async
 
         :payload:
-            - fileList: list[File] 💡 信息可以取自 `P123Client.fs_file` 接口
+            - fileList: list[File] 💡 信息可以取自 `P123Client.fs_info` 接口
 
                 .. code:: python
 
@@ -444,12 +484,52 @@ class P123Client:
         def gen_step():
             nonlocal payload
             if not isinstance(payload, dict):
-                resp = yield self.fs_file(payload, async_=async_, **request_kwargs)
+                resp = yield self.fs_info(payload, async_=async_, **request_kwargs)
                 check_response(resp)
                 payload = {"fileList": resp["data"]["infoList"]}
             payload = {"targetFileId": parent_id, **payload}
             return self.request(url=api, json=payload, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def fs_detail(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_detail(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_detail(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取文件或目录详情（文件数、目录数、总大小）
+
+        GET https://www.123pan.com/a/api/file/detail
+
+        :payload:
+            - fileID: int | str
+        """
+        api = "https://www.123pan.com/a/api/file/detail"
+        if isinstance(payload, (int, str)):
+            payload = {"fileID": payload}
+        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_delete(
@@ -489,22 +569,22 @@ class P123Client:
                 .. code:: python
 
                     FileID = {
-                        "fileId": int | str
+                        "FileId": int | str
                     }
 
             - event: str = "recycleDelete"
         """
         api = "https://www.123pan.com/a/api/file/delete"
         if isinstance(payload, (int, str)):
-            payload = {"fileIdList": [{"fileId": payload}]}
+            payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
-            payload = {"fileIdList": [{"fileId": fid} for fid in payload]}
+            payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         payload = cast(dict, payload)
         payload.setdefault("event", "recycleDelete")
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_file(
+    def fs_info(
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
@@ -514,7 +594,7 @@ class P123Client:
     ) -> dict:
         ...
     @overload
-    def fs_file(
+    def fs_info(
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
@@ -523,7 +603,7 @@ class P123Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_file(
+    def fs_info(
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
@@ -541,14 +621,14 @@ class P123Client:
                 .. code:: python
 
                     FileID = {
-                        "fileId": int | str
+                        "FileId": int | str
                     }
         """
         api = "https://www.123pan.com/a/api/file/info"
         if isinstance(payload, (int, str)):
-            payload = {"fileIdList": [{"fileId": payload}]}
+            payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
-            payload = {"fileIdList": [{"fileId": fid} for fid in payload]}
+            payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -592,10 +672,10 @@ class P123Client:
         :payload:
             - driveId: int | str = 0
             - limit: int = 100 💡 分页大小
-            - next: int = 0
-            - orderBy: "file_id" | "file_name" | "update_at" | "size" = "file_id" 💡 排序依据
+            - next: int = 0    💡 下一批拉取开始的 id
+            - orderBy: str = "file_id" 💡 排序依据："file_id", "file_name", "create_at", "update_at", "size", "share_id", ...
             - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
-            - Page: int = 1 💡 第几页
+            - Page: int = <default> 💡 第几页，从 1 开始，可以是 0
             - parentFileId: int | str = 0 💡 父目录 id
             - trashed: "false" | "true" = <default>
             - inDirectSpace: "false" | "true" = "false"
@@ -603,8 +683,9 @@ class P123Client:
 
                 - "homeListFile": 全部文件
                 - "recycleListFile": 回收站
+                - "syncFileList": 同步空间
 
-            - operateType: int = <default>
+            - operateType: int | str = <default> 💡 操作类型，如果在同步空间，则需要指定为 "SyncSpacePage"
             - SearchData: str = <default> 💡 搜索文本
             - OnlyLookAbnormalFile: int = <default>
         """
@@ -617,7 +698,6 @@ class P123Client:
             "next": 0, 
             "orderBy": "file_id", 
             "orderDirection": "asc", 
-            "Page": 1, 
             "parentFileId": 0, 
             "inDirectSpace": "false", 
             "event": event, 
@@ -630,6 +710,56 @@ class P123Client:
                 case _:
                     payload["trashed"] = "false"
         return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_mkdir(
+        self, 
+        name: str, 
+        /, 
+        parent_id: int | str = 0, 
+        duplicate: Literal[0, 1, 2] = 0, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_mkdir(
+        self, 
+        name: str, 
+        /, 
+        parent_id: int | str = 0, 
+        duplicate: Literal[0, 1, 2] = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_mkdir(
+        self, 
+        name: str, 
+        /, 
+        parent_id: int | str = 0, 
+        duplicate: Literal[0, 1, 2] = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """创建目录
+
+        :param name: 目录名
+        :param parent_id: 父目录 id
+        :param duplicate: 处理同名：0: 复用 1: 保留两者 2: 替换
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口响应
+        """
+        payload = {"filename": name, "parentFileId": parent_id}
+        if duplicate:
+            payload["NotReuse"] = True
+            payload["duplicate"] = duplicate
+        return self.upload_request(payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_move(
@@ -672,7 +802,7 @@ class P123Client:
                 .. code:: python
 
                     FileID = {
-                        "fileId": int | str
+                        "FileId": int | str
                     }
 
             - parentFileId: int | str = 0
@@ -680,9 +810,9 @@ class P123Client:
         """
         api = "https://www.123pan.com/a/api/file/mod_pid"
         if isinstance(payload, (int, str)):
-            payload = {"fileIdList": [{"fileId": payload}]}
+            payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
-            payload = {"fileIdList": [{"fileId": fid} for fid in payload]}
+            payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         payload = {
             "parentFileId": parent_id, 
             "event": "fileMove", 
@@ -720,7 +850,7 @@ class P123Client:
         POST https://www.123pan.com/a/api/file/rename
 
         :payload:
-            - fileId: int | str
+            - FileId: int | str
             - fileName: str
             - driveId: int | str = 0
             - duplicate: 0 | 1 | 2 = 0 💡 处理同名：0: 提示/忽略 1: 保留两者 2: 替换
@@ -740,6 +870,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        event: str = "intoRecycle", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -750,6 +881,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        event: str = "intoRecycle", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -769,7 +901,7 @@ class P123Client:
         POST https://www.123pan.com/a/api/file/trash
 
         :payload:
-            - fileTrashInfoList: list[File] 💡 信息可以取自 `P123Client.fs_file` 接口
+            - fileTrashInfoList: list[File] 💡 信息可以取自 `P123Client.fs_info` 接口
 
                 .. code:: python
 
@@ -838,6 +970,633 @@ class P123Client:
         api = "https://www.123pan.com/a/api/file/trash_delete_all"
         payload.setdefault("event", "recycleClear")
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_cancel(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_cancel(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_cancel(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """取消分享
+
+        POST https://www.123pan.com/a/api/share/delete
+
+        :payload:
+            - shareInfoList: list[ShareID] 💡 信息可以取自 `P123Client.fs_info` 接口
+
+                .. code:: python
+
+                    ShareID = { 
+                        "shareId": int | str, 
+                    }
+
+            - driveId: int = 0
+            - event: str = "shareCancel" 💡 事件类型
+            - isPayShare: bool = False 💡 是否付费分享
+        """
+        api = "https://www.123pan.com/a/api/share/delete"
+        if isinstance(payload, (int, str)):
+            payload = {"shareInfoList": [{"shareId": payload}]}
+        elif not isinstance(payload, dict):
+            payload = {"shareInfoList": [{"shareId": sid} for sid in payload]}
+        payload = {"driveId": 0, "event": "shareCancel", "isPayShare": False, **payload}
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_clear(
+        self, 
+        payload: dict = {"event": "shareClear"}, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_clear(
+        self, 
+        payload: dict = {"event": "shareClear"}, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_clear(
+        self, 
+        payload: dict = {"event": "shareClear"}, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """清理全部失效链接
+
+        GET https://www.123pan.com/a/api/share/clean_expire
+
+        :payload:
+            - event: str = "shareClear"
+        """
+        api = "https://www.123pan.com/a/api/share/clean_expire"
+        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_create(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_create(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_create(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """创建分享
+
+        POST https://www.123pan.com/a/api/share/create
+
+        :payload:
+            - fileIdList: int | str 💡 文件或目录的 id，多个用逗号 "," 分隔
+            - displayStatus: int = 2     💡 默认展示：1:平铺 2:列表
+            - driveId: int = 0
+            - event: str = "shareCreate" 💡 事件类型
+            - expiration: "9999-12-31T23:59:59+08:00" 💡 有效期，日期用 ISO 格式
+            - isPayShare: bool = False   💡 是否付费分享
+            - isReward: 0 | 1 = 0        💡 是否开启打赏
+            - payAmount: int = 0         💡 付费金额，单位：分
+            - renameVisible: bool = False
+            - resourceDesc: str = ""     💡 资源描述
+            - shareName: str = <default> 💡 分享名称
+            - sharePwd: str = ""         💡 分享密码
+            - trafficLimit: int = 0      💡 流量限制额度，单位字节
+            - trafficLimitSwitch: 1 | 2 = 1 💡 是否开启流量限制：1:关闭 2:开启
+            - trafficSwitch: 1 | 2 = 1      💡 是否开启免登录流量包：1:关闭 2:开启
+        """
+        api = "https://www.123pan.com/a/api/share/create"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIdList": payload}
+        elif not isinstance(payload, dict):
+            payload = {"fileIdList": ",".join(map(str, payload))}
+        payload = {
+            "displayStatus": 2, 
+            "driveId": 0, 
+            "event": "shareCreate", 
+            "expiration": "9999-12-31T23:59:59+08:00", 
+            "isPayShare": False, 
+            "isReward": 0, 
+            "payAmount": 0, 
+            "renameVisible": False, 
+            "resourceDesc": "", 
+            "sharePwd": "", 
+            "trafficLimit": 0, 
+            "trafficLimitSwitch": 1, 
+            "trafficSwitch": 1, 
+            **payload, 
+        }
+        if "fileIdList" not in payload:
+            raise ValueError("missing field: 'fileIdList'")
+        if "shareName" not in payload:
+            payload["shareName"] = "%d 个文件或目录" % (str(payload["fileIdList"]).count(",") + 1)
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_download_info(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_download_info(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_download_info(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取分享中的下载信息
+
+        POST https://www.123pan.com/a/api/share/download/info
+
+        :payload:
+            - ShareKey: str 💡 分享码
+            - SharePwd: str = <default> 💡 密码，如果没有就不用传
+            - Etag: str
+            - S3KeyFlag: str
+            - FileID: int | str
+            - Size: int = <default>
+            - ...
+        """
+        api = "https://www.123pan.com/a/api/share/download/info"
+        if headers := request_kwargs.get("headers"):
+            headers = dict(headers)
+        else:
+            headers = {}
+        headers["platform"] = "android"
+        request_kwargs["headers"] = headers
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_download_info_batch(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_download_info_batch(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_download_info_batch(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取分享中的批量下载信息
+
+        POST https://www.123pan.com/a/api/file/batch_download_share_info
+
+        :payload:
+            - ShareKey: str 💡 分享码
+            - SharePwd: str = <default> 💡 密码，如果没有就不用传
+            - fileIdList: list[FileID]
+
+                .. code:: python
+
+                    FileID = {
+                        "FileId": int | str
+                    }
+        """
+        api = "https://www.123pan.com/a/api/file/batch_download_share_info"
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_fs_copy(
+        self, 
+        payload: dict, 
+        /, 
+        parent_id: None | int | str = 0, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_fs_copy(
+        self, 
+        payload: dict, 
+        /, 
+        parent_id: None | int | str = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_fs_copy(
+        self, 
+        payload: dict, 
+        /, 
+        parent_id: None | int | str = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """转存
+
+        POST https://www.123pan.com/a/api/file/copy/async
+
+        .. caution::
+            这个函数的字段名，使用 snake case，而不是 camel case
+
+        :payload:
+            - share_key: str 💡 分享码
+            - share_pwd: str = <default> 💡 密码，如果没有就不用传
+            - current_level: int = 1
+            - event: str = "transfer"
+            - file_list: list[File]
+
+                .. code:: python
+
+                    File = {
+                        "file_id": int | str, 
+                        "file_name": str, 
+                        "etag": str, 
+                        "parent_file_id": int | str = 0, 
+                        "drive_id": int | str = 0, 
+                        ...
+                    }
+        """
+        api = "https://www.123pan.com/a/api/file/copy/async"
+        def to_snake_case(
+            payload: dict[str, Any], 
+            /, 
+            mapping={
+                "sharekey": "share_key", 
+                "sharepwd": "share_pwd", 
+                "filelist": "file_list", 
+                "fileid": "file_id", 
+                "filename": "file_name", 
+                "parentfileid": "parent_file_id", 
+                "driveid": "drive_id", 
+                "currentlevel": "current_level", 
+            }, 
+        ):
+            d: dict[str, Any] = {}
+            for k, v in payload.items():
+                if "_" in k:
+                    d[k.lower()] = v
+                elif k2 := mapping.get(k.lower()):
+                    d[k2] = v
+                elif (k2 := CRE_UPPER_ALPHABET_sub(r"_\g<0>", k)) != k:
+                    d[k2.lower()] = v
+                else:
+                    d[k] = v
+            if "file_list" in d:
+                ls = d["file_list"]
+                for i, d2 in enumerate(ls):
+                    ls[i] = {"drive_id": 0, **to_snake_case(d2)}
+                    if parent_id is not None:
+                        ls[i]["parent_file_id"] = parent_id
+            return d
+        payload = {"current_level": 1, "event": "transfer", **to_snake_case(payload)}
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    @staticmethod
+    def share_fs_list(
+        payload: dict, 
+        /, 
+        request: None | Callable = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def share_fs_list(
+        payload: dict, 
+        /, 
+        request: None | Callable = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    @staticmethod
+    def share_fs_list(
+        payload: dict, 
+        /, 
+        request: None | Callable = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取分享中的文件列表
+
+        GET https://www.123pan.com/a/api/share/get
+
+        .. note::
+            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
+
+        :payload:
+            - ShareKey: str 💡 分享码
+            - SharePwd: str = <default> 💡 密码，如果没有就不用传
+            - limit: int = 100 💡 分页大小
+            - next: int = 0    💡 下一批拉取开始的 id
+            - orderBy: str = "file_name" 💡 排序依据："file_name", "create_at", "update_at", "size", ...
+            - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
+            - Page: int = 1 💡 第几页，从 1 开始，可以是 0
+            - parentFileId: int | str = 0 💡 父目录 id
+            - event: str = "homeListFile" 💡 事件名称
+            - operateType: int | str = <default> 💡 操作类型
+        """
+        api = "https://www.123pan.com/a/api/share/get"
+        payload = {
+            "limit": 100, 
+            "next": 0, 
+            "orderBy": "file_name", 
+            "orderDirection": "asc", 
+            "Page": 1, 
+            "parentFileId": 0, 
+            "event": "homeListFile", 
+            **payload, 
+        }
+        request_kwargs.setdefault("parse", default_parse)
+        if request is None:
+            return get_default_request()(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        else:
+            return request(url=api, method="GET", params=payload, **request_kwargs)
+
+    @overload
+    def share_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        event: str = "shareListFile", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        event: str = "shareListFile", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        event: str = "shareListFile", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取免费分享列表（可搜索）
+
+        GET https://www.123pan.com/a/api/share/list
+
+        .. note::
+            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
+
+        :payload:
+            - driveId: int | str = 0
+            - limit: int = 100 💡 分页大小
+            - next: int = 0    💡 下一批拉取开始的 id
+            - orderBy: str = "fileId" 💡 排序依据："fileId", ...
+            - orderDirection: "asc" | "desc" = "desc" 💡 排序顺序
+            - Page: int = <default> 💡 第几页，从 1 开始，可以是 0
+            - event: str = "shareListFile"
+            - operateType: int | str = <default>
+            - SearchData: str = <default> 💡 搜索文本
+        """
+        api = "https://www.123pan.com/a/api/share/list"
+        if isinstance(payload, int):
+            payload = {"Page": payload}
+        payload = {
+            "driveId": 0, 
+            "limit": 100, 
+            "next": 0, 
+            "orderBy": "fileId", 
+            "orderDirection": "desc", 
+            "event": event, 
+            **payload, 
+        }
+        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_payment_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        event: str = "shareListFile", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_payment_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        event: str = "shareListFile", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_payment_list(
+        self, 
+        payload: int | dict = 1, 
+        /, 
+        event: str = "shareListFile", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取付费分享列表（可搜索）
+
+        GET https://www.123pan.com/a/api/restful/goapi/v1/share/content/payment/list
+
+        .. note::
+            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
+
+        :payload:
+            - driveId: int | str = 0
+            - limit: int = 100 💡 分页大小
+            - next: int = 0    💡 下一批拉取开始的 id
+            - orderBy: str = "fileId" 💡 排序依据："fileId", ...
+            - orderDirection: "asc" | "desc" = "desc" 💡 排序顺序
+            - Page: int = <default> 💡 第几页，从 1 开始，可以是 0
+            - event: str = "shareListFile"
+            - operateType: int | str = <default>
+            - SearchData: str = <default> 💡 搜索文本
+        """
+        api = "https://www.123pan.com/a/api/restful/goapi/v1/share/content/payment/list"
+        if isinstance(payload, int):
+            payload = {"Page": payload}
+        payload = {
+            "driveId": 0, 
+            "limit": 100, 
+            "next": 0, 
+            "orderBy": "fileId", 
+            "orderDirection": "desc", 
+            "event": event, 
+            **payload, 
+        }
+        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_reward_set(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        is_reward: bool = False, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_reward_set(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        is_reward: bool = False, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_reward_set(
+        self, 
+        payload: int | str | Iterable[int | str] | dict, 
+        /, 
+        is_reward: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开启或关闭打赏
+
+        POST https://www.123pan.com/a/api/restful/goapi/v1/share/reward/status
+
+        :payload:
+            - ids: list[int | str] 💡 分享 id
+            - isReward: 0 | 1 = 1
+        """
+        api = "https://www.123pan.com/a/api/restful/goapi/v1/share/reward/status"
+        if isinstance(payload, (int, str)):
+            payload = {"ids": [payload]}
+        elif not isinstance(payload, dict):
+            payload = {"ids": list(payload)}
+        payload = {"is_reward": int(is_reward), **payload}
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def share_traffic_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_traffic_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_traffic_set(
+        self, 
+        payload: dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """流量包设置
+
+        PUT https://www.123pan.com/a/api/restful/goapi/v1/share/info
+
+        :payload:
+            - shareId: int | str
+            - trafficLimit: int = <default>         💡 流量限制额度，单位字节
+            - trafficLimitSwitch: 1 | 2 = <default> 💡 是否开启流量限制：1:关闭 2:开启
+            - trafficSwitch: 1 | 2 = <default>      💡 是否开启免登录流量包：1:关闭 2:开启
+            - ...
+        """
+        api = "https://www.123pan.com/a/api/restful/goapi/v1/share/info"
+        return self.request(url=api, method="PUT", json=payload, async_=async_, **request_kwargs)
 
     @overload
     def upload_auth(
@@ -916,7 +1675,7 @@ class P123Client:
         POST https://www.123pan.com/a/api/file/upload_complete/v2
 
         :payload:
-            - fileId: int 💡 文件 id
+            - FileId: int 💡 文件 id
             - bucket: str 💡 存储桶
             - key: str
             - storageNode: str
@@ -1253,13 +2012,14 @@ class P123Client:
                     "etag": file_md5, 
                     "fileName": file_name, 
                     "size": file_size, 
+                    "parentFileId": parent_id, 
                     "type": 0, 
                     "duplicate": duplicate, 
                 }, 
                 async_=async_, 
                 **request_kwargs, 
             )
-            if resp["code"]:
+            if resp.get("code", 0) not in (0, 200):
                 return resp
             upload_data = resp["data"]
             if upload_data["Reuse"]:
@@ -1296,6 +2056,161 @@ class P123Client:
                 yield self.request(url, data=file, async_=async_, **upload_request_kwargs)
             upload_data["isMultipart"] = file_size > slice_size
             return self.upload_complete(upload_data, async_=async_, **request_kwargs)
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def upload_file_fast(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] ) = b"", 
+        file_md5: str = "", 
+        file_name: str = "", 
+        file_size: int = -1, 
+        parent_id: int = 0, 
+        duplicate: Literal[0, 1, 2] = 0, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def upload_file_fast(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ) = b"", 
+        file_md5: str = "", 
+        file_name: str = "", 
+        file_size: int = -1, 
+        parent_id: int = 0, 
+        duplicate: Literal[0, 1, 2] = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def upload_file_fast(
+        self, 
+        /, 
+        file: ( str | PathLike | URL | SupportsGeturl | 
+                Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer] ) = b"", 
+        file_md5: str = "", 
+        file_name: str = "", 
+        file_size: int = -1, 
+        parent_id: int = 0, 
+        duplicate: Literal[0, 1, 2] = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """尝试秒传文件，如果失败也直接返回
+
+        :param file: 待上传的文件
+
+            - 如果为 `collections.abc.Buffer`，则作为二进制数据上传
+            - 如果为 `filewrap.SupportsRead`，则作为可读的二进制文件上传
+            - 如果为 `str` 或 `os.PathLike`，则视为路径，打开后作为文件上传
+            - 如果为 `yarl.URL` 或 `http_request.SupportsGeturl` (`pip install python-http_request`)，则视为超链接，打开后作为文件上传
+            - 如果为 `collections.abc.Iterable[collections.abc.Buffer]` 或 `collections.abc.AsyncIterable[collections.abc.Buffer]`，则迭代以获取二进制数据，逐步上传
+
+        :param file_md5: 文件的 MD5 散列值
+        :param file_name: 文件名
+        :param file_size: 文件大小
+        :param parent_id: 要上传的目标目录
+        :param duplicate: 处理同名：0: 提示/忽略 1: 保留两者 2: 替换
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 接口响应
+        """ 
+        def gen_step():
+            nonlocal file, file_md5, file_name, file_size
+            if file_md5 and file_size >= 0:
+                pass
+            elif file:
+                def do_upload(file):
+                    return self.upload_file_fast(
+                        file=file, 
+                        file_md5=file_md5, 
+                        file_name=file_name, 
+                        file_size=file_size, 
+                        parent_id=parent_id, 
+                        duplicate=duplicate, 
+                        async_=async_, 
+                        **request_kwargs, 
+                    )
+                try:
+                    file = getattr(file, "getbuffer")()
+                except (AttributeError, TypeError):
+                    pass
+                if isinstance(file, Buffer):
+                    file_size = buffer_length(file)
+                    if not file_md5:
+                        file_md5 = md5(file).hexdigest()
+                elif isinstance(file, (str, PathLike)):
+                    path = fsdecode(file)
+                    if not file_name:
+                        file_name = basename(path)
+                    if async_:
+                        async def request():
+                            async with async_open(path, "rb") as file:
+                                return await do_upload(file)
+                        return request
+                    else:
+                        return do_upload(open(path, "rb"))
+                elif isinstance(file, SupportsRead):
+                    if not file_md5 or file_size < 0:
+                        if async_:
+                            file_size, hashobj = yield file_digest_async(file)
+                        else:
+                            file_size, hashobj = file_digest(file)
+                        file_md5 = hashobj.hexdigest()
+                elif isinstance(file, (URL, SupportsGeturl)):
+                    if isinstance(file, URL):
+                        url = str(file)
+                    else:
+                        url = file.geturl()
+                    if async_:
+                        from httpfile import AsyncHttpxFileReader
+                        async def request():
+                            file = await AsyncHttpxFileReader.new(url)
+                            async with file:
+                                return await do_upload(file)
+                        return request
+                    else:
+                        from httpfile import HTTPFileReader
+                        with HTTPFileReader(url) as file:
+                            return do_upload(file)
+                elif not file_md5 or file_size < 0:
+                    if async_:
+                        file = bytes_iter_to_async_reader(file) # type: ignore
+                    else:
+                        file = bytes_iter_to_reader(file) # type: ignore
+                    return do_upload(file)
+            else:
+                file_md5 = "d41d8cd98f00b204e9800998ecf8427e"
+                file_size = 0
+            if not file_name:
+                file_name = getattr(file, "name", "")
+            if file_name:
+                file_name = basename(file_name).translate(TANSTAB_CLEAN_name)
+            if not file_name:
+                file_name = str(uuid4())
+            if file_size < 0:
+                file_size = getattr(file, "length", 0)
+            return self.upload_request(
+                {
+                    "etag": file_md5, 
+                    "fileName": file_name, 
+                    "size": file_size, 
+                    "parentFileId": parent_id, 
+                    "type": 0, 
+                    "duplicate": duplicate, 
+                }, 
+                async_=async_, 
+                **request_kwargs, 
+            )
         return run_gen_step(gen_step, async_=async_)
 
     @overload

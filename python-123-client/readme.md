@@ -67,7 +67,7 @@ from typing import overload, Any, Literal
 
 from p123 import P123Client
 
-class MyCustom115Client(P123Client):
+class MyCustom123Client(P123Client):
 
     @overload
     def foo(
@@ -140,7 +140,7 @@ class MyCustom115Client(P123Client):
 
 ### 3. 检查响应
 
-接口被调用后，如果返回的是 dict 类型的数据（说明原本是 JSON），则可以用 `p123.check_response` 执行检查。首先会查看其中名为 "code" 的键的对应值，如果为 0 或者不存在，则原样返回被检查的数据；否则，抛出一个 `p123.P123OSError` 的实例。
+接口被调用后，如果返回的是 dict 类型的数据（说明原本是 JSON），则可以用 `p123.check_response` 执行检查。首先会查看其中名为 "code" 的键的对应值，如果为 0 或 200 或者不存在，则原样返回被检查的数据；否则，抛出一个 `p123.P123OSError` 的实例。
 
 ```python
 from p123 import check_response
