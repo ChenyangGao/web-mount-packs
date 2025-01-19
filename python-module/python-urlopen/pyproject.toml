@@ -29,6 +29,7 @@ include = [
 python = "^3.10"
 brotli = "*"
 http_response = "*"
+orjson = "*"
 python-argtools = "*"
 python-filewrap = "*"
 zstandard = "*"

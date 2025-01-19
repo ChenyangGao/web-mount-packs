@@ -55,7 +55,7 @@ await client.method(payload, async_=True)
 从根本上讲，除了几个 `staticmethod`，它们都会调用 `P123Client.request`
 
 ```python
-url = "https://www.123pan.com/b/api/someapi"
+url = "https://www.123pan.com/api/someapi"
 response = client.request(url=url, json={...})
 ```
 
@@ -94,7 +94,7 @@ class MyCustom123Client(P123Client):
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        api = "https://www.123pan.com/b/api/foo"
+        api = "https://www.123pan.com/api/foo"
         return self.request(
             api, 
             method="GET", 
@@ -128,7 +128,7 @@ class MyCustom123Client(P123Client):
         async_: bool = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        api = "https://www.123pan.com/b/api/bar"
+        api = "https://www.123pan.com/api/bar"
         return self.request(
             api, 
             method="POST", 
@@ -149,4 +149,12 @@ from p123 import check_response
 data = check_response(client.method(payload))
 # 检查异步调用
 data = check_response(await client.method(payload, async_=True))
+```
+
+### 4. 辅助工具
+
+一些简单的封装工具可能是必要的，特别是那种实现起来代码量比较少，可以封装成单个函数的。我把平常使用过程中，积累的一些经验具体化为一组工具函数。这些工具函数分别有着不同的功能，如果组合起来使用，或许能解决很多问题。
+
+```python
+from p123 import tool
 ```

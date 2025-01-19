@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "python-123-client"
-version = "0.0.2"
-description = "Python wrapper for 115 webdisk."
+version = "0.0.3.2"
+description = "Python wrapper for 123 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
@@ -33,6 +33,7 @@ httpx_request = ">=0.1.2"
 multidict = "*"
 orjson = "*"
 python-asynctools = ">=0.0.8.2"
+python-encode_uri = ">=0.0.3"
 python-property = ">=0.0.3"
 python-hashtools = ">=0.0.3.3"
 python-httpfile = ">=0.0.5"

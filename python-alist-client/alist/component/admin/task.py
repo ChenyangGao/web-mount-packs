@@ -89,9 +89,9 @@ class AlistCopyTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "取消某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_copy_cancel
+            method: Callable = self.client.task_copy_cancel
         else:
-            method = self.client.admin_task_copy_cancel_some
+            method = self.client.task_copy_cancel_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -150,7 +150,7 @@ class AlistCopyTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已完成任务"
-        return check_response(self.client.admin_task_copy_clear_done( # type: ignore
+        return check_response(self.client.task_copy_clear_done( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -179,7 +179,7 @@ class AlistCopyTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已成功任务"
-        return check_response(self.client.admin_task_copy_clear_succeeded( # type: ignore
+        return check_response(self.client.task_copy_clear_succeeded( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -212,9 +212,9 @@ class AlistCopyTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "删除某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_copy_delete
+            method: Callable = self.client.task_copy_delete
         else:
-            method = self.client.admin_task_copy_delete_some
+            method = self.client.task_copy_delete_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -234,7 +234,7 @@ class AlistCopyTaskList:
         "获取某个任务信息"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_copy_info, 
+                self.client.task_copy_info, 
                 tid, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -369,7 +369,7 @@ class AlistCopyTaskList:
         "列出所有已完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_copy_done, 
+                self.client.task_copy_done, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -402,7 +402,7 @@ class AlistCopyTaskList:
         "列出所有未完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_copy_undone, 
+                self.client.task_copy_undone, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -478,9 +478,9 @@ class AlistCopyTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_copy_retry
+            method: Callable = self.client.task_copy_retry
         else:
-            method = self.client.admin_task_copy_retry_some
+            method = self.client.task_copy_retry_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -511,7 +511,7 @@ class AlistCopyTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试所有失败任务"
-        return check_response(self.client.admin_task_copy_retry_failed( # type: ignore
+        return check_response(self.client.task_copy_retry_failed( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -623,9 +623,9 @@ class AlistUploadTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "取消某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_upload_cancel
+            method: Callable = self.client.task_upload_cancel
         else:
-            method = self.client.admin_task_upload_cancel_some
+            method = self.client.task_upload_cancel_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -684,7 +684,7 @@ class AlistUploadTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已完成任务"
-        return check_response(self.client.admin_task_upload_clear_done( # type: ignore
+        return check_response(self.client.task_upload_clear_done( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -713,7 +713,7 @@ class AlistUploadTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已成功任务"
-        return check_response(self.client.admin_task_upload_clear_succeeded( # type: ignore
+        return check_response(self.client.task_upload_clear_succeeded( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -746,9 +746,9 @@ class AlistUploadTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "删除某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_upload_delete
+            method: Callable = self.client.task_upload_delete
         else:
-            method = self.client.admin_task_upload_delete_some
+            method = self.client.task_upload_delete_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -768,7 +768,7 @@ class AlistUploadTaskList:
         "获取某个任务信息"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_upload_info, 
+                self.client.task_upload_info, 
                 tid, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -903,7 +903,7 @@ class AlistUploadTaskList:
         "列出所有已完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_upload_done, 
+                self.client.task_upload_done, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -936,7 +936,7 @@ class AlistUploadTaskList:
         "列出所有未完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_upload_undone, 
+                self.client.task_upload_undone, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -1012,9 +1012,9 @@ class AlistUploadTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_upload_retry
+            method: Callable = self.client.task_upload_retry
         else:
-            method = self.client.admin_task_upload_retry_some
+            method = self.client.task_upload_retry_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -1045,7 +1045,7 @@ class AlistUploadTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试所有失败任务"
-        return check_response(self.client.admin_task_upload_retry_failed( # type: ignore
+        return check_response(self.client.task_upload_retry_failed( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -1157,9 +1157,9 @@ class AlistOfflineDownloadTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "取消某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_offline_download_cancel
+            method: Callable = self.client.task_offline_download_cancel
         else:
-            method = self.client.admin_task_offline_download_cancel_some
+            method = self.client.task_offline_download_cancel_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -1218,7 +1218,7 @@ class AlistOfflineDownloadTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已完成任务"
-        return check_response(self.client.admin_task_offline_download_clear_done( # type: ignore
+        return check_response(self.client.task_offline_download_clear_done( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -1247,7 +1247,7 @@ class AlistOfflineDownloadTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已成功任务"
-        return check_response(self.client.admin_task_offline_download_clear_succeeded( # type: ignore
+        return check_response(self.client.task_offline_download_clear_succeeded( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -1280,9 +1280,9 @@ class AlistOfflineDownloadTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "删除某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_offline_download_delete
+            method: Callable = self.client.task_offline_download_delete
         else:
-            method = self.client.admin_task_offline_download_delete_some
+            method = self.client.task_offline_download_delete_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -1302,7 +1302,7 @@ class AlistOfflineDownloadTaskList:
         "获取某个任务信息"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_offline_download_info, 
+                self.client.task_offline_download_info, 
                 tid, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -1437,7 +1437,7 @@ class AlistOfflineDownloadTaskList:
         "列出所有已完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_offline_download_done, 
+                self.client.task_offline_download_done, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -1470,7 +1470,7 @@ class AlistOfflineDownloadTaskList:
         "列出所有未完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_offline_download_undone, 
+                self.client.task_offline_download_undone, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -1546,9 +1546,9 @@ class AlistOfflineDownloadTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_offline_download_retry
+            method: Callable = self.client.task_offline_download_retry
         else:
-            method = self.client.admin_task_offline_download_retry_some
+            method = self.client.task_offline_download_retry_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -1579,7 +1579,7 @@ class AlistOfflineDownloadTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试所有失败任务"
-        return check_response(self.client.admin_task_offline_download_retry_failed( # type: ignore
+        return check_response(self.client.task_offline_download_retry_failed( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -1691,9 +1691,9 @@ class AlistOfflineDownloadTransferTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "取消某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_offline_download_transfer_cancel
+            method: Callable = self.client.task_offline_download_transfer_cancel
         else:
-            method = self.client.admin_task_offline_download_transfer_cancel_some
+            method = self.client.task_offline_download_transfer_cancel_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -1752,7 +1752,7 @@ class AlistOfflineDownloadTransferTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已完成任务"
-        return check_response(self.client.admin_task_offline_download_transfer_clear_done( # type: ignore
+        return check_response(self.client.task_offline_download_transfer_clear_done( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -1781,7 +1781,7 @@ class AlistOfflineDownloadTransferTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "清除所有已成功任务"
-        return check_response(self.client.admin_task_offline_download_transfer_clear_succeeded( # type: ignore
+        return check_response(self.client.task_offline_download_transfer_clear_succeeded( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 
@@ -1814,9 +1814,9 @@ class AlistOfflineDownloadTransferTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "删除某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_offline_download_transfer_delete
+            method: Callable = self.client.task_offline_download_transfer_delete
         else:
-            method = self.client.admin_task_offline_download_transfer_delete_some
+            method = self.client.task_offline_download_transfer_delete_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -1836,7 +1836,7 @@ class AlistOfflineDownloadTransferTaskList:
         "获取某个任务信息"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_offline_download_transfer_info, 
+                self.client.task_offline_download_transfer_info, 
                 tid, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
@@ -1971,7 +1971,7 @@ class AlistOfflineDownloadTransferTaskList:
         "列出所有已完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_offline_download_transfer_done, 
+                self.client.task_offline_download_transfer_done, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -2004,7 +2004,7 @@ class AlistOfflineDownloadTransferTaskList:
         "列出所有未完成任务"
         def gen_step():
             resp = yield partial(
-                self.client.admin_task_offline_download_transfer_undone, 
+                self.client.task_offline_download_transfer_undone, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
                 **request_kwargs, 
@@ -2080,9 +2080,9 @@ class AlistOfflineDownloadTransferTaskList:
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试某个任务"
         if isinstance(tid, str):
-            method: Callable = self.client.admin_task_offline_download_transfer_retry
+            method: Callable = self.client.task_offline_download_transfer_retry
         else:
-            method = self.client.admin_task_offline_download_transfer_retry_some
+            method = self.client.task_offline_download_transfer_retry_some
         return check_response(method(
             tid, 
             request=self.async_request if async_ else self.request, 
@@ -2113,7 +2113,7 @@ class AlistOfflineDownloadTransferTaskList:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         "重试所有失败任务"
-        return check_response(self.client.admin_task_offline_download_transfer_retry_failed( # type: ignore
+        return check_response(self.client.task_offline_download_transfer_retry_failed( # type: ignore
             request=self.async_request if async_ else self.request, 
             async_=async_, 
             **request_kwargs, 

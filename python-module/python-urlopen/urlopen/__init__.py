@@ -13,7 +13,6 @@ from gzip import decompress as decompress_gzip
 from http.client import HTTPResponse
 from http.cookiejar import CookieJar
 from inspect import isgenerator
-from json import dumps, loads
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from re import compile as re_compile
@@ -31,6 +30,7 @@ from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 from argtools import argcount
 from filewrap import bio_skip_iter, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
+from orjson import dumps, loads
 
 
 if "__del__" not in HTTPResponse.__dict__:
@@ -125,11 +125,11 @@ def urlopen(
         if isinstance(json, bytes):
             data = json
         else:
-            data = dumps(json).encode("utf-8")
+            data = dumps(json)
         if headers:
-            headers = {**headers, "Content-type": "application/json"}
+            headers = {**headers, "Content-type": "application/json; charset=UTF-8"}
         else:
-            headers = {"Content-type": "application/json"}
+            headers = {"Content-type": "application/json; charset=UTF-8"}
     elif data is not None:
         if isinstance(data, bytes):
             pass
