@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["check_response", "P123Client", "P123OSError"]
 
 from collections.abc import (
@@ -20,6 +20,7 @@ from re import compile as re_compile
 from tempfile import TemporaryFile
 from typing import cast, overload, Any, Literal, Self
 from uuid import uuid4
+from warnings import filterwarnings
 
 from aiofile import async_open
 from asynctools import ensure_async
@@ -40,9 +41,11 @@ TANSTAB_FULLWIDH_winname = {c: chr(c+65248) for c in b"\\/:*?|><"}
 # 查找大写字母（除了左边第 1 个）
 CRE_UPPER_ALPHABET_sub = re_compile("(?<!^)[A-Z]").sub
 # 默认使用的域名
-DEFAULT_BASE_URL = "https://www.123pan.com"
+DEFAULT_BASE_URL = "https://www.123pan.com/a"
 # 默认的请求函数
 _httpx_request = None
+
+filterwarnings("ignore", category=SyntaxWarning)
 
 
 class P123OSError(OSError):
@@ -291,7 +294,7 @@ class P123Client:
     @staticmethod
     def app_dydomain(
         request: None | Callable = None, 
-        base_url: str = "", 
+        base_url: str = DEFAULT_BASE_URL, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -301,7 +304,7 @@ class P123Client:
     @staticmethod
     def app_dydomain(
         request: None | Callable = None, 
-        base_url: str = "", 
+        base_url: str = DEFAULT_BASE_URL, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -310,7 +313,7 @@ class P123Client:
     @staticmethod
     def app_dydomain(
         request: None | Callable = None, 
-        base_url: str = "", 
+        base_url: str = DEFAULT_BASE_URL, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -482,7 +485,7 @@ class P123Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：获取下载链接
+        """开放接口：获取下载直链
 
         GET https://open-api.123pan.com/api/v1/direct-link/url
 
@@ -490,7 +493,7 @@ class P123Client:
             https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/tdxfsmtemp4gu4o2
 
         .. note::
-            获取的直链有效期是 24 小时
+            需要开通会员
 
         :payload:
             - fileID: int | str 💡 文件 id
@@ -1354,32 +1357,42 @@ class P123Client:
 
     @overload
     def share_download_info(
-        self, 
-        payload: dict, 
+        self: Any = None, 
+        payload: None | dict = None, 
         /, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
     def share_download_info(
-        self, 
-        payload: dict, 
+        self: Any = None, 
+        payload: None | dict = None, 
         /, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def share_download_info(
-        self, 
-        payload: dict, 
+        self: Any = None, 
+        payload: None | dict = None, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享中的下载信息
 
         POST https://www.123pan.com/api/share/download/info
+
+        .. note::
+            可以作为 staticmethod 使用，此时第 1 个位置参数要传入 None 或者 dict
+
+            如果文件在 100MB 以内，下载时是不需要登录的；如果超过 100 MB，但分享者设置的免登录流量包未告罄，下载时也不需要登录
+
+            你也可以使用 `P123Client.download_info` 来获取下载链接，则不需要提供 "ShareKey" 和 "SharePwd"
 
         :payload:
             - ShareKey: str 💡 分享码
@@ -1390,43 +1403,66 @@ class P123Client:
             - Size: int = <default>
             - ...
         """
-        api = f"{self.base_url}/api/share/download/info"
+        if isinstance(self, P123Client):
+            base_url = self.base_url
+        else:
+            base_url = request_kwargs.pop("base_url", None) or DEFAULT_BASE_URL
+            if isinstance(self, dict):
+                payload = self
+            else:
+                assert isinstance(payload, dict)
+            self = None
+        api = f"{base_url}/api/share/download/info"
         if headers := request_kwargs.get("headers"):
             headers = dict(headers)
         else:
             headers = {}
         headers["platform"] = "android"
         request_kwargs["headers"] = headers
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        if self is None:
+            request_kwargs.setdefault("parse", default_parse)
+            request = request_kwargs.pop("request", None)
+            if request is None:
+                return get_default_request()(url=api, method="POST", json=payload, async_=async_, **request_kwargs)
+            else:
+                return request(url=api, method="POST", json=payload, **request_kwargs)
+        else:
+            return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
     def share_download_info_batch(
-        self, 
-        payload: dict, 
+        self: Any = None, 
+        payload: None | dict = None, 
         /, 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
     def share_download_info_batch(
-        self, 
-        payload: dict, 
+        self: Any = None, 
+        payload: None | dict = None, 
         /, 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def share_download_info_batch(
-        self, 
-        payload: dict, 
+        self: Any = None, 
+        payload: None | dict = None, 
         /, 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取分享中的批量下载信息
 
         POST https://www.123pan.com/api/file/batch_download_share_info
+
+        .. note::
+            可以作为 staticmethod 使用，此时第 1 个位置参数要传入 None 或者 dict
 
         :payload:
             - ShareKey: str 💡 分享码
@@ -1439,8 +1475,25 @@ class P123Client:
                         "FileId": int | str
                     }
         """
-        api = f"{self.base_url}/api/file/batch_download_share_info"
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        if isinstance(self, P123Client):
+            base_url = self.base_url
+        else:
+            base_url = request_kwargs.pop("base_url", None) or DEFAULT_BASE_URL
+            if isinstance(self, dict):
+                payload = self
+            else:
+                assert isinstance(payload, dict)
+            self = None
+        api = f"{base_url}/api/file/batch_download_share_info"
+        if self is None:
+            request_kwargs.setdefault("parse", default_parse)
+            request = request_kwargs.pop("request", None)
+            if request is None:
+                return get_default_request()(url=api, method="POST", json=payload, async_=async_, **request_kwargs)
+            else:
+                return request(url=api, method="POST", json=payload, **request_kwargs)
+        else:
+            return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
     def share_fs_copy(
@@ -1539,7 +1592,7 @@ class P123Client:
         payload: dict, 
         /, 
         request: None | Callable = None, 
-        base_url: str = "", 
+        base_url: str = DEFAULT_BASE_URL, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1551,7 +1604,7 @@ class P123Client:
         payload: dict, 
         /, 
         request: None | Callable = None, 
-        base_url: str = "", 
+        base_url: str = DEFAULT_BASE_URL, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1562,7 +1615,7 @@ class P123Client:
         payload: dict, 
         /, 
         request: None | Callable = None, 
-        base_url: str = "", 
+        base_url: str = DEFAULT_BASE_URL, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2517,4 +2570,4 @@ class P123Client:
         else:
             return request(url=api, method="POST", json=payload, **request_kwargs)
 
-# TODO: 再制作一个 P123OpenClient 类 https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced
+# TODO: 再添加一组开放接口，文档：https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced

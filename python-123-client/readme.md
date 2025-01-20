@@ -158,3 +158,123 @@ data = check_response(await client.method(payload, async_=True))
 ```python
 from p123 import tool
 ```
+
+#### 1. 创建自定义 uri
+
+```python
+from p123 import P123Client
+from p123.tool import make_uri
+
+# TODO: 改成你自己的账户和密码
+client = P123Client(passport="手机号或邮箱", password="登录密码")
+
+# TODO: 请改成你要处理的文件 id
+file_id = 15688945
+print(make_uri(client, file_id))
+```
+
+#### 2. 由自定义 uri 转存文件到你的网盘
+
+```python
+from p123 import P123Client
+from p123.tool import upload_uri
+
+# TODO: 改成你自己的账户和密码
+client = P123Client(passport="手机号或邮箱", password="登录密码")
+
+uri = "123://torrentgalaxy.db|1976025090|582aa8bfb0ad8e6f512d9661f6243bdd"
+print(upload_uri(client, uri, duplicate=1))
+```
+
+#### 3. 由自定义 uri 获取下载直链
+
+```python
+from p123 import P123Client
+from p123.tool import get_downurl
+
+# TODO: 改成你自己的账户和密码
+client = P123Client(passport="手机号或邮箱", password="登录密码")
+
+# 带 s3_key_flag
+print(get_downurl(client, "123://torrentgalaxy.db|1976025090|582aa8bfb0ad8e6f512d9661f6243bdd?1812602326-0"))
+# 不带 s3_key_flag（会转存）
+print(get_downurl(client, "123://torrentgalaxy.db|1976025090|582aa8bfb0ad8e6f512d9661f6243bdd"))
+```
+
+#### 4. 直链服务
+
+需要先安装 [fastapi](https://pypi.org/project/fastapi/)
+
+```console
+pip install 'fastapi[uvicorn]'
+```
+
+然后启动如下服务，就可以访问以获取直链了
+
+**带 s3_key_flag**
+
+http://localhost:8123/torrentgalaxy.db|1976025090|582aa8bfb0ad8e6f512d9661f6243bdd?1812602326-0
+
+**不带 s3_key_flag（会转存）**
+
+http://localhost:8123/torrentgalaxy.db|1976025090|582aa8bfb0ad8e6f512d9661f6243bdd
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from p123 import P123Client
+from p123.tool import get_downurl
+
+# TODO: 改成你自己的账户和密码
+client = P123Client(passport="手机号或邮箱", password="登录密码")
+
+app = FastAPI(debug=True)
+
+@app.get("/{uri:path}")
+@app.head("/{uri:path}")
+async def index(request: Request, uri: str):
+    try:
+        payload = int(uri)
+    except ValueError:
+        if uri.count("|") < 2:
+            return JSONResponse({"state": False, "message": f"bad uri: {uri!r}"}, 500)
+        payload = uri
+        if s3_key_flag := request.url.query:
+            payload += "?" + s3_key_flag
+    url = await get_downurl(client, payload, quoted=False, async_=True)
+    return RedirectResponse(url, 302)
+
+if __name__ == "__main__":
+    from uvicorn import run
+
+    run(app, host="0.0.0.0", port=8123)
+```
+
+#### 5. 遍历文件列表
+
+**遍历网盘中的文件列表**
+
+```python
+from p123 import P123Client
+from p123.tool import iterdir
+
+# TODO: 改成你自己的账户和密码
+client = P123Client(passport="手机号或邮箱", password="登录密码")
+
+for info in iterdir(client, parent_id=0, max_depth=-1, predicate=lambda a: not a["is_dir"]):
+    print(info)
+```
+
+**遍历分享中的文件列表（无需登录）**
+
+```python
+from p123.tool import share_iterdir
+
+# TODO: 分享码
+share_key = "g0n0Vv-2sbI"
+# TODO: 密码
+share_pwd = ""
+
+for info in share_iterdir(share_key, share_pwd, parent_id=0, max_depth=-1, predicate=lambda a: not a["is_dir"]):
+    print(info)
+```
