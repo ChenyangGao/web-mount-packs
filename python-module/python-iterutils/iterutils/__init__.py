@@ -2,19 +2,21 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 2)
 __all__ = [
-    "iterable", "async_iterable", "foreach", "async_foreach", "through", "async_through", 
-    "flatten", "async_flatten", "chunked", "wrap_iter", "wrap_aiter", "acc_step", 
-    "cut_iter", "run_gen_step", "run_gen_step_iter", "Return", "Yield", "YieldFrom", 
+    "Return", "Yield", "YieldFrom", "iterable", "async_iterable", "foreach", "async_foreach", 
+    "through", "async_through", "flatten", "async_flatten", "iter_unique", "async_iter_unique", 
+    "chunked", "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", "run_gen_step", 
+    "run_gen_step_iter", "bfs_gen", 
 ]
 
 
 from abc import ABC, abstractmethod
 from asyncio import to_thread
+from collections import deque
 from collections.abc import (
     AsyncIterable, AsyncIterator, Buffer, Callable, Generator, 
-    Iterable, Iterator, Sequence, 
+    Iterable, Iterator, MutableSet, Sequence, 
 )
 from dataclasses import dataclass
 from itertools import batched, pairwise
@@ -172,6 +174,53 @@ async def async_flatten(
                 yield e
         else:
             yield e
+
+
+@overload
+def iter_unique[T](
+    iterable: Iterable[T], 
+    /, 
+    seen: None | MutableSet = None, 
+) -> Iterator[T]:
+    ...
+@overload
+def iter_unique[T](
+    iterable: AsyncIterable[T], 
+    /, 
+    seen: None | MutableSet = None, 
+) -> AsyncIterator[T]:
+    ...
+def iter_unique[T](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    /, 
+    seen: None | MutableSet = None, 
+) -> Iterator[T] | AsyncIterator[T]:
+    if not isinstance(iterable, Iterable):
+        return async_iter_unique(iterable, seen)
+    if seen is None:
+        seen = set()
+    def gen(iterable):
+        add = seen.add
+        for e in iterable:
+            if e not in seen:
+                yield e
+                add(e)
+    return gen(iterable)
+
+
+async def async_iter_unique[T](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    /, 
+    seen: None | MutableSet = None, 
+    threaded: bool = False, 
+) -> AsyncIterator[T]:
+    if seen is None:
+        seen = set()
+    add = seen.add
+    async for e in ensure_aiter(iterable, threaded=threaded):
+        if e not in seen:
+            yield e
+            add(e)
 
 
 @overload
@@ -564,4 +613,46 @@ def run_gen_step_iter(
                 if close is not None:
                     close()
     return process()
+
+
+@overload
+def bfs_gen[T](
+    initial: T, 
+    /, 
+    unpack_iterator: Literal[False] = False, 
+) -> Generator[T, T | None, None]:
+    ...
+@overload
+def bfs_gen[T](
+    initial: T | Iterator[T], 
+    /, 
+    unpack_iterator: Literal[True], 
+) -> Generator[T, T | None, None]:
+    ...
+def bfs_gen[T](
+    initial: T | Iterator[T], 
+    /, 
+    unpack_iterator: bool = False, 
+) -> Generator[T, T | None, None]:
+    """辅助函数，返回生成器，用来简化广度优先遍历
+    """
+    dq: deque[T] = deque()
+    push, pushmany, pop = dq.append, dq.extend, dq.popleft
+    if isinstance(initial, Iterator) and unpack_iterator:
+        pushmany(initial)
+    else:
+        push(initial) # type: ignore
+    while dq:
+        args: None | T = yield (val := pop())
+        if unpack_iterator:
+            while args is not None:
+                if isinstance(args, Iterator):
+                    pushmany(args)
+                else:
+                    push(args)
+                args = yield val
+        else:
+            while args is not None:
+                push(args)
+                args = yield val
 
