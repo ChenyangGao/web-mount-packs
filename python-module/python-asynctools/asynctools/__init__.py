@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 10)
 __all__ = [
     "run_async", "as_thread", "ensure_async", "ensure_await", "ensure_coroutine", 
     "ensure_aiter", "async_map", "async_filter", "async_filterfalse", "async_reduce", 
@@ -15,7 +15,8 @@ __all__ = [
 from asyncio import create_task, get_running_loop, run, to_thread
 from collections.abc import (
     Awaitable, AsyncIterable, AsyncIterator, Callable, Collection, Coroutine, 
-    Iterable, Iterator, MutableSequence, MutableSet, Sequence, 
+    ItemsView, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, 
+    MutableSet, Sequence, 
 )
 from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
 from itertools import pairwise
@@ -673,31 +674,56 @@ async def to_list[T](
     return [e async for e in ensure_aiter(iterable, threaded=threaded)]
 
 
+@overload
+async def collect[K, V](
+    iterable: Iterable[tuple[K, V]] | AsyncIterable[tuple[K, V]] | Mapping[K, V], 
+    /, 
+    rettype: Callable[[Iterable[tuple[K, V]]], MutableMapping[K, V]], 
+    threaded: bool = False, 
+) -> MutableMapping[K, V]:
+    ...
+@overload
 async def collect[T](
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
-    rettype: Callable[[list[T]], Collection[T]] = list, 
+    rettype: Callable[[Iterable[T]], Collection[T]] = list, 
     threaded: bool = False, 
 ) -> Collection[T]:
-    if type(iterable) is rettype:
-        return iterable # type: ignore
-    iterator = ensure_aiter(iterable, threaded=threaded)
+    ...
+async def collect(
+    iterable: Iterable | AsyncIterable, 
+    /, 
+    rettype: Callable[[Iterable], Collection] = list, 
+    threaded: bool = False, 
+) -> Collection:
+    if isinstance(iterable, Iterable):
+        if threaded and not isinstance(iterable, Collection):
+            iterable = ensure_aiter(iterable, threaded=True)
+        else:
+            return rettype(iterable)
     if isinstance(rettype, type):
         if issubclass(rettype, MutableSequence):
             if rettype is list:
-                return [e async for e in iterator]
+                return [e async for e in iterable]
             ls = rettype()
-            add = ls.append
-            async for e in iterator:
-                add(e)
+            append = ls.append
+            async for e in iterable:
+                append(e)
             return ls
         elif issubclass(rettype, MutableSet):
             if rettype is set:
-                return {e async for e in iterator}
+                return {e async for e in iterable}
             st = rettype()
             add = st.add
-            async for e in iterator:
+            async for e in iterable:
                 add(e)
             return st
-    return rettype([e async for e in iterator])
+        elif issubclass(rettype, MutableMapping):
+            if rettype is dict:
+                return {k: v async for k, v in iterable}
+            dt = rettype()
+            async for k, v in iterable:
+                dt[k] = v
+            return dt
+    return rettype([e async for e in iterable])
 

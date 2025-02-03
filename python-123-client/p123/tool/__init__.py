@@ -339,6 +339,7 @@ def iterdir(
     max_depth: int = 1, 
     predicate: None | Callable[[dict], Literal[None, 0, 1, False, True]] = None, 
     interval: int | float = 0, 
+    use_list_new: bool = False, 
     *, 
     async_: Literal[False] = False, 
     **request_kwargs, 
@@ -352,6 +353,7 @@ def iterdir(
     max_depth: int = 1, 
     predicate: None | Callable[[dict], Literal[None, 0, 1, False, True]] = None, 
     interval: int | float = 0, 
+    use_list_new: bool = False, 
     *, 
     async_: Literal[True], 
     **request_kwargs, 
@@ -364,6 +366,7 @@ def iterdir(
     max_depth: int = 1, 
     predicate: None | Callable[[dict], Literal[None, 0, 1, False, True]] = None, 
     interval: int | float = 0, 
+    use_list_new: bool = False, 
     *, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
@@ -382,13 +385,14 @@ def iterdir(
         - 如果返回值是 True，则输出此节点
 
     :param interval: 两次调用之间，休息的时间
+    :param use_list_new: 使用 `P123Client.fs_list_new` 而不是 `P123Client.fs_list`
     :param async_: 是否异步
     :param request_kwargs: 其它请求参数
 
     :return: 迭代器，产生文件或目录的信息
     """
     return _iterdir(
-        client.fs_list, 
+        client.fs_list_new if use_list_new else client.fs_list, 
         parent_id=parent_id, 
         min_depth=min_depth, 
         max_depth=max_depth, 

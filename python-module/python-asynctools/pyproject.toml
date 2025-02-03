@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-asynctools"
-version = "0.0.9"
+version = "0.0.10"
 description = "Python asynchronous tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

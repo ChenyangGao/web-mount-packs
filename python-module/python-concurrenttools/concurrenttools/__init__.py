@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "thread_batch", "thread_pool_batch", "async_batch", 
     "threaded", "run_as_thread", "asynchronized", "run_as_async", 
@@ -14,7 +14,7 @@ from asyncio import (
     Queue as AsyncQueue, Semaphore as AsyncSemaphore, TaskGroup, 
 )
 from collections.abc import (
-    AsyncIterator, Awaitable, Callable, Coroutine, Iterable, 
+    AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable, 
     Iterator, Mapping, 
 )
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
@@ -151,27 +151,32 @@ def thread_pool_batch[T, V](
 
 async def async_batch[T, V](
     work: Callable[[T], Coroutine[None, None, V]] | Callable[[T, Callable], Coroutine[None, None, V]], 
-    tasks: Iterable[T], 
+    tasks: Iterable[T] | AsyncIterable[T], 
     callback: None | Callable[[V], Any] = None, 
-    sema: None | AsyncSemaphore = None, 
+    max_workers: None | int | AsyncSemaphore = None, 
 ):
+    if max_workers is None:
+        max_workers = 32
+    if isinstance(max_workers, int):
+        if max_workers > 0:
+            sema = AsyncSemaphore()
+        else:
+            sema = None
+    else:
+        sema = max_workers
     ac = argcount(work)
     if ac < 1:
         raise TypeError(f"{work!r} should accept a positional argument as task")
     with_submit = ac > 1
-    async def works(task):
+    async def works(task, sema=sema):
+        if sema is not None:
+            async with sema:
+                return await works(task, None)
         try:
-            if sema is None:
-                if with_submit:
-                    r = await cast(Callable[[T, Callable], Coroutine[None, None, V]], work)(task, submit)
-                else:
-                    r = await cast(Callable[[T], Coroutine[None, None, V]], work)(task)
+            if with_submit:
+                r = await cast(Callable[[T, Callable], Coroutine[None, None, V]], work)(task, submit)
             else:
-                async with sema:
-                    if with_submit:
-                        r = await cast(Callable[[T, Callable], Coroutine[None, None, V]], work)(task, submit)
-                    else:
-                        r = await cast(Callable[[T], Coroutine[None, None, V]], work)(task)
+                r = await cast(Callable[[T], Coroutine[None, None, V]], work)(task)
             if callback is not None:
                 t = callback(r)
                 if isawaitable(t):
@@ -180,12 +185,15 @@ async def async_batch[T, V](
             raise
         except BaseException as e:
             raise CancelledError from e
-    def submit(task):
-        return create_task(works(task))
     async with TaskGroup() as tg:
         create_task = tg.create_task
-        for task in tasks:
-            submit(task)
+        submit = lambda task, /: create_task(works(task))
+        if isinstance(tasks, Iterable):
+            for task in tasks:
+                submit(task)
+        else:
+            async for task in tasks:
+                submit(task)
 
 
 @optional
@@ -272,6 +280,8 @@ def threadpool_map[T](
 ) -> Iterator[T]:
     if kwargs is None:
         kwargs = {}
+    if max_workers is None or max_workers <= 0:
+        max_workers = min(32, (cpu_count() or 1) + 4)
     queue: SimpleQueue[None | Future] = SimpleQueue()
     get, put = queue.get, queue.put_nowait
     executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -304,8 +314,8 @@ async def taskgroup_map[T](
     max_workers: None | int = None, 
     kwargs: None | Mapping = None, 
 ) -> AsyncIterator[T]:
-    if max_workers is None:
-        max_workers = 20
+    if max_workers is None or max_workers <= 0:
+        max_workers = 32
     if kwargs is None:
         kwargs = {}
     sema = AsyncSemaphore(max_workers)
@@ -320,12 +330,9 @@ async def taskgroup_map[T](
                 put(create_task(call(args)))
         finally:
             put(None)
-    try:
-        async with TaskGroup() as tg:
-            create_task = tg.create_task
-            create_task(make_tasks())
-            while task := await get():
-                yield await task
-    except *GeneratorExit:
-        pass
+    async with TaskGroup() as tg:
+        create_task = tg.create_task
+        create_task(make_tasks())
+        while task := await get():
+            yield await task
 

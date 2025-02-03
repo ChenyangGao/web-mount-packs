@@ -6,16 +6,18 @@ __version__ = (0, 0, 4)
 __all__ = ["check_response", "P123Client", "P123OSError"]
 
 from collections.abc import (
-    AsyncIterable, Awaitable, Buffer, Callable, Coroutine, Iterable, 
-    MutableMapping, Sized, 
+    AsyncIterable, Awaitable, Buffer, Callable, Coroutine, ItemsView, 
+    Iterable, Mapping, MutableMapping, Sized, 
 )
 from errno import EIO, EISDIR, ENOENT
 from functools import partial
 from hashlib import md5
 from http.cookiejar import CookieJar
 from inspect import isawaitable
+from itertools import chain
 from os import fsdecode, fstat, PathLike
 from os.path import basename
+from platform import system
 from re import compile as re_compile
 from tempfile import TemporaryFile
 from typing import cast, overload, Any, Literal, Self
@@ -36,8 +38,16 @@ from http_request import SupportsGeturl
 from yarl import URL
 
 
+# 当前的系统平台
+SYS_PLATFORM = system()
 # 替换表，用于半角转全角，包括了 Windows 中不允许出现在文件名中的字符
-TANSTAB_FULLWIDH_winname = {c: chr(c+65248) for c in b"\\/:*?|><"}
+match SYS_PLATFORM:
+    case "Windows":
+        NAME_TANSTAB_FULLWIDH = {c: chr(c+65248) for c in b"\\/:*?|><"}
+    case "Darwin":
+        NAME_TANSTAB_FULLWIDH = {ord("/"): ":", ord(":"): "："}
+    case _:
+        NAME_TANSTAB_FULLWIDH = {ord("/"): "／"}
 # 查找大写字母（除了左边第 1 个）
 CRE_UPPER_ALPHABET_sub = re_compile("(?<!^)[A-Z]").sub
 # 默认使用的域名
@@ -73,6 +83,43 @@ def buffer_length(b: Buffer, /) -> int:
         return len(b)
     else:
         return len(memoryview(b))
+
+
+def items[K, V](
+    m: Mapping[K, V] | Iterable[tuple[K, V]], 
+    /, 
+) -> Iterable[tuple[K, V]]:
+    if isinstance(m, Mapping):
+        try:
+            get_items = getattr(m, "items")
+            if isinstance((items := get_items()), ItemsView):
+                return items
+        except Exception:
+            pass
+        return ItemsView(m)
+    return m
+
+
+def dict_to_lower(
+    d: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+    /, 
+    *ds: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+    **kwd, 
+) -> dict[str, Any]:
+    return {k.lower(): v for k, v in chain(items(d), *map(items, ds), kwd.items())}
+
+
+def dict_to_lower_merge(
+    d: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+    /, 
+    *ds: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+    **kwd, 
+) -> dict[str, Any]:
+    m: dict[str, Any] = {}
+    setdefault = m.setdefault
+    for k, v in chain(items(d), *map(items, ds), kwd.items()):
+        setdefault(k.lower(), v)
+    return m
 
 
 @overload
@@ -405,10 +452,9 @@ class P123Client:
                 payload = cast(dict, info_list[0])
                 if payload["Type"]:
                     raise IsADirectoryError(EISDIR, resp)
-            payload = cast(dict, payload)
-            payload = {"driveId": 0, "Type": 0, "FileID": 0, **payload}
-            if "FileName" not in payload:
-                payload["FileName"] = payload["Etag"]
+            payload = dict_to_lower_merge(payload, {"driveId": 0, "Type": 0, "FileID": 0})
+            if "filename" not in payload:
+                payload["filename"] = payload["etag"]
             return self.request(url=api, json=payload, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
 
@@ -561,7 +607,7 @@ class P123Client:
                 if not info_list:
                     raise FileNotFoundError(ENOENT, resp)
                 payload = {"fileList": info_list}
-            payload = {"targetFileId": parent_id, **payload}
+            payload = dict_to_lower_merge(payload, targetFileId=parent_id)
             return self.request(url=api, json=payload, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
 
@@ -637,6 +683,9 @@ class P123Client:
 
         POST https://www.123pan.com/api/file/delete
 
+        .. hint::
+            彻底删除文件前,文件必须要在回收站中,否则无法删除
+
         :payload:
             - fileIdList: list[FileID]
 
@@ -655,6 +704,53 @@ class P123Client:
             payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         payload = cast(dict, payload)
         payload.setdefault("event", "recycleDelete")
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_delete_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_delete_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_delete_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：彻底删除
+
+        POST https://open-api.123pan.com/api/v1/file/delete
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/sg2gvfk5i3dwoxtg
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+        """
+        api = "https://open-api.123pan.com/api/v1/file/delete"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -706,6 +802,49 @@ class P123Client:
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
+    def fs_info_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_info_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_info_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取文件信息
+
+        GET https://open-api.123pan.com/api/v1/file/detail
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/uxomcu64kefnbdvz
+
+        :payload:
+            - fileID: int | str
+        """
+        api = "https://open-api.123pan.com/api/v1/file/detail"
+        if isinstance(payload, (int, str)):
+            payload = {"fileID": payload}
+        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    @overload
     def fs_list(
         self, 
         payload: int | str | dict = 0, 
@@ -751,7 +890,7 @@ class P123Client:
             - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
             - Page: int = <default> 💡 第几页，从 1 开始，可以是 0
             - parentFileId: int | str = 0 💡 父目录 id
-            - trashed: "false" | "true" = <default>
+            - trashed: "false" | "true" = <default> 💡 是否查看回收站的文件
             - inDirectSpace: "false" | "true" = "false"
             - event: str = "homeListFile" 💡 事件名称
 
@@ -766,7 +905,7 @@ class P123Client:
         api = f"{self.base_url}/api/file/list"
         if isinstance(payload, (int, str)):
             payload = {"parentFileId": payload}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "limit": 100, 
             "next": 0, 
@@ -775,8 +914,7 @@ class P123Client:
             "parentFileId": 0, 
             "inDirectSpace": "false", 
             "event": event, 
-            **payload, 
-        }
+        })
         if not payload.get("trashed"):
             match payload["event"]:
                 case "recycleListFile":
@@ -786,7 +924,7 @@ class P123Client:
         return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_list2(
+    def fs_list_new(
         self, 
         payload: int | str | dict = 0, 
         /, 
@@ -797,7 +935,7 @@ class P123Client:
     ) -> dict:
         ...
     @overload
-    def fs_list2(
+    def fs_list_new(
         self, 
         payload: int | str | dict = 0, 
         /, 
@@ -807,7 +945,7 @@ class P123Client:
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_list2(
+    def fs_list_new(
         self, 
         payload: int | str | dict = 0, 
         /, 
@@ -831,7 +969,7 @@ class P123Client:
             - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
             - Page: int = <default> 💡 第几页，从 1 开始，可以是 0
             - parentFileId: int | str = 0 💡 父目录 id
-            - trashed: "false" | "true" = <default>
+            - trashed: "false" | "true" = <default> 💡 是否查看回收站的文件
             - inDirectSpace: "false" | "true" = "false"
             - event: str = "homeListFile" 💡 事件名称
 
@@ -846,7 +984,7 @@ class P123Client:
         api = f"{self.base_url}/api/file/list/new"
         if isinstance(payload, (int, str)):
             payload = {"parentFileId": payload}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "limit": 100, 
             "next": 0, 
@@ -855,8 +993,7 @@ class P123Client:
             "parentFileId": 0, 
             "inDirectSpace": "false", 
             "event": event, 
-            **payload, 
-        }
+        })
         if not payload.get("trashed"):
             match payload["event"]:
                 case "recycleListFile":
@@ -866,32 +1003,88 @@ class P123Client:
         return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
 
     @overload
-    def fs_list_open(
+    def fs_list_open_v1(
         self, 
         payload: int | str | dict = 0, 
         /, 
-        event: str = "homeListFile", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_list_open(
+    def fs_list_open_v1(
         self, 
         payload: int | str | dict = 0, 
         /, 
-        event: str = "homeListFile", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_list_open(
+    def fs_list_open_v1(
         self, 
         payload: int | str | dict = 0, 
         /, 
-        event: str = "homeListFile", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取文件列表（可搜索）
+
+        GET https://open-api.123pan.com/api/v1/file/list
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/am42fselaozmg123
+
+        .. note::
+            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
+
+        :payload:
+            - limit: int = 100 💡 分页大小，最大不超过100
+            - orderBy: str = "file_id" 💡 排序依据："file_id", "file_name", "create_at", "update_at", "size", "share_id", ...
+            - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
+            - page: int = 1 💡 第几页，从 1 开始，可以是 0
+            - parentFileId: int | str = 0 💡 父目录 id
+            - trashed: "false" | "true" = <default> 💡 是否查看回收站的文件
+            - searchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
+        """
+        api = "https://open-api.123pan.com/api/v1/file/list"
+        if isinstance(payload, (int, str)):
+            payload = {"parentFileId": payload}
+        payload = dict_to_lower_merge(payload, {
+            "limit": 100, 
+            "orderBy": "file_id", 
+            "orderDirection": "desc", 
+            "page": 1, 
+            "parentFileId": 0, 
+        })
+        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_list_open_v2(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_list_open_v2(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_list_open_v2(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -920,13 +1113,14 @@ class P123Client:
         api = "https://open-api.123pan.com/api/v2/file/list"
         if isinstance(payload, (int, str)):
             payload = {"parentFileId": payload}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "limit": 100, 
             "parentFileId": 0, 
             "searchMode": 0, 
-            **payload, 
-        }
+        })
         return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+
+    fs_list_open = fs_list_open_v2
 
     @overload
     def fs_mkdir(
@@ -977,6 +1171,54 @@ class P123Client:
             payload["NotReuse"] = True
             payload["duplicate"] = duplicate
         return self.upload_request(payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_mkdir_open(
+        self, 
+        payload: str | dict, 
+        /, 
+        parent_id: int | str = 0, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_mkdir_open(
+        self, 
+        payload: str | dict, 
+        /, 
+        parent_id: int | str = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_mkdir_open(
+        self, 
+        payload: str | dict, 
+        /, 
+        parent_id: int | str = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：创建目录
+
+        POST https://open-api.123pan.com/upload/v1/file/mkdir
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/gvz09ibuuo97i5ue
+
+        :payload:
+            - name: str
+            - parentID: int | str = 0
+        """
+        api = "https://open-api.123pan.com/upload/v1/file/mkdir"
+        if isinstance(payload, str):
+            payload = {"name": payload}
+        payload = dict_to_lower_merge(payload, parentID=parent_id)
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_move(
@@ -1030,11 +1272,59 @@ class P123Client:
             payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
-        payload = {
-            "parentFileId": parent_id, 
-            "event": "fileMove", 
-            **payload, 
-        }
+        payload = dict_to_lower_merge(payload, {"parentFileId": parent_id, "event": "fileMove"})
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_move_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        parent_id: int | str = 0, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_move_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        parent_id: int | str = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_move_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        parent_id: int | str = 0, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：从回收站恢复文件
+
+        POST https://open-api.123pan.com/api/v1/file/move
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/kx9f8b6wk6g55uwy
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+            - toParentFileID: int | str = 0
+        """
+        api = "https://open-api.123pan.com/api/v1/file/move"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
+        payload = dict_to_lower_merge(payload, toParentFileID=parent_id)
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1074,12 +1364,55 @@ class P123Client:
             - event: str = "fileRename"
         """
         api = f"{self.base_url}/api/file/rename"
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "duplicate": 0, 
             "event": "fileRename", 
-            **payload, 
-        }
+        })
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_rename_open(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_rename_open(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_rename_open(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：重命名
+
+        POST https://open-api.123pan.com/api/v1/file/rename
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/ec18ovepgciazfuc
+
+        :payload:
+            - renameList: list[str] 💡 数组，最多 30 个成员，每个成员的格式为 "文件ID|新的文件名"
+        """
+        api = "https://open-api.123pan.com/api/v1/file/rename"
+        if isinstance(payload, str):
+            payload = {"renameList": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"renameList": payload}
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1140,7 +1473,7 @@ class P123Client:
             payload = {"fileTrashInfoList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"fileTrashInfoList": [{"FileId": fid} for fid in payload]}
-        payload = {"driveId": 0, "event": event, **payload}
+        payload = dict_to_lower_merge(payload, {"driveId": 0, "event": event})
         if payload.get("operation") is None:
             match payload["event"]:
                 case "recycleRestore":
@@ -1186,6 +1519,100 @@ class P123Client:
         """
         api = f"{self.base_url}/api/file/trash_delete_all"
         payload.setdefault("event", "recycleClear")
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_trash_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_trash_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_trash_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：删除文件，放入回收站中
+
+        POST https://open-api.123pan.com/api/v1/file/trash
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/en07662k2kki4bo6
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+        """
+        api = "https://open-api.123pan.com/api/v1/file/trash"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
+        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+
+    @overload
+    def fs_trash_recover_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_trash_recover_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_trash_recover_open(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：从回收站恢复文件
+
+        POST https://open-api.123pan.com/api/v1/file/recover
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/kx9f8b6wk6g55uwy
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+        """
+        api = "https://open-api.123pan.com/api/v1/file/recover"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1238,7 +1665,11 @@ class P123Client:
             payload = {"shareInfoList": [{"shareId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"shareInfoList": [{"shareId": sid} for sid in payload]}
-        payload = {"driveId": 0, "event": "shareCancel", "isPayShare": False, **payload}
+        payload = dict_to_lower_merge(payload, {
+            "driveId": 0, 
+            "event": "shareCancel", 
+            "isPayShare": False, 
+        })
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1333,7 +1764,7 @@ class P123Client:
             payload = {"fileIdList": payload}
         elif not isinstance(payload, dict):
             payload = {"fileIdList": ",".join(map(str, payload))}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "displayStatus": 2, 
             "driveId": 0, 
             "event": "shareCreate", 
@@ -1347,12 +1778,11 @@ class P123Client:
             "trafficLimit": 0, 
             "trafficLimitSwitch": 1, 
             "trafficSwitch": 1, 
-            **payload, 
-        }
-        if "fileIdList" not in payload:
+        })
+        if "fileidlist" not in payload:
             raise ValueError("missing field: 'fileIdList'")
-        if "shareName" not in payload:
-            payload["shareName"] = "%d 个文件或目录" % (str(payload["fileIdList"]).count(",") + 1)
+        if "sharename" not in payload:
+            payload["sharename"] = "%d 个文件或目录" % (str(payload["fileidlist"]).count(",") + 1)
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1640,7 +2070,7 @@ class P123Client:
             - operateType: int | str = <default> 💡 操作类型
         """
         api = f"{base_url}/api/share/get"
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "limit": 100, 
             "next": 0, 
             "orderBy": "file_name", 
@@ -1648,8 +2078,7 @@ class P123Client:
             "Page": 1, 
             "parentFileId": 0, 
             "event": "homeListFile", 
-            **payload, 
-        }
+        })
         request_kwargs.setdefault("parse", default_parse)
         if request is None:
             return get_default_request()(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
@@ -1708,15 +2137,14 @@ class P123Client:
         api = f"{self.base_url}/api/share/list"
         if isinstance(payload, int):
             payload = {"Page": payload}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "limit": 100, 
             "next": 0, 
             "orderBy": "fileId", 
             "orderDirection": "desc", 
             "event": event, 
-            **payload, 
-        }
+        })
         return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1771,15 +2199,14 @@ class P123Client:
         api = f"{self.base_url}/api/restful/goapi/v1/share/content/payment/list"
         if isinstance(payload, int):
             payload = {"Page": payload}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "limit": 100, 
             "next": 0, 
             "orderBy": "fileId", 
             "orderDirection": "desc", 
             "event": event, 
-            **payload, 
-        }
+        })
         return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1826,7 +2253,7 @@ class P123Client:
             payload = {"ids": [payload]}
         elif not isinstance(payload, dict):
             payload = {"ids": list(payload)}
-        payload = {"is_reward": int(is_reward), **payload}
+        payload = dict_to_lower_merge(payload, is_reward=int(is_reward))
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -1953,7 +2380,7 @@ class P123Client:
             - isMultipart: bool = True 💡 是否分块上传
         """
         api = f"{self.base_url}/api/file/upload_complete/v2"
-        payload = {"isMultipart": is_multipart, **payload}
+        payload = dict_to_lower_merge(payload, isMultipart=is_multipart)
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
 
     @overload
@@ -2087,7 +2514,7 @@ class P123Client:
         api = f"{self.base_url}/api/file/upload_request"
         if isinstance(payload, str):
             payload = {"fileName": payload}
-        payload = {
+        payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "duplicate": 0, 
             "etag": "", 
@@ -2095,8 +2522,7 @@ class P123Client:
             "size": 0, 
             "type": 1, 
             "NotReuse": False, 
-            **payload, 
-        }
+        })
         if payload["size"] or payload["etag"]:
             payload["type"] = 0
         return self.request(url=api, json=payload, async_=async_, **request_kwargs)
@@ -2276,8 +2702,8 @@ class P123Client:
                 file_name = getattr(file, "name", "")
                 file_name = basename(file_name)
             if file_name:
-                file_name = file_name.translate(TANSTAB_FULLWIDH_winname)
-            if not file_name:
+                file_name = file_name.translate(NAME_TANSTAB_FULLWIDH)
+            else:
                 file_name = str(uuid4())
             if file_size < 0:
                 file_size = getattr(file, "length", 0)
@@ -2469,7 +2895,7 @@ class P123Client:
                 file_name = getattr(file, "name", "")
                 file_name = basename(file_name)
             if file_name:
-                file_name = file_name.translate(TANSTAB_FULLWIDH_winname)
+                file_name = file_name.translate(NAME_TANSTAB_FULLWIDH)
             if not file_name:
                 file_name = str(uuid4())
             if file_size < 0:
@@ -2510,11 +2936,43 @@ class P123Client:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """（单个）改名
+        """用户信息
 
         GET https://www.123pan.com/api/user/info
         """
         api = f"{self.base_url}/api/user/info"
+        return self.request(url=api, method="GET", async_=async_, **request_kwargs)
+
+    @overload
+    def user_info_open(
+        self, 
+        /, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def user_info_open(
+        self, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def user_info_open(
+        self, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：用户信息
+
+        GET https://open-api.123pan.com/api/v1/user/info
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/fa2w0rosunui2v4m
+        """
+        api = "https://open-api.123pan.com/api/v1/user/info"
         return self.request(url=api, method="GET", async_=async_, **request_kwargs)
 
     @overload
