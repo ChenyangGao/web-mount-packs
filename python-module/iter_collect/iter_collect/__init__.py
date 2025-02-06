@@ -2,22 +2,19 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
     "SupportsLT", "grouped_mapping", "grouped_mapping_async", 
     "uniq", "uniq_async", "dups", "dups_async", "iter_keyed_dups", 
     "iter_keyed_dups_async", "iter_dups", "iter_dups_async", 
 ]
 
-from collections.abc import AsyncIterable, AsyncIterator, Hashable, Iterable, Iterator, MutableMapping
-from operator import itemgetter
-from typing import (
-    cast, overload, runtime_checkable, Any, Callable, Literal, Protocol, TypeVar, 
+from collections.abc import (
+    AsyncIterable, AsyncIterator, Coroutine, Iterable, Iterator, 
+    MutableMapping, 
 )
-
-
-K = TypeVar("K", bound=Hashable)
-V = TypeVar("V")
+from operator import itemgetter
+from typing import cast, overload, runtime_checkable, Any, Callable, Protocol 
 
 
 @runtime_checkable
@@ -27,7 +24,7 @@ class SupportsLT(Protocol):
 
 
 @overload
-def grouped_mapping(
+def grouped_mapping[K, V](
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -36,7 +33,7 @@ def grouped_mapping(
 ) -> dict[K, list[V]]:
     ...
 @overload
-def grouped_mapping(
+def grouped_mapping[K, V](
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -45,7 +42,7 @@ def grouped_mapping(
 ) -> MutableMapping[K, list[V]]:
     ...
 @overload
-def grouped_mapping(
+def grouped_mapping[K, V](
     it: Iterable[tuple[K, V]], 
     /, 
     key: None = None, 
@@ -54,7 +51,7 @@ def grouped_mapping(
 ) -> dict[K, list[V]]:
     ...
 @overload
-def grouped_mapping(
+def grouped_mapping[K, V](
     it: Iterable[tuple[K, V]], 
     /, 
     key: None = None, 
@@ -62,13 +59,49 @@ def grouped_mapping(
     mapping: MutableMapping[K, list[V]], 
 ) -> MutableMapping[K, list[V]]:
     ...
-def grouped_mapping(
-    it: Iterable[V] | Iterable[tuple[K, V]], 
+@overload
+def grouped_mapping[K, V](
+    it: AsyncIterable[V], 
+    /, 
+    key: Callable[[V], K], 
+    *, 
+    mapping: None = None, 
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
+    ...
+@overload
+def grouped_mapping[K, V](
+    it: AsyncIterable[V], 
+    /, 
+    key: Callable[[V], K], 
+    *, 
+    mapping: MutableMapping[K, list[V]], 
+) -> Coroutine[Any, Any, MutableMapping[K, list[V]]]:
+    ...
+@overload
+def grouped_mapping[K, V](
+    it: AsyncIterable[tuple[K, V]], 
+    /, 
+    key: None = None, 
+    *, 
+    mapping: None = None, 
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
+    ...
+@overload
+def grouped_mapping[K, V](
+    it: AsyncIterable[tuple[K, V]], 
+    /, 
+    key: None = None, 
+    *, 
+    mapping: MutableMapping[K, list[V]], 
+) -> Coroutine[Any, Any, MutableMapping[K, list[V]]]:
+    ...
+def grouped_mapping[K, V](
+    it: Iterable[V] | Iterable[tuple[K, V]] | AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
     *, 
     mapping: None | MutableMapping[K, list[V]] = None, 
-) -> MutableMapping[K, list[V]]:
+) -> dict[K, list[V]] | MutableMapping[K, list[V]] | Coroutine[Any, Any, dict[K, list[V]]] | Coroutine[Any, Any, MutableMapping[K, list[V]]]:
     """Groups elements from an iterable into a mapping by a specified key or directly from tuples.
 
     This function supports two modes:
@@ -82,6 +115,8 @@ def grouped_mapping(
 
     :return: A mapping where each key corresponds to a list of values associated with that key.
     """
+    if not isinstance(it, Iterable):
+        return grouped_mapping_async(it, key=key, mapping=mapping) # type: ignore
     if mapping is None:
         mapping = {}
     append = list.append
@@ -98,7 +133,7 @@ def grouped_mapping(
 
 
 @overload
-async def grouped_mapping_async(
+async def grouped_mapping_async[K, V](
     it: AsyncIterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -107,7 +142,7 @@ async def grouped_mapping_async(
 ) -> dict[K, list[V]]:
     ...
 @overload
-async def grouped_mapping_async(
+async def grouped_mapping_async[K, V](
     it: AsyncIterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -116,7 +151,7 @@ async def grouped_mapping_async(
 ) -> MutableMapping[K, list[V]]:
     ...
 @overload
-async def grouped_mapping_async(
+async def grouped_mapping_async[K, V](
     it: AsyncIterable[tuple[K, V]], 
     /, 
     key: None = None, 
@@ -125,7 +160,7 @@ async def grouped_mapping_async(
 ) -> dict[K, list[V]]:
     ...
 @overload
-async def grouped_mapping_async(
+async def grouped_mapping_async[K, V](
     it: AsyncIterable[tuple[K, V]], 
     /, 
     key: None = None, 
@@ -133,7 +168,7 @@ async def grouped_mapping_async(
     mapping: MutableMapping[K, list[V]], 
 ) -> MutableMapping[K, list[V]]:
     ...
-async def grouped_mapping_async(
+async def grouped_mapping_async[K, V](
     it: AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
@@ -169,7 +204,7 @@ async def grouped_mapping_async(
 
 
 @overload
-def uniq(
+def uniq[K, V](
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -177,19 +212,35 @@ def uniq(
 ) -> dict[K, V]:
     ...
 @overload
-def uniq(
+def uniq[K, V](
     it: Iterable[tuple[K, V]], 
     /, 
     key: None = None, 
     keep_first: bool | Callable[[V], SupportsLT] = True, 
 ) -> dict[K, V]:
     ...
-def uniq(
-    it: Iterable[V] | Iterable[tuple[K, V]], 
+@overload
+def uniq[K, V](
+    it: AsyncIterable[V], 
+    /, 
+    key: Callable[[V], K], 
+    keep_first: bool | Callable[[V], SupportsLT] = True, 
+) -> Coroutine[Any, Any, dict[K, V]]:
+    ...
+@overload
+def uniq[K, V](
+    it: AsyncIterable[tuple[K, V]], 
+    /, 
+    key: None = None, 
+    keep_first: bool | Callable[[V], SupportsLT] = True, 
+) -> Coroutine[Any, Any, dict[K, V]]:
+    ...
+def uniq[K, V](
+    it: Iterable[V] | Iterable[tuple[K, V]] | AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
     keep_first: bool | Callable[[V], SupportsLT] = True, 
-) -> dict[K, V]:
+) -> dict[K, V] | Coroutine[Any, Any, dict[K, V]]:
     """Returns a dictionary of unique items from an iterable.
     
     This function supports two modes:
@@ -206,6 +257,8 @@ def uniq(
 
     :return: A dictionary where stores all the unique values (differentiated by their keys).
     """
+    if not isinstance(it, Iterable):
+        return uniq_async(it, key=key, keep_first=keep_first) # type: ignore
     if key is not None:
         it = cast(Iterable[V], it)
         it = ((key(v), v) for v in it)
@@ -233,7 +286,7 @@ def uniq(
 
 
 @overload
-async def uniq_async(
+async def uniq_async[K, V](
     it: AsyncIterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -241,14 +294,14 @@ async def uniq_async(
 ) -> dict[K, V]:
     ...
 @overload
-async def uniq_async(
+async def uniq_async[K, V](
     it: AsyncIterable[tuple[K, V]], 
     /, 
     key: None = None, 
     keep_first: bool | Callable[[V], SupportsLT] = True, 
 ) -> dict[K, V]:
     ...
-async def uniq_async(
+async def uniq_async[K, V](
     it: AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
@@ -297,7 +350,7 @@ async def uniq_async(
 
 
 @overload
-def dups(
+def dups[K, V](
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -305,19 +358,35 @@ def dups(
 ) -> dict[K, list[V]]:
     ...
 @overload
-def dups(
+def dups[K, V](
     it: Iterable[tuple[K, V]], 
     /, 
     key: None = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> dict[K, list[V]]:
     ...
-def dups(
-    it: Iterable[V] | Iterable[tuple[K, V]], 
+@overload
+def dups[K, V](
+    it: AsyncIterable[V], 
+    /, 
+    key: Callable[[V], K], 
+    keep_first: None | bool | Callable[[V], SupportsLT] = None, 
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
+    ...
+@overload
+def dups[K, V](
+    it: AsyncIterable[tuple[K, V]], 
+    /, 
+    key: None = None, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = None, 
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
+    ...
+def dups[K, V](
+    it: Iterable[V] | Iterable[tuple[K, V]] | AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
-) -> dict[K, list[V]]:
+) -> dict[K, list[V]] | Coroutine[Any, Any, dict[K, list[V]]]:
     """Finds duplicates in the given iterable and returns them as a dictionary.
 
     :param it: An iterable of values (V) or an iterable of tuples (K, V).
@@ -330,42 +399,33 @@ def dups(
 
     :return: A dictionary where keys are derived from the input values and values are lists of duplicates.
     """
-    if key is None:
-        itr = iter_keyed_dups(
-            cast(Iterable[tuple[K, V]], it), 
-            keep_first=keep_first, 
-        )
-    else:
-        itr = iter_keyed_dups(
-            cast(Iterable[V], it), 
-            key=key, 
-            keep_first=keep_first, 
-        )
-    return grouped_mapping(itr)
+    if not isinstance(it, Iterable):
+        return dups_async(it, key=key, keep_first=keep_first) # type: ignore
+    return grouped_mapping(iter_keyed_dups(it, key=key, keep_first=keep_first)) # type: ignore
 
 
 @overload
-async def dups_async(
+def dups_async[K, V](
     it: AsyncIterable[V], 
     /, 
     key: Callable[[V], K], 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
-) -> dict[K, list[V]]:
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
     ...
 @overload
-async def dups_async(
+def dups_async[K, V](
     it: AsyncIterable[tuple[K, V]], 
     /, 
     key: None = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
-) -> dict[K, list[V]]:
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
     ...
-async def dups_async(
+def dups_async[K, V](
     it: AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
-) -> dict[K, list[V]]:
+) -> Coroutine[Any, Any, dict[K, list[V]]]:
     """Finds duplicates in the given async iterable and returns them as a dictionary.
 
     :param it: An async iterable of values (V) or an async iterable of tuples (K, V).
@@ -378,22 +438,11 @@ async def dups_async(
 
     :return: A dictionary where keys are derived from the input values and values are lists of duplicates.
     """
-    if key is None:
-        itr = iter_keyed_dups_async(
-            cast(AsyncIterable[tuple[K, V]], it), 
-            keep_first=keep_first, 
-        )
-    else:
-        itr = iter_keyed_dups_async(
-            cast(AsyncIterable[V], it), 
-            key=key, 
-            keep_first=keep_first, 
-        )
-    return await grouped_mapping_async(itr)
+    return grouped_mapping_async(iter_keyed_dups_async(it, key=key, keep_first=keep_first)) # type: ignore
 
 
 @overload
-def iter_keyed_dups(
+def iter_keyed_dups[K, V](
     it: Iterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -401,19 +450,35 @@ def iter_keyed_dups(
 ) -> Iterator[tuple[K, V]]:
     ...
 @overload
-def iter_keyed_dups(
+def iter_keyed_dups[K, V](
     it: Iterable[tuple[K, V]], 
     /, 
     key: None = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> Iterator[tuple[K, V]]:
     ...
-def iter_keyed_dups(
-    it: Iterable[V] | Iterable[tuple[K, V]], 
+@overload
+def iter_keyed_dups[K, V](
+    it: AsyncIterable[V], 
+    /, 
+    key: Callable[[V], K], 
+    keep_first: None | bool | Callable[[V], SupportsLT] = None, 
+) -> AsyncIterator[tuple[K, V]]:
+    ...
+@overload
+def iter_keyed_dups[K, V](
+    it: AsyncIterable[tuple[K, V]], 
+    /, 
+    key: None = None, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = None, 
+) -> AsyncIterator[tuple[K, V]]:
+    ...
+def iter_keyed_dups[K, V](
+    it: Iterable[V] | Iterable[tuple[K, V]] | AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
-) -> Iterator[tuple[K, V]]:
+) -> Iterator[tuple[K, V]] | AsyncIterator[tuple[K, V]]:
     """Yields tuples of key and (duplicate) value pairs.
 
     :param it: An iterable of values (V) or an iterable of tuples (K, V).
@@ -426,54 +491,59 @@ def iter_keyed_dups(
 
     :yield: Iterator of tuples of keys and their corresponding duplicate values.
     """
-    if key is not None:
-        it = cast(Iterable[V], it)
-        it = ((key(v), v) for v in it)
-    it = cast(Iterable[tuple[K, V]], it)
-    if keep_first is None:
-        d: dict[K, V] = {}
-        pop = d.pop
-        s: set[K] = set()
-        add = s.add
-        for k, v in it:
-            if k in s:
-                yield k, v
-            elif k in d:
-                yield k, pop(k)
-                yield k, v
-                add(k)
-            else:
-                d[k] = v
-    elif callable(keep_first):
-        cache: dict[K, tuple[SupportsLT, V]] = {}
-        for k, v in it:
-            comparand = keep_first(v)
-            if k in cache:
-                prev_comparand, prev_v = cache[k]
-                if comparand < prev_comparand:
-                    yield k, prev_v
-                else:
+    if not isinstance(it, Iterable):
+        return iter_keyed_dups_async(it, key=key, keep_first=keep_first) # type: ignore
+    def call():
+        nonlocal it
+        if key is not None:
+            it = cast(Iterable[V], it)
+            it = ((key(v), v) for v in it)
+        it = cast(Iterable[tuple[K, V]], it)
+        if keep_first is None:
+            d: dict[K, V] = {}
+            pop = d.pop
+            s: set[K] = set()
+            add = s.add
+            for k, v in it:
+                if k in s:
                     yield k, v
-                    continue
-            cache[k] = (comparand, v)
-    elif keep_first:
-        s = set()
-        add = s.add
-        for k, v in it:
-            if k in s:
-                yield k, v
-            else:
-                add(k)
-    else:
-        d = {}
-        for k, v in it:
-            if k in d:
-                yield k, d[k]
-            d[k] = v
+                elif k in d:
+                    yield k, pop(k)
+                    yield k, v
+                    add(k)
+                else:
+                    d[k] = v
+        elif callable(keep_first):
+            cache: dict[K, tuple[SupportsLT, V]] = {}
+            for k, v in it:
+                comparand = keep_first(v)
+                if k in cache:
+                    prev_comparand, prev_v = cache[k]
+                    if comparand < prev_comparand:
+                        yield k, prev_v
+                    else:
+                        yield k, v
+                        continue
+                cache[k] = (comparand, v)
+        elif keep_first:
+            s = set()
+            add = s.add
+            for k, v in it:
+                if k in s:
+                    yield k, v
+                else:
+                    add(k)
+        else:
+            d = {}
+            for k, v in it:
+                if k in d:
+                    yield k, d[k]
+                d[k] = v
+    return call()
 
 
 @overload
-def iter_keyed_dups_async(
+def iter_keyed_dups_async[K, V](
     it: AsyncIterable[V], 
     /, 
     key: Callable[[V], K], 
@@ -481,14 +551,14 @@ def iter_keyed_dups_async(
 ) -> AsyncIterator[tuple[K, V]]:
     ...
 @overload
-def iter_keyed_dups_async(
+def iter_keyed_dups_async[K, V](
     it: AsyncIterable[tuple[K, V]], 
     /, 
     key: None = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> AsyncIterator[tuple[K, V]]:
     ...
-async def iter_keyed_dups_async(
+async def iter_keyed_dups_async[K, V](
     it: AsyncIterable[V] | AsyncIterable[tuple[K, V]], 
     /, 
     key: None | Callable[[V], K] = None, 
@@ -553,27 +623,43 @@ async def iter_keyed_dups_async(
 
 
 @overload
-def iter_dups(
+def iter_dups[V](
     it: Iterable[V], 
     /, 
-    key: Callable[[V], Hashable], 
+    key: Callable[[V], Any], 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> Iterator[V]:
     ...
 @overload
-def iter_dups(
-    it: Iterable[tuple[Hashable, V]], 
+def iter_dups[V](
+    it: Iterable[tuple[Any, V]], 
     /, 
     key: None = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> Iterator[V]:
     ...
-def iter_dups(
-    it: Iterable[V] | Iterable[tuple[Hashable, V]], 
+@overload
+def iter_dups[V](
+    it: AsyncIterable[V], 
     /, 
-    key: None | Callable[[V], Hashable] = None, 
+    key: Callable[[V], Any], 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
-) -> Iterator[V]:
+) -> AsyncIterator[V]:
+    ...
+@overload
+def iter_dups[V](
+    it: AsyncIterable[tuple[Any, V]], 
+    /, 
+    key: None = None, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = None, 
+) -> AsyncIterator[V]:
+    ...
+def iter_dups[V](
+    it: Iterable[V] | Iterable[tuple[Any, V]] | AsyncIterable[V] | AsyncIterable[tuple[Any, V]], 
+    /, 
+    key: None | Callable[[V], Any] = None, 
+    keep_first: None | bool | Callable[[V], SupportsLT] = None, 
+) -> Iterator[V] | AsyncIterator[V]:
     """Yields duplicate values from the provided iterable.
     
     :param it: An iterable of values (V) or an iterable of tuples (K, V).
@@ -586,40 +672,34 @@ def iter_dups(
 
     :yield: Iterator of duplicate values from the input iterable.
     """
-    if key is None:
-        itr = iter_keyed_dups(
-            cast(Iterable[tuple[Hashable, V]], it), 
-            keep_first=keep_first, 
-        )
-    else:
-        itr = iter_keyed_dups(
-            cast(Iterable[V], it), 
-            key=key, 
-            keep_first=keep_first, 
-        )
-    return map(itemgetter(1), itr)
+    if not isinstance(it, Iterable):
+        return iter_dups_async(it, key=key, keep_first=keep_first) # type: ignore
+    return map(
+        itemgetter(1), 
+        iter_keyed_dups(it, key=key, keep_first=keep_first), # type: ignore
+    )
 
 
 @overload
-def iter_dups_async(
+def iter_dups_async[V](
     it: AsyncIterable[V], 
     /, 
-    key: Callable[[V], Hashable], 
+    key: Callable[[V], Any], 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> AsyncIterator[V]:
     ...
 @overload
-def iter_dups_async(
-    it: AsyncIterable[tuple[Hashable, V]], 
+def iter_dups_async[V](
+    it: AsyncIterable[tuple[Any, V]], 
     /, 
     key: None = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> AsyncIterator[V]:
     ...
-async def iter_dups_async(
-    it: AsyncIterable[V] | AsyncIterable[tuple[Hashable, V]], 
+async def iter_dups_async[V](
+    it: AsyncIterable[V] | AsyncIterable[tuple[Any, V]], 
     /, 
-    key: None | Callable[[V], Hashable] = None, 
+    key: None | Callable[[V], Any] = None, 
     keep_first: None | bool | Callable[[V], SupportsLT] = None, 
 ) -> AsyncIterator[V]:
     """Yields duplicate values from the provided async iterable.
@@ -634,17 +714,7 @@ async def iter_dups_async(
 
     :yield: Iterator of duplicate values from the input async iterable.
     """
-    if key is None:
-        itr = iter_keyed_dups_async(
-            cast(AsyncIterable[tuple[Hashable, V]], it), 
-            keep_first=keep_first, 
-        )
-    else:
-        itr = iter_keyed_dups_async(
-            cast(AsyncIterable[V], it), 
-            key=key, 
-            keep_first=keep_first, 
-        )
-    async for item in itr:
-        yield item[1]
+    item: V
+    async for _, item in iter_keyed_dups_async(it, key=key, keep_first=keep_first): # type: ignore
+        yield item
 

@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "python-iterutils"
-version = "0.1.5"
-description = "Python another itertools."
+name = "ariarpc"
+version = "0.0.1.1"
+description = "Python aria2 RPC call."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-iterutils"
-keywords = ["iterable", "iterutils"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/ariarpc"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/ariarpc"
+keywords = ["aria2", "rpc"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,14 +26,14 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.12"
-python-asynctools = ">=0.0.10"
-python-texttools = ">=0.0.3"
-python-undefined = ">=0.0.3"
+python = "^3.11"
+orjson = "*"
+httpx = "*"
+httpx_request = ">=0.1.2"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterutils"
+include = "ariarpc"
