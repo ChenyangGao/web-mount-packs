@@ -2,16 +2,15 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["rpc_call", "AriaRPC"]
+__version__ = (0, 0, 2)
+__all__ = ["rpc_call", "AriaRPC", "AriaXMLRPC"]
 
 from collections.abc import Callable, Coroutine, Iterable, Mapping
-from typing import overload, Any, Final, Literal, Self
+from typing import cast, overload, Any, Final, Literal, Self
 from uuid import uuid4
+from xmlrpc.client import _Method, ServerProxy
 
 from orjson import loads, dumps
-from httpx import AsyncClient, AsyncHTTPTransport, Client, HTTPTransport, Limits
-from httpx_request import request as httpx_request
 
 
 ARIA2_METHODS: Final = [
@@ -22,29 +21,37 @@ ARIA2_METHODS: Final = [
     "getVersion", "getSessionInfo", "shutdown", "forceShutdown", "getGlobalStat", "saveSession", 
 ]
 SYSTEM_METHODS: Final = ["multicall", "listMethods", "listNotifications"]
+_httpx_request: None | Callable = None
 
 
-def default_request(
-    *args, 
-    async_: bool = False, 
-    session: Client = Client(
-        limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
-        transport=HTTPTransport(retries=5), 
-        verify=False, 
-    ), 
-    async_session: AsyncClient = AsyncClient(
-        limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
-        transport=AsyncHTTPTransport(retries=5), 
-        verify=False, 
-    ), 
-    **request_kwargs, 
-):
-    return httpx_request(
-        *args, # type: ignore
-        session=async_session if async_ else session, 
-        async_=async_, 
-        **request_kwargs, 
-    )
+def get_default_request() -> Callable:
+    global _httpx_request
+    if _httpx_request is None:
+        from httpx import AsyncClient, AsyncHTTPTransport, Client, HTTPTransport, Limits
+        from httpx_request import request as httpx_request
+        limit = Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10)
+        def _httpx_request(
+            *args, 
+            async_: bool = False, 
+            session: Client = Client(
+                limits=limit, 
+                transport=HTTPTransport(retries=5), 
+                verify=False, 
+            ), 
+            async_session: AsyncClient = AsyncClient(
+                limits=limit, 
+                transport=AsyncHTTPTransport(retries=5), 
+                verify=False, 
+            ), 
+            **request_kwargs, 
+        ):
+            return httpx_request(
+                *args, # type: ignore
+                session=async_session if async_ else session, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+    return cast(Callable, _httpx_request)
 
 
 def rpc_call(
@@ -84,7 +91,7 @@ def rpc_call(
         }), 
     )
     if request is None:
-        return default_request(parse=parse, async_=async_, **request_kwargs)
+        return get_default_request()(parse=parse, async_=async_, **request_kwargs)
     else:
         return request(parse=parse, **request_kwargs)
 
@@ -191,4 +198,27 @@ class AriaRPC:
         for obj in self.__dict__.values():
             if isinstance(obj, AriaRPC):
                 obj.url = url
+
+
+class Method(_Method):
+
+    def __init__(self, send: Callable, name: str):
+        super().__init__(send, name)
+        if name == "aria2":
+            self.__dict__.update((name, _Method(send, "aria2." + name)) for name in ARIA2_METHODS)
+        elif name == "system":
+            self.__dict__.update((name, _Method(send, "system." + name)) for name in SYSTEM_METHODS)
+
+
+class AriaXMLRPC(ServerProxy):
+
+    def __init__(self, /, uri: int | str = "http://localhost:6800/rpc", *args, **kwds):
+        if isinstance(uri, int):
+            uri = f"http://localhost:{uri}/rpc"
+        super().__init__(uri, *args, **kwds)
+        self.__dict__["aria2"] = self.aria2
+        self.__dict__["system"] = self.system
+
+    def __getattr__(self, name):
+        return Method(self._ServerProxy__request, name)
 

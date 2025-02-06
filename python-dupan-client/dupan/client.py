@@ -388,6 +388,7 @@ class DuPanClient:
             sign = resp["sign"]
             if console_qrcode:
                 url = f"https://wappass.baidu.com/wp/?qrlogin&error=0&sign={sign}&cmd=login&lp=pc&tpl=netdisk&adapter=3&qrloginfrom=pc"
+                print(url)
                 from qrcode import QRCode # type: ignore
                 qr = QRCode(border=1)
                 qr.add_data(url)

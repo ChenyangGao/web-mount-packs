@@ -11,16 +11,11 @@ pip install -U ariarpc
 ## Usage
 
 ```python
-from ariarpc import AriaRPC, AriaXMLRPC
+from ariarpc import rpc_call, AriaRPC
 
-# JSON RPC
 rpc = AriaRPC()
 rpc.system.listMethods()
 
-# asynchronous JSON RPC
+# asynchronous
 await rpc.system.listMethods(async_=True)
-
-# XML RPC
-rpc = AriaXMLRPC()
-rpc.system.listMethods()
 ```
