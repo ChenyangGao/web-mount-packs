@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-concurrenttools"
-version = "0.0.7"
+version = "0.0.8.2"
 description = "Python concurrent tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,7 +29,7 @@ include = [
 python = "^3.12"
 python-argtools = "*"
 python-asynctools = ">=0.0.8.2"
-python-decotools = ">=0.0.1.2"
+python-decotools = ">=0.0.2"
 
 [build-system]
 requires = ["poetry-core"]

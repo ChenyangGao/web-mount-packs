@@ -2,11 +2,11 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __all__ = [
     "thread_batch", "thread_pool_batch", "async_batch", 
     "threaded", "run_as_thread", "asynchronized", "run_as_async", 
-    "threadpool_map", "taskgroup_map", 
+    "threadpool_map", "taskgroup_map", "Return", 
 ]
 
 from asyncio import (
@@ -20,7 +20,6 @@ from collections.abc import (
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from functools import partial, update_wrapper
 from inspect import isawaitable, iscoroutinefunction
-from itertools import takewhile
 from os import cpu_count
 from queue import Queue, SimpleQueue, Empty
 from _thread import start_new_thread
@@ -36,6 +35,11 @@ if "__del__" not in ThreadPoolExecutor.__dict__:
     setattr(ThreadPoolExecutor, "__del__", lambda self, /: self.shutdown(wait=False, cancel_futures=True))
 if "__del__" not in TaskGroup.__dict__:
     setattr(TaskGroup, "__del__", lambda self, /: run_async(self.__aexit__(None, None, None)))
+
+
+class Return:
+    def __init__(self, value, /):
+        self.value = value
 
 
 def thread_batch[T, V](
@@ -275,11 +279,10 @@ def threadpool_map[T](
     it, 
     /, 
     *its, 
+    arg_func: None | Callable = None, 
     max_workers: None | int = None, 
-    kwargs: None | Mapping = None, 
+    kwargs: Mapping = {}, 
 ) -> Iterator[T]:
-    if kwargs is None:
-        kwargs = {}
     if max_workers is None or max_workers <= 0:
         max_workers = min(32, (cpu_count() or 1) + 4)
     queue: SimpleQueue[None | Future] = SimpleQueue()
@@ -289,9 +292,18 @@ def threadpool_map[T](
     running = True
     def make_tasks():
         try:
-            for args in takewhile(lambda _: running, zip(it, *its)):
+            for args in zip(it, *its):
+                if not running:
+                    break
                 try:
-                    put(submit(func, *args, **kwargs))
+                    if arg_func is None:
+                        put(submit(func, *args, **kwargs))
+                    else:
+                        arg = arg_func(*args, **kwargs)
+                        if isinstance(arg, Return):
+                            put(arg.value)
+                            continue
+                        put(submit(func, *args, arg, **kwargs))
                 except RuntimeError:
                     break
         finally:
@@ -311,13 +323,12 @@ async def taskgroup_map[T](
     it, 
     /, 
     *its, 
+    arg_func: None | Callable = None, 
     max_workers: None | int = None, 
-    kwargs: None | Mapping = None, 
+    kwargs: Mapping = {}, 
 ) -> AsyncIterator[T]:
     if max_workers is None or max_workers <= 0:
         max_workers = 32
-    if kwargs is None:
-        kwargs = {}
     sema = AsyncSemaphore(max_workers)
     queue: AsyncQueue[None | AsyncFuture] = AsyncQueue()
     get, put = queue.get, queue.put_nowait
@@ -327,6 +338,14 @@ async def taskgroup_map[T](
     async def make_tasks():
         try:
             async for args in async_zip(it, *its):
+                if arg_func is not None:
+                    arg = arg_func(*args, **kwargs)
+                    if isawaitable(arg):
+                        arg = await arg
+                    if isinstance(arg, Return):
+                        put(arg.value)
+                        continue
+                    args = (*args, arg)
                 put(create_task(call(args)))
         finally:
             put(None)

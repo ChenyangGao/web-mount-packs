@@ -3,7 +3,7 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __version__ = (0, 0, 2)
-__all__ = ["rpc_call", "AriaRPC", "AriaXMLRPC"]
+__all__ = ["json_rpc_call", "AriaRPC", "AriaXMLRPC"]
 
 from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import cast, overload, Any, Final, Literal, Self
@@ -54,7 +54,7 @@ def get_default_request() -> Callable:
     return cast(Callable, _httpx_request)
 
 
-def rpc_call(
+def json_rpc_call(
     method: str = "system.listMethods", 
     params: Iterable = (), 
     payload: Mapping = {}, 
@@ -169,7 +169,7 @@ class AriaRPC:
 
         :return: The `self.method` interface return value, parsed as JSON.
         """
-        return rpc_call(
+        return json_rpc_call(
             self.method, 
             params, 
             payload, 

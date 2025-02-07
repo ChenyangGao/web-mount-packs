@@ -6,32 +6,31 @@ decorators, in order to simplify some boilerplate code.
 """
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["decorated", "optional", "optional_args", "currying", "partialize"]
 
 from collections.abc import Callable
 from functools import partial, reduce, update_wrapper as _update_wrapper
 from inspect import signature
-from typing import cast, overload, Any, Concatenate, Optional, ParamSpec, TypeVar
+from typing import cast, overload, Any, Concatenate
 
 from partial import ppartial
 from undefined import undefined
 
 
-Args = ParamSpec("Args")
-Args0 = ParamSpec("Args0")
-R = TypeVar("R")
-T = TypeVar("T")
+def update_wrapper[T: Callable](
+    f: T, 
+    g: Callable, 
+    /, 
+    *args, 
+    **kwds, 
+) -> T:
+    if f is not g:
+        _update_wrapper(f, g, *args, **kwds)
+    return f
 
 
-def update_wrapper(f, g, /, *args, **kwds):
-    if f is g:
-        return f
-    else:
-        return _update_wrapper(f, g, *args, **kwds)
-
-
-def decorated(
+def decorated[**Args, R, T](
     f: Callable[Concatenate[Callable[Args, R], Args], T], 
     /, 
 ) -> Callable[[Callable[Args, R]], Callable[Args, T]]:
@@ -55,11 +54,11 @@ def decorated(
     return update_wrapper(lambda g, /: update_wrapper(lambda *a, **k: f(g, *a, **k), g), f)
 
 
-def optional(
+def optional[**Args, **Args0, R, T](
     f: Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]], 
     /, 
-) -> Callable[[Callable[Args, R]], Callable[Args, T]] \
-    | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]]:
+) -> Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, T]]] \
+    | Callable[..., Callable[Args, T]]:
     """This function decorates another decorator that with optional parameters.
     NOTE: Make sure that these optional parameters have default values.
 
@@ -161,10 +160,11 @@ def optional(
     return update_wrapper(wrapped, f)
 
 
-def optional_args(
+def optional_args[**Args, **Args0, R, T](
     f: Callable[Args0, Callable[Concatenate[Callable[Args, R], Args], T]], 
     /,
-) -> Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, T]]] | Callable[Concatenate[Callable[Args, R], Args0], Callable[Args, T]]:
+) -> Callable[Args0, Callable[[Callable[Args, R]], Callable[Args, T]]] \
+    | Callable[..., Callable[Args, T]]:
     """This function decorates another decorator that with optional parameters.
     NOTE: Make sure that these optional parameters have default values.
 
@@ -266,7 +266,7 @@ def optional_args(
     return update_wrapper(wrapped, f)
 
 
-def currying(
+def currying[**Args, R](
     f: Callable[Args, R], 
     /, 
 ) -> Callable[Args, R]:
@@ -286,20 +286,20 @@ def currying(
 
 
 @overload
-def partialize(
+def partialize[**Args, R](
     f: None = None, 
     /, 
     sentinel: Any = undefined, 
 ) -> Callable[[Callable[Args, R]], Callable[Args, R]]:
     ...
 @overload
-def partialize(
+def partialize[**Args, R](
     f: Callable[Args, R], 
     /, 
     sentinel: Any = undefined, 
 ) -> Callable[Args, R]:
     ...
-def partialize(
+def partialize[**Args, R](
     f: None | Callable[Args, R] = None, 
     /, 
     sentinel: Any = undefined, 

@@ -2,12 +2,13 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 5)
+__version__ = (0, 1, 6)
 __all__ = [
     "Return", "Yield", "YieldFrom", "iterable", "async_iterable", "foreach", "async_foreach", 
     "through", "async_through", "flatten", "async_flatten", "map", "filter", "reduce", "zip", 
     "chunked", "iter_unique", "async_iter_unique", "wrap_iter", "wrap_aiter", "acc_step", 
-    "cut_iter", "run_gen_step", "run_gen_step_iter", "bfs_gen", "with_iter_next", "backgroud_loop", 
+    "cut_iter", "run_gen_step", "run_gen_step_iter", "as_gen_step", "bfs_gen", "with_iter_next", 
+    "backgroud_loop", 
 ]
 
 from abc import ABC, abstractmethod
@@ -22,6 +23,7 @@ from contextlib import asynccontextmanager, contextmanager, ExitStack, AsyncExit
 from dataclasses import dataclass
 from itertools import batched, pairwise
 from inspect import isawaitable, iscoroutinefunction
+from sys import _getframe
 from _thread import start_new_thread
 from time import sleep, time
 from typing import overload, Any, AsyncContextManager, ContextManager, Literal
@@ -29,6 +31,7 @@ from typing import overload, Any, AsyncContextManager, ContextManager, Literal
 from asynctools import (
     async_filter, async_map, async_reduce, async_zip, async_batched, ensure_async, ensure_aiter, 
 )
+from decotools import optional
 from texttools import format_time
 from undefined import undefined, Undefined
 
@@ -679,6 +682,21 @@ def run_gen_step_iter(
                 if close is not None:
                     close()
     return process()
+
+
+@optional
+def as_gen_step(
+    func: Callable, 
+    /, 
+    async_: bool = False, 
+    iter: bool = False, 
+) -> Callable:
+    def wrapper(*args, **kwds):
+        if iter:
+            return run_gen_step_iter(func(*args, **kwds), async_=async_) # type: ignore
+        else:
+            return run_gen_step(func(*args, **kwds), async_=async_)
+    return wrapper
 
 
 @overload
