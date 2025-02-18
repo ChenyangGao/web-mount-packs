@@ -11,7 +11,7 @@ __all__ = [
     "bytes_iter_to_reader", "bytes_iter_to_async_reader", "bytes_to_chunk_iter", 
     "bytes_to_chunk_async_iter", "bytes_ensure_part_iter", "bytes_ensure_part_async_iter", 
     "progress_bytes_iter", "progress_bytes_async_iter", "copyfileobj", "copyfileobj_async", 
-    "bound_bufferd_reader", "bound_bufferd_async_reader", 
+    "bound_bytes_reader", "bound_async_bytes_reader", 
 ]
 
 from asyncio import Lock as AsyncLock
@@ -1765,7 +1765,7 @@ async def copyfileobj_async(
                 await fdst_write(chunk)
 
 
-def bound_bufferd_reader(
+def bound_bytes_reader(
     file: SupportsRead[Buffer], 
     size: int = -1, 
 ) -> SupportsRead[Buffer]:
@@ -1799,7 +1799,7 @@ def bound_bufferd_reader(
     return Reader()
 
 
-def bound_bufferd_async_reader(
+def bound_async_bytes_reader(
     file: SupportsRead[Buffer] | SupportsRead[Awaitable[Buffer]], 
     size: int = -1, 
 ) -> SupportsRead[Awaitable[Buffer]]:
