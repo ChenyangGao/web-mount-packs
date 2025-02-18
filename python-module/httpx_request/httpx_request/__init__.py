@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 3)
 __all__ = ["request", "request_sync", "request_async"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
@@ -91,6 +91,8 @@ def request_sync(
         follow_redirects=follow_redirects, 
         stream=stream, 
     )
+    # NOTE: keep ref to prevent gc
+    setattr(resp, "session", session)
     if resp.status_code >= 400 and raise_for_status:
         resp.raise_for_status()
     if parse is None:
@@ -149,6 +151,7 @@ async def request_async(
         follow_redirects=follow_redirects, 
         stream=stream, 
     )
+    setattr(resp, "session", session)
     if resp.status_code >= 400 and raise_for_status:
         resp.raise_for_status()
     if parse is None:

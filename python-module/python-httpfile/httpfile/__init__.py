@@ -1068,33 +1068,17 @@ if find_spec("aiohttp"):
             global _aiohttp_urlopen
             from aiohttp import request, ClientSession
 
-            close_session = True
             if isinstance(urlopen, ClientSession):
                 urlopen = urlopen.get
-                close_session = False
-            if urlopen is None:
+            elif urlopen is None:
                 if _aiohttp_urlopen is None:
                     urlopen = _aiohttp_urlopen = partial(request, "GET")
                 else:
                     urlopen = _aiohttp_urlopen
-            else:
-                func = urlopen
-                if isinstance(func, partial):
-                    func = func.func
-                close_session = not (
-                    isinstance(func, MethodType) and 
-                    isinstance(func.__self__, ClientSession)
-                )
             async def urlopen_wrapper(url: str, headers: None | Mapping = headers):
-                resp = await urlopen(url, headers=headers).__aenter__()
-                async def aclose():
-                    if close_session:
-                        try:
-                            await resp._session.close()
-                        except AttributeError:
-                            pass
-                    resp.close()
-                resp.aclose = aclose
+                ctx = urlopen(url, headers=headers)
+                resp = await ctx.__aenter__()
+                resp.aclose = lambda: ctx.__aexit__(None, None, None)
                 resp.raise_for_status()
                 return resp
             await super().__ainit__(
@@ -1133,7 +1117,7 @@ if find_spec("httpx"):
             if "__del__" not in Client.__dict__:
                 setattr(Client, "__del__", lambda self: self.close())
             session = Client()
-        return session.send(
+        resp = session.send(
             request=session.build_request(
                 method=method, 
                 url=url, 
@@ -1143,6 +1127,8 @@ if find_spec("httpx"):
             follow_redirects=follow_redirects, 
             stream=stream, 
         )
+        setattr(resp, "session", session)
+        return resp
 
     async def httpx_request_async(
         url, 
@@ -1158,7 +1144,7 @@ if find_spec("httpx"):
             if "__del__" not in AsyncClient.__dict__:
                 setattr(AsyncClient, "__del__", lambda self: run_async(self.aclose()))
             session = AsyncClient()
-        return await session.send(
+        resp = await session.send(
             request=session.build_request(
                 method=method, 
                 url=url, 
@@ -1168,6 +1154,8 @@ if find_spec("httpx"):
             follow_redirects=follow_redirects, 
             stream=stream, 
         )
+        setattr(resp, "session", session)
+        return resp
 
     class HttpxFileReader(HTTPFileReader):
 

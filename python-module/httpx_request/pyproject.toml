@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "httpx_request"
-version = "0.1.2"
+version = "0.1.3"
 description = "httpx request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

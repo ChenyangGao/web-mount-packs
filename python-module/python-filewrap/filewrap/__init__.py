@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 7)
+__version__ = (0, 2, 8)
 __all__ = [
     "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", "buffer_length", 
@@ -1275,28 +1275,28 @@ def bytes_iter_to_reader(
         if at_end or not (bufsize := buffer_length(buf)):
             return 0
         with lock:
-            n = buffer_length(unconsumed)
-            if bufsize <= n:
-                buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
-                pos += bufsize
-                return bufsize
-            buf[:n] = unconsumed
-            del unconsumed[:]
+            if n := buffer_length(unconsumed):
+                if bufsize <= n:
+                    buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
+                    pos += bufsize
+                    return bufsize
+                buf[:n] = unconsumed
+                pos += n
+                del unconsumed[:]
             try:
                 while True:
-                    b = memoryview(getnext())
-                    if not b:
-                        continue
-                    m = n + buffer_length(b)
-                    if m >= bufsize:
-                        buf[n:] = b[:bufsize-n]
-                        unconsumed += b[bufsize-n:]
-                        pos += bufsize
-                        return bufsize
-                    else:
-                        buf[n:m] = b
-                        pos += buffer_length(b)
-                        n = m
+                    if b := memoryview(getnext()):
+                        m = n + len(b)
+                        if m >= bufsize:
+                            delta = bufsize - n
+                            buf[n:] = b[:delta]
+                            unconsumed += b[delta:]
+                            pos += delta
+                            return bufsize
+                        else:
+                            buf[n:m] = b
+                            pos += len(b)
+                            n = m
             except StopIteration:
                 at_end = True
                 return n
@@ -1401,15 +1401,7 @@ def bytes_iter_to_async_reader(
         except:
             pass
     def close():
-        nonlocal at_end
-        try:
-            method = getattr(it, "aclose")
-        except AttributeError:
-            method = getattr(it, "close")
-        ret = method()
-        if isawaitable(ret):
-            run_async(ret)
-        at_end = True
+        run_async(aclose())
     async def aclose():
         nonlocal at_end
         try:
@@ -1452,28 +1444,28 @@ def bytes_iter_to_async_reader(
         if at_end or not (bufsize := buffer_length(buf)):
             return 0
         async with lock:
-            n = buffer_length(unconsumed)
-            if bufsize <= n:
-                buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
-                pos += bufsize
-                return bufsize
-            buf[:n] = unconsumed
-            del unconsumed[:]
+            if n := buffer_length(unconsumed):
+                if bufsize <= n:
+                    buf[:], unconsumed = unconsumed[:bufsize], unconsumed[bufsize:]
+                    pos += bufsize
+                    return bufsize
+                buf[:n] = unconsumed
+                pos += n
+                del unconsumed[:]
             try:
                 while True:
-                    b = memoryview(await getnext())
-                    if not b:
-                        continue
-                    m = n + buffer_length(b)
-                    if m >= bufsize:
-                        buf[n:] = b[:bufsize-n]
-                        unconsumed += b[bufsize-n:]
-                        pos += bufsize
-                        return bufsize
-                    else:
-                        buf[n:m] = b
-                        pos += buffer_length(b)
-                        n = m
+                    if b := memoryview(await getnext()):
+                        m = n + len(b)
+                        if m >= bufsize:
+                            delta = bufsize - n
+                            buf[n:] = b[:delta]
+                            unconsumed += b[delta:]
+                            pos += delta
+                            return bufsize
+                        else:
+                            buf[n:m] = b
+                            pos += len(b)
+                            n = m
             except (StopIteration, StopAsyncIteration):
                 at_end = True
                 return n
