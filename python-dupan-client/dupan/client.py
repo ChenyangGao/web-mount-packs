@@ -10,26 +10,36 @@ import errno
 
 from base64 import b64encode
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterator, Mapping
-from functools import cached_property, partial
+from collections.abc import (
+    AsyncIterator, Awaitable, Buffer, Callable, Coroutine, ItemsView, Iterable, 
+    Iterator, Mapping, MutableMapping, 
+)
+from functools import partial
+from http.cookiejar import Cookie, CookieJar
+from http.cookies import Morsel
 from itertools import count
 from os import isatty
 from posixpath import join as joinpath
 from re import compile as re_compile
-from typing import cast, overload, Any, Final, Literal, TypedDict
-from urllib.parse import parse_qsl, unquote, urlencode, urlparse
+from typing import cast, overload, Any, Final, Literal
+from urllib.parse import parse_qsl, unquote, urlparse
 from uuid import uuid4
 
-from cookietools import cookies_str_to_dict
+from cookietools import cookies_str_to_dict, create_cookie
 from ddddocr import DdddOcr # type: ignore
-from iterutils import run_gen_step
+from ed2k import ed2k_hash, ed2k_hash_async, Ed2kHash
+from hashtools import HashObj, file_digest, file_mdigest, file_digest_async, file_mdigest_async
+from httpfile import HTTPFileReader, AsyncHTTPFileReader
+from http_response import get_total_length
+from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from lxml.html import fromstring, tostring, HtmlElement
 from orjson import dumps, loads
+from property import locked_cacheproperty
 from qrcode import QRCode # type: ignore
 from startfile import startfile, startfile_async # type: ignore
 from texttools import text_within
 
-from exception import check_response
+from .exception import check_response, DuPanOSError
 
 
 # 默认的请求函数
@@ -38,104 +48,35 @@ _httpx_request = None
 # https://alist.nn.ci/guide/drivers/baidu.html
 CLIENT_ID = "iYCeC9g08h5vuP9UqvPHKKSVrKFXGa1v"
 CLIENT_SECRET = "jXiFMOPVPCWlO2M5CwWQzffpNPaGTRBG"
-# 百度网盘 errno 对应的信息
-ERRNO_TO_MESSAGE: Final[dict[int, str]] = {
-    0: "成功", 
-    -1: "由于您分享了违反相关法律法规的文件，分享功能已被禁用，之前分享出去的文件不受影响。", 
-    -2: "用户不存在,请刷新页面后重试", 
-    -3: "文件不存在,请刷新页面后重试", 
-    -4: "登录信息有误，请重新登录试试", 
-    -5: "host_key和user_key无效", 
-    -6: "请重新登录", 
-    -7: "该分享已删除或已取消", 
-    -8: "该分享已经过期", 
-    -9: "访问密码错误", 
-    -10: "分享外链已经达到最大上限100000条，不能再次分享", 
-    -11: "验证cookie无效", 
-    -12: "参数错误", 
-    -14: "对不起，短信分享每天限制20条，你今天已经分享完，请明天再来分享吧！", 
-    -15: "对不起，邮件分享每天限制20封，你今天已经分享完，请明天再来分享吧！", 
-    -16: "对不起，该文件已经限制分享！", 
-    -17: "文件分享超过限制", 
-    -21: "预置文件无法进行相关操作", 
-    -30: "文件已存在", 
-    -31: "文件保存失败", 
-    -33: "一次支持操作999个，减点试试吧", 
-    -32: "你的空间不足了哟", 
-    -62: "需要验证码或者验证码错误", 
-    -70: "你分享的文件中包含病毒或疑似病毒，为了你和他人的数据安全，换个文件分享吧", 
-    2: "参数错误", 
-    3: "未登录或帐号无效", 
-    4: "存储好像出问题了，请稍候再试", 
-    108: "文件名有敏感词，优化一下吧", 
-    110: "分享次数超出限制，可以到“我的分享”中查看已分享的文件链接", 
-    114: "当前任务不存在，保存失败", 
-    115: "该文件禁止分享", 
-    112: '页面已过期，请<a href="javascript:window.location.reload();">刷新</a>后重试', 
-    9100: '你的帐号存在违规行为，已被冻结，<a href="/disk/appeal" target="_blank">查看详情</a>', 
-    9200: '你的帐号存在违规行为，已被冻结，<a href="/disk/appeal" target="_blank">查看详情</a>', 
-    9300: '你的帐号存在违规行为，该功能暂被冻结，<a href="/disk/appeal" target="_blank">查看详情</a>', 
-    9400: '你的帐号异常，需验证后才能使用该功能，<a href="/disk/appeal" target="_blank">立即验证</a>', 
-    9500: '你的帐号存在安全风险，已进入保护模式，请修改密码后使用，<a href="/disk/appeal" target="_blank">查看详情</a>', 
-    90003: "暂无目录管理权限", 
-}
-SHARE_ERRORTYPE_TO_MESSAGE: Final[dict[int, str]] = {
-    0: "啊哦，你来晚了，分享的文件已经被删除了，下次要早点哟。", 
-    1: "啊哦，你来晚了，分享的文件已经被取消了，下次要早点哟。", 
-    2: "此链接分享内容暂时不可访问", 
-    3: "此链接分享内容可能因为涉及侵权、色情、反动、低俗等信息，无法访问！", 
-    5: "啊哦！链接错误没找到文件，请打开正确的分享链接!", 
-    10: "啊哦，来晚了，该分享文件已过期", 
-    11: "由于访问次数过多，该分享链接已失效", 
-    12: "因该分享含有自动备份目录，暂无法查看", 
-    15: "系统升级，链接暂时无法查看，升级完成后恢复正常。", 
-    17: "该链接访问范围受限，请使用正常的访问方式", 
-    123: "该链接已超过访问人数上限，可联系分享者重新分享", 
-    124: "您访问的链接已被冻结，可联系分享者进行激活", 
-    -1: "分享的文件不存在。", 
-}
+ED2K_NAME_TRANSTAB: Final = dict(zip(b"/|", ("%2F", "%7C")))
 
 
-class VCodeResult(TypedDict, total=True):
-    vcode: str
-    vcode_str: str
+def convert_digest(digest, /):
+    if isinstance(digest, str):
+        if digest == "crc32":
+            from binascii import crc32
+            digest = lambda: crc32
+        elif digest == "ed2k":
+            digest = Ed2kHash()
+    return digest
 
 
-# TODO: 支持同步和异步
-def decaptcha(
-    ocr: Callable[[bytes], str] = DdddOcr(beta=True, show_ad=False).classification, 
+def items(m: Mapping, /) -> ItemsView:
+    try:
+        if isinstance((items := getattr(m, "items")()), ItemsView):
+            return items
+    except (AttributeError, TypeError):
+        pass
+    return ItemsView(m)
+
+
+def make_ed2k_url(
+    name: str, 
+    size: int | str, 
+    hash: str, 
     /, 
-    min_confirm: int = 2, 
-) -> VCodeResult:
-    "识别百度网盘的验证码"
-    url = "https://pan.baidu.com/api/getcaptcha?prod=shareverify&web=1&clienttype=0"
-    with get(url) as resp:
-        resp.raise_for_status()
-        data = resp.json()
-    vcode_img: str = data["vcode_img"]
-    vcode_str: str = data["vcode_str"]
-    counter: dict[str, int] = {}
-    while True:
-        try:
-            with get(vcode_img, timeout=5) as resp:
-                resp.raise_for_status()
-                content = resp.content
-        except:
-            continue
-        res = ocr(content)
-        if len(res) != 4 or not res.isalnum():
-            continue
-        if min_confirm <= 1:
-            return {"vcode": res, "vcode_str": vcode_str}
-        m = counter.get(res, 0) + 1
-        if m >= min_confirm:
-            return {"vcode": res, "vcode_str": vcode_str}
-        counter[res] = m
-
-
-
-
-
+) -> str:
+    return f"ed2k://|file|{name.translate(ED2K_NAME_TRANSTAB)}|{size}|{hash}|/"
 
 
 def get_default_request():
@@ -147,50 +88,24 @@ def get_default_request():
 
 
 def default_parse(resp, content: Buffer, /):
-    from orjson import loads
     if isinstance(content, (bytes, bytearray, memoryview)):
         return loads(content)
     else:
         return loads(memoryview(content))
 
 
-class DuPanClient:
-
-    def __init__(
-        self, 
-        /, 
-        cookies: None | str | Mapping[str, None | str] | Iterable[Mapping | Cookie | Morsel] = None, 
-        console_qrcode: bool = True, 
-    ):
-        if cookies is None:
-            self.login_with_qrcode(console_qrcode=console_qrcode)
-        else:
-            self.cookies = cookies
+class HTTPXClientMixin:
 
     def __del__(self, /):
         self.close()
 
-    def __eq__(self, other, /) -> bool:
-        try:
-            return (
-                type(self) is type(other) and 
-                self.baiduid == other.baiduid and 
-                self.bdstoken == other.bdstoken
-            )
-        except AttributeError:
-            return False
-
-    def __hash__(self, /) -> int:
-        return id(self)
-
-    @cached_property
+    @locked_cacheproperty
     def session(self, /):
         """同步请求的 session 对象
         """
         import httpx_request
-        from httpx import Client, HTTPTransport, Limits
+        from httpx import Client, HTTPTransport
         session = Client(
-            limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
             transport=HTTPTransport(retries=5), 
             verify=False, 
         )
@@ -198,14 +113,13 @@ class DuPanClient:
         setattr(session, "_cookies", self.cookies)
         return session
 
-    @cached_property
+    @locked_cacheproperty
     def async_session(self, /):
         """异步请求的 session 对象
         """
         import httpx_request
-        from httpx import AsyncClient, AsyncHTTPTransport, Limits
+        from httpx import AsyncClient, AsyncHTTPTransport
         session = AsyncClient(
-            limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
             transport=AsyncHTTPTransport(retries=5), 
             verify=False, 
         )
@@ -276,7 +190,7 @@ class DuPanClient:
             if cookie.domain == "baidu.com" or cookie.domain.endswith(".baidu.com")
         )
 
-    @cached_property
+    @locked_cacheproperty
     def headers(self, /) -> MutableMapping:
         """请求头，无论同步还是异步请求都共用这个请求头
         """
@@ -287,6 +201,12 @@ class DuPanClient:
             "connection": "keep-alive", 
             "user-agent": "Mozilla/5.0 AppleWebKit/600 Safari/600 Chrome/124.0.0.0", 
         })
+
+    def close(self, /) -> None:
+        """删除 session 和 async_session 属性，如果它们未被引用，则应该会被自动清理
+        """
+        self.__dict__.pop("session", None)
+        self.__dict__.pop("async_session", None)
 
     def request(
         self, 
@@ -326,29 +246,80 @@ class DuPanClient:
                 **request_kwargs, 
             )
 
-    @cached_property
+
+class DuPanClient(HTTPXClientMixin):
+
+    def __init__(
+        self, 
+        /, 
+        cookies: None | str | Mapping[str, None | str] | Iterable[Mapping | Cookie | Morsel] = None, 
+        console_qrcode: bool = True, 
+    ):
+        if cookies is None:
+            self.login_with_qrcode(console_qrcode=console_qrcode)
+        else:
+            self.cookies = cookies
+
+    def __eq__(self, other, /) -> bool:
+        try:
+            return (
+                type(self) is type(other) and 
+                self.baiduid == other.baiduid and 
+                self.bdstoken == other.bdstoken
+            )
+        except AttributeError:
+            return False
+
+    def __hash__(self, /) -> int:
+        return id(self)
+
+    @locked_cacheproperty
+    def session(self, /):
+        """同步请求的 session 对象
+        """
+        import httpx_request
+        from httpx import Client, HTTPTransport, Limits
+        session = Client(
+            limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
+            transport=HTTPTransport(retries=5), 
+            verify=False, 
+        )
+        setattr(session, "_headers", self.headers)
+        setattr(session, "_cookies", self.cookies)
+        return session
+
+    @locked_cacheproperty
+    def async_session(self, /):
+        """异步请求的 session 对象
+        """
+        import httpx_request
+        from httpx import AsyncClient, AsyncHTTPTransport, Limits
+        session = AsyncClient(
+            limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
+            transport=AsyncHTTPTransport(retries=5), 
+            verify=False, 
+        )
+        setattr(session, "_headers", self.headers)
+        setattr(session, "_cookies", self.cookies)
+        return session
+
+    @locked_cacheproperty
     def baiduid(self, /) -> str:
         return self.cookies["BAIDUID"]
 
-    @cached_property
+    @locked_cacheproperty
     def bdstoken(self, /) -> str:
         resp = self.get_templatevariable("bdstoken")
         check_response(resp)
         return resp["result"]["bdstoken"]
 
-    @cached_property
+    @locked_cacheproperty
     def logid(self, /) -> str:
         return b64encode(self.baiduid.encode("ascii")).decode("ascii")
 
-    @cached_property
+    @locked_cacheproperty
     def sign_and_timestamp(self, /) -> dict:
         return self.get_sign_and_timestamp()
-
-    def close(self, /) -> None:
-        """删除 session 和 async_session 属性，如果它们未被引用，则应该会被自动清理
-        """
-        self.__dict__.pop("session", None)
-        self.__dict__.pop("async_session", None)
 
     @overload
     def login_with_qrcode(
@@ -470,9 +441,9 @@ class DuPanClient:
         url = "https://pan.baidu.com/disk/cmsdata?clienttype=0&web=1&do=client"
         request_kwargs.setdefault("parse", default_parse)
         if request is None:
-            return get_default_request()(url=api, async_=async_, **request_kwargs)
+            return get_default_request()(url=url, async_=async_, **request_kwargs)
         else:
-            return request(url=api, **request_kwargs)
+            return request(url=url, **request_kwargs)
 
     @overload
     def fs_copy(
@@ -502,7 +473,7 @@ class DuPanClient:
         /, 
         params: None | dict = None, 
         *, 
-        async_: Literal[True], 
+        async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """复制
@@ -530,7 +501,7 @@ class DuPanClient:
             params = {"opera": "copy"}
         elif params.get("opera") != "copy":
             params = {**params, "opera": "copy"}
-        return self.filemanager(params, payload, async_=async_, **request_kwargs)
+        return self.fs_filemanager(params, payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_delete(
@@ -583,7 +554,7 @@ class DuPanClient:
             params = {"opera": "delete"}
         elif params.get("opera") != "delete":
             params = {**params, "opera": "delete"}
-        return self.filemanager(params, payload, async_=async_, **request_kwargs)
+        return self.fs_filemanager(params, payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_filemanager(
@@ -628,7 +599,7 @@ class DuPanClient:
             - ondup: "newcopy" | "overwrite" = "newcopy"
 
         :data:
-            - filelist: list 💡 JSON array
+            - filelist: str 💡 JSON array
         """
         api = "https://pan.baidu.com/api/filemanager"
         if isinstance(params, str):
@@ -684,7 +655,7 @@ class DuPanClient:
         GET https://pan.baidu.com/api/filemetas
 
         :payload:
-            - target: str 💡 JSON array
+            - target: str 💡 路径列表，JSON array
             - dlink: 0 | 1 = 1
         """
         api = "https://pan.baidu.com/api/filemetas"
@@ -734,7 +705,7 @@ class DuPanClient:
         :payload:
             - dir: str = "/"  💡 目录路径
             - desc: 0 | 1 = 0 💡 是否逆序
-            - order: "name" | "time" | "size" = "name" 💡 排序方式
+            - order: "name" | "time" | "size" | "other" = "name" 💡 排序方式
             - num: int = 100 💡 分页大小
             - page: int = 1 💡 第几页，从 1 开始
             - limit: int = <default> 💡 最大返回数量，优先级高于 `num`
@@ -854,7 +825,7 @@ class DuPanClient:
             params = {"opera": "move"}
         elif params.get("opera") != "move":
             params = {**params, "opera": "move"}
-        return self.filemanager(params, payload, async_=async_, **request_kwargs)
+        return self.fs_filemanager(params, payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_rename(
@@ -911,7 +882,7 @@ class DuPanClient:
             params = {"opera": "rename"}
         elif params.get("opera") != "rename":
             params = {**params, "opera": "rename"}
-        return self.filemanager(params, payload, async_=async_, **request_kwargs)
+        return self.fs_filemanager(params, payload, async_=async_, **request_kwargs)
 
     @overload
     def fs_taskquery(
@@ -958,91 +929,6 @@ class DuPanClient:
         else:
             payload = {"clienttype": 0, "web": 1, **payload}
         return self.request(api, params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_transfer(
-        self, 
-        /, 
-        url: str, 
-        params: dict = {}, 
-        data: None | str | int | Iterable[int] | dict = None, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_transfer(
-        self, 
-        /, 
-        url: str, 
-        params: dict = {}, 
-        data: None | str | int | Iterable[int] | dict = None, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_transfer(
-        self, 
-        /, 
-        url: str, 
-        params: dict = {}, 
-        data: None | int | str | Iterable[int] | dict = None, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """转存
-
-        POST https://pan.baidu.com/share/transfer
-
-        :params:
-            - shareid: int | str 💡 分享 id
-            - from: int | str    💡 分享者的用户 id
-            - sekey: str = ""    💡 安全码
-            - async: 0 | 1 = 1   💡 是否异步
-            - bdstoken: str = <default>
-            - ondup: "overwrite" | "newcopy" = <default>
-
-        :data:
-            - fsidlist: str # JSON array
-            - path: str = "/"
-        """
-        def gen_step():
-            api = "https://pan.baidu.com/share/transfer"
-            sl = DuPanShareList(url)
-            if data is None:
-                flist = yield sl.list_index(async_=async_, **request_kwargs)
-                data = {"fsidlist": "[%s]" % ",".join(f["fs_id"] for f in flist)}
-            elif isinstance(data, str):
-                data = {"fsidlist": data}
-            elif isinstance(data, int):
-                data = {"fsidlist": "[%s]" % data}
-            elif not isinstance(data, dict):
-                data = {"fsidlist": "[%s]" % ",".join(map(str, data))}
-            elif "fsidlist" not in data:
-                flist = yield sl.list_index(async_=async_, **request_kwargs)
-                data["fsidlist"] = "[%s]" % ",".join(f["fs_id"] for f in flist)
-            elif isinstance(data["fsidlist"], (list, tuple)):
-                data["fsidlist"] = "[%s]" % ",".join(map(str, data["fsidlist"]))
-            data.setdefault("path", "/")
-            if frozenset(("shareid", "from")) - params.keys():
-                params.update({
-                    "shareid": sl.share_id, 
-                    "from": sl.share_uk, 
-                    "sekey": sl.randsk, 
-                })
-            params = {
-                "async": 1, 
-                "bdstoken": self.bdstoken, 
-                "clienttype": 0, 
-                "web": 1, 
-                **params, 
-            }
-            request_kwargs["headers"] = dict(request_kwargs.get("headers") or {}, Referer=url)
-            return self.request(url=api, method="POST", params=params, data=data, async_=async_, **request_kwargs)
-        return run_gen_step(gen_step, async_=async_)
 
     @overload
     def get_sign_and_timestamp(
@@ -1132,7 +1018,7 @@ class DuPanClient:
             "sign1", "sign2", "sign3", "timestamp", "bdstoken", "isPcShareIdWhiteList", "openlogo", "pcShareIdFrom", ...
 
         payload:
-            - fields: str # JSON array
+            - fields: str # 字段列表，JSON array
         """
         api = "https://pan.baidu.com/api/gettemplatevariable"
         if isinstance(payload, str):
@@ -1173,7 +1059,7 @@ class DuPanClient:
         GET https://pan.baidu.com/api/download
 
         :payload:
-            - fidlist: str 💡 JSON array
+            - fidlist: str 💡 文件 id 列表，JSON array
             - type: str = "dlink"
         """
         api = "https://pan.baidu.com/api/download"
@@ -1334,7 +1220,8 @@ class DuPanClient:
             payload: list[tuple] = []
             grant_permissions: list[str] = []
             el: HtmlElement
-            for el in fromstring(resp).xpath('//form[@name="scopes"]//input'):
+            input_els = cast(list[HtmlElement], fromstring(resp).xpath('//form[@name="scopes"]//input'))
+            for el in input_els:
                 name, value = el.name, el.value
                 if name == "grant_permissions_arr":
                     grant_permissions.append(value)
@@ -1399,6 +1286,92 @@ class DuPanClient:
                 "redirect_uri": "oob", 
             }
             return self.request(url=api, params=params, async_=async_, **request_kwargs)
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def share_transfer(
+        self, 
+        /, 
+        url: str, 
+        params: dict = {}, 
+        data: None | str | int | Iterable[int] | dict = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def share_transfer(
+        self, 
+        /, 
+        url: str, 
+        params: dict = {}, 
+        data: None | str | int | Iterable[int] | dict = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def share_transfer(
+        self, 
+        /, 
+        url: str, 
+        params: dict = {}, 
+        data: None | int | str | Iterable[int] | dict = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """转存
+
+        POST https://pan.baidu.com/share/transfer
+
+        :params:
+            - shareid: int | str 💡 分享 id
+            - from: int | str    💡 分享者的用户 id
+            - sekey: str = ""    💡 安全码
+            - async: 0 | 1 = 1   💡 是否异步
+            - bdstoken: str = <default>
+            - ondup: "overwrite" | "newcopy" = <default>
+
+        :data:
+            - fsidlist: str # 文件 id 列表，JSON array
+            - path: str = "/"
+        """
+        def gen_step():
+            nonlocal params, data
+            api = "https://pan.baidu.com/share/transfer"
+            share_list = DuPanShareList(url)
+            if data is None:
+                resp = yield share_list.fs_list_root(async_=async_, **request_kwargs)
+                data = {"fsidlist": "[%s]" % ",".join(str(f["fs_id"]) for f in resp["file_list"])}
+            elif isinstance(data, str):
+                data = {"fsidlist": data}
+            elif isinstance(data, int):
+                data = {"fsidlist": "[%s]" % data}
+            elif not isinstance(data, dict):
+                data = {"fsidlist": "[%s]" % ",".join(map(str, data))}
+            elif "fsidlist" not in data:
+                resp = yield share_list.fs_list_root(async_=async_, **request_kwargs)
+                data["fsidlist"] = "[%s]" % ",".join(str(f["fs_id"]) for f in resp["file_list"])
+            elif isinstance(data["fsidlist"], (list, tuple)):
+                data["fsidlist"] = "[%s]" % ",".join(map(str, data["fsidlist"]))
+            data.setdefault("path", "/")
+            if frozenset(("shareid", "from")) - params.keys():
+                params.update({
+                    "shareid": share_list.share_id, 
+                    "from": share_list.share_uk, 
+                    "sekey": share_list.randsk, 
+                })
+            params = {
+                "async": 1, 
+                "bdstoken": self.bdstoken, 
+                "clienttype": 0, 
+                "web": 1, 
+                **params, 
+            }
+            request_kwargs["headers"] = dict(request_kwargs.get("headers") or {}, Referer=url)
+            return self.request(url=api, method="POST", params=params, data=data, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -1521,7 +1494,480 @@ class DuPanClient:
         return self.request(url=api, async_=async_, **request_kwargs)
 
 
-class DuPanShareList:
+    @overload
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        headers: None | Mapping = None, 
+        http_file_reader_cls: None | type[HTTPFileReader] = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> HTTPFileReader:
+        ...
+    @overload
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        headers: None | Mapping = None, 
+        http_file_reader_cls: None | type[AsyncHTTPFileReader] = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> AsyncHTTPFileReader:
+        ...
+    def open(
+        self, 
+        /, 
+        url: str | Callable[[], str] | Callable[[], Awaitable[str]], 
+        start: int = 0, 
+        seek_threshold: int = 1 << 20, 
+        headers: None | Mapping = None, 
+        http_file_reader_cls: None | type[HTTPFileReader] | type[AsyncHTTPFileReader] = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> HTTPFileReader | AsyncHTTPFileReader:
+        """打开下载链接，返回文件对象
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+
+            - P115Client.download_url
+            - P115Client.share_download_url
+            - P115Client.extract_download_url
+
+        :param start: 开始索引
+        :param seek_threshold: 当向前 seek 的偏移量不大于此值时，调用 read 来移动文件位置（可避免重新建立连接）
+        :param http_file_reader_cls: 返回的文件对象的类，需要是 `httpfile.HTTPFileReader` 的子类
+        :param headers: 请求头
+        :param async_: 是否异步
+
+        :return: 返回打开的文件对象，可以读取字节数据
+        """
+        if headers is None:
+            headers = self.headers
+        else:
+            headers = {**self.headers, **headers}
+        if async_:
+            if http_file_reader_cls is None:
+                from httpfile import AsyncHttpxFileReader
+                http_file_reader_cls = AsyncHttpxFileReader
+            return http_file_reader_cls(
+                url, # type: ignore
+                headers=headers, 
+                start=start, 
+                seek_threshold=seek_threshold, 
+            )
+        else:
+            if http_file_reader_cls is None:
+                http_file_reader_cls = HTTPFileReader
+            return http_file_reader_cls(
+                url, # type: ignore
+                headers=headers, 
+                start=start, 
+                seek_threshold=seek_threshold, 
+            )
+
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        name: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> str:
+        ...
+    @overload
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        name: str = "", 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, str]:
+        ...
+    def ed2k(
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        headers: None | Mapping = None, 
+        name: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> str | Coroutine[Any, Any, str]:
+        """下载文件流并生成它的 ed2k 链接
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param headers: 请求头
+        :param name: 文件名
+        :param async_: 是否异步
+
+        :return: 文件的 ed2k 链接
+        """
+        trantab = dict(zip(b"/|", ("%2F", "%7C")))
+        if async_:
+            async def request():
+                async with self.open(url, headers=headers, async_=True) as file:
+                    return make_ed2k_url(name or file.name, *(await ed2k_hash_async(file)))
+            return request()
+        else:
+            with self.open(url, headers=headers) as file:
+                return make_ed2k_url(name or file.name, *ed2k_hash(file))
+
+    @overload
+    def hash[T](
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] = "md5", 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+    ) -> tuple[int, HashObj | T]:
+        ...
+    @overload
+    def hash[T](
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, tuple[int, HashObj | T]]:
+        ...
+    def hash[T](
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+    ) -> tuple[int, HashObj | T] | Coroutine[Any, Any, tuple[int, HashObj | T]]:
+        """下载文件流并用一种 hash 算法求值
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param digest: hash 算法
+
+            - 如果是 str，则可以是 `hashlib.algorithms_available` 中任一，也可以是 "ed2k" 或 "crc32"
+            - 如果是 HashObj (来自 python-hashtools)，就相当于是 `_hashlib.HASH` 类型，需要有 update 和 digest 等方法
+            - 如果是 Callable，则返回值必须是 HashObj，或者是一个可用于累计的函数，第 1 个参数是本次所传入的字节数据，第 2 个参数是上一次的计算结果，返回值是这一次的计算结果，第 2 个参数可省略
+
+        :param start: 开始索引，可以为负数（从文件尾部开始）
+        :param stop: 结束索引（不含），可以为负数（从文件尾部开始）
+        :param headers: 请求头
+        :param async_: 是否异步
+
+        :return: 元组，包含文件的 大小 和 hash 计算结果
+        """
+        digest = convert_digest(digest)
+        if async_:
+            async def request():
+                nonlocal stop
+                async with self.open(url, start=start, headers=headers, async_=True) as file: # type: ignore
+                    if stop is None:
+                        return await file_digest_async(file, digest)
+                    else:
+                        if stop < 0:
+                            stop += file.length
+                        return await file_digest_async(file, digest, stop=max(0, stop-start)) # type: ignore
+            return request()
+        else:
+            with self.open(url, start=start, headers=headers) as file:
+                if stop is None:
+                    return file_digest(file, digest) # type: ignore
+                else:
+                    if stop < 0:
+                        stop = stop + file.length
+                    return file_digest(file, digest, stop=max(0, stop-start)) # type: ignore
+
+    @overload
+    def hashes[T](
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] = "md5", 
+        *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]], 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        async_: Literal[False] = False, 
+    ) -> tuple[int, list[HashObj | T]]:
+        ...
+    @overload
+    def hashes[T](
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]], 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        async_: Literal[True], 
+    ) -> Coroutine[Any, Any, tuple[int, list[HashObj | T]]]:
+        ...
+    def hashes[T](
+        self, 
+        /, 
+        url: str | Callable[[], str], 
+        digest: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]] = "md5", 
+        *digests: str | HashObj | Callable[[], HashObj] | Callable[[], Callable[[bytes, T], T]] | Callable[[], Callable[[bytes, T], Awaitable[T]]], 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        async_: Literal[False, True] = False, 
+    ) -> tuple[int, list[HashObj | T]] | Coroutine[Any, Any, tuple[int, list[HashObj | T]]]:
+        """下载文件流并用一组 hash 算法求值
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param digest: hash 算法
+
+            - 如果是 str，则可以是 `hashlib.algorithms_available` 中任一，也可以是 "ed2k" 或 "crc32"
+            - 如果是 HashObj (来自 python-hashtools)，就相当于是 `_hashlib.HASH` 类型，需要有 update 和 digest 等方法
+            - 如果是 Callable，则返回值必须是 HashObj，或者是一个可用于累计的函数，第 1 个参数是本次所传入的字节数据，第 2 个参数是上一次的计算结果，返回值是这一次的计算结果，第 2 个参数可省略
+
+        :param digests: 同 `digest`，但可以接受多个
+        :param start: 开始索引，可以为负数（从文件尾部开始）
+        :param stop: 结束索引（不含），可以为负数（从文件尾部开始）
+        :param headers: 请求头
+        :param async_: 是否异步
+
+        :return: 元组，包含文件的 大小 和一组 hash 计算结果
+        """
+        digests = (convert_digest(digest), *map(convert_digest, digests))
+        if async_:
+            async def request():
+                nonlocal stop
+                async with self.open(url, start=start, headers=headers, async_=True) as file: # type: ignore
+                    if stop is None:
+                        return await file_mdigest_async(file, *digests)
+                    else:
+                        if stop < 0:
+                            stop += file.length
+                        return await file_mdigest_async(file *digests, stop=max(0, stop-start)) # type: ignore
+            return request()
+        else:
+            with self.open(url, start=start, headers=headers) as file:
+                if stop is None:
+                    return file_mdigest(file, *digests) # type: ignore
+                else:
+                    if stop < 0:
+                        stop = stop + file.length
+                    return file_mdigest(file, *digests, stop=max(0, stop-start)) # type: ignore
+
+    @overload
+    def read_bytes(
+        self, 
+        /, 
+        url: str, 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def read_bytes(
+        self, 
+        /, 
+        url: str, 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def read_bytes(
+        self, 
+        /, 
+        url: str, 
+        start: int = 0, 
+        stop: None | int = None, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        """读取文件一定索引范围的数据
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param start: 开始索引，可以为负数（从文件尾部开始）
+        :param stop: 结束索引（不含），可以为负数（从文件尾部开始）
+        :param headers: 请求头
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+        """
+        def gen_step():
+            def get_bytes_range(start, stop):
+                if start < 0 or (stop and stop < 0):
+                    length: int = yield self.read_bytes_range(
+                        url, 
+                        bytes_range="-1", 
+                        headers=headers, 
+                        async_=async_, 
+                        **{**request_kwargs, "parse": lambda resp: get_total_length(resp)}, 
+                    )
+                    if start < 0:
+                        start += length
+                    if start < 0:
+                        start = 0
+                    if stop is None:
+                        return f"{start}-"
+                    elif stop < 0:
+                        stop += length
+                if stop is None:
+                    return f"{start}-"
+                elif start >= stop:
+                    return None
+                return f"{start}-{stop-1}"
+            bytes_range = yield from get_bytes_range(start, stop)
+            if not bytes_range:
+                return b""
+            return self.read_bytes_range(
+                url, 
+                bytes_range=bytes_range, 
+                headers=headers, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def read_bytes_range(
+        self, 
+        /, 
+        url: str, 
+        bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def read_bytes_range(
+        self, 
+        /, 
+        url: str, 
+        bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def read_bytes_range(
+        self, 
+        /, 
+        url: str, 
+        bytes_range: str = "0-", 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        """读取文件一定索引范围的数据
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param bytes_range: 索引范围，语法符合 `HTTP Range Requests <https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests>`_
+        :param headers: 请求头
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+        """
+        headers = dict(headers) if headers else {}
+        if headers_extra := getattr(url, "headers", None):
+            headers.update(headers_extra)
+        headers["Accept-Encoding"] = "identity"
+        headers["Range"] = f"bytes={bytes_range}"
+        request_kwargs["headers"] = headers
+        request_kwargs.setdefault("method", "GET")
+        request_kwargs.setdefault("parse", False)
+        return self.request(url, async_=async_, **request_kwargs)
+
+    @overload
+    def read_block(
+        self, 
+        /, 
+        url: str, 
+        size: int = -1, 
+        offset: int = 0, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> bytes:
+        ...
+    @overload
+    def read_block(
+        self, 
+        /, 
+        url: str, 
+        size: int = -1, 
+        offset: int = 0, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, bytes]:
+        ...
+    def read_block(
+        self, 
+        /, 
+        url: str, 
+        size: int = -1, 
+        offset: int = 0, 
+        headers: None | Mapping = None, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> bytes | Coroutine[Any, Any, bytes]:
+        """读取文件一定索引范围的数据
+
+        :param url: 115 文件的下载链接（可以从网盘、网盘上的压缩包内、分享链接中获取）
+        :param size: 读取字节数（最多读取这么多字节，如果遇到 EOF (end-of-file)，则会小于这个值），如果小于 0，则读取到文件末尾
+        :param offset: 偏移索引，从 0 开始，可以为负数（从文件尾部开始）
+        :param headers: 请求头
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+        """
+        def gen_step():
+            if size == 0:
+                return b""
+            elif size > 0:
+                stop: int | None = offset + size
+            else:
+                stop = None
+            return self.read_bytes(
+                url, 
+                start=offset, 
+                stop=stop, 
+                headers=headers, 
+                async_=async_, 
+                **request_kwargs, 
+            )
+        return run_gen_step(gen_step, async_=async_)
+
+
+class DuPanShareList(HTTPXClientMixin):
 
     def __init__(self, url: str, password: str = ""):
         if url.startswith(("http://", "https://")):
@@ -1538,20 +1984,27 @@ class DuPanShareList:
         self.url = url
         self.shorturl = shorturl
         self.password = password
-        session = self.session = Session()
-        session.headers["Referer"] = url
+        self.headers["Referer"] = url
+
+    async def __aiter__(self, /) -> AsyncIterator[dict]:
+        dq: deque[str] = deque()
+        get, put = dq.popleft, dq.append
+        put("/")
+        while dq:
+            async for item in self.iterdir(get(), async_=True):
+                yield item
+                if item["isdir"]:
+                    put(item["path"])
 
     def __iter__(self, /) -> Iterator[dict]:
-        dq: deque[tuple[str, str]] = deque()
+        dq: deque[str] = deque()
         get, put = dq.popleft, dq.append
-        put(("", ""))
+        put("/")
         while dq:
-            dir, dir_relpath = get()
-            for file in self.iterdir(dir):
-                relpath = file["relpath"] = joinpath(dir_relpath, file["server_filename"])
-                yield file
-                if file["isdir"]:
-                    put((file["path"], relpath))
+            for item in self.iterdir(get()):
+                yield item
+                if item["isdir"]:
+                    put(item["path"])
 
     @staticmethod
     def _extract_from_url(url: str, /) -> tuple[str, str]:
@@ -1599,142 +2052,205 @@ class DuPanShareList:
         except:
             return None
 
-    @cached_property
+    @locked_cacheproperty
     def root(self, /):
-        self.list_index()
+        self.fs_list_root()
         return self.__dict__["root"]
 
-    @cached_property
+    @locked_cacheproperty
     def root2(self, /):
-        self.list_index()
+        self.fs_list_root()
         return self.__dict__["root2"]
 
-    @cached_property
+    @locked_cacheproperty
     def randsk(self, /) -> str:
-        self.list_index()
-        return unquote(self.session.cookies.get("BDCLND", ""))
+        self.fs_list_root()
+        return unquote(self.cookies.get("BDCLND", ""))
 
-    @cached_property
+    @locked_cacheproperty
     def share_id(self, /):
-        self.list_index()
+        self.fs_list_root()
         return self.__dict__["share_id"]
 
-    @cached_property
+    @locked_cacheproperty
     def share_uk(self, /):
-        self.list_index()
+        self.fs_list_root()
         return self.__dict__["share_uk"]
 
-    @cached_property
+    @locked_cacheproperty
     def yundata(self, /):
-        self.list_index()
+        self.fs_list_root()
         return self.__dict__["yundata"]
 
-    def verify(
+    # TODO: 增加并发，以大量获得图片，以快速得出识别结果
+    @overload
+    def decaptcha(
         self, 
         /, 
-        use_vcode: bool = False, 
+        min_confirm: int = 2, 
+        ocr: Callable[[bytes], str] = DdddOcr(beta=True, show_ad=False).classification, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs
+    ) -> dict:
+        ...
+    @overload
+    def decaptcha(
+        self, 
+        /, 
+        min_confirm: int = 2, 
+        ocr: Callable[[bytes], str] = DdddOcr(beta=True, show_ad=False).classification, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def decaptcha(
+        self, 
+        /, 
+        min_confirm: int = 2, 
+        ocr: Callable[[bytes], str] = DdddOcr(beta=True, show_ad=False).classification, 
         *, 
         async_: Literal[False, True] = False, 
+        **request_kwargs
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """识别百度网盘的验证码
+
+        :param min_confirm: 最小确认次数，仅当识别为相同结果达到指定次数才予以返回
+        :param ocr: 调用以执行 ocr
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+
+        :return: 字典，{"vcode": "验证码的识别结果", "vcode_str": "验证码的 key"}
+        """
+        def gen_step():
+            url = "https://pan.baidu.com/api/getcaptcha?prod=shareverify&web=1&clienttype=0"
+            data: dict = yield self.request(url=url, async_=async_, **request_kwargs)
+            vcode_img: str = data["vcode_img"]
+            vcode_str: str = data["vcode_str"]
+            counter: dict[str, int] = {}
+            while True:
+                try:
+                    image = yield self.request(vcode_img, timeout=5, parse=False, async_=async_, **request_kwargs)
+                except:
+                    continue
+                res = ocr(image)
+                if len(res) != 4 or not res.isalnum():
+                    continue
+                if min_confirm <= 1:
+                    return {"vcode": res, "vcode_str": vcode_str}
+                m = counter.get(res, 0) + 1
+                if m >= min_confirm:
+                    return {"vcode": res, "vcode_str": vcode_str}
+                counter[res] = m
+        return run_gen_step(gen_step, async_=async_)
+
+    @overload
+    def fs_list(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False] = False, 
         **request_kwargs, 
-    ):
-        api = "https://pan.baidu.com/share/verify"
-        params: dict[str, int | str]
-        if self.shorturl:
-            params = {"surl": self.shorturl, "web": 1, "clienttype": 0}
-        else:
-            params = {"web": 1, "clienttype": 0}
-            params.update(parse_qsl(urlparse(self.url).query))
+    ) -> dict:
+        ...
+    @overload
+    def fs_list(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_list(
+        self, 
+        payload: str | dict, 
+        /, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """获取文件列表
 
-        data = {"pwd": self.password}
-        if use_vcode:
-            data.update(cast(dict[str, str], decaptcha()))
-        post = self.session.post
-        while True:
-            with post(api, params=params, data=data) as resp:
-                resp.raise_for_status()
-                json = resp.json()
-                errno = json["errno"]
-                if not errno:
-                    break
-                if errno == -62:
-                    data.update(cast(dict[str, str], decaptcha()))
-                else:
-                    raise OSError(json)
+        GET https://pan.baidu.com/share/list
 
-    def iterdir(self, /, dir: str = "/", page: int = 1, num: int = 0) -> Iterator[dict]:
-        if dir in ("", "/"):
-            data = self.list_index()
-            if num <= 0 or page <= 0:
-                yield from data
-            else:
-                yield from data[(page-1)*num:page*num]
-            return
-        if not hasattr(self, "share_uk"):
-            self.list_index()
-        if not dir.startswith("/"):
-            dir = self.root + "/" + dir
+        :payload:
+            - dir: str 💡 目录路径（⚠️ 不能是根目录）
+            - uk: int | str = <default> 💡 分享用户的 id
+            - shareid: int | str = <default> 💡 分享 id
+            - order: "name" | "time" | "size" | "other" = "name" 💡 排序方式
+            - desc: 0 | 1 = 0 💡 是否逆序
+            - showempty: 0 | 1 = 0
+            - page: int = 1 💡 第几页，从 1 开始
+            - num: int = 100 💡 分页大小
+        """
         api = "https://pan.baidu.com/share/list"
+        if isinstance(payload, str):
+            dir_ = payload
+            if not dir_.startswith("/"):
+                dir_ = self.root + "/" + dir_
+            payload = {"dir": dir_}
         params = {
             "uk": self.share_uk, 
             "shareid": self.share_id, 
             "order": "other", 
-            "desc": 1, 
+            "desc": 0, 
             "showempty": 0, 
             "clienttype": 0, 
             "web": 1, 
             "page": 1, 
             "num": 100, 
-            "dir": dir, 
+            **payload, 
         }
-        get = self.session.get
-        if num <= 0 or page <= 0:
-            if num > 0:
-                params["num"] = num
-            else:
-                num = params["num"]
-            while True:
-                ls = check_response(get(api, params=params).json())["list"]
-                yield from ls
-                if len(ls) < num:
-                    break
-                params["page"] += 1
-        else:
-            params["page"] = page
-            params["num"] = num
-            yield from check_response(get(api, params=params).json())["list"]
+        return self.request(api, params=params, async_=async_, **request_kwargs)
 
-    def list_index(
+    @overload
+    def fs_list_root(
+        self, 
+        /, 
+        try_times: int = 5, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_list_root(
+        self, 
+        /, 
+        try_times: int = 5, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_list_root(
         self, 
         /, 
         try_times: int = 5, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> list[dict]:
-        url = self.url
-        password = self.password
-        session = self.session
-        if try_times <= 0:
-            it: Iterator[int] = count(0)
-        else:
-            it = iter(range(try_times))
-        for _ in it:
-            with session.get(url) as resp:
-                resp.raise_for_status()
-                content = resp.content
+    ) -> dict | Coroutine[Any, Any, dict]:
+        def gen_step():
+            if try_times <= 0:
+                counter: Iterator[int] = count(0)
+            else:
+                counter = iter(range(try_times))
+            url = self.url
+            for _ in counter:
+                content = yield self.request(url, parse=False, async_=async_, **request_kwargs)
                 data = self._extract_indexdata(content)
                 if b'"verify-form"' in content:
-                    if not password:
-                        raise OSError("需要密码")
-                    self.verify(b'"change-code"' in content)
+                    yield self.verify(b'"change-code"' in content, async_=async_, **request_kwargs)
                 else:
-                    if data["errno"]:
-                        data["errno_reason"] = ERRNO_TO_MESSAGE.get(data["errno"])
-                        data["errortype_reason"] = SHARE_ERRORTYPE_TO_MESSAGE.get(data.get("errortype", -1))
-                        raise OSError(data)
+                    check_response(data)
                     file_list = data.get("file_list")
-                    if not file_list:
-                        raise OSError("无下载文件，可能是链接失效、分享被取消、删除了所有分享文件等原因")
+                    if file_list is None:
+                        raise DuPanOSError(
+                            errno.ENOENT, 
+                            "无下载文件，可能是链接失效、分享被取消、删除了所有分享文件等原因", 
+                        )
                     self.yundata = self._extract_yundata(content)
                     if file_list:
                         for file in file_list:
@@ -1750,19 +2266,35 @@ class DuPanShareList:
                         share_uk = data["share_uk"], 
                         share_id = data["shareid"], 
                     )
-                    return file_list
-        raise RuntimeError("too many attempts")
+                    return data
+            raise RuntimeError("too many attempts")
+        return run_gen_step(gen_step, async_=async_)
 
-    def listdir(
+    @overload
+    def iterdir(
         self, 
         /, 
         dir: str = "/", 
         page: int = 1, 
         num: int = 0, 
-    ) -> list[str]:
-        return [attr["server_filename"] for attr in self.iterdir(dir, page, num)]
-
-    def listdir_attr(
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> Iterator[dict]:
+        ...
+    @overload
+    def iterdir(
+        self, 
+        /, 
+        dir: str = "/", 
+        page: int = 1, 
+        num: int = 0, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> AsyncIterator[dict]:
+        ...
+    def iterdir(
         self, 
         /, 
         dir: str = "/", 
@@ -1771,6 +2303,95 @@ class DuPanShareList:
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
-    ) -> list[dict]:
-        return list(self.iterdir(dir, page, num))
+    ) -> Iterator[dict] | AsyncIterator[dict]:
+        def gen_step():
+            nonlocal dir, num
+            reldir = dir.strip("/")
+            if reldir:
+                if not dir.startswith("/"):
+                    dir = self.root + "/" + dir
+                params = {
+                    "uk": self.share_uk, 
+                    "shareid": self.share_id, 
+                    "order": "other", 
+                    "desc": 1, 
+                    "showempty": 0, 
+                    "clienttype": 0, 
+                    "web": 1, 
+                    "page": 1, 
+                    "num": 100, 
+                    "dir": dir, 
+                }
+                if num <= 0 or page <= 0:
+                    if num > 0:
+                        params["num"] = num
+                    else:
+                        num = params["num"]
+                    while True:
+                        resp = yield self.fs_list(params, async_=async_, **request_kwargs)
+                        data = resp["list"]
+                        for item in data:
+                            item["relpath"] = joinpath(reldir, item["server_filename"])
+                            yield Yield(item, identity=True)
+                        if len(data) < num:
+                            break
+                        params["page"] += 1
+                else:
+                    params["page"] = page
+                    params["num"] = num
+                    resp = yield self.fs_list(params, async_=async_, **request_kwargs)
+                    for item in resp["list"]:
+                        item["relpath"] = joinpath(reldir, item["server_filename"])
+                        yield Yield(item, identity=True)
+            else:
+                resp = yield self.fs_list_root(async_=async_, **request_kwargs)
+                data = resp["file_list"]
+                if num <= 0 or page <= 0:
+                    yield YieldFrom(data, identity=True)
+                else:
+                    yield YieldFrom(data[(page-1)*num:page*num])
+        return run_gen_step_iter(gen_step, async_=async_)
 
+    def verify(
+        self, 
+        /, 
+        has_vcode: bool = False, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ):
+        """提交验证
+
+        :param has_vcode: 是否有验证码
+        :param async_: 是否异步
+        :param request_kwargs: 其它请求参数
+        """
+        def gen_step():
+            api = "https://pan.baidu.com/share/verify"
+            if self.shorturl:
+                params: dict = {"surl": self.shorturl, "web": 1, "clienttype": 0}
+            else:
+                params = {"web": 1, "clienttype": 0}
+                params.update(parse_qsl(urlparse(self.url).query))
+            data = {"pwd": self.password}
+            if has_vcode:
+                vcode = yield self.decaptcha(async_=async_, **request_kwargs)
+                data.update(vcode)
+            while True:
+                resp = yield self.request(url=api, method="POST", params=params, data=data, async_=async_, **request_kwargs)
+                errno = resp["errno"]
+                if not errno:
+                    break
+                if errno == -62:
+                    vcode = yield self.decaptcha(async_=async_, **request_kwargs)
+                    data.update(vcode)
+                else:
+                    check_response(resp)
+        return run_gen_step(gen_step, async_=async_)
+
+# TODO: 回收站
+# TODO: 分享
+# TODO: 离线下载
+# TODO: 快捷访问
+# TODO: 同步空间
+# TODO: 开放接口

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-iterutils"
-version = "0.1.6.1"
+version = "0.1.8"
 description = "Python another itertools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,8 +27,8 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-asynctools = ">=0.0.10"
-python-decotools = ">=0.0.1.2"
+python-asynctools = ">=0.0.10.1"
+python-decotools = ">=0.0.2"
 python-texttools = ">=0.0.3"
 python-undefined = ">=0.0.3"
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-filewrap"
-version = "0.2.6.1"
+version = "0.2.7.1"
 description = "Python file wrappers."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,8 +26,8 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-python-asynctools = ">=0.0.5"
+python = "^3.12"
+python-asynctools = ">=0.1"
 python-property = ">=0.0.3"
 
 [build-system]

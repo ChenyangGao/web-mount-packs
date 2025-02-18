@@ -106,13 +106,13 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         urlopen = urlopen, 
     ):
         if headers:
-            headers = {**headers, "Accept-Encoding": "identity"}
+            headers = {**headers, "accept-encoding": "identity"}
         else:
-            headers = {"Accept-Encoding": "identity"}
+            headers = {"accept-encoding": "identity"}
         if start > 0:
-            headers["Range"] = f"bytes={start}-"
+            headers["range"] = f"bytes={start}-"
         elif start < 0:
-            headers["Range"] = f"bytes={start}"
+            headers["range"] = f"bytes={start}"
         if urlopen is None:
             urlopen = globals()["urlopen"]
         if callable(url):
@@ -316,7 +316,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         url = self.url
         response = self.urlopen(
             url() if callable(url) else url, 
-            headers={**self.headers, "Range": f"bytes={start}-"}
+            headers={**self.headers, "range": f"bytes={start}-"}
         )
         length_new = get_total_length(response)
         if self.length != length_new:
@@ -572,13 +572,13 @@ class AsyncHTTPFileReader(HTTPFileReader):
         urlopen = None, 
     ):
         if headers:
-            headers = {**headers, "Accept-Encoding": "identity"}
+            headers = {**headers, "accept-encoding": "identity"}
         else:
-            headers = {"Accept-Encoding": "identity"}
+            headers = {"accept-encoding": "identity"}
         if start > 0:
-            headers["Range"] = f"bytes={start}-"
+            headers["range"] = f"bytes={start}-"
         elif start < 0:
-            headers["Range"] = f"bytes={start}"
+            headers["range"] = f"bytes={start}"
         if urlopen is None:
             urlopen = globals()["urlopen"]
         if callable(url):
@@ -751,7 +751,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         url = self.url
         response = await self.urlopen(
             (await url()) if callable(url) else url, 
-            headers={**self.headers, "Range": f"bytes={start}-"}
+            headers={**self.headers, "range": f"bytes={start}-"}
         )
         length_new = get_total_length(response)
         if self.length != length_new:

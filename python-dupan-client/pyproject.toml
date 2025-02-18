@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dupan"
-version = "0.0.1.3.8"
+version = "0.0.2"
 description = "Python wrapper for `baidu webdisk <https://pan.baidu.com>`."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,12 +26,25 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-
-ddddocr = "1.4.11"
+python = "^3.12"
+ddddocr = "*"
+ed2k = ">=0.0.2.1"
+glob_pattern = ">=0.0.2"
+http_response = ">=0.0.2.2"
+httpx = "*"
+httpx_request = ">=0.1.2"
 lxml = "*"
+multidict = "*"
+orjson = "*"
+python-cookietools = ">=0.0.2.1"
+python-filewrap = ">=0.2.6.1"
+python-hashtools = ">=0.0.3.3"
+python-httpfile = ">=0.0.5"
+python-iterutils = ">=0.1.7"
+python-property = ">=0.0.3"
+python-startfile = ">=0.0.2"
+python-texttools = ">=0.0.3"
 qrcode = "*"
-requests = "*"
 
 [tool.poetry.dev-dependencies]
 

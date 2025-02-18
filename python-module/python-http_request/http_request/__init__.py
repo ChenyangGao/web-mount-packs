@@ -2,13 +2,13 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "cookies_str_to_dict", "headers_str_to_dict", 
     "encode_multipart_data", "encode_multipart_data_async", 
 ]
 
-from collections.abc import AsyncIterable, AsyncIterator, ItemsView, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Buffer, ItemsView, Iterable, Iterator, Mapping
 from itertools import chain
 from mimetypes import guess_type
 from os import fsdecode
@@ -19,7 +19,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from asynctools import ensure_aiter, async_chain
-from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead
+from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from integer_tool import int_to_bytes
 from texttools import text_to_dict
 
@@ -76,9 +76,13 @@ def headers_str_to_dict(
     return text_to_dict(headers.strip(), kv_sep, entry_sep)
 
 
-def ensure_bytes(s, /) -> Buffer:
-    if isinstance(s, Buffer):
+def ensure_bytes(s, /) -> bytes:
+    if isinstance(s, bytes):
         return s
+    elif isinstance(s, memoryview):
+        return s.tobytes()
+    elif isinstance(s, Buffer):
+        return bytes(s)
     if isinstance(s, int):
         return int_to_bytes(s)
     elif isinstance(s, str):
@@ -93,9 +97,13 @@ def encode_multipart_data(
     data: None | Mapping[str, Any] = None, 
     files: None | Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer]] = None, 
     boundary: None | str = None, 
+    file_suffix: str = "", 
 ) -> tuple[dict, Iterator[Buffer]]:
     if not boundary:
         boundary = uuid4().hex
+    suffix = bytes(file_suffix, "ascii")
+    if suffix and not suffix.startswith(b"."):
+        suffix = b"." + suffix
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
     def encode_data(data) -> Iterator[Buffer]:
@@ -140,15 +148,18 @@ def encode_multipart_data(
             elif hasattr(file, "read"):
                 file = bio_chunk_iter(file)
                 if not filename:
-                    path = getattr(file, name, None)
+                    path = getattr(file, "name", None)
                     if path:
                         filename = basename(path)
                         if b"Content-Type" not in headers:
                             headers[b"Content-Type"] = ensure_bytes(guess_type(fsdecode(filename))[0] or b"application/octet-stream")
             if filename:
-                headers[b"Content-Disposition"] += b'; filename="%s"' % quote(filename).encode("ascii")
+                name = bytes(quote(filename), "ascii")
+                if not name.endswith(suffix):
+                    name += suffix
+                headers[b"Content-Disposition"] += b'; filename="%s"' % name
             else:
-                headers[b"Content-Disposition"] += b'; filename="%032x"' % uuid4().int
+                headers[b"Content-Disposition"] += b'; filename="%032x%s"' % (uuid4().int, suffix)
             yield boundary_line
             for entry in headers.items():
                 yield b"%s: %s\r\n" % entry
@@ -167,9 +178,13 @@ def encode_multipart_data_async(
     data: None | Mapping[str, Any] = None, 
     files: None | Mapping[str, Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer]] = None, 
     boundary: None | str = None, 
+    file_suffix: str = "", 
 ) -> tuple[dict, AsyncIterator[Buffer]]:
     if not boundary:
         boundary = uuid4().hex
+    suffix = bytes(file_suffix, "ascii")
+    if suffix and not suffix.startswith(b"."):
+        suffix = b"." + suffix
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
     async def encode_data(data) -> AsyncIterator[Buffer]:
@@ -214,7 +229,7 @@ def encode_multipart_data_async(
             elif hasattr(file, "read"):
                 file = bio_chunk_async_iter(file)
                 if not filename:
-                    path = getattr(file, name, None)
+                    path = getattr(file, "name", None)
                     if path:
                         filename = basename(path)
                         if b"Content-Type" not in headers:
@@ -222,9 +237,12 @@ def encode_multipart_data_async(
             else:
                 file = ensure_aiter(file)
             if filename:
-                headers[b"Content-Disposition"] += b'; filename="%s"' % quote(filename).encode("ascii")
+                name = bytes(quote(filename), "ascii")
+                if not name.endswith(suffix):
+                    name += suffix
+                headers[b"Content-Disposition"] += b'; filename="%s"' % name
             else:
-                headers[b"Content-Disposition"] += b'; filename="%032x"' % uuid4().int
+                headers[b"Content-Disposition"] += b'; filename="%032x%s"' % (uuid4().int, suffix)
             yield boundary_line
             for entry in headers.items():
                 yield b"%s: %s\r\n" % entry

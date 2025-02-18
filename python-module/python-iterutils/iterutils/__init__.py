@@ -2,34 +2,38 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 6)
+__version__ = (0, 1, 8)
 __all__ = [
     "Return", "Yield", "YieldFrom", "iterable", "async_iterable", "foreach", "async_foreach", 
-    "through", "async_through", "flatten", "async_flatten", "map", "filter", "reduce", "zip", 
-    "chunked", "iter_unique", "async_iter_unique", "wrap_iter", "wrap_aiter", "acc_step", 
-    "cut_iter", "run_gen_step", "run_gen_step_iter", "as_gen_step", "bfs_gen", "with_iter_next", 
-    "backgroud_loop", 
+    "through", "async_through", "flatten", "async_flatten", "collect", "async_collect", 
+    "group_collect", "async_group_collect", "map", "filter", "reduce", "zip", "chunked", 
+    "iter_unique", "async_iter_unique", "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", 
+    "run_gen_step", "run_gen_step_iter", "as_gen_step", "bfs_gen", "with_iter_next", "backgroud_loop", 
 ]
 
 from abc import ABC, abstractmethod
 from asyncio import create_task, sleep as async_sleep, to_thread
 from builtins import map as _map, filter as _filter, zip as _zip
-from collections import deque
+from collections import defaultdict, deque
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, Coroutine, Generator, 
-    Iterable, Iterator, MutableSet, Sequence, 
+    AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, Collection, Container, 
+    Coroutine, Generator, Iterable, Iterator, Mapping, MutableMapping, MutableSet, 
+    MutableSequence, Sequence, ValuesView, 
 )
 from contextlib import asynccontextmanager, contextmanager, ExitStack, AsyncExitStack
+from copy import copy
 from dataclasses import dataclass
 from itertools import batched, pairwise
 from inspect import isawaitable, iscoroutinefunction
 from sys import _getframe
 from _thread import start_new_thread
 from time import sleep, time
-from typing import overload, Any, AsyncContextManager, ContextManager, Literal
+from types import FrameType
+from typing import cast, overload, Any, AsyncContextManager, ContextManager, Literal
 
 from asynctools import (
     async_filter, async_map, async_reduce, async_zip, async_batched, ensure_async, ensure_aiter, 
+    collect as async_collect, 
 )
 from decotools import optional
 from texttools import format_time
@@ -95,7 +99,7 @@ async def async_foreach(
     iterable: Iterable | AsyncIterable, 
     /, 
     *iterables: Iterable | AsyncIterable, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ):
     value = ensure_async(value, threaded=threaded)
     if iterables:
@@ -126,7 +130,7 @@ async def async_through(
     iterable: Iterable | AsyncIterable, 
     /, 
     take_while: None | Callable = None, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ):
     iterable = ensure_aiter(iterable, threaded=threaded)
     if take_while is None:
@@ -176,7 +180,7 @@ async def async_flatten(
     iterable: Iterable | AsyncIterable, 
     /, 
     exclude_types: type | tuple[type, ...] = (Buffer, str), 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator:
     async for e in ensure_aiter(iterable, threaded=threaded):
         if isinstance(e, (Iterable, AsyncIterable)) and not isinstance(e, exclude_types):
@@ -184,6 +188,168 @@ async def async_flatten(
                 yield e
         else:
             yield e
+
+
+@overload
+def collect[K, V](
+    iterable: Iterable[tuple[K, V]] | Mapping[K, V], 
+    /, 
+    rettype: Callable[[Iterable[tuple[K, V]]], MutableMapping[K, V]], 
+) -> MutableMapping[K, V]:
+    ...
+@overload
+def collect[T](
+    iterable: Iterable[T], 
+    /, 
+    rettype: Callable[[Iterable[T]], Collection[T]] = list, 
+) -> Collection[T]:
+    ...
+@overload
+def collect[K, V](
+    iterable: AsyncIterable[tuple[K, V]], 
+    /, 
+    rettype: Callable[[Iterable[tuple[K, V]]], MutableMapping[K, V]], 
+) -> Coroutine[Any, Any, MutableMapping[K, V]]:
+    ...
+@overload
+def collect[T](
+    iterable: AsyncIterable[T], 
+    /, 
+    rettype: Callable[[Iterable[T]], Collection[T]] = list, 
+) -> Coroutine[Any, Any, Collection[T]]:
+    ...
+def collect(
+    iterable: Iterable | AsyncIterable | Mapping, 
+    /, 
+    rettype: Callable[[Iterable], Collection] = list, 
+) -> Collection | Coroutine[Any, Any, Collection]:
+    if not isinstance(iterable, Iterable):
+        return async_collect(iterable, rettype)
+    return rettype(iterable)
+
+
+@overload
+def group_collect[K, V, C: Container](
+    iterable: Iterable[tuple[K, V]], 
+    mapping: None = None, 
+    factory: None | C | Callable[[], C] = None, 
+) -> dict[K, C]:
+    ...
+@overload
+def group_collect[K, V, C: Container, M: MutableMapping](
+    iterable: Iterable[tuple[K, V]], 
+    mapping: M, 
+    factory: None | C | Callable[[], C] = None, 
+) -> M:
+    ...
+@overload
+def group_collect[K, V, C: Container](
+    iterable: AsyncIterable[tuple[K, V]], 
+    mapping: None = None, 
+    factory: None | C | Callable[[], C] = None, 
+) -> Coroutine[Any, Any, dict[K, C]]:
+    ...
+@overload
+def group_collect[K, V, C: Container, M: MutableMapping](
+    iterable: AsyncIterable[tuple[K, V]], 
+    mapping: M, 
+    factory: None | C | Callable[[], C] = None, 
+) -> Coroutine[Any, Any, M]:
+    ...
+def group_collect[K, V, C: Container, M: MutableMapping](
+    iterable: Iterable[tuple[K, V]] | AsyncIterable[tuple[K, V]], 
+    mapping: None | M = None, 
+    factory: None | C | Callable[[], C] = None, 
+) -> dict[K, C] | M | Coroutine[Any, Any, dict[K, C]] | Coroutine[Any, Any, M]:
+    if not isinstance(iterable, Iterable):
+        return async_group_collect(iterable, mapping, factory)
+    if factory is None:
+        if isinstance(mapping, defaultdict):
+            factory = mapping.default_factory
+        elif mapping:
+            factory = type(next(iter(ValuesView(mapping))))
+        else:
+            factory = cast(type[C], list)
+    elif callable(factory):
+        pass
+    elif isinstance(factory, Container):
+        factory = cast(Callable[[], C], lambda _obj=factory: copy(_obj))
+    else:
+        raise ValueError("can't determine factory")
+    factory = cast(Callable[[], C], factory)
+    if isinstance(factory, type):
+        factory_type = factory
+    else:
+        factory_type = type(factory())
+    if issubclass(factory_type, MutableSequence):
+        add = getattr(factory_type, "append")
+    else:
+        add = getattr(factory_type, "add")
+    if mapping is None:
+        mapping = cast(M, {})
+    for k, v in iterable:
+        try:
+            c = mapping[k]
+        except LookupError:
+            c = mapping[k] = factory()
+        add(c, v)
+    return mapping
+
+
+@overload
+async def async_group_collect[K, V, C: Container](
+    iterable: Iterable[tuple[K, V]] | AsyncIterable[tuple[K, V]], 
+    mapping: None = None, 
+    factory: None | C | Callable[[], C] = None, 
+    threaded: bool = False, 
+) -> dict[K, C]:
+    ...
+@overload
+async def async_group_collect[K, V, C: Container, M: MutableMapping](
+    iterable: Iterable[tuple[K, V]] | AsyncIterable[tuple[K, V]], 
+    mapping: M, 
+    factory: None | C | Callable[[], C] = None, 
+    threaded: bool = False, 
+) -> M:
+    ...
+async def async_group_collect[K, V, C: Container, M: MutableMapping](
+    iterable: Iterable[tuple[K, V]] | AsyncIterable[tuple[K, V]], 
+    mapping: None | M = None, 
+    factory: None | C | Callable[[], C] = None, 
+    threaded: bool = False, 
+) -> dict[K, C] | M:
+    iterable = ensure_aiter(iterable, threaded=threaded)
+    if factory is None:
+        if isinstance(mapping, defaultdict):
+            factory = mapping.default_factory
+        elif mapping:
+            factory = type(next(iter(ValuesView(mapping))))
+        else:
+            factory = cast(type[C], list)
+    elif callable(factory):
+        pass
+    elif isinstance(factory, Container):
+        factory = cast(Callable[[], C], lambda _obj=factory: copy(_obj))
+    else:
+        raise ValueError("can't determine factory")
+    factory = cast(Callable[[], C], factory)
+    if isinstance(factory, type):
+        factory_type = factory
+    else:
+        factory_type = type(factory())
+    if issubclass(factory_type, MutableSequence):
+        add = getattr(factory_type, "append")
+    else:
+        add = getattr(factory_type, "add")
+    if mapping is None:
+        mapping = cast(M, {})
+    async for k, v in iterable:
+        try:
+            c = mapping[k]
+        except LookupError:
+            c = mapping[k] = factory()
+        add(c, v)
+    return mapping
 
 
 def map(
@@ -399,7 +565,7 @@ async def wrap_aiter[T](
     callnext: None | Callable[[T], Any] = None, 
     callenter: None | Callable[[Iterable[T] | AsyncIterable[T]], Any] = None, 
     callexit: None | Callable[[Iterable[T] | AsyncIterable[T], None | BaseException], Any] = None, 
-    threaded: bool = True, 
+    threaded: bool = False, 
 ) -> AsyncIterator[T]:
     callprev = ensure_async(callprev, threaded=threaded) if callable(callprev) else None
     callnext = ensure_async(callnext, threaded=threaded) if callable(callnext) else None
@@ -453,13 +619,32 @@ def cut_iter(
         yield stop, stop - start
 
 
+def _get_async(back: int = 2) -> bool:
+    f: None | FrameType
+    f = _getframe(back)
+    f_globals = f.f_globals
+    f_locals  = f.f_locals
+    if f_locals is f_globals:
+        return f_locals.get("async_") or False
+    while f_locals is not f_globals:
+        if "async_" in f_locals:
+            return f_locals["async_"] or False
+        f = f.f_back
+        if f is None:
+            break
+        f_locals = f.f_locals
+    return False
+
+
 def run_gen_step[T](
     gen_step: Generator[Any, Any, T] | Callable[[], Generator[Any, Any, T]], 
     *, 
-    async_: bool = False, 
+    async_: None | bool = None, 
     threaded: bool = False, 
     as_iter: bool = False, 
 ) -> T:
+    if async_ is None:
+        async_ = _get_async()
     if callable(gen_step):
         gen = gen_step()
         close = gen.close
@@ -562,7 +747,15 @@ def run_gen_step_iter(
     gen_step: Generator | Callable[[], Generator], 
     threaded: bool = False, 
     *, 
-    async_: Literal[False] = False, 
+    async_: None = None, 
+) -> Iterator | AsyncIterator:
+    ...
+@overload
+def run_gen_step_iter(
+    gen_step: Generator | Callable[[], Generator], 
+    threaded: bool = False, 
+    *, 
+    async_: Literal[False], 
 ) -> Iterator:
     ...
 @overload
@@ -577,8 +770,10 @@ def run_gen_step_iter(
     gen_step: Generator | Callable[[], Generator], 
     threaded: bool = False, 
     *, 
-    async_: bool = False, 
+    async_: None | bool = None, 
 ) -> Iterator | AsyncIterator:
+    if async_ is None:
+        async_ = _get_async()
     if callable(gen_step):
         gen = gen_step()
         close = gen.close
@@ -688,9 +883,11 @@ def run_gen_step_iter(
 def as_gen_step(
     func: Callable, 
     /, 
-    async_: bool = False, 
+    async_: None | bool = None, 
     iter: bool = False, 
 ) -> Callable:
+    if async_ is None:
+        async_ = _get_async()
     def wrapper(*args, **kwds):
         if iter:
             return run_gen_step_iter(func(*args, **kwds), async_=async_) # type: ignore

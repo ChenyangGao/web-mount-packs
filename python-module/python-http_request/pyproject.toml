@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-http_request"
-version = "0.0.6"
+version = "0.0.7"
 description = "Python http response utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,11 +26,11 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-python-asynctools = "*"
-python-filewrap = ">=0.1"
-python-texttools = "*"
-integer_tool = "*"
+python = "^3.12"
+python-asynctools = ">=0.0.10"
+python-filewrap = ">=0.2.6"
+python-texttools = ">=0.0.3"
+integer_tool = ">=0.0.2"
 
 [build-system]
 requires = ["poetry-core"]

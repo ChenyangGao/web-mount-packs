@@ -8,37 +8,25 @@ __all__ = ["DuPanPath", "DuPanFileSystem"]
 
 import errno
 
-from base64 import b64encode
-from collections import deque
-from collections.abc import Callable, Coroutine, ItemsView, Iterator, KeysView, Mapping, ValuesView
-from functools import cached_property, partial, update_wrapper
-from io import BytesIO, TextIOWrapper, UnsupportedOperation, DEFAULT_BUFFER_SIZE
-from itertools import count
+from collections.abc import Callable, ItemsView, Iterator, KeysView, Mapping, ValuesView
+from functools import cached_property
+from io import BytesIO, TextIOWrapper
 from mimetypes import guess_type
 from os import fsdecode, fspath, makedirs, scandir, stat_result, path as ospath, PathLike
-from platform import system
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, split as splitpath, splitext
-from re import compile as re_compile, escape as re_escape, Pattern
-from shutil import copyfileobj, SameFileError
+from re import compile as re_compile, escape as re_escape
+from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
-from subprocess import run
-from threading import Thread
 from time import time
-from typing import cast, overload, Any, Final, IO, Literal, Never, Optional, TypedDict
+from typing import cast, Any, IO, Literal, Never, Optional
 from types import MappingProxyType
-from urllib.parse import parse_qsl, urlencode, urlparse, unquote
-from uuid import uuid4
 
-from ddddocr import DdddOcr # type: ignore
-from lxml.html import fromstring, tostring, HtmlElement
-from orjson import dumps
-from qrcode import QRCode # type: ignore
-
-from cookietools import cookies_str_to_dict
 from filewrap import SupportsRead, SupportsWrite
 from glob_pattern import translate_iter
 from httpfile import HTTPFileReader
-from texttools import text_within
+
+from .client import DuPanClient, DuPanShareList
+from .exception import check_response
 
 
 class DuPanPath:
@@ -593,8 +581,8 @@ class DuPanFileSystem:
             return self.write_bytes(path, file)
 
     @classmethod
-    def login(cls, /, cookie=None, scan_in_console: bool = True) -> DuPanFileSystem:
-        return cls(DuPanClient(cookie, scan_in_console=scan_in_console))
+    def login(cls, /, cookie=None, console_qrcode: bool = True) -> DuPanFileSystem:
+        return cls(DuPanClient(cookie, console_qrcode=console_qrcode))
 
     def abspath(self, path: str | PathLike[str] = "", /) -> str:
         if path == "/":
@@ -634,7 +622,7 @@ class DuPanFileSystem:
         elif _check:
             path = self.abspath(path)
         path = cast(str, path)
-        resp = self.client.filemetas(path)
+        resp = self.client.fs_filemetas(path)
         lastest_update = time()
         err = resp["errno"]
         if err:
@@ -729,7 +717,7 @@ class DuPanFileSystem:
         try:
             dst_attr = self.attr(dst_path, _check=False)
         except FileNotFoundError:
-            self.client.copy([{"path": src_path, "dest": dst_dir, "newname": dst_name}])
+            self.client.fs_copy([{"path": src_path, "dest": dst_dir, "newname": dst_name}])
         else:
             if dst_attr["isdir"]:
                 if overwrite_or_ignore == False:
@@ -745,7 +733,7 @@ class DuPanFileSystem:
                 )
             elif not overwrite_or_ignore:
                 return None
-            self.client.copy([{"path": src_path, "dest": dst_dir, "newname": dst_name, "ondup": "overwrite"}])
+            self.client.fs_copy([{"path": src_path, "dest": dst_dir, "newname": dst_name, "ondup": "overwrite"}])
         return dst_path
 
     def copytree(
@@ -791,7 +779,7 @@ class DuPanFileSystem:
         try:
             dst_attr = self.attr(dst_path, _check=False)
         except FileNotFoundError:
-            self.client.copy([{"path": src_path, "dest": dst_dir, "newname": dst_name}])
+            self.client.fs_copy([{"path": src_path, "dest": dst_dir, "newname": dst_name}])
         else:
             if not dst_attr["isdir"]:
                 if overwrite_or_ignore == False:
@@ -918,7 +906,9 @@ class DuPanFileSystem:
         attr = self.attr(path)
         if attr["isdir"]:
             raise OSError(errno.EISDIR, path)
-        return Error.check(self.client.get_url(attr["fs_id"]))["dlink"][0]["dlink"]
+        resp = self.client.get_url(attr["fs_id"])
+        check_response(resp)
+        return resp["dlink"][0]["dlink"]
 
     def glob(
         self, 
@@ -1133,7 +1123,7 @@ class DuPanFileSystem:
             raise OSError(errno.ENOTDIR, path)
         payload = {"dir": path, "num": page_size, "page": 1}
         while True:
-            resp = self.client.listdir(payload)
+            resp = self.client.fs_list(payload)
             lastest_update = time()
             err = resp["errno"]
             if err:
@@ -1190,7 +1180,7 @@ class DuPanFileSystem:
         try:
             attr = self.attr(path, _check=False)
         except FileNotFoundError:
-            return Error.check(self.client.makedir(path))["path"]
+            return check_response(self.client.fs_mkdir(path))["path"]
         else:
             if exist_ok:
                 if not attr["isdir"]:
@@ -1218,7 +1208,7 @@ class DuPanFileSystem:
             dir_ = dirname(path)
             if not self.attr(dir_)["isdir"]:
                 raise NotADirectoryError(errno.ENOTDIR, dir_) from e
-            Error.check(self.client.makedir(path))
+            check_response(self.client.fs_mkdir(path))
             return path
         else:
             raise FileExistsError(errno.EEXIST, path)
@@ -1258,7 +1248,7 @@ class DuPanFileSystem:
             dst_attr = self.attr(dst_path)
         except FileNotFoundError:
             dest, name = splitpath(dst_path)
-            Error.check(self.client.move([{
+            check_response(self.client.fs_move([{
                 "path": src_path, 
                 "dest": dest, 
                 "newname": name, 
@@ -1270,7 +1260,7 @@ class DuPanFileSystem:
                 dst_filepath = joinpath(dst_path, dst_filename)
                 if self.exists(dst_filepath, _check=False):
                     raise FileExistsError(errno.EEXIST, f"destination path {dst_filepath!r} already exists")
-                Error.check(self.client.move([{
+                check_response(self.client.fs_move([{
                     "path": src_path, 
                     "dest": dst_path, 
                     "newname": dst_filename, 
@@ -1301,7 +1291,7 @@ class DuPanFileSystem:
             start=start, 
             seek_threshold=seek_threshold, 
         ).wrap(
-            text_mode="b" not in mode, 
+            text_mode="b" not in mode, # type: ignore
             buffering=buffering, 
             encoding=encoding, 
             errors=errors, 
@@ -1375,13 +1365,13 @@ class DuPanFileSystem:
             if recursive:
                 attrs = self.listdir_attr("/")
                 if attrs:
-                    Error.check(self.client.delete([attr["path"] for attr in attrs]))
+                    check_response(self.client.fs_delete([attr["path"] for attr in attrs]))
                 return
             else:
                 raise PermissionError(errno.EPERM, "remove the root directory is not allowed")
         if self.attr(path)["isdir"] and not recursive:
             raise IsADirectoryError(errno.EISDIR, path)
-        Error.check(self.client.delete([path]))
+        check_response(self.client.fs_delete([path]))
 
     def removedirs(
         self, 
@@ -1433,7 +1423,7 @@ class DuPanFileSystem:
             raise PermissionError(errno.EPERM, f"rename a path as its descendant is not allowed: {src_path!r} -> {dst_path!r}")
         dest, name = splitpath(dst_path)
         if replace:
-            Error.check(self.client.move([{
+            check_response(self.client.fs_move([{
                 "path": src_path, 
                 "dest": dest, 
                 "newname": name, 
@@ -1442,7 +1432,7 @@ class DuPanFileSystem:
         else:
             if self.exists(dst_path, _check=False):
                 raise FileExistsError(errno.EEXIST, f"{dst_path!r} already exists: {src_path!r} -> {dst_path!r}")
-            Error.check(self.client.move([{
+            check_response(self.client.fs_move([{
                 "path": src_path, 
                 "dest": dest, 
                 "newname": name
@@ -1522,7 +1512,7 @@ class DuPanFileSystem:
                 pass
             else:
                 raise OSError(errno.ENOTEMPTY, f"directory not empty: {path!r}")
-        Error.check(self.client.delete([path]))
+        check_response(self.client.fs_delete([path]))
 
     def rmtree(
         self, 
@@ -1599,8 +1589,8 @@ class DuPanFileSystem:
         self.makedirs(save_dir, exist_ok=True)
         share_list = DuPanShareList(url, password)
         if not fsidlist:
-            fsidlist = [f["fs_id"] for f in share_list.list_index()]
-        return Error.check(self.client.transfer(
+            fsidlist = [f["fs_id"] for f in share_list.fs_list_root()["file_list"]]
+        return check_response(self.client.share_transfer(
             share_list.url, 
             params={
                 "shareid": share_list.share_id, 

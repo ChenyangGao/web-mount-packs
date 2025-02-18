@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = ["check_response", "P123Client", "P123OSError"]
 
 from collections.abc import (
     AsyncIterable, Awaitable, Buffer, Callable, Coroutine, ItemsView, 
-    Iterable, Mapping, MutableMapping, Sized, 
+    Iterable, Iterator, Mapping, MutableMapping, Sized, 
 )
 from errno import EIO, EISDIR, ENOENT
 from functools import partial
@@ -28,6 +30,7 @@ from aiofile import async_open
 from asynctools import ensure_async
 from property import locked_cacheproperty
 from hashtools import file_digest, file_digest_async
+from http_request import encode_multipart_data, encode_multipart_data_async
 from iterutils import run_gen_step
 from filewrap import (
     bio_chunk_iter, bio_chunk_async_iter, 
@@ -51,7 +54,9 @@ match SYS_PLATFORM:
 # 查找大写字母（除了左边第 1 个）
 CRE_UPPER_ALPHABET_sub = re_compile("(?<!^)[A-Z]").sub
 # 默认使用的域名
-DEFAULT_BASE_URL = "https://www.123pan.com/a"
+DEFAULT_BASE_URL = "https://www.123pan.com/b"
+DEFAULT_LOGIN_BASE_URL = "https://login.123pan.com"
+DEFAULT_OPEN_BASE_URL = "https://open-api.123pan.com"
 # 默认的请求函数
 _httpx_request = None
 
@@ -100,25 +105,30 @@ def items[K, V](
     return m
 
 
-def dict_to_lower(
-    d: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+def dict_to_lower[K, V](
+    d: Mapping[K, V] | Iterable[tuple[K, V]], 
     /, 
-    *ds: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+    *ds: Mapping[K, V] | Iterable[tuple[K, V]], 
     **kwd, 
-) -> dict[str, Any]:
-    return {k.lower(): v for k, v in chain(items(d), *map(items, ds), kwd.items())}
+) -> dict[K, V]:
+    return {
+        (k.lower() if isinstance(k, str) else k): v # type: ignore
+        for k, v in cast(Iterator[tuple[K, V]], chain(items(d), *map(items, ds), kwd.items()))
+    }
 
 
-def dict_to_lower_merge(
-    d: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+def dict_to_lower_merge[K, V](
+    d: Mapping[K, V] | Iterable[tuple[K, V]], 
     /, 
-    *ds: Mapping[str, Any] | Iterable[tuple[str, Any]], 
+    *ds: Mapping[K, V] | Iterable[tuple[K, V]], 
     **kwd, 
-) -> dict[str, Any]:
-    m: dict[str, Any] = {}
+) -> dict[K, V]:
+    m: dict[K, V] = {}
     setdefault = m.setdefault
-    for k, v in chain(items(d), *map(items, ds), kwd.items()):
-        setdefault(k.lower(), v)
+    for k, v in cast(Iterator[tuple[K, V]], chain(items(d), *map(items, ds), kwd.items())):
+        if isinstance(k, str):
+            k = k.lower() # type: ignore
+        setdefault(k, v)
     return m
 
 
@@ -151,14 +161,15 @@ class P123Client:
         passport: int | str = "", 
         password: str = "", 
         token: str = "", 
-        base_url: str = "", 
     ):
         self.passport = passport
         self.password = password
         self.token = token
-        self.base_url = base_url
         if passport and password:
             self.login()
+
+    def __del__(self, /):
+        self.close()
 
     @property
     def cookies(self, /):
@@ -241,6 +252,12 @@ class P123Client:
     def token(self, /):
         self.token = ""
 
+    def close(self, /) -> None:
+        """删除 session 和 async_session 属性，如果它们未被引用，则应该会被自动清理
+        """
+        self.__dict__.pop("session", None)
+        self.__dict__.pop("async_session", None)
+
     @overload
     def login(
         self, 
@@ -286,12 +303,11 @@ class P123Client:
             self.password = password
         else:
             password = self.password
-        if not base_url:
-            base_url = self.base_url
         def gen_step():
             if passport and password:
                 resp = yield self.user_login(
                     {"passport": passport, "password": password, "remember": remember}, 
+                    base_url=base_url, 
                     async_=async_, 
                     **request_kwargs, 
                 )
@@ -306,6 +322,7 @@ class P123Client:
         url: str, 
         method: str = "POST", 
         request: None | Callable = None, 
+        base_url: str = "", 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ):
@@ -315,8 +332,8 @@ class P123Client:
             url = "https:" + url
         elif not url.startswith(("http://", "https://")):
             if not url.startswith("/"):
-                url = "/" + url
-            url = (self.base_url or DEFAULT_BASE_URL) + url
+                url = "/api/" + url
+            url = (base_url or DEFAULT_BASE_URL) + url
         request_kwargs.setdefault("parse", default_parse)
         if request is None:
             request_kwargs["session"] = self.async_session if async_ else self.session
@@ -341,7 +358,7 @@ class P123Client:
     @staticmethod
     def app_dydomain(
         request: None | Callable = None, 
-        base_url: str = DEFAULT_BASE_URL, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -351,7 +368,7 @@ class P123Client:
     @staticmethod
     def app_dydomain(
         request: None | Callable = None, 
-        base_url: str = DEFAULT_BASE_URL, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -360,7 +377,7 @@ class P123Client:
     @staticmethod
     def app_dydomain(
         request: None | Callable = None, 
-        base_url: str = DEFAULT_BASE_URL, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -369,7 +386,7 @@ class P123Client:
 
         GET https://www.123pan.com/api/dydomain
         """
-        api = f"{base_url}/api/dydomain"
+        api = f"{base_url or DEFAULT_BASE_URL}/api/dydomain"
         request_kwargs.setdefault("parse", default_parse)
         if request is None:
             return get_default_request()(url=api, method="GET", async_=async_, **request_kwargs)
@@ -381,6 +398,8 @@ class P123Client:
         self, 
         payload: int | str | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -390,6 +409,8 @@ class P123Client:
         self, 
         payload: int | str | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -398,6 +419,8 @@ class P123Client:
         self, 
         payload: int | str | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -433,7 +456,7 @@ class P123Client:
             - driveId: int | str = 0
             - ...
         """
-        api = f"{self.base_url}/api/file/download_info"
+        api = "file/download_info"
         def gen_step():
             nonlocal payload
             if headers := request_kwargs.get("headers"):
@@ -443,7 +466,7 @@ class P123Client:
             headers["platform"] = "android"
             request_kwargs["headers"] = headers
             if not isinstance(payload, dict):
-                resp = yield self.fs_info(payload, async_=async_, **request_kwargs)
+                resp = yield self.fs_info(payload, base_url=base_url, async_=async_, **request_kwargs)
                 resp["payload"] = payload
                 check_response(resp)
                 info_list = resp["data"]["infoList"]
@@ -455,7 +478,7 @@ class P123Client:
             payload = dict_to_lower_merge(payload, {"driveId": 0, "Type": 0, "FileID": 0})
             if "filename" not in payload:
                 payload["filename"] = payload["etag"]
-            return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+            return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -463,6 +486,8 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -472,6 +497,8 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -480,6 +507,8 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -499,55 +528,12 @@ class P123Client:
                         "FileId": int | str
                     }
         """
-        api = f"{self.base_url}/api/file/batch_download_info"
+        api = "api/file/batch_download_info"
         if isinstance(payload, (int, str)):
             payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def download_url_open(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def download_url_open(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def download_url_open(
-        self, 
-        payload: int | str | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：获取下载直链
-
-        GET https://open-api.123pan.com/api/v1/direct-link/url
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/tdxfsmtemp4gu4o2
-
-        .. note::
-            需要开通会员
-
-        :payload:
-            - fileID: int | str 💡 文件 id
-        """
-        api = f"https://open-api.123pan.com/api/v1/direct-link/url"
-        if isinstance(payload, (int, str)):
-            payload = {"fileID": payload}
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_copy(
@@ -555,6 +541,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         parent_id: int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -566,6 +553,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         parent_id: int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -576,6 +564,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         parent_id: int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -596,11 +585,11 @@ class P123Client:
 
             - targetFileId: int | str = 0
         """
-        api = f"{self.base_url}/api/restful/goapi/v1/file/copy/async"
+        api = "restful/goapi/v1/file/copy/async"
         def gen_step():
             nonlocal payload
             if not isinstance(payload, dict):
-                resp = yield self.fs_info(payload, async_=async_, **request_kwargs)
+                resp = yield self.fs_info(payload, base_url=base_url, async_=async_, **request_kwargs)
                 resp["payload"] = payload
                 check_response(resp)
                 info_list = resp["data"]["infoList"]
@@ -608,7 +597,7 @@ class P123Client:
                     raise FileNotFoundError(ENOENT, resp)
                 payload = {"fileList": info_list}
             payload = dict_to_lower_merge(payload, targetFileId=parent_id)
-            return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+            return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -616,6 +605,7 @@ class P123Client:
         self, 
         payload: int | str | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -626,6 +616,7 @@ class P123Client:
         self, 
         payload: int | str | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -635,6 +626,7 @@ class P123Client:
         self, 
         payload: int | str | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -646,16 +638,17 @@ class P123Client:
         :payload:
             - fileID: int | str
         """
-        api = f"{self.base_url}/api/file/detail"
+        api = "file/detail"
         if isinstance(payload, (int, str)):
             payload = {"fileID": payload}
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_delete(
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -666,6 +659,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -675,6 +669,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -697,67 +692,64 @@ class P123Client:
 
             - event: str = "recycleDelete"
         """
-        api = f"{self.base_url}/api/file/delete"
+        api = "file/delete"
         if isinstance(payload, (int, str)):
             payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         payload = cast(dict, payload)
         payload.setdefault("event", "recycleDelete")
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
-    def fs_delete_open(
+    def fs_get_path(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_delete_open(
+    def fs_get_path(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_delete_open(
+    def fs_get_path(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：彻底删除
+        """获取某个 id 对应的祖先节点列表
 
-        POST https://open-api.123pan.com/api/v1/file/delete
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/sg2gvfk5i3dwoxtg
+        POST https://www.123pan.com/api/file/get_path
 
         :payload:
-            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+            - fileId: int 💡 文件 id
         """
-        api = "https://open-api.123pan.com/api/v1/file/delete"
-        if isinstance(payload, (int, str)):
-            payload = {"fileIDs": [payload]}
-        elif not isinstance(payload, dict):
-            if not isinstance(payload, (tuple, list)):
-                payload = list(payload)
-            payload = {"fileIDs": payload}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        api = "file/get_path"
+        if isinstance(payload, int):
+            payload = {"fileId": payload}
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_info(
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -768,6 +760,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -777,6 +770,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict = 0, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -794,55 +788,12 @@ class P123Client:
                         "FileId": int | str
                     }
         """
-        api = f"{self.base_url}/api/file/info"
+        api = "file/info"
         if isinstance(payload, (int, str)):
             payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_info_open(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_info_open(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_info_open(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：获取文件信息
-
-        GET https://open-api.123pan.com/api/v1/file/detail
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/uxomcu64kefnbdvz
-
-        :payload:
-            - fileID: int | str
-        """
-        api = "https://open-api.123pan.com/api/v1/file/detail"
-        if isinstance(payload, (int, str)):
-            payload = {"fileID": payload}
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_list(
@@ -850,6 +801,7 @@ class P123Client:
         payload: int | str | dict = 0, 
         /, 
         event: str = "homeListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -861,6 +813,7 @@ class P123Client:
         payload: int | str | dict = 0, 
         /, 
         event: str = "homeListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -871,6 +824,7 @@ class P123Client:
         payload: int | str | dict = 0, 
         /, 
         event: str = "homeListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -902,7 +856,7 @@ class P123Client:
             - SearchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
             - OnlyLookAbnormalFile: int = <default>
         """
-        api = f"{self.base_url}/api/file/list"
+        api = "file/list"
         if isinstance(payload, (int, str)):
             payload = {"parentFileId": payload}
         payload = dict_to_lower_merge(payload, {
@@ -921,7 +875,7 @@ class P123Client:
                     payload["trashed"] = "true"
                 case _:
                     payload["trashed"] = "false"
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_list_new(
@@ -929,6 +883,7 @@ class P123Client:
         payload: int | str | dict = 0, 
         /, 
         event: str = "homeListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -940,6 +895,7 @@ class P123Client:
         payload: int | str | dict = 0, 
         /, 
         event: str = "homeListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -950,6 +906,7 @@ class P123Client:
         payload: int | str | dict = 0, 
         /, 
         event: str = "homeListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -981,7 +938,7 @@ class P123Client:
             - SearchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
             - OnlyLookAbnormalFile: int = <default>
         """
-        api = f"{self.base_url}/api/file/list/new"
+        api = "file/list/new"
         if isinstance(payload, (int, str)):
             payload = {"parentFileId": payload}
         payload = dict_to_lower_merge(payload, {
@@ -1000,127 +957,7 @@ class P123Client:
                     payload["trashed"] = "true"
                 case _:
                     payload["trashed"] = "false"
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_list_open_v1(
-        self, 
-        payload: int | str | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_list_open_v1(
-        self, 
-        payload: int | str | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_list_open_v1(
-        self, 
-        payload: int | str | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：获取文件列表（可搜索）
-
-        GET https://open-api.123pan.com/api/v1/file/list
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/am42fselaozmg123
-
-        .. note::
-            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
-
-        :payload:
-            - limit: int = 100 💡 分页大小，最大不超过100
-            - orderBy: str = "file_id" 💡 排序依据："file_id", "file_name", "create_at", "update_at", "size", "share_id", ...
-            - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
-            - page: int = 1 💡 第几页，从 1 开始，可以是 0
-            - parentFileId: int | str = 0 💡 父目录 id
-            - trashed: "false" | "true" = <default> 💡 是否查看回收站的文件
-            - searchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
-        """
-        api = "https://open-api.123pan.com/api/v1/file/list"
-        if isinstance(payload, (int, str)):
-            payload = {"parentFileId": payload}
-        payload = dict_to_lower_merge(payload, {
-            "limit": 100, 
-            "orderBy": "file_id", 
-            "orderDirection": "desc", 
-            "page": 1, 
-            "parentFileId": 0, 
-        })
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_list_open_v2(
-        self, 
-        payload: int | str | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_list_open_v2(
-        self, 
-        payload: int | str | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_list_open_v2(
-        self, 
-        payload: int | str | dict = 0, 
-        /, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：获取文件列表（可搜索）
-
-        GET https://open-api.123pan.com/api/v2/file/list
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/rei7kh5mnze2ad4q
-
-        .. note::
-            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
-
-        :payload:
-            - lastFileId: int = <default> 💡 上一页的最后一条记录的 FileID，翻页查询时需要填写
-            - limit: int = 100 💡 分页大小，最大不超过100
-            - parentFileId: int | str = 0 💡 父目录 id
-            - SearchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
-            - searchMode: 0 | 1 = 0 💡 搜索模式
-
-                .. note::
-                    - 0: 全文模糊搜索（将会根据搜索项分词,查找出相似的匹配项）
-                    - 1: 精准搜索（精准搜索需要提供完整的文件名）
-        """
-        api = "https://open-api.123pan.com/api/v2/file/list"
-        if isinstance(payload, (int, str)):
-            payload = {"parentFileId": payload}
-        payload = dict_to_lower_merge(payload, {
-            "limit": 100, 
-            "parentFileId": 0, 
-            "searchMode": 0, 
-        })
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
-
-    fs_list_open = fs_list_open_v2
+        return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_mkdir(
@@ -1129,6 +966,7 @@ class P123Client:
         /, 
         parent_id: int | str = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1141,6 +979,7 @@ class P123Client:
         /, 
         parent_id: int | str = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1152,6 +991,7 @@ class P123Client:
         /, 
         parent_id: int | str = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1170,55 +1010,7 @@ class P123Client:
         if duplicate:
             payload["NotReuse"] = True
             payload["duplicate"] = duplicate
-        return self.upload_request(payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_mkdir_open(
-        self, 
-        payload: str | dict, 
-        /, 
-        parent_id: int | str = 0, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_mkdir_open(
-        self, 
-        payload: str | dict, 
-        /, 
-        parent_id: int | str = 0, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_mkdir_open(
-        self, 
-        payload: str | dict, 
-        /, 
-        parent_id: int | str = 0, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：创建目录
-
-        POST https://open-api.123pan.com/upload/v1/file/mkdir
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/gvz09ibuuo97i5ue
-
-        :payload:
-            - name: str
-            - parentID: int | str = 0
-        """
-        api = "https://open-api.123pan.com/upload/v1/file/mkdir"
-        if isinstance(payload, str):
-            payload = {"name": payload}
-        payload = dict_to_lower_merge(payload, parentID=parent_id)
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.upload_request(payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_move(
@@ -1226,6 +1018,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         parent_id: int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1237,6 +1030,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         parent_id: int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1247,6 +1041,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         parent_id: int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1267,71 +1062,21 @@ class P123Client:
             - parentFileId: int | str = 0
             - event: str = "fileMove"
         """
-        api = f"{self.base_url}/api/file/mod_pid"
+        api = "file/mod_pid"
         if isinstance(payload, (int, str)):
             payload = {"fileIdList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
             payload = {"fileIdList": [{"FileId": fid} for fid in payload]}
         payload = dict_to_lower_merge(payload, {"parentFileId": parent_id, "event": "fileMove"})
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_move_open(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
-        /, 
-        parent_id: int | str = 0, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_move_open(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
-        /, 
-        parent_id: int | str = 0, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_move_open(
-        self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
-        /, 
-        parent_id: int | str = 0, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：从回收站恢复文件
-
-        POST https://open-api.123pan.com/api/v1/file/move
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/kx9f8b6wk6g55uwy
-
-        :payload:
-            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
-            - toParentFileID: int | str = 0
-        """
-        api = "https://open-api.123pan.com/api/v1/file/move"
-        if isinstance(payload, (int, str)):
-            payload = {"fileIDs": [payload]}
-        elif not isinstance(payload, dict):
-            if not isinstance(payload, (tuple, list)):
-                payload = list(payload)
-            payload = {"fileIDs": payload}
-        payload = dict_to_lower_merge(payload, toParentFileID=parent_id)
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_rename(
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -1341,6 +1086,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -1349,6 +1096,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -1363,57 +1112,13 @@ class P123Client:
             - duplicate: 0 | 1 | 2 = 0 💡 处理同名：0: 提示/忽略 1: 保留两者 2: 替换
             - event: str = "fileRename"
         """
-        api = f"{self.base_url}/api/file/rename"
+        api = "file/rename"
         payload = dict_to_lower_merge(payload, {
             "driveId": 0, 
             "duplicate": 0, 
             "event": "fileRename", 
         })
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
-
-    @overload
-    def fs_rename_open(
-        self, 
-        payload: str | Iterable[str] | dict, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def fs_rename_open(
-        self, 
-        payload: str | Iterable[str] | dict, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def fs_rename_open(
-        self, 
-        payload: str | Iterable[str] | dict, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：重命名
-
-        POST https://open-api.123pan.com/api/v1/file/rename
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/ec18ovepgciazfuc
-
-        :payload:
-            - renameList: list[str] 💡 数组，最多 30 个成员，每个成员的格式为 "文件ID|新的文件名"
-        """
-        api = "https://open-api.123pan.com/api/v1/file/rename"
-        if isinstance(payload, str):
-            payload = {"renameList": [payload]}
-        elif not isinstance(payload, dict):
-            if not isinstance(payload, (tuple, list)):
-                payload = list(payload)
-            payload = {"renameList": payload}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_trash(
@@ -1421,6 +1126,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         event: str = "intoRecycle", 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1432,6 +1138,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         event: str = "intoRecycle", 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1442,6 +1149,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         event: str = "intoRecycle", 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1468,7 +1176,7 @@ class P123Client:
 
             - operation: bool = <default>
         """
-        api = f"{self.base_url}/api/file/trash"
+        api = "file/trash"
         if isinstance(payload, (int, str)):
             payload = {"fileTrashInfoList": [{"FileId": payload}]}
         elif not isinstance(payload, dict):
@@ -1480,13 +1188,14 @@ class P123Client:
                     payload["operation"] = False
                 case _:
                     payload["operation"] = True
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def fs_trash_clear(
         self, 
         payload: dict = {"event": "recycleClear"}, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1497,6 +1206,7 @@ class P123Client:
         self, 
         payload: dict = {"event": "recycleClear"}, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1506,6 +1216,7 @@ class P123Client:
         self, 
         payload: dict = {"event": "recycleClear"}, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1517,109 +1228,251 @@ class P123Client:
         :payload:
             - event: str = "recycleClear"
         """
-        api = f"{self.base_url}/api/file/trash_delete_all"
+        api = "file/trash_delete_all"
         payload.setdefault("event", "recycleClear")
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
-    def fs_trash_open(
+    def offline_task_delete(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | Iterable[int] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_trash_open(
+    def offline_task_delete(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | Iterable[int] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_trash_open(
+    def offline_task_delete(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | Iterable[int] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：删除文件，放入回收站中
+        """删除离线下载任务
 
-        POST https://open-api.123pan.com/api/v1/file/trash
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/en07662k2kki4bo6
+        POST https://www.123pan.com/api/offline_download/task/delete
 
         :payload:
-            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+            - task_ids: list[int] 💡 任务 id 列表
+            - status_arr: list[0|1|2] = [] 💡 状态列表：0:等待 1:运行 2:完成
         """
-        api = "https://open-api.123pan.com/api/v1/file/trash"
-        if isinstance(payload, (int, str)):
-            payload = {"fileIDs": [payload]}
+        api = "offline_download/task/delete"
+        if isinstance(payload, int):
+            payload = {"task_ids": [payload], "status_arr": []}
         elif not isinstance(payload, dict):
-            if not isinstance(payload, (tuple, list)):
-                payload = list(payload)
-            payload = {"fileIDs": payload}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+            if not isinstance(payload, (list, tuple)):
+                payload = tuple(payload)
+            payload = {"task_ids": payload, "status_arr": []}
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
-    def fs_trash_recover_open(
+    def offline_task_list(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | dict = 1, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def fs_trash_recover_open(
+    def offline_task_list(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | dict = 1, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def fs_trash_recover_open(
+    def offline_task_list(
         self, 
-        payload: int | str | Iterable[int | str] | dict = 0, 
+        payload: int | dict = 1, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：从回收站恢复文件
+        """离线下载任务列表
 
-        POST https://open-api.123pan.com/api/v1/file/recover
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/kx9f8b6wk6g55uwy
+        POST https://www.123pan.com/api/offline_download/task/list
 
         :payload:
-            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+            - current_page: int = 1
+            - page_size: 100
+            - status_arr: list[0|1|2] = [0, 1] 💡 状态列表：0:等待 1:运行 2:完成
         """
-        api = "https://open-api.123pan.com/api/v1/file/recover"
-        if isinstance(payload, (int, str)):
-            payload = {"fileIDs": [payload]}
+        api = "offline_download/task/list"
+        if isinstance(payload, int):
+            payload = {"current_page": payload, "page_size": 100, "status_arr": [0, 1]}
+        else:
+            payload = {"current_page": 1, "page_size": 100, "status_arr": [0, 1], **payload}
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_task_resolve(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_task_resolve(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_task_resolve(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """解析下载链接
+
+        POST https://www.123pan.com/api/offline_download/task/resolve
+
+        :payload:
+            - urls: str = <default> 💡 下载链接，多个用 "\n" 隔开（用于新建链接下载任务）
+            - info_hash: str = <default> 💡 种子文件的 info_hash（用于新建BT任务）
+        """
+        api = "offline_download/task/resolve"
+        if isinstance(payload, str):
+            payload = {"urls": payload.strip("\n")}
         elif not isinstance(payload, dict):
-            if not isinstance(payload, (tuple, list)):
-                payload = list(payload)
-            payload = {"fileIDs": payload}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+            payload = {"urls": "\n".join(payload)}
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
+
+    # TODO: 支持接受一个 Iterable[int | dict]，int 视为 id （select_file 为 [0]），dict 视为 resolve 信息
+    @overload
+    def offline_task_submit(
+        self, 
+        payload: dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_task_submit(
+        self, 
+        payload: dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_task_submit(
+        self, 
+        payload: dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """提交离线下载任务
+
+        POST https://www.123pan.com/api/offline_download/task/submit
+
+        :payload:
+            - resource_list: list[Task] 💡 资源列表
+
+                .. code:: python
+
+                    File = {
+                        "resource_id": int, 
+                        "select_file": list[int] # 如果是链接下载，则传 [0]，如果BT下载，则传需要下载的文件在列表中的索引的列表
+                    }
+
+            - upload_dir: int 💡 保存到目录的 id
+        """
+        api = "offline_download/task/submit"
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
+
+    @overload
+    def offline_task_upload_seed(
+        self, 
+        /, 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer], 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def offline_task_upload_seed(
+        self, 
+        /, 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def offline_task_upload_seed(
+        self, 
+        /, 
+        file: Buffer | SupportsRead[Buffer] | Iterable[Buffer] | AsyncIterable[Buffer], 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """上传种子，以作解析
+
+        POST https://www.123pan.com/api/offline_download/upload/seed
+        """
+        api = "offline_download/upload/seed"
+        if async_:
+            headers, request_kwargs["data"] = encode_multipart_data_async({}, {"upload-torrent": file}, file_suffix=".torrent")
+        else:
+            headers, request_kwargs["data"] = encode_multipart_data({}, {"upload-torrent": file}, file_suffix=".torrent") # type: ignore
+        request_kwargs["headers"] = {**(request_kwargs.get("headers") or {}), **headers}
+        return self.request(url=api, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_cancel(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1630,6 +1483,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1639,6 +1493,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1660,7 +1515,7 @@ class P123Client:
             - event: str = "shareCancel" 💡 事件类型
             - isPayShare: bool = False 💡 是否付费分享
         """
-        api = f"{self.base_url}/api/share/delete"
+        api = "share/delete"
         if isinstance(payload, (int, str)):
             payload = {"shareInfoList": [{"shareId": payload}]}
         elif not isinstance(payload, dict):
@@ -1670,13 +1525,14 @@ class P123Client:
             "event": "shareCancel", 
             "isPayShare": False, 
         })
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_clear(
         self, 
         payload: dict = {"event": "shareClear"}, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1687,6 +1543,7 @@ class P123Client:
         self, 
         payload: dict = {"event": "shareClear"}, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1696,6 +1553,7 @@ class P123Client:
         self, 
         payload: dict = {"event": "shareClear"}, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1707,14 +1565,15 @@ class P123Client:
         :payload:
             - event: str = "shareClear"
         """
-        api = f"{self.base_url}/api/share/clean_expire"
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        api = "share/clean_expire"
+        return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_create(
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1725,6 +1584,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1734,6 +1594,7 @@ class P123Client:
         self, 
         payload: int | str | Iterable[int | str] | dict, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1759,7 +1620,7 @@ class P123Client:
             - trafficLimitSwitch: 1 | 2 = 1 💡 是否开启流量限制：1:关闭 2:开启
             - trafficSwitch: 1 | 2 = 1      💡 是否开启免登录流量包：1:关闭 2:开启
         """
-        api = f"{self.base_url}/api/share/create"
+        api = "share/create"
         if isinstance(payload, (int, str)):
             payload = {"fileIdList": payload}
         elif not isinstance(payload, dict):
@@ -1783,13 +1644,14 @@ class P123Client:
             raise ValueError("missing field: 'fileIdList'")
         if "sharename" not in payload:
             payload["sharename"] = "%d 个文件或目录" % (str(payload["fileidlist"]).count(",") + 1)
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_download_info(
-        self: Any = None, 
+        self: None | dict | P123Client = None, 
         payload: None | dict = None, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1797,18 +1659,20 @@ class P123Client:
         ...
     @overload
     def share_download_info(
-        self: Any = None, 
+        self: None | dict | P123Client = None, 
         payload: None | dict = None, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def share_download_info(
-        self: Any = None, 
+        self: None | dict | P123Client = None, 
         payload: None | dict = None, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1833,16 +1697,12 @@ class P123Client:
             - Size: int = <default>
             - ...
         """
-        if isinstance(self, P123Client):
-            base_url = self.base_url
-        else:
-            base_url = request_kwargs.pop("base_url", None) or DEFAULT_BASE_URL
-            if isinstance(self, dict):
-                payload = self
+        if not isinstance(self, P123Client):
+            if self is None:
+                assert payload is not None
             else:
-                assert isinstance(payload, dict)
-            self = None
-        api = f"{base_url}/api/share/download/info"
+                payload = self
+                self = None
         if headers := request_kwargs.get("headers"):
             headers = dict(headers)
         else:
@@ -1850,6 +1710,7 @@ class P123Client:
         headers["platform"] = "android"
         request_kwargs["headers"] = headers
         if self is None:
+            api = f"{base_url or DEFAULT_BASE_URL}/api/share/download/info"
             request_kwargs.setdefault("parse", default_parse)
             request = request_kwargs.pop("request", None)
             if request is None:
@@ -1857,13 +1718,15 @@ class P123Client:
             else:
                 return request(url=api, method="POST", json=payload, **request_kwargs)
         else:
-            return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+            api = "share/download/info"
+            return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_download_info_batch(
-        self: Any = None, 
+        self: None | dict | P123Client = None, 
         payload: None | dict = None, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1871,18 +1734,20 @@ class P123Client:
         ...
     @overload
     def share_download_info_batch(
-        self: Any = None, 
+        self: None | dict | P123Client = None, 
         payload: None | dict = None, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
     def share_download_info_batch(
-        self: Any = None, 
+        self: None | dict | P123Client = None, 
         payload: None | dict = None, 
         /, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1905,17 +1770,14 @@ class P123Client:
                         "FileId": int | str
                     }
         """
-        if isinstance(self, P123Client):
-            base_url = self.base_url
-        else:
-            base_url = request_kwargs.pop("base_url", None) or DEFAULT_BASE_URL
-            if isinstance(self, dict):
-                payload = self
+        if not isinstance(self, P123Client):
+            if self is None:
+                assert payload is not None
             else:
-                assert isinstance(payload, dict)
-            self = None
-        api = f"{base_url}/api/file/batch_download_share_info"
+                payload = self
+                self = None
         if self is None:
+            api = f"{base_url or DEFAULT_BASE_URL}/api/file/batch_download_share_info"
             request_kwargs.setdefault("parse", default_parse)
             request = request_kwargs.pop("request", None)
             if request is None:
@@ -1923,7 +1785,8 @@ class P123Client:
             else:
                 return request(url=api, method="POST", json=payload, **request_kwargs)
         else:
-            return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+            api = "file/batch_download_share_info"
+            return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_fs_copy(
@@ -1931,6 +1794,7 @@ class P123Client:
         payload: dict, 
         /, 
         parent_id: None | int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1942,6 +1806,7 @@ class P123Client:
         payload: dict, 
         /, 
         parent_id: None | int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1952,6 +1817,7 @@ class P123Client:
         payload: dict, 
         /, 
         parent_id: None | int | str = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -1981,7 +1847,7 @@ class P123Client:
                         ...
                     }
         """
-        api = f"{self.base_url}/api/file/copy/async"
+        api = "file/copy/async"
         def to_snake_case(
             payload: dict[str, Any], 
             /, 
@@ -2014,38 +1880,38 @@ class P123Client:
                         ls[i]["parent_file_id"] = parent_id
             return d
         payload = {"current_level": 1, "event": "transfer", **to_snake_case(payload)}
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
-    @staticmethod
     def share_fs_list(
-        payload: dict, 
+        self: None | dict | P123Client = None, 
+        payload: None | dict = None, 
         /, 
         request: None | Callable = None, 
-        base_url: str = DEFAULT_BASE_URL, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    @staticmethod
     def share_fs_list(
-        payload: dict, 
+        self: None | dict | P123Client = None, 
+        payload: None | dict = None, 
         /, 
         request: None | Callable = None, 
-        base_url: str = DEFAULT_BASE_URL, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    @staticmethod
     def share_fs_list(
-        payload: dict, 
+        self: None | dict | P123Client = None, 
+        payload: None | dict = None, 
         /, 
         request: None | Callable = None, 
-        base_url: str = DEFAULT_BASE_URL, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2069,8 +1935,13 @@ class P123Client:
             - event: str = "homeListFile" 💡 事件名称
             - operateType: int | str = <default> 💡 操作类型
         """
-        api = f"{base_url}/api/share/get"
-        payload = dict_to_lower_merge(payload, {
+        if not isinstance(self, P123Client):
+            if self is None:
+                assert payload is not None
+            else:
+                payload = self
+                self = None
+        payload = dict_to_lower_merge(cast(dict, payload), {
             "limit": 100, 
             "next": 0, 
             "orderBy": "file_name", 
@@ -2080,10 +1951,15 @@ class P123Client:
             "event": "homeListFile", 
         })
         request_kwargs.setdefault("parse", default_parse)
-        if request is None:
-            return get_default_request()(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        if self is None:
+            api = f"{base_url or DEFAULT_BASE_URL}/api/share/get"
+            if request is None:
+                return get_default_request()(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+            else:
+                return request(url=api, method="GET", params=payload, **request_kwargs)
         else:
-            return request(url=api, method="GET", params=payload, **request_kwargs)
+            api = "share/get"
+            return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_list(
@@ -2091,6 +1967,7 @@ class P123Client:
         payload: int | dict = 1, 
         /, 
         event: str = "shareListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2102,6 +1979,7 @@ class P123Client:
         payload: int | dict = 1, 
         /, 
         event: str = "shareListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -2112,6 +1990,7 @@ class P123Client:
         payload: int | dict = 1, 
         /, 
         event: str = "shareListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2134,7 +2013,7 @@ class P123Client:
             - operateType: int | str = <default>
             - SearchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
         """
-        api = f"{self.base_url}/api/share/list"
+        api = "share/list"
         if isinstance(payload, int):
             payload = {"Page": payload}
         payload = dict_to_lower_merge(payload, {
@@ -2145,7 +2024,7 @@ class P123Client:
             "orderDirection": "desc", 
             "event": event, 
         })
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_payment_list(
@@ -2153,6 +2032,7 @@ class P123Client:
         payload: int | dict = 1, 
         /, 
         event: str = "shareListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2164,6 +2044,7 @@ class P123Client:
         payload: int | dict = 1, 
         /, 
         event: str = "shareListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -2174,6 +2055,7 @@ class P123Client:
         payload: int | dict = 1, 
         /, 
         event: str = "shareListFile", 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2196,7 +2078,7 @@ class P123Client:
             - operateType: int | str = <default>
             - SearchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
         """
-        api = f"{self.base_url}/api/restful/goapi/v1/share/content/payment/list"
+        api = "restful/goapi/v1/share/content/payment/list"
         if isinstance(payload, int):
             payload = {"Page": payload}
         payload = dict_to_lower_merge(payload, {
@@ -2207,7 +2089,7 @@ class P123Client:
             "orderDirection": "desc", 
             "event": event, 
         })
-        return self.request(url=api, method="GET", params=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, method="GET", params=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_reward_set(
@@ -2215,6 +2097,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         is_reward: bool = False, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2226,6 +2109,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         is_reward: bool = False, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -2236,6 +2120,7 @@ class P123Client:
         payload: int | str | Iterable[int | str] | dict, 
         /, 
         is_reward: bool = False, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2248,19 +2133,21 @@ class P123Client:
             - ids: list[int | str] 💡 分享 id
             - isReward: 0 | 1 = 1
         """
-        api = f"{self.base_url}/api/restful/goapi/v1/share/reward/status"
+        api = "restful/goapi/v1/share/reward/status"
         if isinstance(payload, (int, str)):
             payload = {"ids": [payload]}
         elif not isinstance(payload, dict):
             payload = {"ids": list(payload)}
         payload = dict_to_lower_merge(payload, is_reward=int(is_reward))
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def share_traffic_set(
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2270,6 +2157,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2278,6 +2167,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2292,14 +2183,16 @@ class P123Client:
             - trafficSwitch: 1 | 2 = <default>      💡 是否开启免登录流量包：1:关闭 2:开启
             - ...
         """
-        api = f"{self.base_url}/api/restful/goapi/v1/share/info"
-        return self.request(url=api, method="PUT", json=payload, async_=async_, **request_kwargs)
+        api = "restful/goapi/v1/share/info"
+        return self.request(url=api, method="PUT", json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def upload_auth(
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2309,6 +2202,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2317,6 +2212,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2333,8 +2230,8 @@ class P123Client:
             - storageNode: str
             - uploadId: str
         """
-        api = f"{self.base_url}/api/file/s3_upload_object/auth"
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        api = "file/s3_upload_object/auth"
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def upload_complete(
@@ -2342,6 +2239,7 @@ class P123Client:
         payload: dict, 
         /, 
         is_multipart: bool = False, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2353,6 +2251,7 @@ class P123Client:
         payload: dict, 
         /, 
         is_multipart: bool = False, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -2363,6 +2262,7 @@ class P123Client:
         payload: dict, 
         /, 
         is_multipart: bool = False, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2379,15 +2279,17 @@ class P123Client:
             - uploadId: str
             - isMultipart: bool = True 💡 是否分块上传
         """
-        api = f"{self.base_url}/api/file/upload_complete/v2"
+        api = "file/upload_complete/v2"
         payload = dict_to_lower_merge(payload, isMultipart=is_multipart)
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def upload_prepare_parts(
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2397,6 +2299,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2405,6 +2309,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2423,18 +2329,20 @@ class P123Client:
             - partNumberStart: int = 1 💡 开始的分块编号（从 0 开始编号）
             - partNumberEnd: int = <default> 💡 结束的分块编号（不含）
         """
-        api = f"{self.base_url}/api/file/s3_repare_upload_parts_batch"
+        api = "file/s3_repare_upload_parts_batch"
         if "partNumberStart" not in payload:
             payload["partNumberStart"] = 1
         if "partNumberEnd" not in payload:
             payload["partNumberEnd"] = int(payload["partNumberStart"]) + 1
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def upload_list_parts(
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2444,6 +2352,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2452,6 +2362,8 @@ class P123Client:
         self, 
         payload: dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2465,14 +2377,16 @@ class P123Client:
             - storageNode: str
             - uploadId: str
         """
-        api = f"{self.base_url}/api/file/s3_list_upload_parts"
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        api = "file/s3_list_upload_parts"
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     def upload_request(
         self, 
         payload: str | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2482,6 +2396,8 @@ class P123Client:
         self, 
         payload: str | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2490,6 +2406,8 @@ class P123Client:
         self, 
         payload: str | dict, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2511,7 +2429,7 @@ class P123Client:
             - NotReuse: bool = False 💡 不要重用（仅在 `type=1` 时有效，如果为 False，当有重名时，立即返回，此时 `duplicate` 字段无效）
             - ...
         """
-        api = f"{self.base_url}/api/file/upload_request"
+        api = "file/upload_request"
         if isinstance(payload, str):
             payload = {"fileName": payload}
         payload = dict_to_lower_merge(payload, {
@@ -2525,8 +2443,10 @@ class P123Client:
         })
         if payload["size"] or payload["etag"]:
             payload["type"] = 0
-        return self.request(url=api, json=payload, async_=async_, **request_kwargs)
+        return self.request(url=api, json=payload, base_url=base_url, async_=async_, **request_kwargs)
 
+    # TODO: 支持断点续传，也就是传入复传信息
+    # TODO: 支持如果文件未曾打开，则可等尝试秒传失败之后，再行打开（因为如果能秒传，则根本不必打开）
     @overload
     def upload_file(
         self, 
@@ -2538,6 +2458,8 @@ class P123Client:
         file_size: int = -1, 
         parent_id: int = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        upload_data: None | dict = None, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2554,6 +2476,8 @@ class P123Client:
         file_size: int = -1, 
         parent_id: int = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        upload_data: None | dict = None, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -2569,6 +2493,8 @@ class P123Client:
         file_size: int = -1, 
         parent_id: int = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        upload_data: None | dict = None, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2591,6 +2517,7 @@ class P123Client:
         :param file_size: 文件大小
         :param parent_id: 要上传的目标目录
         :param duplicate: 处理同名：0: 提示/忽略 1: 保留两者 2: 替换
+        :param upload_data: 上传信息，用于断点续传，提供此参数，则会忽略 `file_md5`、`file_name`、`file_size`、`parent_id` 和 `duplicate`
         :param async_: 是否异步
         :param request_kwargs: 其它请求参数
 
@@ -2606,6 +2533,7 @@ class P123Client:
                     file_size=file_size, 
                     parent_id=parent_id, 
                     duplicate=duplicate, 
+                    base_url=base_url, 
                     async_=async_, 
                     **request_kwargs, 
                 )
@@ -2716,6 +2644,7 @@ class P123Client:
                     "type": 0, 
                     "duplicate": duplicate, 
                 }, 
+                base_url=base_url, 
                 async_=async_, 
                 **request_kwargs, 
             )
@@ -2735,7 +2664,12 @@ class P123Client:
                 upload_data["partNumberStart"] = 1
                 q, r = divmod(file_size, slice_size)
                 upload_data["partNumberEnd"] = q + 1 + (r > 0)
-                resp = yield self.upload_prepare_parts(upload_data, async_=async_, **request_kwargs)
+                resp = yield self.upload_prepare_parts(
+                    upload_data, 
+                    base_url=base_url, 
+                    async_=async_, 
+                    **request_kwargs, 
+                )
                 check_response(resp)
                 d_urls = resp["data"]["presignedUrls"]
                 urls = (d_urls[str(i)] for i in range(1, len(d_urls) + 1))
@@ -2750,12 +2684,22 @@ class P123Client:
                     for chunk, url in zip(chunks, urls):
                         self.request(url, data=chunk, **upload_request_kwargs)
             else:
-                resp = yield self.upload_auth(upload_data, async_=async_, **request_kwargs)
+                resp = yield self.upload_auth(
+                    upload_data, 
+                    base_url=base_url, 
+                    async_=async_, 
+                    **request_kwargs, 
+                )
                 check_response(resp)
                 url = resp["data"]["presignedUrls"]["1"]
                 yield self.request(url, data=file, async_=async_, **upload_request_kwargs)
             upload_data["isMultipart"] = file_size > slice_size
-            return self.upload_complete(upload_data, async_=async_, **request_kwargs)
+            return self.upload_complete(
+                upload_data, 
+                base_url=base_url, 
+                async_=async_, 
+                **request_kwargs, 
+            )
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -2769,6 +2713,7 @@ class P123Client:
         file_size: int = -1, 
         parent_id: int = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2785,6 +2730,7 @@ class P123Client:
         file_size: int = -1, 
         parent_id: int = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -2800,6 +2746,7 @@ class P123Client:
         file_size: int = -1, 
         parent_id: int = 0, 
         duplicate: Literal[0, 1, 2] = 0, 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -2837,6 +2784,7 @@ class P123Client:
                         file_size=file_size, 
                         parent_id=parent_id, 
                         duplicate=duplicate, 
+                        base_url=base_url, 
                         async_=async_, 
                         **request_kwargs, 
                     )
@@ -2909,6 +2857,7 @@ class P123Client:
                     "type": 0, 
                     "duplicate": duplicate, 
                 }, 
+                base_url=base_url, 
                 async_=async_, 
                 **request_kwargs, 
             )
@@ -2918,6 +2867,8 @@ class P123Client:
     def user_info(
         self, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -2926,6 +2877,8 @@ class P123Client:
     def user_info(
         self, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -2933,6 +2886,8 @@ class P123Client:
     def user_info(
         self, 
         /, 
+        base_url: str = "", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
@@ -2940,40 +2895,8 @@ class P123Client:
 
         GET https://www.123pan.com/api/user/info
         """
-        api = f"{self.base_url}/api/user/info"
-        return self.request(url=api, method="GET", async_=async_, **request_kwargs)
-
-    @overload
-    def user_info_open(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def user_info_open(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def user_info_open(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """开放接口：用户信息
-
-        GET https://open-api.123pan.com/api/v1/user/info
-
-        .. tip::
-            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/fa2w0rosunui2v4m
-        """
-        api = "https://open-api.123pan.com/api/v1/user/info"
-        return self.request(url=api, method="GET", async_=async_, **request_kwargs)
+        api = "user/info"
+        return self.request(url=api, method="GET", base_url=base_url, async_=async_, **request_kwargs)
 
     @overload
     @staticmethod
@@ -2981,7 +2904,7 @@ class P123Client:
         payload: dict, 
         /, 
         request: None | Callable = None, 
-        base_url: str = "https://login.123pan.com", 
+        base_url: str = "", 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -2993,7 +2916,7 @@ class P123Client:
         payload: dict, 
         /, 
         request: None | Callable = None, 
-        base_url: str = "https://login.123pan.com", 
+        base_url: str = "", 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -3004,7 +2927,7 @@ class P123Client:
         payload: dict, 
         /, 
         request: None | Callable = None, 
-        base_url: str = "https://login.123pan.com", 
+        base_url: str = "", 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
@@ -3021,11 +2944,628 @@ class P123Client:
             - password: str         💡 密码
             - remember: bool = True 💡 是否记住密码（不用管）
         """
-        api = f"{base_url}/api/user/sign_in"
+        api = f"{base_url or DEFAULT_LOGIN_BASE_URL}/api/user/sign_in"
         request_kwargs.setdefault("parse", default_parse)
         if request is None:
             return get_default_request()(url=api, method="POST", json=payload, async_=async_, **request_kwargs)
         else:
             return request(url=api, method="POST", json=payload, **request_kwargs)
+
+    @overload
+    @staticmethod
+    def open_access_token(
+        payload: dict, 
+        /, 
+        request: None | Callable = None, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    @staticmethod
+    def open_access_token(
+        payload: dict, 
+        /, 
+        request: None | Callable = None, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    @staticmethod
+    def open_access_token(
+        payload: dict, 
+        /, 
+        request: None | Callable = None, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取 access_token
+
+        POST https://open-api.123pan.com/api/v1/access_token
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/sg2gvfk5i3dwoxtg
+
+        :payload:
+            - clientID: str
+            - clientSecret: str
+        """
+        api = f"{base_url or DEFAULT_OPEN_BASE_URL}/api/v1/access_token"
+        request_kwargs.setdefault("parse", default_parse)
+        if request is None:
+            return get_default_request()(url=api, method="POST", json=payload, async_=async_, **request_kwargs)
+        else:
+            return request(url=api, method="POST", json=payload, **request_kwargs)
+
+    @overload
+    def open_download_url(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_download_url(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_download_url(
+        self, 
+        payload: int | str | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取下载直链
+
+        GET https://open-api.123pan.com/api/v1/direct-link/url
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/tdxfsmtemp4gu4o2
+
+        .. note::
+            需要开通会员
+
+        :payload:
+            - fileID: int | str 💡 文件 id
+        """
+        api = "v1/direct-link/url"
+        if isinstance(payload, (int, str)):
+            payload = {"fileID": payload}
+        return self.request(url=api, method="GET", params=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_delete(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_delete(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_delete(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：彻底删除
+
+        POST https://open-api.123pan.com/api/v1/file/delete
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/sg2gvfk5i3dwoxtg
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+        """
+        api = "v1/file/delete"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
+        return self.request(url=api, json=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_info(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_info(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_info(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取文件信息
+
+        GET https://open-api.123pan.com/api/v1/file/detail
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/uxomcu64kefnbdvz
+
+        :payload:
+            - fileID: int | str
+        """
+        api = "v1/file/detail"
+        if isinstance(payload, (int, str)):
+            payload = {"fileID": payload}
+        return self.request(url=api, method="GET", params=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_list_v1(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_list_v1(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_list_v1(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取文件列表（可搜索）
+
+        GET https://open-api.123pan.com/api/v1/file/list
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/am42fselaozmg123
+
+        .. note::
+            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
+
+        :payload:
+            - limit: int = 100 💡 分页大小，最大不超过100
+            - orderBy: str = "file_id" 💡 排序依据："file_id", "file_name", "create_at", "update_at", "size", "share_id", ...
+            - orderDirection: "asc" | "desc" = "asc" 💡 排序顺序
+            - page: int = 1 💡 第几页，从 1 开始，可以是 0
+            - parentFileId: int | str = 0 💡 父目录 id
+            - trashed: "false" | "true" = <default> 💡 是否查看回收站的文件
+            - searchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
+        """
+        api = "v1/file/list"
+        if isinstance(payload, (int, str)):
+            payload = {"parentFileId": payload}
+        payload = dict_to_lower_merge(payload, {
+            "limit": 100, 
+            "orderBy": "file_id", 
+            "orderDirection": "desc", 
+            "page": 1, 
+            "parentFileId": 0, 
+        })
+        return self.request(url=api, method="GET", params=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_list_v2(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_list_v2(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_list_v2(
+        self, 
+        payload: int | str | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：获取文件列表（可搜索）
+
+        GET https://open-api.123pan.com/api/v2/file/list
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/rei7kh5mnze2ad4q
+
+        .. note::
+            如果返回信息中，有 "Next" 的值为 "-1"，说明无下一页
+
+        :payload:
+            - lastFileId: int = <default> 💡 上一页的最后一条记录的 FileID，翻页查询时需要填写
+            - limit: int = 100 💡 分页大小，最大不超过100
+            - parentFileId: int | str = 0 💡 父目录 id
+            - SearchData: str = <default> 💡 搜索关键字（将无视 `parentFileId` 参数）
+            - searchMode: 0 | 1 = 0 💡 搜索模式
+
+                .. note::
+                    - 0: 全文模糊搜索（将会根据搜索项分词,查找出相似的匹配项）
+                    - 1: 精准搜索（精准搜索需要提供完整的文件名）
+        """
+        api = "v2/file/list"
+        if isinstance(payload, (int, str)):
+            payload = {"parentFileId": payload}
+        payload = dict_to_lower_merge(payload, {
+            "limit": 100, 
+            "parentFileId": 0, 
+            "searchMode": 0, 
+        })
+        return self.request(url=api, method="GET", params=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    open_fs_list = open_fs_list_v2
+
+    @overload
+    def open_fs_mkdir(
+        self, 
+        payload: str | dict, 
+        /, 
+        parent_id: int | str = 0, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_mkdir(
+        self, 
+        payload: str | dict, 
+        /, 
+        parent_id: int | str = 0, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_mkdir(
+        self, 
+        payload: str | dict, 
+        /, 
+        parent_id: int | str = 0, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：创建目录
+
+        POST https://open-api.123pan.com/upload/v1/file/mkdir
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/gvz09ibuuo97i5ue
+
+        :payload:
+            - name: str
+            - parentID: int | str = 0
+        """
+        api = "/upload/v1/file/mkdir"
+        if isinstance(payload, str):
+            payload = {"name": payload}
+        payload = dict_to_lower_merge(payload, parentID=parent_id)
+        return self.request(url=api, json=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_move(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        parent_id: int | str = 0, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_move(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        parent_id: int | str = 0, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_move(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        parent_id: int | str = 0, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：从回收站恢复文件
+
+        POST https://open-api.123pan.com/api/v1/file/move
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/kx9f8b6wk6g55uwy
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+            - toParentFileID: int | str = 0
+        """
+        api = "v1/file/move"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
+        payload = dict_to_lower_merge(payload, toParentFileID=parent_id)
+        return self.request(url=api, json=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_rename(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_rename(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_rename(
+        self, 
+        payload: str | Iterable[str] | dict, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：重命名
+
+        POST https://open-api.123pan.com/api/v1/file/rename
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/ec18ovepgciazfuc
+
+        :payload:
+            - renameList: list[str] 💡 数组，最多 30 个成员，每个成员的格式为 "文件ID|新的文件名"
+        """
+        api = "v1/file/rename"
+        if isinstance(payload, str):
+            payload = {"renameList": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"renameList": payload}
+        return self.request(url=api, json=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_trash(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_trash(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_trash(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：删除文件，放入回收站中
+
+        POST https://open-api.123pan.com/api/v1/file/trash
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/en07662k2kki4bo6
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+        """
+        api = "v1/file/trash"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
+        return self.request(url=api, json=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_fs_trash_recover(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_fs_trash_recover(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_fs_trash_recover(
+        self, 
+        payload: int | str | Iterable[int | str] | dict = 0, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：从回收站恢复文件
+
+        POST https://open-api.123pan.com/api/v1/file/recover
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/kx9f8b6wk6g55uwy
+
+        :payload:
+            - fileIDs: list[int | str] 💡 文件 id 数组，长度最大不超过 100
+        """
+        api = "v1/file/recover"
+        if isinstance(payload, (int, str)):
+            payload = {"fileIDs": [payload]}
+        elif not isinstance(payload, dict):
+            if not isinstance(payload, (tuple, list)):
+                payload = list(payload)
+            payload = {"fileIDs": payload}
+        return self.request(url=api, json=payload, base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
+
+    @overload
+    def open_user_info(
+        self, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def open_user_info(
+        self, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def open_user_info(
+        self, 
+        /, 
+        base_url: str = "", 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """开放接口：用户信息
+
+        GET https://open-api.123pan.com/api/v1/user/info
+
+        .. tip::
+            https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced/fa2w0rosunui2v4m
+        """
+        api = "v1/user/info"
+        return self.request(url=api, method="GET", base_url=(base_url or DEFAULT_OPEN_BASE_URL), async_=async_, **request_kwargs)
 
 # TODO: 再添加一组开放接口，文档：https://123yunpan.yuque.com/org-wiki-123yunpan-muaork/cr6ced

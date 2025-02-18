@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ariarpc"
-version = "0.0.2"
+version = "0.0.2.1"
 description = "Python aria2 RPC call."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

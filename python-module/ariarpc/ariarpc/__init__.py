@@ -27,20 +27,23 @@ _httpx_request: None | Callable = None
 def get_default_request() -> Callable:
     global _httpx_request
     if _httpx_request is None:
-        from httpx import AsyncClient, AsyncHTTPTransport, Client, HTTPTransport, Limits
+        from httpx import AsyncClient, AsyncHTTPTransport, Client, HTTPTransport, Limits, Timeout
         from httpx_request import request as httpx_request
         limit = Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10)
+        timeout = Timeout(connect=5, read=60, write=60, pool=5)
         def _httpx_request(
             *args, 
             async_: bool = False, 
             session: Client = Client(
                 limits=limit, 
                 transport=HTTPTransport(retries=5), 
+                timeout=timeout, 
                 verify=False, 
             ), 
             async_session: AsyncClient = AsyncClient(
                 limits=limit, 
                 transport=AsyncHTTPTransport(retries=5), 
+                timeout=timeout, 
                 verify=False, 
             ), 
             **request_kwargs, 

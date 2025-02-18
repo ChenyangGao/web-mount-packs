@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10)
+__version__ = (0, 1)
 __all__ = [
     "run_async", "as_thread", "ensure_async", "ensure_await", "ensure_coroutine", 
     "ensure_aiter", "async_map", "async_filter", "async_filterfalse", "async_reduce", 
@@ -12,7 +12,7 @@ __all__ = [
     "async_repeat", "async_zip_longest", "async_tee", "call_as_aiter", "to_list", "collect", 
 ]
 
-from asyncio import create_task, get_running_loop, run, to_thread
+from asyncio import create_task, run, to_thread
 from collections.abc import (
     Awaitable, AsyncIterable, AsyncIterator, Callable, Collection, Coroutine, 
     ItemsView, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, 
@@ -20,18 +20,30 @@ from collections.abc import (
 )
 from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
 from itertools import pairwise
-from typing import cast, overload, Any, Self
+from typing import cast, overload, Any, Protocol, Self
 
 from decotools import decorated
 from undefined import undefined, Undefined
 
 
+class SupportsBool(Protocol):
+    def __bool__(self, /) -> bool: ...
+
+
+@overload
+def run_async[T](obj: Awaitable[T], /) -> T:
+    ...
+@overload
+def run_async[T](obj: T, /) -> T:
+    ...
 def run_async(obj, /):
     if isawaitable(obj):
         coro = ensure_coroutine(obj)
         try:
-            get_running_loop()
-            return create_task(coro)
+            task = create_task(coro)
+            # keep ref to task
+            task.add_done_callback(lambda _=task, /: None) # type: ignore
+            return task
         except RuntimeError:
             return run(coro)
     else:
@@ -53,6 +65,20 @@ def as_thread[**Args, T](
     return to_thread(wrapfunc, *args, **kwds)
 
 
+@overload
+def ensure_async[**Args, T](
+    function: Callable[Args, Awaitable[T]], 
+    /, 
+    threaded: bool = False, 
+) -> Callable[Args, Awaitable[T]]:
+    ...
+@overload
+def ensure_async[**Args, T](
+    function: Callable[Args, T], 
+    /, 
+    threaded: bool = False, 
+) -> Callable[Args, Awaitable[T]]:
+    ...
 def ensure_async[**Args, T](
     function: Callable[Args, T] | Callable[Args, Awaitable[T]], 
     /, 
@@ -60,26 +86,17 @@ def ensure_async[**Args, T](
 ) -> Callable[Args, Awaitable[T]]:
     if iscoroutinefunction(function):
         return function
-    function = cast(Callable[Args, T], function)
-    if threaded:
-        function = as_thread(function)
-        async def wrapper(*args, **kwds):
-            ret = await function(*args, **kwds)
-            if isawaitable(ret):
-                try:
-                    return await ret
-                except StopIteration as e:
-                    raise StopAsyncIteration from e
-            return ret
-    else:
-        async def wrapper(*args, **kwds):
-            try:
+    async def wrapper(*args, **kwds):
+        try:
+            if threaded:
+                return await to_thread(function, *args, **kwds)
+            else:
                 ret = function(*args, **kwds)
                 if isawaitable(ret):
                     return await ret
                 return ret
-            except StopIteration as e:
-                raise StopAsyncIteration from e
+        except StopIteration as e:
+            raise StopAsyncIteration from e
     return wrapper
 
 
@@ -108,23 +125,17 @@ def ensure_aiter[T](
 ) -> AsyncIterator[T]:
     if isinstance(iterable, AsyncIterable):
         return aiter(iterable)
-    if isinstance(iterable, Sequence):
-        async def it():
-            for e in iterable:
-                yield e
-        return it()
-    elif isgenerator(iterable):
+    if isgenerator(iterable):
+        send = iterable.send
         if threaded:
-            send = as_thread(iterable.send)
             async def wrapper():
                 e: Any = None
                 try:
                     while True:
-                        e = yield await send(e)
-                except StopAsyncIteration:
+                        e = yield await to_thread(send, e)
+                except StopIteration:
                     pass
         else:
-            send = iterable.send
             async def wrapper():
                 e: Any = None
                 try:
@@ -133,13 +144,15 @@ def ensure_aiter[T](
                 except StopIteration:
                     pass
     else:
+        if isinstance(iterable, Sequence):
+            threaded = False
         if threaded:
-            get = as_thread(iter(iterable).__next__)
             async def wrapper():
+                get_next = iter(iterable).__next__
                 try:
                     while True:
-                        yield await get()
-                except StopAsyncIteration:
+                        yield await to_thread(get_next)
+                except StopIteration:
                     pass
         else:
             async def wrapper():
@@ -148,6 +161,24 @@ def ensure_aiter[T](
     return wrapper()
 
 
+@overload
+def async_map[T](
+    function: Callable[..., Awaitable[T]], 
+    iterable: Iterable | AsyncIterable, 
+    /, 
+    *iterables: Iterable | AsyncIterable, 
+    threaded: bool = False, 
+) -> AsyncIterator[T]:
+    ...
+@overload
+def async_map[T](
+    function: Callable[..., T], 
+    iterable: Iterable | AsyncIterable, 
+    /, 
+    *iterables: Iterable | AsyncIterable, 
+    threaded: bool = False, 
+) -> AsyncIterator[T]:
+    ...
 async def async_map[T](
     function: Callable[..., T] | Callable[..., Awaitable[T]], 
     iterable: Iterable | AsyncIterable, 
@@ -155,52 +186,61 @@ async def async_map[T](
     *iterables: Iterable | AsyncIterable, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
-    func = ensure_async(function, threaded=threaded)
+    function = ensure_async(function, threaded=threaded)
     if iterables:
         async for args in async_zip(iterable, *iterables, threaded=threaded):
-            yield await func(*args)
+            yield await function(*args)
     else:
         async for arg in ensure_aiter(iterable, threaded=threaded):
-            yield await func(arg)
+            yield await function(arg)
 
 
 async def async_filter[T](
-    function: None | Callable[[T], bool] | Callable[[T], Awaitable[bool]], 
+    function: None | Callable[[T], SupportsBool] | Callable[[T], Awaitable[SupportsBool]], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
-    if function is None or function is bool:
+    if function is None:
         async for arg in ensure_aiter(iterable, threaded=threaded):
             if arg:
                 yield arg
     else:
-        fn = ensure_async(function, threaded=threaded)
+        function = ensure_async(function, threaded=threaded)
         async for arg in ensure_aiter(iterable, threaded=threaded):
-            if await fn(arg):
+            if await function(arg):
                 yield arg
 
 
 async def async_filterfalse[T](
-    function: None | Callable[[T], bool] | Callable[[T], Awaitable[bool]], 
+    function: None | Callable[[T], SupportsBool] | Callable[[T], Awaitable[SupportsBool]], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
-    if function is None or function is bool:
+    if function is None:
         async for arg in ensure_aiter(iterable, threaded=threaded):
             if not arg:
                 yield arg
     else:
-        fn = ensure_async(function, threaded=threaded)
+        function = ensure_async(function, threaded=threaded)
         async for arg in ensure_aiter(iterable, threaded=threaded):
-            if not (await fn(arg)):
+            if not (await function(arg)):
                 yield arg
 
 
 @overload
 async def async_reduce[T](
-    function: Callable[[T, T], T] | Callable[[T, T], Awaitable[T]], 
+    function: Callable[[T, T], Awaitable[T]], 
+    iterable: Iterable[T] | AsyncIterable[T], 
+    initial: Undefined = undefined, 
+    /, 
+    threaded: bool = False, 
+) -> T:
+    ...
+@overload
+async def async_reduce[T](
+    function: Callable[[T, T], T], 
     iterable: Iterable[T] | AsyncIterable[T], 
     initial: Undefined = undefined, 
     /, 
@@ -209,7 +249,16 @@ async def async_reduce[T](
     ...
 @overload
 async def async_reduce[T, V](
-    function: Callable[[V, T], V] | Callable[[V, T], Awaitable[V]], 
+    function: Callable[[V, T], Awaitable[V]], 
+    iterable: Iterable[T] | AsyncIterable[T], 
+    initial: V, 
+    /, 
+    threaded: bool = False, 
+) -> V:
+    ...
+@overload
+async def async_reduce[T, V](
+    function: Callable[[V, T], V], 
     iterable: Iterable[T] | AsyncIterable[T], 
     initial: V, 
     /, 
@@ -274,7 +323,7 @@ async def async_chain_from_iterable(
         async for e in ensure_aiter(iterable, threaded=threaded):
             yield e
 
-setattr(async_chain, "from_iterable", async_chain_from_iterable)
+async_chain.from_iterable = async_chain_from_iterable # type: ignore
 
 
 async def async_all(
@@ -332,7 +381,16 @@ async def async_cycle[T](
 @overload
 def async_accumulate[T](
     iterable: Iterable[T] | AsyncIterable[T], 
-    function: Callable[[T, T], T] | Callable[[T, T], Awaitable[T]], 
+    function: Callable[[T, T], Awaitable[T]], 
+    /, 
+    initial: Undefined = undefined, 
+    threaded: bool = False, 
+) -> AsyncIterator[T]:
+    ...
+@overload
+def async_accumulate[T](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    function: Callable[[T, T], T], 
     /, 
     initial: Undefined = undefined, 
     threaded: bool = False, 
@@ -341,7 +399,16 @@ def async_accumulate[T](
 @overload
 def async_accumulate[T, V](
     iterable: Iterable[T] | AsyncIterable[T], 
-    function: Callable[[V, T], V] | Callable[[V, T], Awaitable[V]], 
+    function: Callable[[V, T], Awaitable[V]], 
+    /, 
+    initial: V, 
+    threaded: bool = False, 
+) -> AsyncIterator[V]:
+    ...
+@overload
+def async_accumulate[T, V](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    function: Callable[[V, T], V], 
     /, 
     initial: V, 
     threaded: bool = False, 
@@ -359,12 +426,12 @@ async def async_accumulate[T, V](
     if initial is undefined:
         try:
             total = await anext(iterator)
-        except StopAsyncIteration:
+        except (StopIteration, StopAsyncIteration):
             return
     else:
         total = cast(V, initial)
     yield total
-    call = cast(Callable[[T | V, T], Awaitable[T | V]], ensure_async(function, threaded=threaded))
+    call: Callable = ensure_async(function, threaded=threaded)
     async for e in iterator:
         total = await call(total, e)
         yield total
@@ -411,7 +478,7 @@ async def async_islice[T](
 
 
 async def async_takewhile[T](
-    predicate: Callable[[T], Any], 
+    predicate: Callable[[T], SupportsBool] | Callable[[T], Awaitable[SupportsBool]], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
@@ -424,7 +491,7 @@ async def async_takewhile[T](
 
 
 async def async_dropwhile[T](
-    predicate: Callable[[T], Any], 
+    predicate: Callable[[T], SupportsBool] | Callable[[T], Awaitable[SupportsBool]], 
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     threaded: bool = False, 
@@ -537,15 +604,31 @@ async def async_pairwise[T](
         a = b
 
 
+@overload
+def async_starmap[T](
+    function: Callable[..., Awaitable[T]], 
+    iterable: Iterable | AsyncIterable, 
+    /, 
+    threaded: bool = False, 
+) -> AsyncIterator[T]:
+    ...
+@overload
+def async_starmap[T](
+    function: Callable[..., T], 
+    iterable: Iterable | AsyncIterable, 
+    /, 
+    threaded: bool = False, 
+) -> AsyncIterator[T]:
+    ...
 async def async_starmap[T](
     function: Callable[..., T] | Callable[..., Awaitable[T]], 
     iterable: Iterable | AsyncIterable, 
     /, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
-    fn = ensure_async(function, threaded=threaded)
+    function = ensure_async(function, threaded=threaded)
     async for args in ensure_aiter(iterable, threaded=threaded):
-        yield await fn(*args)
+        yield await function(*args)
 
 
 async def async_count(
@@ -691,7 +774,7 @@ async def collect[T](
 ) -> Collection[T]:
     ...
 async def collect(
-    iterable: Iterable | AsyncIterable, 
+    iterable: Iterable | AsyncIterable | Mapping, 
     /, 
     rettype: Callable[[Iterable], Collection] = list, 
     threaded: bool = False, 

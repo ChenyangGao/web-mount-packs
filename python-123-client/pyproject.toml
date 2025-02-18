@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-123-client"
-version = "0.0.4.1"
+version = "0.0.5"
 description = "Python wrapper for 123 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -39,7 +39,7 @@ python-hashtools = ">=0.0.3.3"
 python-httpfile = ">=0.0.5"
 python-iterutils = ">=0.0.9"
 python-filewrap = ">=0.2.6.1"
-python-http_request = ">=0.0.6"
+python-http_request = ">=0.0.7"
 yarl = "*"
 
 [build-system]

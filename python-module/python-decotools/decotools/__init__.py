@@ -51,6 +51,7 @@ def decorated[**Args, R, T](
             return func(*args, **kwds)
         return functools.update_wrapper(wrapper, func)
     """
+    # NOTE: Can even be simplified as `lambda g, /: functools.partial(f, g)`
     return update_wrapper(lambda g, /: update_wrapper(lambda *a, **k: f(g, *a, **k), g), f)
 
 
