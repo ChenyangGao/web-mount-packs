@@ -2,11 +2,49 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["format_size", "format_time", "format_timestamp"]
+__all__ = ["format_mode", "format_size", "format_time", "format_timestamp"]
+
+import stat
 
 from datetime import datetime, timezone
 from email.utils import format_datetime
-from typing import Literal
+from stat import S_IFMT, S_IMODE
+from typing import Final, Literal
+
+
+FILE_TYPE: Final[dict[int, str]] = {
+    stat.S_IFBLK: "b", 
+    stat.S_IFCHR: "c", 
+    stat.S_IFDIR: "d", 
+    stat.S_IFLNK: "l", 
+    stat.S_IFIFO: "p", 
+    stat.S_IFSOCK: "s", 
+    stat.S_IFREG: "-", 
+}
+
+
+def format_mode(
+    mode: int, 
+    /, 
+    with_type: bool = True, 
+) -> str:
+    """Formats the file mode (permissions) into a human-readable string.
+
+    :param mode: The file mode (permissions) in integer format, typically obtained from os.stat().
+    :param with_type: A flag indicating whether to include the file type prefix
+                      (e.g., "d" for directory, "-" for regular file, "l" for symlink).
+
+    :return: A formatted string representing the file's permissions.
+    """
+    if with_type:
+        prefix = FILE_TYPE.get(S_IFMT(mode), "-")
+    else:
+        prefix = ""
+    m = f"{S_IMODE(mode):09b}"
+    return prefix + "".join(
+        c if b == "1" else "-"
+        for b, c in zip(m, "rwx" * 3)
+    )
 
 
 def format_size(

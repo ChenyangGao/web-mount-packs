@@ -2,24 +2,36 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1)
+__version__ = (0, 1, 1)
 __all__ = [
-    "run_async", "as_thread", "ensure_async", "ensure_await", "ensure_coroutine", 
-    "ensure_aiter", "async_map", "async_filter", "async_filterfalse", "async_reduce", 
-    "async_zip", "async_chain", "async_all", "async_any", "async_compress", "async_cycle", 
-    "async_accumulate", "async_enumerate", "async_islice", "async_takewhile", "async_dropwhile", 
+    "AsyncExecutor", "get_loop", "stop_loop", "shutdown_loop", "run_loop", "submit", 
+    "get_all_tasks", "cancel_all_tasks", "run_async", "run_in_loop", "as_thread", 
+    "ensure_async", "ensure_await", "ensure_coroutine", "ensure_aiter", "async_map", 
+    "async_filter", "async_filterfalse", "async_reduce", "async_zip", "async_chain", 
+    "async_all", "async_any", "async_compress", "async_cycle", "async_accumulate", 
+    "async_enumerate", "async_islice", "async_takewhile", "async_dropwhile", 
     "async_batched", "async_groupby", "async_pairwise", "async_starmap", "async_count", 
     "async_repeat", "async_zip_longest", "async_tee", "call_as_aiter", "to_list", "collect", 
 ]
 
-from asyncio import create_task, run, to_thread
+from asyncio import (
+    get_event_loop, get_running_loop, new_event_loop, run_coroutine_threadsafe, 
+    set_event_loop, to_thread, 
+)
+from asyncio.events import AbstractEventLoop
+from asyncio.runners import _cancel_all_tasks as cancel_all_tasks # type: ignore
+from asyncio.tasks import all_tasks as get_all_tasks
 from collections.abc import (
     Awaitable, AsyncIterable, AsyncIterator, Callable, Collection, Coroutine, 
-    ItemsView, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, 
-    MutableSet, Sequence, 
+    Iterable, Mapping, MutableMapping, MutableSequence, MutableSet, Sequence, 
 )
+from concurrent.futures import Future
+from contextvars import Context
+from functools import partial
 from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
 from itertools import pairwise
+from _thread import get_ident, start_new_thread
+from time import sleep
 from typing import cast, overload, Any, Protocol, Self
 
 from decotools import decorated
@@ -30,22 +42,173 @@ class SupportsBool(Protocol):
     def __bool__(self, /) -> bool: ...
 
 
-@overload
-def run_async[T](obj: Awaitable[T], /) -> T:
-    ...
-@overload
-def run_async[T](obj: T, /) -> T:
-    ...
-def run_async(obj, /):
-    if isawaitable(obj):
-        coro = ensure_coroutine(obj)
+class AsyncExecutor:
+
+    def __init__(self):
+        self.loop = run_loop(run_in_thread=True)
+
+    def __del__(self, /):
+        self.shutdown(wait=False, cancel_futures=True)
+
+    def __getattr__(self, attr, /):
+        return getattr(self.loop, attr)
+
+    def map(self, func, iterable):
+        submit = self.submit
+        futures = [submit(func, arg) for arg in iterable] 
+        return (f.result() for f in futures)
+
+    def shutdown(self, /, wait: bool = True, *, cancel_futures: bool = False):
+        if wait:
+            loop = self.loop
+            if loop.is_closed():
+                return
+            try:
+                if not cancel_futures:
+                    while not (loop.is_running() or loop.is_closed()):
+                        sleep(0.01)
+                    while get_all_tasks(loop):
+                        sleep(0.01)
+            finally:
+                stop_loop(loop)
+        else:
+            start_new_thread(partial(self.shutdown, wait, cancel_futures=cancel_futures), ())
+
+    def submit(self, func, /, *args, **kwds):
+        return submit(ensure_coroutine(func(*args, **kwds)), self.loop)
+
+    def __enter__(self, /) -> Self:
+        return self
+
+    def __exit__(self, *a):
+        self.shutdown()
+
+
+def get_loop(set_loop: bool = False) -> AbstractEventLoop:
+    try:
+        loop = get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+        return loop
+    except RuntimeError:
+        loop = new_event_loop()
+        if set_loop:
+            set_event_loop(loop)
+        return loop
+
+
+def stop_loop(loop: None | AbstractEventLoop = None):
+    if loop is None:
         try:
-            task = create_task(coro)
+            loop = get_event_loop()
+        except RuntimeError:
+            return
+    tid = getattr(loop, "_thread_id", None)
+    if tid is None:
+        loop.stop()
+        loop.call_soon_threadsafe(loop.stop)
+    elif tid == get_ident():
+        loop.stop()
+    else:
+        loop.call_soon_threadsafe(loop.stop)
+
+
+def shutdown_loop(loop: None | AbstractEventLoop = None):
+    if loop is None:
+        try:
+            loop = get_event_loop()
+        except RuntimeError:
+            return
+    cancel_all_tasks(loop)
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.run_until_complete(loop.shutdown_default_executor())
+
+
+def run_loop(
+    loop: None | AbstractEventLoop = None, 
+    close_at_end: bool = False, 
+    run_in_thread: bool = False, 
+) -> AbstractEventLoop:
+    if loop is None:
+        loop = new_event_loop()
+        close_at_end = True
+    if run_in_thread:
+        start_new_thread(run_loop, (loop, close_at_end))
+    else:
+        try:
+            loop.run_forever()
+        finally:
+            if close_at_end:
+                try:
+                    shutdown_loop(loop)
+                finally:
+                    loop.close()
+    return loop
+
+
+def submit(
+    coro, 
+    /, 
+    loop: None | AbstractEventLoop = None, 
+) -> Future:
+    return run_coroutine_threadsafe(ensure_coroutine(coro), loop or get_loop(True))
+
+
+@overload
+def run_async[T](
+    obj: Awaitable[T], 
+    /, 
+    name: None | str = None, 
+    context: None | Context = None, 
+    loop: None | AbstractEventLoop = None, 
+) -> T:
+    ...
+@overload
+def run_async[T](
+    obj: T, 
+    /, 
+    name: None | str = None, 
+    context: None | Context = None, 
+    loop: None | AbstractEventLoop = None, 
+) -> T:
+    ...
+def run_async(
+    obj, 
+    /, 
+    name: None | str = None, 
+    context: None | Context = None, 
+    loop: None | AbstractEventLoop = None, 
+):
+    if isawaitable(obj):
+        if loop is None:
+            try:
+                loop = get_running_loop()
+            except RuntimeError:
+                loop = get_loop()
+        task = loop.create_task(
+            ensure_coroutine(obj), 
+            name=name, 
+            context=context, 
+        )
+        if loop.is_running():
             # keep ref to task
             task.add_done_callback(lambda _=task, /: None) # type: ignore
             return task
-        except RuntimeError:
-            return run(coro)
+        else:
+            return loop.run_until_complete(task)
+    else:
+        return obj
+
+
+@overload
+def run_in_loop[T](obj: Awaitable[T], /) -> T:
+    ...
+@overload
+def run_in_loop[T](obj: T, /) -> T:
+    ...
+def run_in_loop(obj, /):
+    if isawaitable(obj):
+        return new_event_loop().run_until_complete(obj)
     else:
         return obj
 
@@ -66,18 +229,25 @@ def as_thread[**Args, T](
 
 
 @overload
+def ensure_async[**Args, C: Coroutine](
+    function: Callable[Args, C], 
+    /, 
+    threaded: bool = False, 
+) -> Callable[Args, C]:
+    ...
+@overload
 def ensure_async[**Args, T](
     function: Callable[Args, Awaitable[T]], 
     /, 
     threaded: bool = False, 
-) -> Callable[Args, Awaitable[T]]:
+) -> Callable[Args, Coroutine[Any, Any, T]]:
     ...
 @overload
 def ensure_async[**Args, T](
     function: Callable[Args, T], 
     /, 
     threaded: bool = False, 
-) -> Callable[Args, Awaitable[T]]:
+) -> Callable[Args, Coroutine[Any, Any, T]]:
     ...
 def ensure_async[**Args, T](
     function: Callable[Args, T] | Callable[Args, Awaitable[T]], 
@@ -86,18 +256,9 @@ def ensure_async[**Args, T](
 ) -> Callable[Args, Awaitable[T]]:
     if iscoroutinefunction(function):
         return function
-    async def wrapper(*args, **kwds):
-        try:
-            if threaded:
-                return await to_thread(function, *args, **kwds)
-            else:
-                ret = function(*args, **kwds)
-                if isawaitable(ret):
-                    return await ret
-                return ret
-        except StopIteration as e:
-            raise StopAsyncIteration from e
-    return wrapper
+    if threaded:
+        return lambda *a, **k: to_thread(function, *a, **k)
+    return lambda *a, **k: ensure_coroutine(function(*a, **k))
 
 
 def ensure_await(o, /) -> Awaitable:
@@ -108,14 +269,31 @@ def ensure_await(o, /) -> Awaitable:
     return wrapper()
 
 
-def ensure_coroutine(o, /) -> Coroutine:
-    if iscoroutine(o):
-        return o
-    async def wrapper():
-        if isawaitable(o):
-            return await o
-        return o
-    return wrapper()
+@overload
+def _ensure_coroutine[T](o: Awaitable[T], /) -> Coroutine[Any, Any, T]:
+    ...
+@overload
+def _ensure_coroutine[T](o: T, /) -> Coroutine[Any, Any, T]:
+    ...
+async def _ensure_coroutine(obj, /):
+    if isawaitable(obj):
+        return await obj
+    return obj
+
+
+@overload
+def ensure_coroutine[C: Coroutine](o: C, /) -> C:
+    ...
+@overload
+def ensure_coroutine[T](o: Awaitable[T], /) -> Coroutine[Any, Any, T]:
+    ...
+@overload
+def ensure_coroutine[T](o: T, /) -> Coroutine[Any, Any, T]:
+    ...
+def ensure_coroutine[T](obj: T | Awaitable[T], /) -> Coroutine[Any, Any, T]:
+    if iscoroutine(obj):
+        return obj
+    return _ensure_coroutine(obj)
 
 
 def ensure_aiter[T](
