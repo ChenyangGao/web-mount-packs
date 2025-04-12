@@ -2,10 +2,9 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __all__ = ["request", "request_sync", "request_async"]
 
-from asyncio import get_running_loop, run, run_coroutine_threadsafe
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing, closing
 from inspect import isawaitable, signature
@@ -13,6 +12,7 @@ from json import loads
 from types import EllipsisType
 from typing import cast, overload, Any, Literal
 
+from asynctools import run_async
 from argtools import argcount
 from httpx import AsyncHTTPTransport, HTTPTransport
 from httpx._types import AuthTypes, SyncByteStream, URLTypes
@@ -24,23 +24,12 @@ _CLIENT_INIT_KWARGS = signature(Client).parameters.keys() - _BUILD_REQUEST_KWARG
 
 if "__del__" not in Client.__dict__:
     setattr(Client, "__del__", Client.close)
-
 if "close" not in AsyncClient.__dict__:
     def close(self, /):
-        try:
-            try:
-                loop = get_running_loop()
-            except RuntimeError:
-                run(self.aclose())
-            else:
-                run_coroutine_threadsafe(self.aclose(), loop)
-        except Exception:
-            pass
+        return run_async(self.aclose())
     setattr(AsyncClient, "close", close)
 if "__del__" not in AsyncClient.__dict__:
-    setattr(AsyncClient, "__del__", close)
-
-
+    setattr(AsyncClient, "__del__", getattr(AsyncClient, "close"))
 if "__del__" not in Response.__dict__:
     def __del__(self, /):
         if self.is_closed:
@@ -48,15 +37,7 @@ if "__del__" not in Response.__dict__:
         if isinstance(self.stream, SyncByteStream):
             self.close()
         else:
-            try:
-                try:
-                    loop = get_running_loop()
-                except RuntimeError:
-                    run(self.aclose())
-                else:
-                    run_coroutine_threadsafe(self.aclose(), loop)
-            except Exception:
-                pass
+            return run_async(self.aclose())
     setattr(Response, "__del__", __del__)
 
 

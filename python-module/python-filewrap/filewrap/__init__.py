@@ -31,8 +31,7 @@ from asynctools import async_chain, ensure_async, ensure_aiter, run_async
 from property import funcproperty
 
 
-READ_BUFSIZE = 1 << 13
-WRITE_BUFSIZE = 1 << 16
+READ_BUFSIZE = 1 << 16
 CRE_NOT_UNIX_NEWLINES: Final = re_compile("\r\n|\r")
 
 
@@ -837,7 +836,7 @@ def bio_chunk_iter(
     bio: SupportsRead[Buffer] | SupportsReadinto | Callable[[int], Buffer], 
     /, 
     size: int = -1, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
     can_buffer: bool = False, 
     callback: None | Callable[[int], Any] = None, 
 ) -> Iterator[Buffer]:
@@ -906,7 +905,7 @@ async def bio_chunk_async_iter(
     bio: SupportsRead[Buffer] | SupportsRead[Awaitable[Buffer]] | SupportsReadinto | Callable[[int], Buffer] | Callable[[int], Awaitable[Buffer]], 
     /, 
     size: int = -1, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
     can_buffer: bool = False, 
     callback: None | Callable[[int], Any] = None, 
 ) -> AsyncIterator[Buffer]:
@@ -974,7 +973,7 @@ def bio_skip_iter(
     bio: SupportsRead[Buffer] | SupportsReadinto | Callable[[int], Buffer], 
     /, 
     size: int = -1, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
     callback: None | Callable[[int], Any] = None, 
 ) -> Iterator[int]:
     if size == 0:
@@ -990,7 +989,7 @@ def bio_skip_iter(
             length = seek(0, 2) - curpos
     except Exception:
         if chunksize <= 0:
-            chunksize = WRITE_BUFSIZE
+            chunksize = READ_BUFSIZE
         if callable(bio):
             read = bio
         elif hasattr(bio, "readinto"):
@@ -1045,7 +1044,7 @@ async def bio_skip_async_iter(
     bio: SupportsRead[Buffer] | SupportsRead[Awaitable[Buffer]] | SupportsReadinto | Callable[[int], Buffer] | Callable[[int], Awaitable[Buffer]], 
     /, 
     size: int = -1, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
     callback: None | Callable[[int], Any] = None, 
 ) -> AsyncIterator[int]:
     if size == 0:
@@ -1061,7 +1060,7 @@ async def bio_skip_async_iter(
             length = (await seek(0, 2)) - curpos
     except Exception:
         if chunksize <= 0:
-            chunksize = WRITE_BUFSIZE
+            chunksize = READ_BUFSIZE
         if callable(bio):
             read: Callable[[int], Awaitable[Buffer]] = ensure_async(bio, threaded=True)
         elif hasattr(bio, "readinto"):
@@ -1558,7 +1557,7 @@ def bytes_iter_to_async_reader(
 def bytes_to_chunk_iter(
     b: Buffer, 
     /, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
 ) -> Iterator[memoryview]:
     m = memoryview(b)
     for i in range(0, buffer_length(m), chunksize):
@@ -1568,7 +1567,7 @@ def bytes_to_chunk_iter(
 async def bytes_to_chunk_async_iter(
     b: Buffer, 
     /, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
 ) -> AsyncIterator[memoryview]:
     m = memoryview(b)
     for i in range(0, buffer_length(m), chunksize):
@@ -1578,7 +1577,7 @@ async def bytes_to_chunk_async_iter(
 def bytes_ensure_part_iter(
     it: Iterable[Buffer], 
     /, 
-    partsize: int = WRITE_BUFSIZE, 
+    partsize: int = READ_BUFSIZE, 
 ) -> Iterator[Buffer]:
     n = partsize
     for b in it:
@@ -1606,7 +1605,7 @@ def bytes_ensure_part_iter(
 async def bytes_ensure_part_async_iter(
     it: Iterable[Buffer] | AsyncIterable[Buffer], 
     /, 
-    partsize: int = WRITE_BUFSIZE, 
+    partsize: int = READ_BUFSIZE, 
 ) -> AsyncIterator[Buffer]:
     n = partsize
     async for b in ensure_aiter(it):
@@ -1715,10 +1714,10 @@ def copyfileobj(
     fsrc, 
     fdst: SupportsWrite[Buffer], 
     /, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
 ):
     if chunksize <= 0:
-        chunksize = WRITE_BUFSIZE
+        chunksize = READ_BUFSIZE
     fdst_write = fdst.write
     fsrc_read = getattr(fsrc, "read", None)
     fsrc_readinto = getattr(fsrc, "readinto", None)
@@ -1740,11 +1739,11 @@ async def copyfileobj_async(
     fsrc, 
     fdst: SupportsWrite[Buffer], 
     /, 
-    chunksize: int = WRITE_BUFSIZE, 
+    chunksize: int = READ_BUFSIZE, 
     threaded: bool = True, 
 ):
     if chunksize <= 0:
-        chunksize = WRITE_BUFSIZE
+        chunksize = READ_BUFSIZE
     fdst_write = ensure_async(fdst.write, threaded=threaded)
     fsrc_read = getattr(fsrc, "read", None)
     fsrc_readinto = getattr(fsrc, "readinto", None)

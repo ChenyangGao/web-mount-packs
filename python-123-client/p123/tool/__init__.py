@@ -321,7 +321,7 @@ def _iterdir(
                         continue
                     elif pred:
                         if depth >= min_depth:
-                            yield Yield(info, identity=True)
+                            yield Yield(info, may_await=False)
                         if pred is 1:
                             continue
                     if is_dir and (max_depth < 0 or depth < max_depth):

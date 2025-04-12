@@ -1917,7 +1917,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         elif stop is None or stop > count:
                             total = count - start
                         for attr in resp["data"]:
-                            yield Yield(normalize_attr2(attr, ancestor), identity=True)
+                            yield Yield(normalize_attr2(attr, ancestor), may_await=False)
                         if total <= page_size:
                             return
                         for _ in range((total - 1) // page_size):
@@ -1927,8 +1927,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             if resp["count"] != count:
                                 raise RuntimeError(f"{id} detected count changes during iteration")
                             for attr in resp["data"]:
-                                yield Yield(normalize_attr2(attr, ancestor), identity=True)
-                    return YieldFrom(run_gen_step_iter(iterdir(), async_=async_), identity=True)
+                                yield Yield(normalize_attr2(attr, ancestor), may_await=False)
+                    return YieldFrom(run_gen_step_iter(iterdir(), async_=async_), may_await=False)
                 else:
                     def iterdir():
                         children = id_to_readdir.get(id)
@@ -1977,16 +1977,16 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                             if cur_id in his_ids:
                                                 n -= 1
                                                 if count - len(seen) == n:
-                                                    yield Yield(attr, identity=True)
+                                                    yield Yield(attr, may_await=False)
                                                     for attr in cast(dict[int, AttrDictWithAncestors], children).values():
                                                         if attr["id"] not in seen:
-                                                            yield Yield(attr, identity=True)
+                                                            yield Yield(attr, may_await=False)
                                                     done = True
                                                     return
                                                 his_ids.remove(cur_id)
                                     except Break:
                                         pass
-                                yield Yield(attr, identity=True)
+                                yield Yield(attr, may_await=False)
 
                         resp = yield get_files(payload, async_=async_)
                         count = resp["count"]
@@ -2049,7 +2049,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 values.sort(key=key, reverse=not asc)
             if not fc_mix:
                 values.sort(key=lambda attr: not attr["is_directory"], reverse=not asc)
-            return YieldFrom(values[start:stop], identity=True)
+            return YieldFrom(values[start:stop], may_await=False)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -3010,7 +3010,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             while True:
                 resp = yield request(payload)
                 data = check_response(resp)["data"]
-                yield YieldFrom(data, identity=True)
+                yield YieldFrom(data, may_await=False)
                 if len(data) < page_size:
                     break
                 payload["offset"] += page_size
@@ -3906,7 +3906,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     return
                 for attr in data:
                     attr = normalize_attr(attr, dict_cls=AttrDictWithAncestors)
-                    yield Yield(P115Path(self, attr), identity=True)
+                    yield Yield(P115Path(self, attr), may_await=False)
                 offset = payload["offset"] = offset + resp["page_size"]
                 if offset >= resp["count"] or offset >= 10_000:
                     break

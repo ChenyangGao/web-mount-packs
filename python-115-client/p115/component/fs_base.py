@@ -2229,7 +2229,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                         onerror=onerror, 
                         predicate=predicate, 
                         async_=async_, # type: ignore
-                    ), identity=True)
+                    ), may_await=False)
                 else:
                     mode = write_mode
                     try:
@@ -2253,7 +2253,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                             async_=async_, 
                         )
                         if task is not None:
-                            yield Yield((subpath, download_path, task), identity=True)
+                            yield Yield((subpath, download_path, task), may_await=False)
                             if not submit and task.pending:
                                 yield task.start
                     except (KeyboardInterrupt, GeneratorExit):
@@ -2621,7 +2621,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     pass
                 return
             elif not pattern.lstrip("/"):
-                return Yield(self.as_path(0), identity=True)
+                return Yield(self.as_path(0), may_await=False)
             splitted_pats = tuple(translate_iter(pattern, allow_escaped_slash=allow_escaped_slash))
             if pattern.startswith("/"):
                 attr = self.attr(0)
@@ -2647,7 +2647,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                         max_depth=-1, 
                         predicate=lambda p: match(str(p["path"])) is not None, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
                     return
             else:
                 typ = None
@@ -2672,7 +2672,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                         pid=pid, 
                         max_depth=-1, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
                 if any(typ == "dstar" for _, typ, _ in splitted_pats[i:]):
                     pattern = "".join(
                         "(?:/%s)?" % pat if typ == "dstar" else "/" + pat 
@@ -2687,7 +2687,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                         max_depth=-1, 
                         predicate=lambda p: match(p.path) is not None, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
             cref_cache: dict[int, Callable] = {}
             if subpath:
                 try:
@@ -2713,12 +2713,12 @@ class P115FileSystemBase(Generic[P115PathType]):
                     except FileNotFoundError:
                         return
                     if at_end:
-                        yield Yield(subpath, identity=True)
+                        yield Yield(subpath, may_await=False)
                     elif subpath.is_dir():
                         yield from glob_step_match(subpath, j)
                 elif typ == "star":
                     if at_end:
-                        yield YieldFrom(path.iter(async_=async_), identity=True)
+                        yield YieldFrom(path.iter(async_=async_), may_await=False)
                     else:
                         subpaths = yield path.listdir_path(async_=async_)
                         for subpath in subpaths:
@@ -2735,7 +2735,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                             cref = cref_cache[i] = re_compile(pat).fullmatch
                         if cref(subpath.name):
                             if at_end:
-                                yield Yield(subpath, identity=True)
+                                yield Yield(subpath, may_await=False)
                             elif subpath.is_dir():
                                 yield from glob_step_match(subpath, j)
             yield from glob_step_match(path, i)
@@ -3040,7 +3040,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     if pred is None:
                         return
                     elif pred:
-                        yield Yield(path, identity=True)
+                        yield Yield(path, may_await=False)
                         if pred is 1:
                             return
                     min_depth = 1
@@ -3058,7 +3058,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                             continue
                         elif pred:
                             if depth >= min_depth:
-                                yield Yield(path, identity=True)
+                                yield Yield(path, may_await=False)
                             if pred is 1:
                                 continue
                         if path.is_dir() and (max_depth < 0 or depth < max_depth):
@@ -3133,7 +3133,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                 if pred is None:
                     return
                 elif pred:
-                    yield Yield(path, identity=True)
+                    yield Yield(path, may_await=False)
                     if pred is 1:
                         return
                 if path.is_file():
@@ -3158,7 +3158,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                         continue
                     yield_me = pred 
                 if yield_me and topdown:
-                    yield Yield(path, identity=True)
+                    yield Yield(path, may_await=False)
                 if yield_me is not 1 and path.is_dir():
                     yield YieldFrom(self.iter_dfs(
                         path, 
@@ -3169,9 +3169,9 @@ class P115FileSystemBase(Generic[P115PathType]):
                         onerror=onerror, 
                         async_=async_, 
                         **kwargs, 
-                    ), identity=True)
+                    ), may_await=False)
                 if yield_me and not topdown:
-                    yield Yield(path, identity=True)
+                    yield Yield(path, may_await=False)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -3865,7 +3865,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                                         push((depth, attr))
                                 else:
                                     files.append(attr)
-                            yield Yield((str(parent["path"]), dirs, files), identity=True)
+                            yield Yield((str(parent["path"]), dirs, files), may_await=False)
                         else:
                             for attr in subattrs:
                                 if attr["is_directory"]:
@@ -3946,7 +3946,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     files.append(attr)
             parent_path = yield self.get_path(top, pid=pid, async_=async_)
             if yield_me and topdown:
-                yield Yield((parent_path, dirs, files), identity=True)
+                yield Yield((parent_path, dirs, files), may_await=False)
             for attr in dirs:
                 yield YieldFrom(self.walk_attr_dfs(
                     attr, 
@@ -3957,7 +3957,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     async_=async_, 
                 ))
             if yield_me and not topdown:
-                yield Yield((parent_path, dirs, files), identity=True)
+                yield Yield((parent_path, dirs, files), may_await=False)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload

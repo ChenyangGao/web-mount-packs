@@ -3443,7 +3443,7 @@ class AlistFileSystem:
                         password=password, 
                         refresh=refresh, 
                         async_=async_, # type: ignore
-                    ), identity=True)
+                    ), may_await=False)
                 else:
                     mode = write_mode
                     try:
@@ -3468,7 +3468,7 @@ class AlistFileSystem:
                             async_=async_, 
                         )
                         if task is not None:
-                            yield Yield((subpath, download_path, task), identity=True)
+                            yield Yield((subpath, download_path, task), may_await=False)
                             if not submit and task.pending:
                                 yield task.start
                     except (KeyboardInterrupt, GeneratorExit):
@@ -3801,12 +3801,12 @@ class AlistFileSystem:
                         password, 
                         async_=async_, 
                     )
-                    yield Yield(self.as_path(attr), identity=True)
+                    yield Yield(self.as_path(attr), may_await=False)
                 except FileNotFoundError:
                     pass
                 return
             elif not pattern.lstrip("/"):
-                return Yield(AlistPath(self, "/", password), identity=True)
+                return Yield(AlistPath(self, "/", password), may_await=False)
             splitted_pats = tuple(translate_iter(pattern))
             if pattern.startswith("/"):
                 dirname = "/"
@@ -3832,7 +3832,7 @@ class AlistFileSystem:
                         max_depth=-1, 
                         predicate=lambda p: match(p["path"]) is not None, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
             else:
                 typ = None
                 for i, (pat, typ, orig) in enumerate(splitted_pats):
@@ -3846,7 +3846,7 @@ class AlistFileSystem:
                             password, 
                             async_=async_, 
                         )
-                        yield Yield(self.as_path(attr), identity=True)
+                        yield Yield(self.as_path(attr), may_await=False)
                     except FileNotFoundError:
                         pass
                     return
@@ -3856,7 +3856,7 @@ class AlistFileSystem:
                         password=password, 
                         max_depth=-1, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
                 if any(typ == "dstar" for _, typ, _ in splitted_pats[i:]):
                     pattern = "".join(
                         "(?:/%s)?" % pat if typ == "dstar" else "/" + pat 
@@ -3871,7 +3871,7 @@ class AlistFileSystem:
                         max_depth=-1, 
                         predicate=lambda p: match(p["path"]) is not None, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
             try:
                 attr = yield self.attr(dirname, password, async_=async_)
             except FileNotFoundError:
@@ -3888,14 +3888,14 @@ class AlistFileSystem:
                     subpath = path.joinpath(orig)
                     if at_end:
                         if (yield subpath.exists(async_=async_)):
-                            yield Yield(subpath, identity=True)
+                            yield Yield(subpath, may_await=False)
                     elif subpath.is_dir():
                         yield from glob_step_match(subpath, j)
                 else:
                     subpaths = yield path.listdir_path(async_=async_)
                     if typ == "star":
                         if at_end:
-                            yield YieldFrom(subpaths, identity=True)
+                            yield YieldFrom(subpaths, may_await=False)
                         else:
                             for subpath in subpaths:
                                 if subpath.is_dir():
@@ -3910,7 +3910,7 @@ class AlistFileSystem:
                                 cref = cref_cache[i] = re_compile(pat).fullmatch
                             if cref(subpath.name):
                                 if at_end:
-                                    yield Yield(subpath, identity=True)
+                                    yield Yield(subpath, may_await=False)
                                 elif subpath.is_dir():
                                     yield from glob_step_match(subpath, j)
             yield from glob_step_match(path, i)
@@ -4161,7 +4161,7 @@ class AlistFileSystem:
                     if pred is None:
                         return
                     elif pred:
-                        yield Yield(path, identity=True)
+                        yield Yield(path, may_await=False)
                         if pred is 1:
                             return
                     min_depth = 1
@@ -4179,7 +4179,7 @@ class AlistFileSystem:
                             continue
                         elif pred:
                             if depth >= min_depth:
-                                yield Yield(path, identity=True)
+                                yield Yield(path, may_await=False)
                             if pred is 1:
                                 continue
                         if path.is_dir() and (max_depth < 0 or depth < max_depth):
@@ -4256,7 +4256,7 @@ class AlistFileSystem:
                 if pred is None:
                     return
                 elif pred:
-                    yield Yield(path, identity=True)
+                    yield Yield(path, may_await=False)
                     if pred is 1:
                         return
                 if path.is_file():
@@ -4280,7 +4280,7 @@ class AlistFileSystem:
                         continue
                     yield_me = pred
                 if yield_me and topdown:
-                    yield Yield(path, identity=True)
+                    yield Yield(path, may_await=False)
                 if yield_me is not 1 and path.is_dir():
                     yield YieldFrom(self.iter(
                         path, 
@@ -4292,9 +4292,9 @@ class AlistFileSystem:
                         refresh=refresh, 
                         password=password, 
                         async_=async_, 
-                    ), identity=True)
+                    ), may_await=False)
                 if yield_me and not topdown:
-                    yield Yield(path, identity=True)
+                    yield Yield(path, may_await=False)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -4424,7 +4424,7 @@ class AlistFileSystem:
                         per_page=per_page, 
                         async_=async_, 
                     )
-                    yield YieldFrom(data, identity=True)
+                    yield YieldFrom(data, may_await=False)
                     if len(data) < per_page:
                         break
                     page += 1
@@ -6159,7 +6159,7 @@ class AlistFileSystem:
                                         push((depth, attr))
                                 else:
                                     files.append(attr)
-                            yield Yield((parent["path"], dirs, files), identity=True)
+                            yield Yield((parent["path"], dirs, files), may_await=False)
                         else:
                             for attr in ls:
                                 if attr["is_dir"]:
@@ -6245,7 +6245,7 @@ class AlistFileSystem:
                 else:
                     files.append(attr)
             if yield_me and topdown:
-                yield Yield((top, dirs, files), identity=True)
+                yield Yield((top, dirs, files), may_await=False)
             for attr in dirs:
                 yield YieldFrom(self.walk_attr_dfs(
                     attr, 
@@ -6258,7 +6258,7 @@ class AlistFileSystem:
                     async_=async_, 
                 ))
             if yield_me and not topdown:
-                yield Yield((top, dirs, files), identity=True)
+                yield Yield((top, dirs, files), may_await=False)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload

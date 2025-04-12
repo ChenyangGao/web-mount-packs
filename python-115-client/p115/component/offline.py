@@ -616,7 +616,7 @@ class P115Offline:
                     raise RuntimeError("detected count changes during iteration")
                 if not resp["tasks"]:
                     return
-                yield YieldFrom(map(normalize_attr, resp["tasks"]), identity=True)
+                yield YieldFrom(map(normalize_attr, resp["tasks"]), may_await=False)
                 if page >= resp["page_count"]:
                     return
                 page += 1

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = [
     "AsyncExecutor", "get_loop", "stop_loop", "shutdown_loop", "run_loop", "submit", 
     "get_all_tasks", "cancel_all_tasks", "run_async", "run_in_loop", "as_thread", 
@@ -16,7 +16,7 @@ __all__ = [
 
 from asyncio import (
     get_event_loop, get_running_loop, new_event_loop, run_coroutine_threadsafe, 
-    set_event_loop, to_thread, 
+    set_event_loop, to_thread, Semaphore, Task, 
 )
 from asyncio.events import AbstractEventLoop
 from asyncio.runners import _cancel_all_tasks as cancel_all_tasks # type: ignore
@@ -25,7 +25,7 @@ from collections.abc import (
     Awaitable, AsyncIterable, AsyncIterator, Callable, Collection, Coroutine, 
     Iterable, Mapping, MutableMapping, MutableSequence, MutableSet, Sequence, 
 )
-from concurrent.futures import Future
+from concurrent.futures._base import Executor, Future
 from contextvars import Context
 from functools import partial
 from inspect import isawaitable, iscoroutine, iscoroutinefunction, isgenerator
@@ -42,21 +42,20 @@ class SupportsBool(Protocol):
     def __bool__(self, /) -> bool: ...
 
 
-class AsyncExecutor:
+class AsyncExecutor(Executor):
 
-    def __init__(self):
+    def __init__(self, max_workers: None | int = None):
         self.loop = run_loop(run_in_thread=True)
+        if max_workers is None or max_workers <= 0:
+            self.sema: None | Semaphore = None
+        else:
+            self.sema = Semaphore(max_workers)
 
     def __del__(self, /):
         self.shutdown(wait=False, cancel_futures=True)
 
     def __getattr__(self, attr, /):
         return getattr(self.loop, attr)
-
-    def map(self, func, iterable):
-        submit = self.submit
-        futures = [submit(func, arg) for arg in iterable] 
-        return (f.result() for f in futures)
 
     def shutdown(self, /, wait: bool = True, *, cancel_futures: bool = False):
         if wait:
@@ -74,14 +73,30 @@ class AsyncExecutor:
         else:
             start_new_thread(partial(self.shutdown, wait, cancel_futures=cancel_futures), ())
 
-    def submit(self, func, /, *args, **kwds):
-        return submit(ensure_coroutine(func(*args, **kwds)), self.loop)
+    def submit[**Args, T](
+        self, 
+        func: Callable[Args, Awaitable[T]], # type: ignore
+        /, 
+        *args: Args.args, 
+        **kwargs: Args.kwargs, 
+    ) -> Future[T]:
+        if sema := self.sema:
+            async def call_with_sema():
+                async with sema:
+                    return await func(*args, **kwargs)
+            coro = call_with_sema()
+        else:
+            coro = ensure_coroutine(func(*args, **kwargs))
+        return submit(coro, self.loop)
 
-    def __enter__(self, /) -> Self:
-        return self
-
-    def __exit__(self, *a):
-        self.shutdown()
+    def create_task[T](
+        self, 
+        coro: Awaitable[T], 
+        name: None | str = None, 
+        context: None | Context = None, 
+    ) -> Task[T]:
+        return self.loop.create_task(
+            ensure_coroutine(coro), name=name, context=context)
 
 
 def get_loop(set_loop: bool = False) -> AbstractEventLoop:

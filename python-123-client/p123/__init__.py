@@ -1697,12 +1697,10 @@ class P123Client:
             - Size: int = <default>
             - ...
         """
-        if not isinstance(self, P123Client):
-            if self is None:
-                assert payload is not None
-            else:
-                payload = self
-                self = None
+        if isinstance(self, dict):
+            payload = self
+            self = None
+        assert payload is not None
         if headers := request_kwargs.get("headers"):
             headers = dict(headers)
         else:
@@ -1770,12 +1768,10 @@ class P123Client:
                         "FileId": int | str
                     }
         """
-        if not isinstance(self, P123Client):
-            if self is None:
-                assert payload is not None
-            else:
-                payload = self
-                self = None
+        if isinstance(self, dict):
+            payload = self
+            self = None
+        assert payload is not None
         if self is None:
             api = f"{base_url or DEFAULT_BASE_URL}/api/file/batch_download_share_info"
             request_kwargs.setdefault("parse", default_parse)
@@ -1935,12 +1931,10 @@ class P123Client:
             - event: str = "homeListFile" 💡 事件名称
             - operateType: int | str = <default> 💡 操作类型
         """
-        if not isinstance(self, P123Client):
-            if self is None:
-                assert payload is not None
-            else:
-                payload = self
-                self = None
+        if isinstance(self, dict):
+            payload = self
+            self = None
+        assert payload is not None
         payload = dict_to_lower_merge(cast(dict, payload), {
             "limit": 100, 
             "next": 0, 

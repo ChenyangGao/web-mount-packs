@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-asynctools"
-version = "0.1.2"
-description = "Python asynchronous tools."
+name = "python-sqlitedict"
+version = "0.0.1.2"
+description = "Python sqlite3 dict-like."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-asynctools"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-asynctools"
-keywords = ["asynchronous", "tools"]
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-sqlitedict"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-sqlitedict"
+keywords = ["sqlite3", "dict-like"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,7 +27,8 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-decotools = "*"
+orjson = "*"
+sqlitetools = ">=0.0.3.2"
 python-undefined = ">=0.0.3"
 
 [build-system]
@@ -35,4 +36,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "asynctools"
+include = "sqlitedict"

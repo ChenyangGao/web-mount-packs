@@ -1020,7 +1020,7 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     return
                 for attr in ls:
                     attr = normalize_attr(attr)
-                    yield Yield(P115SharePath(self, attr), identity=True)
+                    yield Yield(P115SharePath(self, attr), may_await=False)
                 offset = payload["offset"] = offset + resp["page_size"]
                 if offset >= resp["count"] or offset >= 10_000:
                     break
