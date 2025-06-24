@@ -2332,7 +2332,7 @@ class DuPanShareList(HTTPXClientMixin):
                         data = resp["list"]
                         for item in data:
                             item["relpath"] = joinpath(reldir, item["server_filename"])
-                            yield Yield(item, may_await=False)
+                            yield Yield(item)
                         if len(data) < num:
                             break
                         params["page"] += 1
@@ -2342,12 +2342,12 @@ class DuPanShareList(HTTPXClientMixin):
                     resp = yield self.fs_list(params, async_=async_, **request_kwargs)
                     for item in resp["list"]:
                         item["relpath"] = joinpath(reldir, item["server_filename"])
-                        yield Yield(item, may_await=False)
+                        yield Yield(item)
             else:
                 resp = yield self.fs_list_root(async_=async_, **request_kwargs)
                 data = resp["file_list"]
                 if num <= 0 or page <= 0:
-                    yield YieldFrom(data, may_await=False)
+                    yield YieldFrom(data)
                 else:
                     yield YieldFrom(data[(page-1)*num:page*num])
         return run_gen_step_iter(gen_step, async_=async_)

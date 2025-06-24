@@ -8,46 +8,39 @@ __all__ = ["AttrDict", "PathType", "AlistPath", "AlistFileSystem"]
 
 import errno
 
-from asyncio import get_running_loop, run, TaskGroup
 from collections import deque
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, ItemsView, 
+    AsyncIterable, AsyncIterator, Callable, Coroutine, ItemsView, 
     Iterable, Iterator, KeysView, Mapping, ValuesView, 
 )
 from datetime import datetime
-from functools import cached_property, partial, update_wrapper
-from hashlib import sha256
-from http.cookiejar import Cookie, CookieJar
-from inspect import isawaitable
-from io import BytesIO, TextIOWrapper, UnsupportedOperation
+from functools import cached_property, partial
+from io import BytesIO, TextIOWrapper
 from itertools import chain, pairwise
-from json import loads
 from mimetypes import guess_type
 from os import (
-    fsdecode, fspath, fstat, lstat, makedirs, remove, scandir, stat_result, 
+    fsdecode, fspath, lstat, makedirs, remove, scandir, stat_result, 
     path as ospath, DirEntry, PathLike, 
 )
 from pathlib import Path
 from posixpath import basename, commonpath, dirname, join as joinpath, normpath, relpath, split as splitpath, splitext
 from re import compile as re_compile, escape as re_escape
-from shutil import copyfileobj, SameFileError, COPY_BUFSIZE # type: ignore
+from shutil import SameFileError, COPY_BUFSIZE # type: ignore
 from stat import S_IFDIR, S_IFREG
 from typing import cast, overload, Any, IO, Literal, Never, Optional, Self, TypeAlias
 from types import MappingProxyType, MethodType
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import uuid4
-from warnings import filterwarnings, warn
+from warnings import warn
 
 from dateutil.parser import parse as dt_parse
 from dictattr import AttrDict
 from download import AsyncDownloadTask, DownloadTask
-from filewrap import bio_chunk_iter, bio_chunk_async_iter, Buffer, SupportsRead, SupportsWrite
+from filewrap import Buffer, SupportsRead, SupportsWrite
 from glob_pattern import translate_iter
 from httpfile import HTTPFileReader
-from http_request import complete_url, encode_multipart_data, encode_multipart_data_async, SupportsGeturl
-from httpx_request import request
+from http_request import SupportsGeturl
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
-from multidict import CIMultiDict
 from yarl import URL
 
 from .client import check_response, AlistClient
@@ -225,7 +218,7 @@ class AlistPath(Mapping, PathLike[str]):
         dst_path: PathType, 
         dst_password: None | str = None, 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> None | Self:
@@ -237,7 +230,7 @@ class AlistPath(Mapping, PathLike[str]):
         dst_path: PathType, 
         dst_password: None | str = None, 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[True], 
     ) -> Coroutine[Any, Any, None | Self]:
@@ -248,7 +241,7 @@ class AlistPath(Mapping, PathLike[str]):
         dst_path: PathType, 
         dst_password: None | str = None, 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> None | Self | Coroutine[Any, Any, None | Self]:
@@ -281,7 +274,7 @@ class AlistPath(Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = True, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         refresh: None | bool = None, 
         *, 
@@ -296,7 +289,7 @@ class AlistPath(Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = True, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         refresh: None | bool = None, 
         *, 
@@ -310,7 +303,7 @@ class AlistPath(Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = True, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         refresh: None | bool = None, 
         *, 
@@ -1358,7 +1351,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[False] = False, 
@@ -1371,7 +1364,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[True], 
@@ -1383,7 +1376,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -1405,7 +1398,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[False] = False, 
@@ -1418,7 +1411,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[True], 
@@ -1430,7 +1423,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -1452,7 +1445,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[False] = False, 
@@ -1465,7 +1458,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[True], 
@@ -1477,7 +1470,7 @@ class AlistPath(Mapping, PathLike[str]):
         topdown: None | bool = True, 
         min_depth: int = 0, 
         max_depth: int = -1, 
-        onerror: None | bool | Callable[[OSError], bool] = None, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         refresh: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -2820,7 +2813,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
         *, 
         async_: Literal[False] = False, 
@@ -2835,7 +2828,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
         *, 
         async_: Literal[True], 
@@ -2849,7 +2842,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         recursive: bool = False, 
         *, 
         async_: Literal[False, True] = False, 
@@ -3031,7 +3024,6 @@ class AlistFileSystem:
                     yield partial(onerror, e)
                 elif onerror:
                     raise
-                return None
         return run_gen_step(gen_step, async_=async_)
 
     @overload
@@ -3043,7 +3035,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         as_task: bool = True, 
         *, 
         async_: Literal[False] = False, 
@@ -3058,7 +3050,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         as_task: bool = True, 
         *, 
         async_: Literal[True], 
@@ -3072,7 +3064,7 @@ class AlistFileSystem:
         src_password: str = "", 
         dst_password: str = "", 
         overwrite: bool = False, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         as_task: bool = True, 
         *, 
         async_: Literal[False, True] = False, 
@@ -3174,7 +3166,7 @@ class AlistFileSystem:
                     yield partial(onerror, e)
                 elif onerror:
                     raise
-                return None
+                return
 
             result = {}
             for sub_srcattr in sub_srcattrs:
@@ -3358,7 +3350,7 @@ class AlistFileSystem:
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = True, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         password: str = "", 
         refresh: None | bool = None, 
@@ -3375,7 +3367,7 @@ class AlistFileSystem:
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = True, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         password: str = "", 
         refresh: None | bool = None, 
@@ -3391,7 +3383,7 @@ class AlistFileSystem:
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: None | bool | Callable[[BaseException], Any] = True, 
         predicate: None | Callable[[AlistPath], bool] = None, 
         password: str = "", 
         refresh: None | bool = None, 
@@ -3443,7 +3435,7 @@ class AlistFileSystem:
                         password=password, 
                         refresh=refresh, 
                         async_=async_, # type: ignore
-                    ), may_await=False)
+                    ))
                 else:
                     mode = write_mode
                     try:
@@ -3468,7 +3460,7 @@ class AlistFileSystem:
                             async_=async_, 
                         )
                         if task is not None:
-                            yield Yield((subpath, download_path, task), may_await=False)
+                            yield Yield((subpath, download_path, task))
                             if not submit and task.pending:
                                 yield task.start
                     except (KeyboardInterrupt, GeneratorExit):
@@ -3801,12 +3793,12 @@ class AlistFileSystem:
                         password, 
                         async_=async_, 
                     )
-                    yield Yield(self.as_path(attr), may_await=False)
+                    yield Yield(self.as_path(attr))
                 except FileNotFoundError:
                     pass
                 return
             elif not pattern.lstrip("/"):
-                return Yield(AlistPath(self, "/", password), may_await=False)
+                return Yield(AlistPath(self, "/", password))
             splitted_pats = tuple(translate_iter(pattern))
             if pattern.startswith("/"):
                 dirname = "/"
@@ -3832,7 +3824,7 @@ class AlistFileSystem:
                         max_depth=-1, 
                         predicate=lambda p: match(p["path"]) is not None, 
                         async_=async_, 
-                    ), may_await=False)
+                    ))
             else:
                 typ = None
                 for i, (pat, typ, orig) in enumerate(splitted_pats):
@@ -3846,7 +3838,7 @@ class AlistFileSystem:
                             password, 
                             async_=async_, 
                         )
-                        yield Yield(self.as_path(attr), may_await=False)
+                        yield Yield(self.as_path(attr))
                     except FileNotFoundError:
                         pass
                     return
@@ -3856,7 +3848,7 @@ class AlistFileSystem:
                         password=password, 
                         max_depth=-1, 
                         async_=async_, 
-                    ), may_await=False)
+                    ))
                 if any(typ == "dstar" for _, typ, _ in splitted_pats[i:]):
                     pattern = "".join(
                         "(?:/%s)?" % pat if typ == "dstar" else "/" + pat 
@@ -3871,7 +3863,7 @@ class AlistFileSystem:
                         max_depth=-1, 
                         predicate=lambda p: match(p["path"]) is not None, 
                         async_=async_, 
-                    ), may_await=False)
+                    ))
             try:
                 attr = yield self.attr(dirname, password, async_=async_)
             except FileNotFoundError:
@@ -3888,14 +3880,14 @@ class AlistFileSystem:
                     subpath = path.joinpath(orig)
                     if at_end:
                         if (yield subpath.exists(async_=async_)):
-                            yield Yield(subpath, may_await=False)
+                            yield Yield(subpath)
                     elif subpath.is_dir():
                         yield from glob_step_match(subpath, j)
                 else:
                     subpaths = yield path.listdir_path(async_=async_)
                     if typ == "star":
                         if at_end:
-                            yield YieldFrom(subpaths, may_await=False)
+                            yield YieldFrom(subpaths)
                         else:
                             for subpath in subpaths:
                                 if subpath.is_dir():
@@ -3910,7 +3902,7 @@ class AlistFileSystem:
                                 cref = cref_cache[i] = re_compile(pat).fullmatch
                             if cref(subpath.name):
                                 if at_end:
-                                    yield Yield(subpath, may_await=False)
+                                    yield Yield(subpath)
                                 elif subpath.is_dir():
                                     yield from glob_step_match(subpath, j)
             yield from glob_step_match(path, i)
@@ -4161,7 +4153,7 @@ class AlistFileSystem:
                     if pred is None:
                         return
                     elif pred:
-                        yield Yield(path, may_await=False)
+                        yield Yield(path)
                         if pred is 1:
                             return
                     min_depth = 1
@@ -4179,7 +4171,7 @@ class AlistFileSystem:
                             continue
                         elif pred:
                             if depth >= min_depth:
-                                yield Yield(path, may_await=False)
+                                yield Yield(path)
                             if pred is 1:
                                 continue
                         if path.is_dir() and (max_depth < 0 or depth < max_depth):
@@ -4256,7 +4248,7 @@ class AlistFileSystem:
                 if pred is None:
                     return
                 elif pred:
-                    yield Yield(path, may_await=False)
+                    yield Yield(path)
                     if pred is 1:
                         return
                 if path.is_file():
@@ -4280,7 +4272,7 @@ class AlistFileSystem:
                         continue
                     yield_me = pred
                 if yield_me and topdown:
-                    yield Yield(path, may_await=False)
+                    yield Yield(path)
                 if yield_me is not 1 and path.is_dir():
                     yield YieldFrom(self.iter(
                         path, 
@@ -4292,9 +4284,9 @@ class AlistFileSystem:
                         refresh=refresh, 
                         password=password, 
                         async_=async_, 
-                    ), may_await=False)
+                    ))
                 if yield_me and not topdown:
-                    yield Yield(path, may_await=False)
+                    yield Yield(path)
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -4424,7 +4416,7 @@ class AlistFileSystem:
                         per_page=per_page, 
                         async_=async_, 
                     )
-                    yield YieldFrom(data, may_await=False)
+                    yield YieldFrom(data)
                     if len(data) < per_page:
                         break
                     page += 1
@@ -5831,6 +5823,7 @@ class AlistFileSystem:
                     yield partial(onerror, e)
                 elif onerror:
                     raise
+                return
             pred: Literal[None, 1, False, True] = True
             next_depth = _depth + 1
             for attr, nattr in pairwise(chain(ls, (None,))):
@@ -6000,7 +5993,7 @@ class AlistFileSystem:
         overwrite: bool = False, 
         remove_done: bool = False, 
         predicate: None | Callable[[Path], bool] = None, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False] = False, 
     ) -> Iterator[str]:
@@ -6017,7 +6010,7 @@ class AlistFileSystem:
         overwrite: bool = False, 
         remove_done: bool = False, 
         predicate: None | Callable[[Path], bool] = None, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[True], 
     ) -> AsyncIterator[str]:
@@ -6033,7 +6026,7 @@ class AlistFileSystem:
         overwrite: bool = False, 
         remove_done: bool = False, 
         predicate: None | Callable[[Path], bool] = None, 
-        onerror: None | bool | Callable[[OSError], bool] = True, 
+        onerror: bool | Callable[[OSError], bool] = True, 
         *, 
         async_: Literal[False, True] = False, 
     ) -> Iterator[str] | AsyncIterator[str]:
@@ -6159,7 +6152,7 @@ class AlistFileSystem:
                                         push((depth, attr))
                                 else:
                                     files.append(attr)
-                            yield Yield((parent["path"], dirs, files), may_await=False)
+                            yield Yield((parent["path"], dirs, files))
                         else:
                             for attr in ls:
                                 if attr["is_dir"]:
@@ -6245,7 +6238,7 @@ class AlistFileSystem:
                 else:
                     files.append(attr)
             if yield_me and topdown:
-                yield Yield((top, dirs, files), may_await=False)
+                yield Yield((top, dirs, files))
             for attr in dirs:
                 yield YieldFrom(self.walk_attr_dfs(
                     attr, 
@@ -6258,7 +6251,7 @@ class AlistFileSystem:
                     async_=async_, 
                 ))
             if yield_me and not topdown:
-                yield Yield((top, dirs, files), may_await=False)
+                yield Yield((top, dirs, files))
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload

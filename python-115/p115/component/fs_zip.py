@@ -15,14 +15,14 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from functools import cached_property, partial
-from itertools import count, islice
+from itertools import count
 from os import fspath, stat_result, PathLike
 from posixpath import join as joinpath
 from stat import S_IFDIR, S_IFREG
-from typing import cast, overload, Any, Literal, Never, Self
+from typing import cast, overload, Any, Literal, Never
 
 from dictattr import AttrDict
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, YieldFrom
 from p115client import check_response, P115URL
 from posixpatht import escape, joins, splits, path_is_dir_form
 
@@ -566,14 +566,13 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
             if stop is not None and (start >= 0 and stop >= 0 or start < 0 and stop < 0) and start >= stop:
                 return ()
             if isinstance(id_or_path, int):
-                attr = yield partial(self._attr, id_or_path, async_=async_)
+                attr = yield self._attr(id_or_path, async_=async_)
             elif isinstance(id_or_path, AttrDict):
                 attr = id_or_path
             elif isinstance(id_or_path, path_class):
                 attr = id_or_path.attr
             else:
-                attr = yield partial(
-                    self._attr_path, 
+                attr = yield self._attr_path(
                     id_or_path, 
                     pid=pid, 
                     ensure_dir=True, 
@@ -595,8 +594,7 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                 path_to_id = self.path_to_id
                 ls: list[AttrDict] = []
                 add = ls.append
-                resp = yield partial(
-                    get_files, 
+                resp = yield get_files(
                     path=dirname, 
                     page_count=page_size, 
                     async_=async_, 
@@ -611,12 +609,11 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     add(attr)
                 next_marker = data["next_marker"]
                 while next_marker:
-                    resp = yield partial(
-                        get_files, 
+                    resp = yield get_files(
                         path=dirname, 
                         ext_marker=next_marker, 
                         page_count=page_size, 
-                        async_=async_, 
+                        async_=async_, # type: ignore
                     )
                     data = resp["data"]
                     for info in data["list"]:
@@ -629,8 +626,8 @@ class P115ZipFileSystem(P115FileSystemBase[P115ZipPath]):
                     next_marker = data["next_marker"]
                 children = self.pid_to_children[id] = tuple(ls)
                 self.id_to_attr.update((attr["id"], attr) for attr in children)
-            return children[start:stop]
-        return run_gen_step(gen_step, async_=async_, as_iter=True)
+            return YieldFrom(children[start:stop])
+        return run_gen_step_iter(gen_step, may_call=False, async_=async_)
 
     @overload
     def stat(

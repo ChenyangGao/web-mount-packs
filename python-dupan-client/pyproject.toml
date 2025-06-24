@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dupan"
-version = "0.0.2"
+version = "0.0.2.0.1"
 description = "Python wrapper for `baidu webdisk <https://pan.baidu.com>`."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -40,7 +40,7 @@ python-cookietools = ">=0.0.2.1"
 python-filewrap = ">=0.2.6.1"
 python-hashtools = ">=0.0.3.3"
 python-httpfile = ">=0.0.5"
-python-iterutils = ">=0.1.7"
+python-iterutils = ">=0.2"
 python-property = ">=0.0.3"
 python-startfile = ">=0.0.2"
 python-texttools = ">=0.0.3"

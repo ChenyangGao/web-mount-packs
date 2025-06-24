@@ -11,7 +11,7 @@ from functools import partial
 from typing import overload, Any, Literal
 
 from asynctools import async_any, to_list
-from iterutils import run_gen_step
+from iterutils import run_gen_step, run_gen_step_iter, YieldFrom
 from p115client import check_response
 from undefined import undefined
 
@@ -487,19 +487,17 @@ class P115LabelList:
                 # - 书籍: 7
         """
         def gen_step():
-            search_kwargs["file_label"] = yield partial(
-                self.id_of, 
+            search_kwargs["file_label"] = yield self.id_of(
                 id_or_name, 
                 async_=async_, 
             )
             search_kwargs.setdefault("cid", 0)
-            return (yield partial(
-                self.client.fs.search, 
+            return YieldFrom(self.client.fs.search(
                 **search_kwargs, 
                 request=self.async_request if async_ else self.request, 
                 async_=async_, 
             ))
-        return run_gen_step(gen_step, async_=async_, as_iter=True)
+        return run_gen_step_iter(gen_step, may_call=False, async_=async_)
 
     @overload
     def list(

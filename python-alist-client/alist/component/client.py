@@ -89,8 +89,8 @@ class AlistClient:
         There are still some interfaces without documentation.
 
     - Router.go: https://github.com/AlistGo/alist/blob/main/server/router.go
-    - AList web api official documentation: https://alist.nn.ci/guide/api/
-    - AList web api online tool: https://alist-v3.apifox.cn
+    - AList web api official documentation: https://docs.oplist.org/guide/api/
+    - AList web api online tool: https://openlist.apifox.cn
     """
     origin: str
     username: str
@@ -114,7 +114,7 @@ class AlistClient:
                 "Accept": "application/json, text/plain, */*", 
                 "Accept-Encoding": "gzip, deflate, br, zstd", 
                 "Connection": "keep-alive", 
-                "User-Agent": "Mozilla/5.0 AppleWebKit/600.0 Chrome/150.0.0.0 Safari/600.0 python-alist/*.*"
+                "User-Agent": "Mozilla/5.0 AppleWebKit/600.0 Chrome/150.0.0.0 Safari/600.0"
             }), 
             cookies = Cookies(), 
         )
@@ -202,7 +202,7 @@ class AlistClient:
         **request_kwargs, 
     ):
         """执行 http 请求，默认为 POST 方法（因为 alist 的大部分 web api 是 POST 的）
-        在线 API 文档：https://alist-v3.apifox.cn
+        在线 API 文档：https://openlist.apifox.cn
         """
         if not url.startswith(("http://", "https://")):
             if not url.startswith("/"):
@@ -313,7 +313,7 @@ class AlistClient:
             return resp["data"]["base_path"]
         return run_gen_step(gen_step, async_=async_)
 
-    # [auth](https://alist.nn.ci/guide/api/auth.html)
+    # [auth](https://docs.oplist.org/guide/api/auth.html)
 
     @overload
     def auth_login(
@@ -341,8 +341,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """token获取
-        - https://alist.nn.ci/guide/api/auth.html#post-token获取
-        - https://alist-v3.apifox.cn/api-128101241
+        - https://docs.oplist.org/guide/api/auth.html#post-token获取
+        - https://openlist.apifox.cn/api-128101241
         """
         return self.request(
             "/api/auth/login", 
@@ -377,8 +377,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """token获取hash
-        - https://alist.nn.ci/guide/api/auth.html#post-token获取hash
-        - https://alist-v3.apifox.cn/api-128101242
+        - https://docs.oplist.org/guide/api/auth.html#post-token获取hash
+        - https://openlist.apifox.cn/api-128101242
         """
         return self.request(
             "/api/auth/login/hash", 
@@ -413,8 +413,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """生成2FA密钥
-        - https://alist.nn.ci/guide/api/auth.html#post-生成2fa密钥
-        - https://alist-v3.apifox.cn/api-128101243
+        - https://docs.oplist.org/guide/api/auth.html#post-生成2fa密钥
+        - https://openlist.apifox.cn/api-128101243
         """
         return self.request(
             "/api/auth/2fa/generate", 
@@ -449,8 +449,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """验证2FA code
-        - https://alist.nn.ci/guide/api/auth.html#post-验证2fa-code
-        - https://alist-v3.apifox.cn/api-128101244
+        - https://docs.oplist.org/guide/api/auth.html#post-验证2fa-code
+        - https://openlist.apifox.cn/api-128101244
         """
         return self.request(
             "/api/auth/2fa/verify", 
@@ -706,8 +706,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取当前用户信息
-        - https://alist.nn.ci/guide/api/auth.html#get-获取当前用户信息
-        - https://alist-v3.apifox.cn/api-128101245
+        - https://docs.oplist.org/guide/api/auth.html#get-获取当前用户信息
+        - https://openlist.apifox.cn/api-128101245
         """
         return self.request(
             "/api/me", 
@@ -1092,7 +1092,7 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # [fs](https://alist.nn.ci/guide/api/fs.html)
+    # [fs](https://docs.oplist.org/guide/api/fs.html)
 
     @overload
     def fs_link(
@@ -1202,8 +1202,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出文件目录
-        - https://alist.nn.ci/guide/api/fs.html#post-列出文件目录
-        - https://alist-v3.apifox.cn/api-128101246
+        - https://docs.oplist.org/guide/api/fs.html#post-列出文件目录
+        - https://openlist.apifox.cn/api-128101246
         """
         return self.request(
             "/api/fs/list", 
@@ -1238,8 +1238,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取某个文件/目录信息
-        - https://alist.nn.ci/guide/api/fs.html#post-获取某个文件-目录信息
-        - https://alist-v3.apifox.cn/api-128101247
+        - https://docs.oplist.org/guide/api/fs.html#post-获取某个文件-目录信息
+        - https://openlist.apifox.cn/api-128101247
         """
         return self.request(
             "/api/fs/get", 
@@ -1274,8 +1274,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取目录
-        - https://alist.nn.ci/guide/api/fs.html#post-获取目录
-        - https://alist-v3.apifox.cn/api-128101248
+        - https://docs.oplist.org/guide/api/fs.html#post-获取目录
+        - https://openlist.apifox.cn/api-128101248
         """
         return self.request(
             "/api/fs/dirs", 
@@ -1310,8 +1310,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """搜索文件或文件夹
-        - https://alist.nn.ci/guide/api/fs.html#post-搜索文件或文件夹
-        - https://alist-v3.apifox.cn/api-128101249
+        - https://docs.oplist.org/guide/api/fs.html#post-搜索文件或文件夹
+        - https://openlist.apifox.cn/api-128101249
         """
         return self.request(
             "/api/fs/search", 
@@ -1346,8 +1346,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """新建文件夹
-        - https://alist.nn.ci/guide/api/fs.html#post-新建文件夹
-        - https://alist-v3.apifox.cn/api-128101250
+        - https://docs.oplist.org/guide/api/fs.html#post-新建文件夹
+        - https://openlist.apifox.cn/api-128101250
         """
         return self.request(
             "/api/fs/mkdir", 
@@ -1382,8 +1382,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """重命名文件
-        - https://alist.nn.ci/guide/api/fs.html#post-重命名文件
-        - https://alist-v3.apifox.cn/api-128101251
+        - https://docs.oplist.org/guide/api/fs.html#post-重命名文件
+        - https://openlist.apifox.cn/api-128101251
 
         NOTE: AList 改名的限制：
         1. 受到网盘的改名限制，例如如果挂载的是 115，就不能包含特殊符号 " < > ，也不能改扩展名，各个网盘限制不同
@@ -1423,8 +1423,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """批量重命名
-        - https://alist.nn.ci/guide/api/fs.html#post-批量重命名
-        - https://alist-v3.apifox.cn/api-128101252
+        - https://docs.oplist.org/guide/api/fs.html#post-批量重命名
+        - https://openlist.apifox.cn/api-128101252
         """
         return self.request(
             "/api/fs/batch_rename", 
@@ -1459,8 +1459,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """正则重命名
-        - https://alist.nn.ci/guide/api/fs.html#post-正则重命名
-        - https://alist-v3.apifox.cn/api-128101253
+        - https://docs.oplist.org/guide/api/fs.html#post-正则重命名
+        - https://openlist.apifox.cn/api-128101253
         """
         return self.request(
             "/api/fs/regex_rename", 
@@ -1495,8 +1495,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """移动文件
-        - https://alist.nn.ci/guide/api/fs.html#post-移动文件
-        - https://alist-v3.apifox.cn/api-128101255
+        - https://docs.oplist.org/guide/api/fs.html#post-移动文件
+        - https://openlist.apifox.cn/api-128101255
         """
         return self.request(
             "/api/fs/move", 
@@ -1531,8 +1531,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """聚合移动
-        - https://alist.nn.ci/guide/api/fs.html#post-聚合移动
-        - https://alist-v3.apifox.cn/api-128101259
+        - https://docs.oplist.org/guide/api/fs.html#post-聚合移动
+        - https://openlist.apifox.cn/api-128101259
         """
         return self.request(
             "/api/fs/recursive_move", 
@@ -1567,8 +1567,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """复制文件
-        - https://alist.nn.ci/guide/api/fs.html#post-复制文件
-        - https://alist-v3.apifox.cn/api-128101256
+        - https://docs.oplist.org/guide/api/fs.html#post-复制文件
+        - https://openlist.apifox.cn/api-128101256
         """
         return self.request(
             "/api/fs/copy", 
@@ -1603,8 +1603,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除文件或文件夹
-        - https://alist.nn.ci/guide/api/fs.html#post-删除文件或文件夹
-        - https://alist-v3.apifox.cn/api-128101257
+        - https://docs.oplist.org/guide/api/fs.html#post-删除文件或文件夹
+        - https://openlist.apifox.cn/api-128101257
         """
         return self.request(
             "/api/fs/remove", 
@@ -1639,8 +1639,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除空文件夹
-        - https://alist.nn.ci/guide/api/fs.html#post-删除空文件夹
-        - https://alist-v3.apifox.cn/api-128101258
+        - https://docs.oplist.org/guide/api/fs.html#post-删除空文件夹
+        - https://openlist.apifox.cn/api-128101258
         """
         return self.request(
             "/api/fs/remove_empty_directory", 
@@ -1675,8 +1675,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """添加离线下载
-        - https://alist.nn.ci/guide/api/fs.html#post-添加离线下载
-        - https://alist-v3.apifox.cn/api-175404336
+        - https://docs.oplist.org/guide/api/fs.html#post-添加离线下载
+        - https://openlist.apifox.cn/api-175404336
         """
         return self.request(
             "/api/fs/add_offline_download", 
@@ -1723,8 +1723,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """表单上传文件
-        - https://alist.nn.ci/guide/api/fs.html#put-表单上传文件
-        - https://alist-v3.apifox.cn/api-128101254
+        - https://docs.oplist.org/guide/api/fs.html#put-表单上传文件
+        - https://openlist.apifox.cn/api-128101254
 
         NOTE: AList 上传的限制：
         1. 上传文件成功不会自动更新缓存（但新增文件夹会更新缓存）
@@ -1870,8 +1870,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """流式上传文件
-        - https://alist.nn.ci/guide/api/fs.html#put-流式上传文件
-        - https://alist-v3.apifox.cn/api-128101260
+        - https://docs.oplist.org/guide/api/fs.html#put-流式上传文件
+        - https://openlist.apifox.cn/api-128101260
 
         NOTE: AList 上传的限制：
         1. 上传文件成功不会自动更新缓存（但新增文件夹会更新缓存）
@@ -2029,7 +2029,7 @@ class AlistClient:
             ))
         return run_gen_step(gen_step, async_=async_)
 
-    # [public](https://alist.nn.ci/guide/api/public.html)
+    # [public](https://docs.oplist.org/guide/api/public.html)
 
     @overload
     def public_settings(
@@ -2054,8 +2054,9 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取站点设置
-        - https://alist.nn.ci/guide/api/public.html#get-获取站点设置
-        - https://alist-v3.apifox.cn/api-128101263
+
+        - https://docs.oplist.org/guide/api/public.html#get-获取站点设置
+        - https://openlist.apifox.cn/api-128101263
         """
         return self.request(
             "/api/public/settings", 
@@ -2087,8 +2088,9 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取站点设置
-        - https://alist.nn.ci/guide/api/public.html#get-获取站点设置
-        - https://alist-v3.apifox.cn/api-128101263
+
+        - https://docs.oplist.org/guide/api/public.html#get-获取站点设置
+        - https://openlist.apifox.cn/api-128101263
         """
         return self.request(
             "/api/public/offline_download_tools", 
@@ -2120,8 +2122,9 @@ class AlistClient:
         **request_kwargs, 
     ) -> str | Coroutine[Any, Any, str]:
         """ping检测
-        - https://alist.nn.ci/guide/api/public.html#get-ping检测
-        - https://alist-v3.apifox.cn/api-128101264
+
+        - https://docs.oplist.org/guide/api/public.html#get-ping检测
+        - https://openlist.apifox.cn/api-128101264
         """
         return self.request(
             "/ping", 
@@ -2131,1582 +2134,513 @@ class AlistClient:
             **request_kwargs, 
         )
 
-
-    # [task](https://alist.nn.ci/guide/api/task.html)
+    # [task](https://docs.oplist.org/guide/api/task.html)
 
     @overload
-    def task_upload_info(
+    def task_info(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: int | str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_info(
+    def task_info(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: int | str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_info(
+    def task_info(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: int | str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取任务信息
-        - https://alist.nn.ci/guide/api/task.html#post-获取任务信息
-        - https://alist-v3.apifox.cn/api-142468741
+
+        - https://docs.oplist.org/guide/api/task.html#post-获取任务信息
+        - https://openlist.apifox.cn/api-142468741
         """
         if isinstance(payload, (int, str)):
             payload = {"tid": payload}
         return self.request(
-            "/api/task/upload/info", 
+            f"/api/task/{category}/info", 
             params=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_done(
+    def task_done(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_done(
+    def task_done(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_done(
+    def task_done(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取已完成任务
-        - https://alist.nn.ci/guide/api/task.html#get-获取已完成任务
-        - https://alist-v3.apifox.cn/api-128101294
+
+        - https://docs.oplist.org/guide/api/task.html#get-获取已完成任务
+        - https://openlist.apifox.cn/api-128101294
         """
         return self.request(
-            "/api/task/upload/done", 
+            f"/api/task/{category}/done", 
             "GET", 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_undone(
+    def task_undone(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_undone(
+    def task_undone(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_undone(
+    def task_undone(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取未完成任务
-        - https://alist.nn.ci/guide/api/task.html#get-获取未完成任务
-        - https://alist-v3.apifox.cn/api-128101295
+
+        - https://docs.oplist.org/guide/api/task.html#get-获取未完成任务
+        - https://openlist.apifox.cn/api-128101295
         """
         return self.request(
-            "/api/task/upload/undone", 
+            f"/api/task/{category}/undone", 
             "GET", 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_delete(
+    def task_delete(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_delete(
+    def task_delete(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_delete(
+    def task_delete(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除任务
-        - https://alist.nn.ci/guide/api/task.html#post-删除任务
-        - https://alist-v3.apifox.cn/api-128101296
+
+        - https://docs.oplist.org/guide/api/task.html#post-删除任务
+        - https://openlist.apifox.cn/api-128101296
         """
         if isinstance(payload, str):
             payload = {"tid": payload}
         return self.request(
-            "/api/task/upload/delete", 
+            f"/api/task/{category}/delete", 
             params=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_cancel(
+    def task_cancel(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_cancel(
+    def task_cancel(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_cancel(
+    def task_cancel(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """取消任务
-        - https://alist.nn.ci/guide/api/task.html#post-取消任务
-        - https://alist-v3.apifox.cn/api-128101297
+
+        - https://docs.oplist.org/guide/api/task.html#post-取消任务
+        - https://openlist.apifox.cn/api-128101297
         """
         if isinstance(payload, str):
             payload = {"tid": payload}
         return self.request(
-            "/api/task/upload/cancel", 
+            f"/api/task/{category}/cancel", 
             params=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_retry(
+    def task_clear_done(
         self, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_retry(
+    def task_clear_done(
         self, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_retry(
+    def task_clear_done(
         self, 
         /, 
-        payload: str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """重试任务
-        - https://alist.nn.ci/guide/api/task.html#post-重试任务
-        - https://alist-v3.apifox.cn/api-128101298
-        """
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/upload/retry", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_upload_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_upload_retry_failed(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_upload_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """重试已失败任务
-        - https://alist.nn.ci/guide/api/task.html#post-重试已失败任务
-        """
-        return self.request(
-            "/api/task/upload/retry_failed", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_upload_clear_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_upload_clear_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_upload_clear_done(
-        self, 
-        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """清除已完成任务
-        - https://alist.nn.ci/guide/api/task.html#post-清除已完成任务
-        - https://alist-v3.apifox.cn/api-128101299
+
+        - https://docs.oplist.org/guide/api/task.html#post-清除已完成任务
+        - https://openlist.apifox.cn/api-128101299
         """
         return self.request(
-            "/api/task/upload/clear_done", 
+            f"/api/task/{category}/clear_done", 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_clear_succeeded(
+    def task_clear_succeeded(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_clear_succeeded(
+    def task_clear_succeeded(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_clear_succeeded(
+    def task_clear_succeeded(
         self, 
         /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """清除已成功任务
-        - https://alist.nn.ci/guide/api/task.html#post-清除已成功任务
-        - https://alist-v3.apifox.cn/api-128101300
+
+        - https://docs.oplist.org/guide/api/task.html#post-清除已成功任务
+        - https://openlist.apifox.cn/api-128101299
         """
         return self.request(
-            "/api/task/upload/clear_succeeded", 
+            f"/api/task/{category}/clear_succeeded", 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_upload_cancel_some(
+    def task_retry(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: list[str], 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_upload_cancel_some(
+    def task_retry(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: list[str], 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_upload_cancel_some(
+    def task_retry(
         self, 
+        payload: dict | int | str, 
         /, 
-        payload: list[str], 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消多个任务"
-        return self.request(
-            "/api/task/upload/cancel_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
+        """重试任务
 
-    @overload
-    def task_upload_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_upload_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_upload_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除多个任务"
-        return self.request(
-            "/api/task/upload/delete_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_upload_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_upload_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_upload_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试多个任务"
-        return self.request(
-            "/api/task/upload/retry_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-获取任务信息"
-        if isinstance(payload, (int, str)):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/copy/info", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_done(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#get-获取已完成任务"
-        return self.request(
-            "/api/task/copy/done", 
-            "GET", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_undone(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_undone(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_undone(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#get-获取未完成任务"
-        return self.request(
-            "/api/task/copy/undone", 
-            "GET", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_delete(
-        self, 
-        /, 
-        payload: str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_delete(
-        self, 
-        /, 
-        payload: str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_delete(
-        self, 
-        /, 
-        payload: str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除任务"
+        - https://docs.oplist.org/guide/api/task.html#post-重试任务
+        - https://openlist.apifox.cn/api-128101298
+        """
         if isinstance(payload, str):
             payload = {"tid": payload}
         return self.request(
-            "/api/task/copy/delete", 
+            f"/api/task/{category}/retry", 
             params=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_copy_cancel(
+    def task_retry_failed(
         self, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_copy_cancel(
+    def task_retry_failed(
         self, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_copy_cancel(
+    def task_retry_failed(
         self, 
         /, 
-        payload: str | dict, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
+        """重试已失败任务
+
+        - https://docs.oplist.org/guide/api/task.html#post-重试已失败任务
+        """
         return self.request(
-            "/api/task/copy/cancel", 
-            params=payload, 
+            f"/api/task/{category}/retry_failed", 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_copy_retry(
+    def task_delete_some(
         self, 
-        /, 
-        payload: str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_retry(
-        self, 
-        /, 
-        payload: str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_retry(
-        self, 
-        /, 
-        payload: str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/copy/retry", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_retry_failed(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试已失败任务"
-        return self.request(
-            "/api/task/copy/retry_failed", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_clear_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_clear_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_clear_done(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-清除已完成任务"
-        return self.request(
-            "/api/task/copy/clear_done", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_copy_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_copy_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-清除已成功任务"
-        return self.request(
-            "/api/task/copy/clear_succeeded", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_copy_cancel_some(
-        self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_copy_cancel_some(
+    def task_delete_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_copy_cancel_some(
+    def task_delete_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消多个任务"
+        """删除多个任务
+
+        - https://docs.oplist.org/guide/api/task.html#post-删除多个任务
+        """
         return self.request(
-            "/api/task/copy/cancel_some", 
+            f"/api/task/{category}/delete_some", 
             json=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_copy_delete_some(
+    def task_cancel_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_copy_delete_some(
+    def task_cancel_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_copy_delete_some(
+    def task_cancel_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除多个任务"
+        """取消多个任务
+
+        - https://docs.oplist.org/guide/api/task.html#post-取消多个任务
+        """
         return self.request(
-            "/api/task/copy/delete_some", 
+            f"/api/task/{category}/cancel_some", 
             json=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
     @overload
-    def task_copy_retry_some(
+    def task_retry_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
         ...
     @overload
-    def task_copy_retry_some(
+    def task_retry_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
         ...
-    def task_copy_retry_some(
+    def task_retry_some(
         self, 
-        /, 
         payload: list[str], 
+        /, 
+        category: str = "upload", 
+        *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试多个任务"
+        """重试多个任务
+
+        - https://docs.oplist.org/guide/api/task.html#post-重试多个任务
+        """
         return self.request(
-            "/api/task/copy/retry_some", 
+            f"/api/task/{category}/retry_some", 
             json=payload, 
             async_=async_, 
             **request_kwargs, 
         )
 
-    @overload
-    def task_offline_download_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-获取任务信息"
-        if isinstance(payload, (int, str)):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download/info", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
+    # [admin](https://docs.oplist.org/guide/api/admin/)
 
-    @overload
-    def task_offline_download_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_done(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#get-获取已完成任务"
-        return self.request(
-            "/api/task/offline_download/done", 
-            "GET", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_undone(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_undone(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_undone(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#get-获取未完成任务"
-        return self.request(
-            "/api/task/offline_download/undone", 
-            "GET", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_delete(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_delete(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_delete(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download/delete", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_cancel(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_cancel(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_cancel(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download/cancel", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_retry(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_retry(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_retry(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download/retry", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_retry_failed(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试已失败任务"
-        return self.request(
-            "/api/task/offline_download/retry_failed", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_clear_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_clear_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_clear_done(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-清除已完成任务"
-        return self.request(
-            "/api/task/offline_download/clear_done", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-清除已成功任务"
-        return self.request(
-            "/api/task/offline_download/clear_succeeded", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_cancel_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_cancel_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_cancel_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消多个任务"
-        return self.request(
-            "/api/task/offline_download/cancel_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除多个任务"
-        return self.request(
-            "/api/task/offline_download/delete_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试多个任务"
-        return self.request(
-            "/api/task/offline_download/retry_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_info(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-获取任务信息"
-        if isinstance(payload, (int, str)):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download_transfer/info", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_done(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#get-获取已完成任务"
-        return self.request(
-            "/api/task/offline_download_transfer/done", 
-            "GET", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_undone(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_undone(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_undone(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#get-获取未完成任务"
-        return self.request(
-            "/api/task/offline_download_transfer/undone", 
-            "GET", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_delete(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_delete(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_delete(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download_transfer/delete", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_cancel(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_cancel(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_cancel(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download_transfer/cancel", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_retry(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_retry(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_retry(
-        self, 
-        /, 
-        payload: int | str | dict, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试任务"
-        if isinstance(payload, str):
-            payload = {"tid": payload}
-        return self.request(
-            "/api/task/offline_download_transfer/retry", 
-            params=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_retry_failed(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_retry_failed(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试已失败任务"
-        return self.request(
-            "/api/task/offline_download_transfer/retry_failed", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_clear_done(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_clear_done(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_clear_done(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-清除已完成任务"
-        return self.request(
-            "/api/task/offline_download_transfer/clear_done", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_clear_succeeded(
-        self, 
-        /, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-清除已成功任务"
-        return self.request(
-            "/api/task/offline_download_transfer/clear_succeeded", 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_cancel_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_cancel_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_cancel_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-取消多个任务"
-        return self.request(
-            "/api/task/offline_download_transfer/cancel_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_delete_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-删除多个任务"
-        return self.request(
-            "/api/task/offline_download_transfer/delete_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
-    def task_offline_download_transfer_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def task_offline_download_transfer_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def task_offline_download_transfer_retry_some(
-        self, 
-        /, 
-        payload: list[str], 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/task.html#post-重试多个任务"
-        return self.request(
-            "/api/task/offline_download_transfer/retry_some", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    # [admin](https://alist.nn.ci/guide/api/admin/)
-
-    # [admin/meta](https://alist.nn.ci/guide/api/admin/meta.html)
+    # [admin/meta](https://docs.oplist.org/guide/api/admin/meta.html)
 
     @overload
     def admin_meta_list(
@@ -3731,8 +2665,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出元信息
-        - https://alist.nn.ci/guide/api/admin/meta.html#get-列出元信息
-        - https://alist-v3.apifox.cn/api-128101265
+        - https://docs.oplist.org/guide/api/admin/meta.html#get-列出元信息
+        - https://openlist.apifox.cn/api-128101265
         """
         return self.request(
             "/api/admin/meta/list", 
@@ -3745,7 +2679,7 @@ class AlistClient:
     def admin_meta_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3754,7 +2688,7 @@ class AlistClient:
     def admin_meta_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -3762,13 +2696,13 @@ class AlistClient:
     def admin_meta_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取元信息
-        - https://alist.nn.ci/guide/api/admin/meta.html#get-获取元信息
-        - https://alist-v3.apifox.cn/api-128101266
+        - https://docs.oplist.org/guide/api/admin/meta.html#get-获取元信息
+        - https://openlist.apifox.cn/api-128101266
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -3806,8 +2740,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """新增元信息
-        - https://alist.nn.ci/guide/api/admin/meta.html#post-新增元信息
-        - https://alist-v3.apifox.cn/api-128101267
+        - https://docs.oplist.org/guide/api/admin/meta.html#post-新增元信息
+        - https://openlist.apifox.cn/api-128101267
         """
         return self.request(
             "/api/admin/meta/create", 
@@ -3842,8 +2776,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """更新元信息
-        - https://alist.nn.ci/guide/api/admin/meta.html#post-更新元信息
-        - https://alist-v3.apifox.cn/api-128101268
+        - https://docs.oplist.org/guide/api/admin/meta.html#post-更新元信息
+        - https://openlist.apifox.cn/api-128101268
         """
         return self.request(
             "/api/admin/meta/update", 
@@ -3856,7 +2790,7 @@ class AlistClient:
     def admin_meta_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3865,7 +2799,7 @@ class AlistClient:
     def admin_meta_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -3873,13 +2807,13 @@ class AlistClient:
     def admin_meta_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除元信息
-        - https://alist.nn.ci/guide/api/admin/meta.html#post-删除元信息
-        - https://alist-v3.apifox.cn/api-128101269
+        - https://docs.oplist.org/guide/api/admin/meta.html#post-删除元信息
+        - https://openlist.apifox.cn/api-128101269
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -3890,7 +2824,7 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # [admin/user](https://alist.nn.ci/guide/api/admin/user.html)
+    # [admin/user](https://docs.oplist.org/guide/api/admin/user.html)
 
     @overload
     def admin_user_list(
@@ -3915,8 +2849,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出所有用户
-        - https://alist.nn.ci/guide/api/admin/user.html#get-列出所有用户
-        - https://alist-v3.apifox.cn/api-128101270
+        - https://docs.oplist.org/guide/api/admin/user.html#get-列出所有用户
+        - https://openlist.apifox.cn/api-128101270
         """
         return self.request(
             "/api/admin/user/list", 
@@ -3929,7 +2863,7 @@ class AlistClient:
     def admin_user_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -3938,7 +2872,7 @@ class AlistClient:
     def admin_user_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -3946,13 +2880,13 @@ class AlistClient:
     def admin_user_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出某个用户
-        - https://alist.nn.ci/guide/api/admin/user.html#get-列出某个用户
-        - https://alist-v3.apifox.cn/api-128101271
+        - https://docs.oplist.org/guide/api/admin/user.html#get-列出某个用户
+        - https://openlist.apifox.cn/api-128101271
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -3990,8 +2924,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """新建用户
-        - https://alist.nn.ci/guide/api/admin/user.html#post-新建用户
-        - https://alist-v3.apifox.cn/api-128101272
+        - https://docs.oplist.org/guide/api/admin/user.html#post-新建用户
+        - https://openlist.apifox.cn/api-128101272
         """
         return self.request(
             "/api/admin/user/create", 
@@ -4026,8 +2960,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """更新用户信息
-        - https://alist.nn.ci/guide/api/admin/user.html#post-更新用户信息
-        - https://alist-v3.apifox.cn/api-128101273
+        - https://docs.oplist.org/guide/api/admin/user.html#post-更新用户信息
+        - https://openlist.apifox.cn/api-128101273
         """
         return self.request(
             "/api/admin/user/update", 
@@ -4040,7 +2974,7 @@ class AlistClient:
     def admin_user_cancel_2fa(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4049,7 +2983,7 @@ class AlistClient:
     def admin_user_cancel_2fa(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4057,13 +2991,13 @@ class AlistClient:
     def admin_user_cancel_2fa(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """取消某个用户的两步验证
-        - https://alist.nn.ci/guide/api/admin/user.html#post-取消某个用户的两步验证
-        - https://alist-v3.apifox.cn/api-128101274
+        - https://docs.oplist.org/guide/api/admin/user.html#post-取消某个用户的两步验证
+        - https://openlist.apifox.cn/api-128101274
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -4078,7 +3012,7 @@ class AlistClient:
     def admin_user_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4087,7 +3021,7 @@ class AlistClient:
     def admin_user_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4095,13 +3029,13 @@ class AlistClient:
     def admin_user_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除用户
-        - https://alist.nn.ci/guide/api/admin/user.html#post-删除用户
-        - https://alist-v3.apifox.cn/api-128101275
+        - https://docs.oplist.org/guide/api/admin/user.html#post-删除用户
+        - https://openlist.apifox.cn/api-128101275
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -4138,8 +3072,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除用户缓存
-        - https://alist.nn.ci/guide/api/admin/user.html#post-删除用户缓存
-        - https://alist-v3.apifox.cn/api-128101276
+        - https://docs.oplist.org/guide/api/admin/user.html#post-删除用户缓存
+        - https://openlist.apifox.cn/api-128101276
         """
         if isinstance(payload, str):
             payload = {"username": payload}
@@ -4178,7 +3112,7 @@ class AlistClient:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/admin/user.html#get-列出用户的-sftp-公钥"
+        "https://docs.oplist.org/guide/api/admin/user.html#get-列出用户的-sftp-公钥"
         return self.request(
             "/api/admin/user/sshkey/list", 
             "GET", 
@@ -4215,7 +3149,7 @@ class AlistClient:
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        "https://alist.nn.ci/guide/api/admin/user.html#post-删除用户的-sftp-公钥"
+        "https://docs.oplist.org/guide/api/admin/user.html#post-删除用户的-sftp-公钥"
         return self.request(
             "/api/admin/user/sshkey/delete", 
             json=payload, 
@@ -4223,7 +3157,7 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # [admin/storage](https://alist.nn.ci/guide/api/admin/storage.html)
+    # [admin/storage](https://docs.oplist.org/guide/api/admin/storage.html)
 
     @overload
     def admin_storage_create(
@@ -4251,8 +3185,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """创建存储
-        - https://alist.nn.ci/guide/api/admin/storage.html#post-创建存储
-        - https://alist-v3.apifox.cn/api-175457115
+        - https://docs.oplist.org/guide/api/admin/storage.html#post-创建存储
+        - https://openlist.apifox.cn/api-175457115
         """
         return self.request(
             "/api/admin/storage/create", 
@@ -4287,8 +3221,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """更新存储
-        - https://alist.nn.ci/guide/api/admin/storage.html#post-更新存储
-        - https://alist-v3.apifox.cn/api-175457877
+        - https://docs.oplist.org/guide/api/admin/storage.html#post-更新存储
+        - https://openlist.apifox.cn/api-175457877
         """
         return self.request(
             "/api/admin/storage/update", 
@@ -4326,8 +3260,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出存储列表
-        - https://alist.nn.ci/guide/api/admin/storage.html#get-列出存储列表
-        - https://alist-v3.apifox.cn/api-128101277
+        - https://docs.oplist.org/guide/api/admin/storage.html#get-列出存储列表
+        - https://openlist.apifox.cn/api-128101277
         """
         return self.request(
             "/api/admin/storage/list", 
@@ -4341,7 +3275,7 @@ class AlistClient:
     def admin_storage_enable(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4350,7 +3284,7 @@ class AlistClient:
     def admin_storage_enable(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4358,13 +3292,13 @@ class AlistClient:
     def admin_storage_enable(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """启用存储
-        - https://alist.nn.ci/guide/api/admin/storage.html#post-启用存储
-        - https://alist-v3.apifox.cn/api-128101278
+        - https://docs.oplist.org/guide/api/admin/storage.html#post-启用存储
+        - https://openlist.apifox.cn/api-128101278
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -4379,7 +3313,7 @@ class AlistClient:
     def admin_storage_disable(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4388,7 +3322,7 @@ class AlistClient:
     def admin_storage_disable(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4396,13 +3330,13 @@ class AlistClient:
     def admin_storage_disable(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """禁用存储
-        - https://alist.nn.ci/guide/api/admin/storage.html#post-禁用存储
-        - https://alist-v3.apifox.cn/api-128101279
+        - https://docs.oplist.org/guide/api/admin/storage.html#post-禁用存储
+        - https://openlist.apifox.cn/api-128101279
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -4417,7 +3351,7 @@ class AlistClient:
     def admin_storage_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4426,7 +3360,7 @@ class AlistClient:
     def admin_storage_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4434,13 +3368,13 @@ class AlistClient:
     def admin_storage_get(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """查询指定存储信息
-        - https://alist.nn.ci/guide/api/admin/storage.html#get-查询指定存储信息
-        - https://alist-v3.apifox.cn/api-128101281
+        - https://docs.oplist.org/guide/api/admin/storage.html#get-查询指定存储信息
+        - https://openlist.apifox.cn/api-128101281
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -4456,7 +3390,7 @@ class AlistClient:
     def admin_storage_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False] = False, 
         **request_kwargs, 
     ) -> dict:
@@ -4465,7 +3399,7 @@ class AlistClient:
     def admin_storage_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[True], 
         **request_kwargs, 
     ) -> Coroutine[Any, Any, dict]:
@@ -4473,13 +3407,13 @@ class AlistClient:
     def admin_storage_delete(
         self, 
         /, 
-        payload: int | str | dict, 
+        payload: dict | int | str, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除指定存储
-        - https://alist.nn.ci/guide/api/admin/storage.html#post-删除指定存储
-        - https://alist-v3.apifox.cn/api-128101282
+        - https://docs.oplist.org/guide/api/admin/storage.html#post-删除指定存储
+        - https://openlist.apifox.cn/api-128101282
         """
         if isinstance(payload, (int, str)):
             payload = {"id": payload}
@@ -4513,8 +3447,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """重新加载所有存储
-        - https://alist.nn.ci/guide/api/admin/storage.html#post-重新加载所有存储
-        - https://alist-v3.apifox.cn/api-128101283
+        - https://docs.oplist.org/guide/api/admin/storage.html#post-重新加载所有存储
+        - https://openlist.apifox.cn/api-128101283
         """
         return self.request(
             "/api/admin/storage/load_all", 
@@ -4522,7 +3456,7 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # [admin/driver](https://alist.nn.ci/guide/api/admin/driver.html)
+    # [admin/driver](https://docs.oplist.org/guide/api/admin/driver.html)
 
     @overload
     def admin_driver_list(
@@ -4547,8 +3481,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """查询所有驱动配置模板列表
-        - https://alist.nn.ci/guide/api/admin/driver.html#get-查询所有驱动配置模板列表
-        - https://alist-v3.apifox.cn/api-128101284
+        - https://docs.oplist.org/guide/api/admin/driver.html#get-查询所有驱动配置模板列表
+        - https://openlist.apifox.cn/api-128101284
         """
         return self.request(
             "/api/admin/driver/list", 
@@ -4580,8 +3514,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出驱动名列表
-        - https://alist.nn.ci/guide/api/admin/driver.html#get-列出驱动名列表
-        - https://alist-v3.apifox.cn/api-128101285
+        - https://docs.oplist.org/guide/api/admin/driver.html#get-列出驱动名列表
+        - https://openlist.apifox.cn/api-128101285
         """
         return self.request(
             "/api/admin/driver/names", 
@@ -4616,8 +3550,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出特定驱动信息
-        - https://alist.nn.ci/guide/api/admin/driver.html#get-列出特定驱动信息
-        - https://alist-v3.apifox.cn/api-128101286
+        - https://docs.oplist.org/guide/api/admin/driver.html#get-列出特定驱动信息
+        - https://openlist.apifox.cn/api-128101286
         """
         if isinstance(payload, str):
             payload = {"driver": payload}
@@ -4629,7 +3563,7 @@ class AlistClient:
             **request_kwargs, 
         )
 
-    # [admin/setting](https://alist.nn.ci/guide/api/admin/setting.html)
+    # [admin/setting](https://docs.oplist.org/guide/api/admin/setting.html)
 
     @overload
     def admin_setting_list(
@@ -4660,8 +3594,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """列出设置
-        - https://alist.nn.ci/guide/api/admin/setting.html#get-列出设置
-        - https://alist-v3.apifox.cn/api-128101287
+        - https://docs.oplist.org/guide/api/admin/setting.html#get-列出设置
+        - https://openlist.apifox.cn/api-128101287
 
         group 参数的说明：
             0: 其他，包括 令牌 和 索引统计（非设置）
@@ -4712,8 +3646,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取某项设置
-        - https://alist.nn.ci/guide/api/admin/setting.html#get-获取某项设置
-        - https://alist-v3.apifox.cn/api-128101288
+        - https://docs.oplist.org/guide/api/admin/setting.html#get-获取某项设置
+        - https://openlist.apifox.cn/api-128101288
         """
         return self.request(
             "/api/admin/setting/get", 
@@ -4749,8 +3683,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """保存设置
-        - https://alist.nn.ci/guide/api/admin/setting.html#post-保存设置
-        - https://alist-v3.apifox.cn/api-128101289
+        - https://docs.oplist.org/guide/api/admin/setting.html#post-保存设置
+        - https://openlist.apifox.cn/api-128101289
         """
         return self.request(
             "/api/admin/setting/save", 
@@ -4785,8 +3719,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """删除设置
-        - https://alist.nn.ci/guide/api/admin/setting.html#post-删除设置
-        - https://alist-v3.apifox.cn/api-128101290
+        - https://docs.oplist.org/guide/api/admin/setting.html#post-删除设置
+        - https://openlist.apifox.cn/api-128101290
         """
         if isinstance(payload, str):
             payload = {"key": payload}
@@ -4820,8 +3754,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """重置令牌
-        - https://alist.nn.ci/guide/api/admin/setting.html#post-重置令牌
-        - https://alist-v3.apifox.cn/api-128101291
+        - https://docs.oplist.org/guide/api/admin/setting.html#post-重置令牌
+        - https://openlist.apifox.cn/api-128101291
         """
         return self.request(
             "/api/admin/setting/reset_token", 
@@ -4855,8 +3789,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置 aria2
-        - https://alist.nn.ci/guide/api/admin/setting.html#post-设置aria2
-        - https://alist-v3.apifox.cn/api-128101292
+        - https://docs.oplist.org/guide/api/admin/setting.html#post-设置aria2
+        - https://openlist.apifox.cn/api-128101292
         """
         return self.request(
             "/api/admin/setting/set_aria2", 
@@ -4891,8 +3825,8 @@ class AlistClient:
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置 qBittorrent
-        - https://alist.nn.ci/guide/api/admin/setting.html#post-设置qbittorrent
-        - https://alist-v3.apifox.cn/api-128101293
+        - https://docs.oplist.org/guide/api/admin/setting.html#post-设置qbittorrent
+        - https://openlist.apifox.cn/api-128101293
         """
         return self.request(
             "/api/admin/setting/set_qbit", 
@@ -5209,7 +4143,7 @@ class AlistClient:
         ensure_ascii: bool = True, 
     ) -> str:
         """获取下载链接（非直链）
-        - https://alist.nn.ci/guide/drivers/common.html#download-proxy-url
+        - https://docs.oplist.org/guide/drivers/common.html#download-proxy-url
         """
         if self.base_path != "/":
             path = self.base_path + path

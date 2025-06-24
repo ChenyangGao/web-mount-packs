@@ -2,14 +2,17 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2)
+__version__ = (0, 2, 2)
 __all__ = [
-    "Return", "Yield", "YieldFrom", "iterable", "async_iterable", "foreach", "async_foreach", 
-    "through", "async_through", "flatten", "async_flatten", "collect", "async_collect", 
-    "group_collect", "async_group_collect", "map", "filter", "reduce", "zip", "chunked", 
-    "iter_unique", "async_iter_unique", "wrap_iter", "wrap_aiter", "acc_step", "cut_iter", 
-    "iter_gen_step", "iter_gen_step_async", "run_gen_step", "run_gen_step_iter", 
-    "as_gen_step", "bfs_gen", "with_iter_next", "backgroud_loop", 
+    "Return", "Yield", "YieldFrom", "iterable", "async_iterable", 
+    "foreach", "async_foreach", "through", "async_through", "flatten", 
+    "async_flatten", "collect", "async_collect", "group_collect", 
+    "async_group_collect", "map", "filter", "reduce", "zip", "chunked", 
+    "iter_unique", "async_iter_unique", "wrap_iter", "wrap_aiter", 
+    "acc_step", "cut_iter", "iter_gen_step", "iter_gen_step_async", 
+    "run_gen_step", "run_gen_step_sync_iter", "run_gen_step_async_iter", 
+    "run_gen_step_iter", "as_gen_step", "bfs_gen", "with_iter_next", 
+    "backgroud_loop", 
 ]
 
 from abc import ABC, abstractmethod
@@ -17,11 +20,14 @@ from asyncio import create_task, sleep as async_sleep, to_thread
 from builtins import map as _map, filter as _filter, zip as _zip
 from collections import defaultdict, deque
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, Collection, Container, 
-    Coroutine, Generator, Iterable, Iterator, Mapping, MutableMapping, MutableSet, 
-    MutableSequence, Sequence, ValuesView, 
+    AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, 
+    Collection, Container, Coroutine, Generator, Iterable, Iterator, 
+    Mapping, MutableMapping, MutableSet, MutableSequence, Sequence, 
+    ValuesView, 
 )
-from contextlib import asynccontextmanager, contextmanager, ExitStack, AsyncExitStack
+from contextlib import (
+    asynccontextmanager, contextmanager, ExitStack, AsyncExitStack, 
+)
 from copy import copy
 from dataclasses import dataclass
 from itertools import batched, pairwise
@@ -30,11 +36,14 @@ from sys import _getframe
 from _thread import start_new_thread
 from time import sleep, time
 from types import FrameType
-from typing import cast, overload, Any, AsyncContextManager, ContextManager, Literal, Protocol
+from typing import (
+    cast, overload, Any, AsyncContextManager, ContextManager, Literal, 
+    Protocol, 
+)
 
 from asynctools import (
-    async_filter, async_map, async_reduce, async_zip, async_batched, ensure_async, ensure_aiter, 
-    collect as async_collect, 
+    async_filter, async_map, async_reduce, async_zip, async_batched, 
+    ensure_async, ensure_aiter, collect as async_collect, 
 )
 from decotools import optional
 from texttools import format_time
@@ -42,22 +51,27 @@ from undefined import undefined
 
 
 class SupportsBool(Protocol):
+    """
+    """
     def __bool__(self, /) -> bool: ...
 
 
 class Reraised(BaseException):
-
+    """
+    """
     def __init__(self, exc: BaseException, /):
         if isinstance(exc, Reraised):
             exc = exc.exception
         self.exception: BaseException = exc
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class YieldBase(ABC):
+    """
+    """
     value: Any
-    may_await: None | bool = True
-    may_call: None | bool = True
+    may_await: None | bool | Literal[1] = False
+    may_call: None | bool | Literal[1] = None
 
     @property
     @abstractmethod
@@ -66,18 +80,29 @@ class YieldBase(ABC):
 
 
 class Return(YieldBase):
+    """
+    """
+    __slots__ = ()
     yield_type = 0
 
 
 class Yield(YieldBase):
+    """
+    """
+    __slots__ = ()
     yield_type = 1
 
 
 class YieldFrom(YieldBase):
+    """
+    """
+    __slots__ = ()
     yield_type = 2
 
 
 def iterable(iterable, /) -> bool:
+    """
+    """
     try:
         return isinstance(iter(iterable), Iterable)
     except TypeError:
@@ -85,6 +110,8 @@ def iterable(iterable, /) -> bool:
 
 
 def async_iterable(iterable, /) -> bool:
+    """
+    """
     try:
         return isinstance(iter(iterable), AsyncIterable)
     except TypeError:
@@ -97,6 +124,8 @@ def foreach(
     /, 
     *iterables: Iterable | AsyncIterable, 
 ):
+    """
+    """
     if not (isinstance(iterable, Iterable) and all(isinstance(it, Iterable) for it in iterables)):
         return async_foreach(value, iterable, *iterables)
     if iterables:
@@ -114,6 +143,8 @@ async def async_foreach(
     *iterables: Iterable | AsyncIterable, 
     threaded: bool = False, 
 ):
+    """
+    """
     value = ensure_async(value, threaded=threaded)
     if iterables:
         async for args in async_zip(iterable, *iterables, threaded=threaded):
@@ -128,6 +159,8 @@ def through(
     /, 
     take_while: None | Callable = None, 
 ):
+    """
+    """
     if not isinstance(iterable, Iterable):
         return async_through(iterable, take_while)
     if take_while is None:
@@ -145,6 +178,8 @@ async def async_through(
     take_while: None | Callable = None, 
     threaded: bool = False, 
 ):
+    """
+    """
     iterable = ensure_aiter(iterable, threaded=threaded)
     if take_while is None:
         async for _ in iterable:
@@ -178,6 +213,8 @@ def flatten(
     /, 
     exclude_types: type | tuple[type, ...] = (Buffer, str), 
 ) -> Iterator | AsyncIterator:
+    """
+    """
     if not isinstance(iterable, Iterable):
         return async_flatten(iterable, exclude_types)
     def gen(iterable):
@@ -195,6 +232,8 @@ async def async_flatten(
     exclude_types: type | tuple[type, ...] = (Buffer, str), 
     threaded: bool = False, 
 ) -> AsyncIterator:
+    """
+    """
     async for e in ensure_aiter(iterable, threaded=threaded):
         if isinstance(e, (Iterable, AsyncIterable)) and not isinstance(e, exclude_types):
             async for e in async_flatten(e, exclude_types, threaded=threaded):
@@ -236,6 +275,8 @@ def collect(
     /, 
     rettype: Callable[[Iterable], Collection] = list, 
 ) -> Collection | Coroutine[Any, Any, Collection]:
+    """
+    """
     if not isinstance(iterable, Iterable):
         return async_collect(iterable, rettype)
     return rettype(iterable)
@@ -274,6 +315,8 @@ def group_collect[K, V, C: Container, M: MutableMapping](
     mapping: None | M = None, 
     factory: None | C | Callable[[], C] = None, 
 ) -> dict[K, C] | M | Coroutine[Any, Any, dict[K, C]] | Coroutine[Any, Any, M]:
+    """
+    """
     if not isinstance(iterable, Iterable):
         return async_group_collect(iterable, mapping, factory)
     if factory is None:
@@ -331,6 +374,8 @@ async def async_group_collect[K, V, C: Container, M: MutableMapping](
     factory: None | C | Callable[[], C] = None, 
     threaded: bool = False, 
 ) -> dict[K, C] | M:
+    """
+    """
     iterable = ensure_aiter(iterable, threaded=threaded)
     if factory is None:
         if isinstance(mapping, defaultdict):
@@ -370,7 +415,9 @@ def map(
     iterable: Iterable | AsyncIterable, 
     /, 
     *iterables: Iterable | AsyncIterable, 
-):      
+):
+    """
+    """
     if (
         iscoroutinefunction(function) or 
         isinstance(iterable, AsyncIterable) or 
@@ -395,6 +442,8 @@ def filter(
     iterable: Iterable | AsyncIterable, 
     /, 
 ):
+    """
+    """
     if iscoroutinefunction(function) or isinstance(iterable, AsyncIterable):
         return async_filter(function, iterable)
     return _filter(function, iterable)
@@ -406,6 +455,8 @@ def reduce(
     initial: Any = undefined, 
     /, 
 ):
+    """
+    """
     if iscoroutinefunction(function) or isinstance(iterable, AsyncIterable):
         return async_reduce(function, iterable, initial)
     from functools import reduce
@@ -419,6 +470,8 @@ def zip(
     /, 
     *iterables: Iterable | AsyncIterable, 
 ):
+    """
+    """
     if isinstance(iterable, AsyncIterable) or any(isinstance(i, AsyncIterable) for i in iterables):
         return async_zip(iterable, *iterables)
     return _zip(iterable, *iterables)
@@ -443,6 +496,8 @@ def chunked[T](
     n: int = 1, 
     /, 
 ) -> Iterator[Sequence[T]] | AsyncIterator[Sequence[T]]:
+    """
+    """
     if n < 0:
         n = 1
     if isinstance(iterable, Sequence):
@@ -474,6 +529,8 @@ def iter_unique[T](
     /, 
     seen: None | MutableSet = None, 
 ) -> Iterator[T] | AsyncIterator[T]:
+    """
+    """
     if not isinstance(iterable, Iterable):
         return async_iter_unique(iterable, seen)
     if seen is None:
@@ -493,6 +550,8 @@ async def async_iter_unique[T](
     seen: None | MutableSet = None, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
+    """
+    """
     if seen is None:
         seen = set()
     add = seen.add
@@ -508,8 +567,6 @@ def wrap_iter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
-    callenter: None | Callable[[Iterable[T]], Any] = None, 
-    callexit: None | Callable[[Iterable[T], None | BaseException], Any] = None, 
 ) -> Iterator[T]:
     ...
 @overload
@@ -518,8 +575,6 @@ def wrap_iter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
-    callenter: None | Callable[[Iterable[T] | AsyncIterable[T]], Any] = None, 
-    callexit: None | Callable[[Iterable[T] | AsyncIterable[T], None | BaseException], Any] = None, 
 ) -> AsyncIterator[T]:
     ...
 def wrap_iter[T](
@@ -527,47 +582,24 @@ def wrap_iter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
-    callenter: None | Callable[[Iterable[T]], Any] | Callable[[Iterable[T] | AsyncIterable[T]], Any] = None, 
-    callexit: ( None | Callable[[Iterable[T], None | BaseException], Any] | 
-                Callable[[Iterable[T] | AsyncIterable[T], None | BaseException], Any] ) = None, 
 ) -> Iterator[T] | AsyncIterator[T]:
+    """
+    """
     if not isinstance(iterable, Iterable):
         return wrap_aiter(
             iterable, 
             callprev=callprev, 
             callnext=callnext, 
-            callenter=callenter, # type: ignore
-            callexit=callexit, # type: ignore
         )
     if not callable(callprev):
         callprev = None
     if not callable(callnext):
         callnext = None
     def gen():
-        try:
-            if callable(callenter):
-                callenter(iterable)
-            for e in iterable:
-                if callprev:
-                    try:
-                        callprev(e)
-                    except (StopIteration, GeneratorExit):
-                        break
-                yield e
-                if callnext:
-                    try:
-                        callnext(e)
-                    except (StopIteration, GeneratorExit):
-                        break
-        except BaseException as e:
-            if callable(callexit):
-                if not callexit(iterable, e):
-                    raise
-            else:
-                raise
-        finally:
-            if callable(callexit):
-                callexit(iterable, None)
+        for e in iterable:
+            callprev and callprev(e)
+            yield e
+            callnext and callnext(e)
     return gen()
 
 
@@ -576,34 +608,16 @@ async def wrap_aiter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
-    callenter: None | Callable[[Iterable[T] | AsyncIterable[T]], Any] = None, 
-    callexit: None | Callable[[Iterable[T] | AsyncIterable[T], None | BaseException], Any] = None, 
     threaded: bool = False, 
 ) -> AsyncIterator[T]:
+    """
+    """
     callprev = ensure_async(callprev, threaded=threaded) if callable(callprev) else None
     callnext = ensure_async(callnext, threaded=threaded) if callable(callnext) else None
-    try:
-        async for e in ensure_aiter(iterable, threaded=threaded):
-            if callprev:
-                try:
-                    await callprev(e)
-                except (StopAsyncIteration, GeneratorExit):
-                    break
-            yield e
-            if callnext:
-                try:
-                    await callnext(e)
-                except (StopAsyncIteration, GeneratorExit):
-                    break
-    except BaseException as e:
-        if callable(callexit):
-            if not await ensure_async(callexit, threaded=threaded)(iterable, e):
-                raise
-        else:
-            raise
-    finally:
-        if callable(callexit):
-            await ensure_async(callexit, threaded=threaded)(iterable, None)
+    async for e in ensure_aiter(iterable, threaded=threaded):
+        callprev and await callprev(e)
+        yield e
+        callnext and await callnext(e)
 
 
 def acc_step(
@@ -611,6 +625,8 @@ def acc_step(
     stop: None | int = None, 
     step: int = 1, 
 ) -> Iterator[tuple[int, int, int]]:
+    """
+    """
     if stop is None:
         start, stop = 0, start
     for i in range(start + step, stop, step):
@@ -624,6 +640,8 @@ def cut_iter(
     stop: None | int = None, 
     step: int = 1, 
 ) -> Iterator[tuple[int, int]]:
+    """
+    """
     if stop is None:
         start, stop = 0, start
     for start in range(start + step, stop, step):
@@ -639,7 +657,7 @@ def _get_async(back: int = 2) -> bool:
     f_locals  = f.f_locals
     if f_locals is f_globals:
         return f_locals.get("async_") or False
-    while f_locals is not f_globals:
+    while f_locals is not None and f_locals is not f_globals:
         if "async_" in f_locals:
             return f_locals["async_"] or False
         f = f.f_back
@@ -652,23 +670,25 @@ def _get_async(back: int = 2) -> bool:
 @overload
 def call_as_async[**Args, T: Coroutine](
     func: Callable[Args, T], /, 
-    may_await: None | bool = False, 
+    may_await: bool | Literal[1] = False, 
     threaded: bool = False, 
 ) -> Callable[Args, T]:
     ...
 @overload
 def call_as_async[**Args, T](
     func: Callable[Args, T], /, 
-    may_await: None | bool = False, 
+    may_await: bool | Literal[1] = False, 
     threaded: bool = False, 
 ) -> Callable[Args, Coroutine[Any, Any, T]]:
     ...
 def call_as_async[**Args, T](
     func: Callable[Args, T], 
     /, 
-    may_await: None | bool = False, 
+    may_await: bool | Literal[1] = False, 
     threaded: bool = False, 
 ) -> Callable[Args, T] | Callable[Args, Coroutine[Any, Any, T]]:
+    """
+    """
     if iscoroutinefunction(func):
         return func
     def wraps(*args, **kwds):
@@ -681,7 +701,7 @@ def call_as_async[**Args, T](
             value = await to_thread(wraps, *args, **kwds)
         else:
             value = wraps(*args, **kwds)
-        if may_await is None or may_await and isawaitable(value):
+        if may_await is 1 or may_await and isawaitable(value):
             value = await value
         return value
     return wrapper
@@ -689,140 +709,131 @@ def call_as_async[**Args, T](
 
 def iter_gen_step(
     gen_step: Generator | Callable[[], Generator], 
-    simple: bool = False, 
+    may_call: bool | Literal[1] = True, 
 ):
-    gen = gen_step() if callable(gen_step) else gen_step
-    send  = gen.send
-    throw = gen.throw
-    close = gen.close
+    """
+    """
+    if callable(gen_step):
+        gen_step = gen_step()
+    send  = gen_step.send
+    throw = gen_step.throw
+    close = gen_step.close
     value: Any = None
-    if simple:
-        try:
-            while True:
-                yield (value := send(value))
-        except StopIteration as e:
-            yield e.value
-        finally:
-            close()
-    else:
-        try:
-            while True:
-                if isinstance(value, YieldBase):
-                    raise StopIteration(value)
-                try:
-                    if callable(value):
-                        value = value()
-                except BaseException as e:
-                    value = throw(e)
-                else:
-                    value = send(value)
-                yield value
-        except StopIteration as e:
-            may_call: None | bool = True
-            value    = e.value
+    try:
+        while True:
             if isinstance(value, YieldBase):
-                may_call = value.may_call
-                value    = value.value
-            if may_call is None or may_call and callable(value):
-                try:
+                raise StopIteration(value)
+            try:
+                if may_call is 1 or may_call and callable(value):
                     value = value()
-                except BaseException as e:
-                    try:
-                        value = throw(e)
-                    except BaseException as e:
-                        raise Reraised(e) from e
+            except BaseException as e:
+                value = throw(e)
+            else:
+                value = send(value)
             yield value
-        finally:
-            close()
+    except StopIteration as e:
+        value = e.value
+        if isinstance(value, YieldBase):
+            maybe_callable = value.may_call
+            if maybe_callable is not None:
+                may_call = maybe_callable
+            value = value.value
+        if may_call is 1 or may_call and callable(value):
+            try:
+                value = value()
+            except BaseException as e:
+                try:
+                    value = throw(e)
+                except BaseException as e:
+                    raise Reraised(e) from e
+        yield value
+    finally:
+        close()
 
 
 async def iter_gen_step_async(
     gen_step: Generator | Callable[[], Generator], 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
-    simple: bool = False, 
 ):
-    gen = gen_step() if callable(gen_step) else gen_step
-    send: Callable  = gen.send
-    throw: Callable = gen.throw
-    close: Callable = call_as_async(gen.close, threaded=threaded)
+    """
+    """
+    if callable(gen_step):
+        gen_step = gen_step()
+    send: Callable  = call_as_async(gen_step.send, threaded=threaded)
+    throw: Callable = call_as_async(gen_step.throw, threaded=threaded)
+    close: Callable = call_as_async(gen_step.close, threaded=threaded)
     value: Any = None
-    if simple:
-        send  = call_as_async(send,  may_await=None, threaded=threaded)
-        throw = call_as_async(throw, may_await=None, threaded=threaded)
-        try:
-            while True:
-                yield (value := await send(value))
-        except BaseException as e:
-            if isinstance(e, Reraised):
-                e = e.exception
-            if isinstance(e, StopIteration):
-                yield e.value
+    try:
+        while True:
+            if isinstance(value, YieldBase):
+                raise StopIteration(value)
+            try:
+                if may_call is 1 or may_call and callable(value):
+                    value = await call_as_async(
+                        value, may_await=may_await, threaded=threaded)()
+                elif may_await is 1 or may_await and isawaitable(value):
+                    value = await value
+            except BaseException as e:
+                if isinstance(e, Reraised):
+                    e = e.exception
+                value = await throw(e)
             else:
-                raise
-        finally:
-            await close()
-    else:
-        send  = call_as_async(send,  threaded=threaded)
-        throw = call_as_async(throw, threaded=threaded)
-        try:
-            while True:
-                if isinstance(value, YieldBase):
-                    raise StopIteration(value)
+                value = await send(value)
+            yield value
+    except BaseException as e:
+        if isinstance(e, Reraised):
+            e = e.exception
+        if isinstance(e, StopIteration):
+            value = e.value
+            if isinstance(value, YieldBase):
+                maybe_awaitable = value.may_await
+                if maybe_awaitable is not None:
+                    may_await = maybe_awaitable
+                maybe_callable  = value.may_call
+                if maybe_callable is not None:
+                    may_call = maybe_callable
+                value = value.value
+            try:
+                if may_call is 1 or may_call and callable(value):
+                    value = await call_as_async(
+                        value, may_await=may_await, threaded=threaded)()
+                elif may_await is 1 or may_await and isawaitable(value):
+                    value = await value
+            except BaseException as e:
                 try:
-                    if callable(value):
-                        value = await call_as_async(
-                            value, may_await=True, threaded=threaded)()
-                    elif isawaitable(value):
-                        value = await value
-                except BaseException as e:
-                    if isinstance(e, Reraised):
-                        e = e.exception
                     value = await throw(e)
-                else:
-                    value = await send(value)
-                yield value
-        except BaseException as e:
-            if isinstance(e, Reraised):
-                e = e.exception
-            if isinstance(e, StopIteration):
-                may_await: None | bool = True
-                may_call: None | bool  = True
-                value     = e.value
-                if isinstance(value, YieldBase):
-                    may_await = value.may_await
-                    may_call  = value.may_call
-                    value     = value.value
-                try:
-                    if may_call is None or may_call and callable(value):
-                        value = await call_as_async(
-                            value, may_await=may_await, threaded=threaded)()
-                    elif may_await is None or may_await and isawaitable(value):
-                        value = await value
                 except BaseException as e:
-                    try:
-                        value = await throw(e)
-                    except BaseException as e:
-                        raise Reraised(e) from e
-                yield value
-            else:
-                raise
-        finally:
-            await close()
+                    raise Reraised(e) from e
+            yield value
+        else:
+            raise
+    finally:
+        await close()
 
 
 def run_gen_step(
     gen_step: Generator | Callable[[], Generator], 
-    simple: bool = False, 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
     running_flag: None | SupportsBool | Callable[[], SupportsBool] | Callable[[], Awaitable[SupportsBool]] = None, 
     *, 
     async_: None | bool = None, 
 ):
+    """
+    """
     if async_ is None:
         async_ = _get_async()
     if async_:
         async def process():
-            gen = iter_gen_step_async(gen_step, simple=simple, threaded=threaded)
+            gen = iter_gen_step_async(
+                gen_step, 
+                may_await=may_await, 
+                may_call=may_call, 
+                threaded=threaded, 
+            )
             try:
                 if running_flag is None:
                     async for value in gen:
@@ -849,7 +860,7 @@ def run_gen_step(
                 raise
         return process()
     else:
-        gen = iter_gen_step(gen_step, simple=simple)
+        gen = iter_gen_step(gen_step, may_call=may_call)
         try:
             if running_flag is None:
                 for value in gen:
@@ -871,10 +882,136 @@ def run_gen_step(
             raise
 
 
+def run_gen_step_sync_iter(
+    gen_step: Generator | Callable[[], Generator], 
+    may_call: bool | Literal[1] = True, 
+) -> Iterator:
+    """
+    """
+    if callable(gen_step):
+        gen_step = gen_step()
+    send:  Callable = gen_step.send
+    throw: Callable = gen_step.throw
+    close: Callable = gen_step.close
+    def extract(value, may_call=may_call, /):
+        yield_type = -1
+        if isinstance(value, YieldBase):
+            yield_type = value.yield_type
+            maybe_callable = value.may_call
+            if maybe_callable is not None:
+                may_call = maybe_callable
+            value      = value.value
+        if may_call is 1 or may_call and callable(value):
+            value = value()
+        return yield_type, value
+    try:
+        value = send(None)
+        while True:
+            try:
+                yield_type, value = extract(value)
+                match yield_type:
+                    case 0:
+                        return value
+                    case 1:
+                        yield value
+                    case 2:
+                        yield from value
+            except BaseException as e:
+                value = throw(e)
+            else:
+                value = send(value)
+    except StopIteration as e:
+        try:
+            yield_type, value = extract(e.value)
+            match yield_type:
+                case 1:
+                    yield value
+                case 2:
+                    yield from value
+                case _:
+                    return value
+        except BaseException as e:
+            throw(e)
+    finally:
+        close()
+
+
+async def run_gen_step_async_iter(
+    gen_step: Generator | Callable[[], Generator], 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
+    threaded: bool = False, 
+) -> AsyncIterator:
+    """
+    """
+    if callable(gen_step):
+        gen_step = gen_step()
+    send:  Callable = call_as_async(gen_step.send, threaded=threaded)
+    throw: Callable = call_as_async(gen_step.throw, threaded=threaded)
+    close: Callable = call_as_async(gen_step.close, threaded=threaded)
+    async def extract(value, may_await=may_await, may_call=may_call, /):
+        yield_type = -1
+        if isinstance(value, YieldBase):
+            yield_type = value.yield_type
+            maybe_awaitable = value.may_await
+            if maybe_awaitable is not None:
+                may_await = maybe_awaitable
+            maybe_callable = value.may_call
+            if maybe_callable is not None:
+                may_call = maybe_callable
+            value = value.value
+        if may_call is 1 or may_call and callable(value):
+            value = await call_as_async(
+                value, may_await=may_await, threaded=threaded)()
+        elif may_await is 1 or may_await and isawaitable(value):
+            value = await value
+        return yield_type, value
+    try:
+        value = await send(None)
+        while True:
+            try:
+                yield_type, value = await extract(value)
+                match yield_type:
+                    case 0:
+                        return
+                    case 1:
+                        yield value
+                    case 2:
+                        async for val in ensure_aiter(value, threaded=threaded):
+                            yield val
+            except BaseException as e:
+                if isinstance(e, Reraised):
+                    e = e.exception
+                value = await throw(e)
+            else:
+                value = await send(value)
+    except BaseException as e:
+        if isinstance(e, Reraised):
+            e = e.exception
+        if isinstance(e, StopIteration):
+            try:
+                yield_type, value = await extract(e.value)
+                match yield_type:
+                    case 1:
+                        yield value
+                    case 2:
+                        async for val in ensure_aiter(value, threaded=threaded):
+                            yield val
+            except BaseException as e:
+                if isinstance(e, Reraised):
+                    e = e.exception
+                await throw(e)
+        else:
+            raise
+    finally:
+        await close()
+
+
 @overload
 def run_gen_step_iter(
     gen_step: Generator | Callable[[], Generator], 
-    simple: bool = False, 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
     *, 
     async_: None = None, 
@@ -883,7 +1020,8 @@ def run_gen_step_iter(
 @overload
 def run_gen_step_iter(
     gen_step: Generator | Callable[[], Generator], 
-    simple: bool = False, 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
     *, 
     async_: Literal[False], 
@@ -892,7 +1030,8 @@ def run_gen_step_iter(
 @overload
 def run_gen_step_iter(
     gen_step: Generator | Callable[[], Generator], 
-    simple: bool = False, 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
     *, 
     async_: Literal[True], 
@@ -900,120 +1039,25 @@ def run_gen_step_iter(
     ...
 def run_gen_step_iter(
     gen_step: Generator | Callable[[], Generator], 
-    simple: bool = False, 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
     *, 
     async_: None | bool = None, 
 ) -> Iterator | AsyncIterator:
+    """
+    """
     if async_ is None:
         async_ = _get_async()
-    gen = gen_step() if callable(gen_step) else gen_step
-    send:  Callable = gen.send
-    throw: Callable = gen.throw
-    close: Callable = gen.close
     if async_:
-        send  = call_as_async(send, threaded=threaded)
-        throw = call_as_async(throw, threaded=threaded)
-        close = call_as_async(close, threaded=threaded)
-        async def aextract(value, /):
-            may_await: None | bool = None if simple else False
-            may_call: None | bool  = not simple
-            yield_type = -1
-            if isinstance(value, YieldBase):
-                yield_type  = value.yield_type
-                may_await   = value.may_await
-                may_call    = value.may_call
-                value       = value.value
-            if may_call is None or may_call and callable(value):
-                value = await call_as_async(
-                    value, may_await=may_await, threaded=threaded)()
-            elif may_await is None or may_await and isawaitable(value):
-                value = await value
-            return yield_type, value
-        async def aprocess():
-            try:
-                value = await send(None)
-                while True:
-                    try:
-                        yield_type, value = await aextract(value)
-                        match yield_type:
-                            case 0:
-                                return
-                            case 1:
-                                yield value
-                            case 2:
-                                async for val in ensure_aiter(value, threaded=threaded):
-                                    yield val
-                    except BaseException as e:
-                        if isinstance(e, Reraised):
-                            e = e.exception
-                        value = await throw(e)
-                    else:
-                        value = await send(value)
-            except BaseException as e:
-                if isinstance(e, Reraised):
-                    e = e.exception
-                if isinstance(e, StopIteration):
-                    try:
-                        yield_type, value = await aextract(e.value)
-                        match yield_type:
-                            case 1:
-                                yield value
-                            case 2:
-                                async for val in ensure_aiter(value, threaded=threaded):
-                                    yield val
-                    except BaseException as e:
-                        if isinstance(e, Reraised):
-                            e = e.exception
-                        await throw(e)
-                else:
-                    raise
-            finally:
-                await close()
-        return aprocess()
+        return run_gen_step_async_iter(
+            gen_step, 
+            may_await=may_await, 
+            may_call=may_call, 
+            threaded=threaded, 
+        )
     else:
-        def extract(value, /):
-            may_call: None | bool = not simple
-            yield_type = -1
-            if isinstance(value, YieldBase):
-                yield_type = value.yield_type
-                may_call   = value.may_call
-                value      = value.value
-            if may_call is None or may_call and callable(value):
-                value = value()
-            return yield_type, value
-        def process():
-            try:
-                value = send(None)
-                while True:
-                    try:
-                        yield_type, value = extract(value)
-                        match yield_type:
-                            case 0:
-                                return value
-                            case 1:
-                                yield value
-                            case 2:
-                                yield from value
-                    except BaseException as e:
-                        value = throw(e)
-                    else:
-                        value = send(value)
-            except StopIteration as e:
-                try:
-                    yield_type, value = extract(e.value)
-                    match yield_type:
-                        case 1:
-                            yield value
-                        case 2:
-                            yield from value
-                        case _:
-                            return value
-                except BaseException as e:
-                    throw(e)
-            finally:
-                close()
-        return process()
+        return run_gen_step_sync_iter(gen_step, may_call=may_call)
 
 
 @optional
@@ -1021,7 +1065,8 @@ def as_gen_step(
     func: Callable, 
     /, 
     iter: bool = False, 
-    simple: bool = False, 
+    may_await: bool | Literal[1] = True, 
+    may_call: bool | Literal[1] = True, 
     threaded: bool = False, 
     running_flag: None | SupportsBool | Callable[[], SupportsBool] | Callable[[], Awaitable[SupportsBool]] = None, 
     *, 
@@ -1029,18 +1074,22 @@ def as_gen_step(
 ) -> Callable:
     """装饰器，构建一个 gen_step 函数
     """
+    if async_ is None:
+        async_ = _get_async()
     def wrapper(*args, **kwds):
         if iter:
             return run_gen_step_iter(
                 func(*args, **kwds), 
-                simple=simple, 
+                may_await=may_await, 
+                may_call=may_call, 
                 threaded=threaded, 
                 async_=async_, # type: ignore
             )
         else:
             return run_gen_step(
                 func(*args, **kwds), 
-                simple=simple, 
+                may_await=may_await, 
+                may_call=may_call, 
                 threaded=threaded, 
                 running_flag=running_flag, 
                 async_=async_, 
@@ -1094,15 +1143,8 @@ def bfs_gen[T](
 def with_iter_next[T](
     iterable: Iterable[T], 
     /, 
-    async_: Literal[False] = False, 
+    async_: Literal[False], 
 ) -> ContextManager[Callable[[], T]]:
-    ...
-@overload
-def with_iter_next[T](
-    iterable: AsyncIterable[T], 
-    /, 
-    async_: Literal[False] = False, 
-) -> ContextManager[Callable[[], Awaitable[T]]]:
     ...
 @overload
 def with_iter_next[T](
@@ -1111,12 +1153,26 @@ def with_iter_next[T](
     async_: Literal[True], 
 ) -> ContextManager[Callable[[], Awaitable[T]]]:
     ...
+@overload
+def with_iter_next[T](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    /, 
+    async_: None = None, 
+) -> ContextManager[Callable[[], T]] | ContextManager[Callable[[], Awaitable[T]]]:
+    ...
 @contextmanager
 def with_iter_next[T](
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
-    async_: Literal[False, True] = False, 
+    async_: None | Literal[False, True] = None, 
 ):
+    """
+    """
+    if async_ is None:
+        if not isinstance(iterable, Iterable):
+            async_ = True
+        else:
+            async_ = _get_async()
     if async_:
         get_next: Callable[[], T] | Callable[[], Awaitable[T]] = ensure_aiter(iterable).__anext__
     elif isinstance(iterable, Iterable):
@@ -1140,7 +1196,7 @@ def with_iter_next[T](
 def context[T](
     func: Callable[..., T], 
     *ctxs: ContextManager, 
-    async_: Literal[False] = False, 
+    async_: Literal[False], 
 ) -> T:
     ...
 @overload
@@ -1150,11 +1206,25 @@ def context[T](
     async_: Literal[True], 
 ) -> Coroutine[Any, Any, T]:
     ...
+@overload
 def context[T](
     func: Callable[..., T] | Callable[..., Awaitable[T]], 
     *ctxs: ContextManager | AsyncContextManager, 
-    async_: Literal[False, True] = False, 
+    async_: None = None, 
 ) -> T | Coroutine[Any, Any, T]:
+    ...
+def context[T](
+    func: Callable[..., T] | Callable[..., Awaitable[T]], 
+    *ctxs: ContextManager | AsyncContextManager, 
+    async_: None | Literal[False, True] = None, 
+) -> T | Coroutine[Any, Any, T]:
+    """
+    """
+    if async_ is None:
+        if iscoroutinefunction(func):
+            async_ = True
+        else:
+            async_ = _get_async()
     if async_:
         async def call():
             args: list = []
@@ -1184,7 +1254,7 @@ def backgroud_loop(
     /, 
     interval: int | float = 0.05, 
     *, 
-    async_: Literal[False] = False, 
+    async_: Literal[False], 
 ) -> ContextManager:
     ...
 @overload
@@ -1196,13 +1266,29 @@ def backgroud_loop(
     async_: Literal[True], 
 ) -> AsyncContextManager:
     ...
+@overload
 def backgroud_loop(
     call: None | Callable = None, 
     /, 
     interval: int | float = 0.05, 
     *, 
-    async_: Literal[False, True] = False, 
+    async_: None = None, 
 ) -> ContextManager | AsyncContextManager:
+    ...
+def backgroud_loop(
+    call: None | Callable = None, 
+    /, 
+    interval: int | float = 0.05, 
+    *, 
+    async_: None | Literal[False, True] = None, 
+) -> ContextManager | AsyncContextManager:
+    """
+    """
+    if async_ is None:
+        if iscoroutinefunction(call):
+            async_ = True
+        else:
+            async_ = _get_async()
     use_default_call = not callable(call)
     if use_default_call:
         start = time()
@@ -1221,6 +1307,7 @@ def backgroud_loop(
                     sleep(interval)
     running = True
     if async_:
+        @asynccontextmanager
         async def actx():
             nonlocal running
             try:
@@ -1231,8 +1318,9 @@ def backgroud_loop(
                 task.cancel()
                 if use_default_call:
                     print("\r\x1b[K", end="")
-        return asynccontextmanager(actx)()
+        return actx()
     else:
+        @contextmanager
         def ctx():
             nonlocal running
             try:
@@ -1241,5 +1329,5 @@ def backgroud_loop(
                 running = False
                 if use_default_call:
                     print("\r\x1b[K", end="")
-        return contextmanager(ctx)()
+        return ctx()
 

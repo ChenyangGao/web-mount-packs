@@ -6,68 +6,67 @@ some arguments at one time and then use them repeatedly later.
 """
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["argcount", "Args", "UpdativeArgs"]
+__version__ = (0, 0, 2)
+__all__ = ["argcount", "Args", "UpdativeArgs", "Call"]
 
 from collections.abc import Callable
 from copy import copy
+from functools import partial, update_wrapper
 from inspect import getfullargspec
-from typing import Any, Callable, Generic, ParamSpec, TypeVar
+from typing import cast, Any
 
 
-T = TypeVar("T")
-P = ParamSpec("P")
-
-
-def argcount(func: Callable) -> int:
+def argcount(func: Callable, /) -> int:
+    if isinstance(func, partial):
+        return max(0, argcount(func.func) - len(func.args))
     try:
         return func.__code__.co_argcount
     except AttributeError:
         return len(getfullargspec(func).args)
 
 
-class Args(Generic[T, P]):
+class Args:
     """Takes some positional arguments and keyword arguments, 
     and put them into an instance, which can be used repeatedly 
     every next time.
 
     Fields::
-        self.pargs: the collected positional arguments
-        self.kargs: the collected keyword arguments
+        self.args: the collected positional arguments
+        self.kwargs: the collected keyword arguments
     """
-    __slots__ = ("pargs", "kargs")
+    __slots__ = ("args", "kwargs")
 
-    def __init__(self, /, *pargs, **kargs):
-        self.pargs: P.args = pargs
-        self.kargs: P.kwargs = kargs
+    def __init__(self, /, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
 
-    def __call__(self, /, func: Callable[..., T]) -> T:
+    def __call__[T](self, /, func: Callable[..., T]) -> T:
         """Pass in the collected positional arguments and keyword 
         arguments when calling the callable `func`."""
-        return func(*self.pargs, **self.kargs)
+        return func(*self.args, **self.kwargs)
 
     def __copy__(self, /):
-        return type(self)(*self.pargs, **self.kargs)
+        return type(self)(*self.args, **self.kwargs)
 
     def __eq__(self, other):
         if isinstance(other, Args):
-            return self.pargs == other.pargs and self.kargs == other.kargs
+            return self.args == other.args and self.kwargs == other.kwargs
         return False
 
     def __iter__(self, /):
-        return iter((self.pargs, self.kargs))
+        return iter((self.args, self.kwargs))
 
     def __repr__(self):
         return "%s(%s)" % (
             type(self).__qualname__,
             ", ".join((
-                *map(repr, self.pargs),
-                *("%s=%r" % e for e in self.kargs.items()),
+                *map(repr, self.args),
+                *("%s=%r" % e for e in self.kwargs.items()),
             )),
         )
 
     @classmethod
-    def call(cls, /, func: Callable[..., T], args: Any = ()) -> T:
+    def call[T](cls, /, func: Callable[..., T], args: Any = ()) -> T:
         """Call the callable `func` and pass in the arguments `args`.
 
         The actual behavior as below:
@@ -81,13 +80,13 @@ class Args(Generic[T, P]):
         """
         if isinstance(args, Args):
             return args(func)
-        match type(args):
-            case tuple:
-                return func(*args)
-            case dict:
-                return func(**args)
-            case _:
-                return func(args)
+        args_type = type(args)
+        if args_type == tuple:
+            return func(*args)
+        elif args_type == dict:
+            return func(**args)
+        else:
+            return func(args)
 
 
 class UpdativeArgs(Args):
@@ -98,12 +97,12 @@ class UpdativeArgs(Args):
     collected arguments.
 
     Fields::
-        self.pargs: the collected positional arguments
-        self.kargs: the collected keyword arguments
+        self.args: the collected positional arguments
+        self.kwargs: the collected keyword arguments
     """
-    __slots__ = ("pargs", "kargs")
+    __slots__ = ("args", "kwargs")
 
-    def extend(self, /, *pargs, **kargs):
+    def extend(self, /, *args, **kwargs):
         """Extend the collected arguments.
 
         Examples::
@@ -114,17 +113,17 @@ class UpdativeArgs(Args):
         >>> args is args2
         True
         """
-        if pargs:
-            self.pargs += pargs
-        if kargs:
-            kargs0 = self.kargs
-            kargs0.update(
-                (k, kargs[k])
-                for k in kargs.keys() - kargs0.keys()
+        if args:
+            self.args += args
+        if kwargs:
+            kwargs0 = self.kwargs
+            kwargs0.update(
+                (k, kwargs[k])
+                for k in kwargs.keys() - kwargs0.keys()
             )
         return self
 
-    def copy_extend(self, /, *pargs, **kargs):
+    def copy_extend(self, /, *args, **kwargs):
         """Extend the collected arguments in a copied instance.
 
         Examples::
@@ -135,9 +134,9 @@ class UpdativeArgs(Args):
         >>> args is args2
         False
         """
-        return copy(self).extend(*pargs, **kargs)
+        return copy(self).extend(*args, **kwargs)
 
-    def prepend(self, /, *pargs, **kargs):
+    def prepend(self, /, *args, **kwargs):
         """Prepend the collected arguments.
 
         Examples::
@@ -148,13 +147,13 @@ class UpdativeArgs(Args):
         >>> args is args2
         True
         """
-        if pargs:
-            self.pargs = pargs + self.pargs
-        if kargs:
-            self.kargs.update(kargs)
+        if args:
+            self.args = args + self.args
+        if kwargs:
+            self.kwargs.update(kwargs)
         return self
 
-    def copy_prepend(self, /, *pargs, **kargs):
+    def copy_prepend(self, /, *args, **kwargs):
         """Prepend the collected arguments in a copied instance.
 
         Examples::
@@ -165,9 +164,9 @@ class UpdativeArgs(Args):
         >>> args is args2
         False
         """
-        return copy(self).prepend(*pargs, **kargs)
+        return copy(self).prepend(*args, **kwargs)
 
-    def update(self, /, *pargs, **kargs):
+    def update(self, /, *args, **kwargs):
         """Update the collected arguments.
 
         Examples::
@@ -181,17 +180,17 @@ class UpdativeArgs(Args):
         >>> args.update(7, 8, 10, 11, x=9, r=0)
         UpdativeArgs(7, 8, 10, 11, x=9, y=5, z=6, r=0)
         """
-        if pargs:
-            n = len(pargs) - len(self.pargs)
+        if args:
+            n = len(args) - len(self.args)
             if n >= 0:
-                self.pargs = pargs
+                self.args = args
             else:
-                self.pargs = pargs + self.pargs[n:]
-        if kargs:
-            self.kargs.update(kargs)
+                self.args = args + self.args[n:]
+        if kwargs:
+            self.kwargs.update(kwargs)
         return self
 
-    def copy_update(self, /, *pargs, **kargs):
+    def copy_update(self, /, *args, **kwargs):
         """Update the collected arguments in a copied instance.
 
         Examples::
@@ -214,9 +213,9 @@ class UpdativeArgs(Args):
         >>> args2 == args3
         True
         """
-        return copy(self).update(*pargs, **kargs)
+        return copy(self).update(*args, **kwargs)
 
-    def update_extend(self, /, *pargs, **kargs):
+    def update_extend(self, /, *args, **kwargs):
         """Update and entend the collected arguments.
 
         Examples::
@@ -230,19 +229,19 @@ class UpdativeArgs(Args):
         >>> args.update_extend(7, 8, x=9, r=0)
         UpdativeArgs(1, 2, 3, x=4, y=5, z=6, r=0)
         """
-        if pargs:
-            n = len(self.pargs) - len(pargs)
+        if args:
+            n = len(self.args) - len(args)
             if n < 0:
-                self.pargs += pargs[n:]
-        if kargs:
-            kargs0 = self.kargs
-            kargs0.update(
-                (k, kargs[k])
-                for k in kargs.keys() - kargs0.keys()
+                self.args += args[n:]
+        if kwargs:
+            kwargs0 = self.kwargs
+            kwargs0.update(
+                (k, kwargs[k])
+                for k in kwargs.keys() - kwargs0.keys()
             )
         return self
 
-    def copy_update_extend(self, /, *pargs, **kargs):
+    def copy_update_extend(self, /, *args, **kwargs):
         """Update and extend the collected arguments in
         a copied instance.
 
@@ -268,7 +267,37 @@ class UpdativeArgs(Args):
         >>> args2 == args3
         True
         """
-        return copy(self).update_extend(*pargs, **kargs)
+        return copy(self).update_extend(*args, **kwargs)
+
+
+class Call[**Params, R](partial):
+    """
+    """
+    def __new__(
+        cls, 
+        func: Callable[Params, R], 
+        /, 
+        *args: Params.args, 
+        **kwds: Params.kwargs, 
+    ):
+        if hasattr(func, "func"):
+            args = cast(Params.args, getattr(func, "args", ()) + args)
+            kwargs: None | dict = None
+            try:
+                kwargs = getattr(func, "kwargs")
+            except AttributeError:
+                kwargs = getattr(func, "keywords", None)
+            if kwargs:
+                kwds = cast(Params.kwargs, {**kwargs, **kwds})
+            func = func.func
+        return update_wrapper(super().__new__(cls, func, *args, **kwds), func)
+
+    @property
+    def kwargs(self, /) -> Params.kwargs:
+        return self.keywords
+
+    def __call__(self, /) -> R:
+        return self.func(*self.args, **self.kwargs)
 
 
 if __name__ == "__main__":

@@ -337,7 +337,7 @@ def ensure_aiter[T](
                 except StopIteration:
                     pass
     else:
-        if isinstance(iterable, Sequence):
+        if isinstance(iterable, Collection):
             threaded = False
         if threaded:
             async def wrapper():

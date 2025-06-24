@@ -24,7 +24,7 @@ from time import time
 from typing import cast, overload, Any, Literal, Never, Self
 
 from dictattr import AttrDict
-from iterutils import run_gen_step, run_gen_step_iter, Yield
+from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from p115client import check_response, normalize_attr, P115URL
 from posixpatht import escape, joins, splits, path_is_dir_form
 
@@ -888,8 +888,8 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                         key = None
                 if key:
                     children = sorted(children, key=key, reverse=payload.get("asc", True))
-            return children[start:stop]
-        return run_gen_step(gen_step, async_=async_, as_iter=True)
+            return YieldFrom(children[start:stop])
+        return run_gen_step_iter(gen_step, may_call=False, async_=async_)
 
     @overload
     def receive(
@@ -1020,13 +1020,13 @@ class P115ShareFileSystem(P115FileSystemBase[P115SharePath]):
                     return
                 for attr in ls:
                     attr = normalize_attr(attr)
-                    yield Yield(P115SharePath(self, attr), may_await=False)
+                    yield Yield(P115SharePath(self, attr))
                 offset = payload["offset"] = offset + resp["page_size"]
                 if offset >= resp["count"] or offset >= 10_000:
                     break
                 if offset + page_size > 10_000:
                     payload["page_size"] = 10_000 - offset
-        return run_gen_step_iter(gen_step, async_=async_)
+        return run_gen_step_iter(gen_step, may_call=False, async_=async_)
 
     @overload
     def stat(

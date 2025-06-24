@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "python-115"
-version = "0.0.9.8.8.4"
+version = "0.0.9.8.8.6"
 description = "Python wrapper for 115 webdisk."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
-repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115-client"
+homepage = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115"
+repository = "https://github.com/ChenyangGao/web-mount-packs/tree/main/python-115"
 keywords = ["115", "webdisk", "client"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -42,7 +42,7 @@ python-filewrap = ">=0.2.6"
 python-hashtools = ">=0.0.3.3"
 python-httpfile = ">=0.0.4"
 python-http_request = ">=0.0.6"
-python-iterutils = ">=0.0.7.1"
+python-iterutils = ">=0.2.1"
 python-texttools = ">=0.0.2"
 python-urlopen = ">=0.0.6"
 python-undefined = "*"

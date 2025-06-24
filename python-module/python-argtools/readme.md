@@ -5,7 +5,7 @@
 You can install from [pypi](https://pypi.org/project/python-argtools/)
 
 ```console
-pip install -U argtools
+pip install -U python-argtools
 ```
 
 ## Usage

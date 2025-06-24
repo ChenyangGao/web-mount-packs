@@ -11,8 +11,6 @@ from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Iterat
 from enum import Enum
 from functools import partial
 from hashlib import sha1
-from time import time
-from types import MappingProxyType
 from typing import overload, Any, Final, Literal, Self
 
 from asynctools import async_any, to_list
@@ -616,11 +614,11 @@ class P115Offline:
                     raise RuntimeError("detected count changes during iteration")
                 if not resp["tasks"]:
                     return
-                yield YieldFrom(map(normalize_attr, resp["tasks"]), may_await=False)
+                yield YieldFrom(map(normalize_attr, resp["tasks"]))
                 if page >= resp["page_count"]:
                     return
                 page += 1
-        return run_gen_step_iter(gen_step, async_=async_)
+        return run_gen_step_iter(gen_step, may_call=False, async_=async_)
 
     @overload
     def list(

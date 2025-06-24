@@ -12,15 +12,15 @@ from asyncio import Lock as AsyncLock
 from collections import deque, UserString
 from collections.abc import (
     AsyncIterable, AsyncIterator, Callable, Coroutine, ItemsView, Iterable, Iterator, 
-    Mapping, MutableMapping, Sequence, 
+    Mapping, Sequence, 
 )
 from functools import cached_property, partial
 from io import BytesIO, TextIOWrapper
 from itertools import accumulate, cycle, islice
 from json import JSONDecodeError
-from os import path as ospath, fsdecode, fspath, makedirs, remove, rmdir, scandir, stat_result, PathLike
+from os import path as ospath, fspath, remove, rmdir, scandir, stat_result, PathLike
 from pathlib import Path
-from posixpath import join as joinpath, splitext
+from posixpath import splitext
 from shutil import SameFileError
 from stat import S_IFDIR, S_IFREG
 from threading import Lock
@@ -35,10 +35,7 @@ from filewrap import Buffer, SupportsRead
 from http_request import SupportsGeturl
 from iterutils import run_gen_step, run_gen_step_iter, Yield, YieldFrom
 from p115client import check_response, normalize_attr, P115URL
-from posixpatht import (
-    basename, commonpath, dirname, escape, joins, normpath, split, splits, 
-    unescape, path_is_dir_form, 
-)
+from posixpatht import escape, joins, normpath, split, splits, path_is_dir_form
 from yarl import URL
 
 from .client import P115Client
@@ -1344,7 +1341,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 except FileNotFoundError as e:
                     self._clear_cache(id)
                     raise FileNotFoundError(errno.ENOENT, f"no such id: {id!r}") from e
-                attr = normalize_attr(resp["data"][0], dict_cls=AttrDictWithAncestors)
+                attr = cast(AttrDictWithAncestors, normalize_attr(resp["data"][0], dict_cls=AttrDictWithAncestors))
                 yield self._get_ancestors(attr, async_=async_)
 
             id_to_readdir = self.id_to_readdir
@@ -1917,7 +1914,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                         elif stop is None or stop > count:
                             total = count - start
                         for attr in resp["data"]:
-                            yield Yield(normalize_attr2(attr, ancestor), may_await=False)
+                            yield Yield(normalize_attr2(attr, ancestor))
                         if total <= page_size:
                             return
                         for _ in range((total - 1) // page_size):
@@ -1927,8 +1924,8 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                             if resp["count"] != count:
                                 raise RuntimeError(f"{id} detected count changes during iteration")
                             for attr in resp["data"]:
-                                yield Yield(normalize_attr2(attr, ancestor), may_await=False)
-                    return YieldFrom(run_gen_step_iter(iterdir(), async_=async_), may_await=False)
+                                yield Yield(normalize_attr2(attr, ancestor))
+                    return YieldFrom(run_gen_step_iter(iterdir(), async_=async_))
                 else:
                     def iterdir():
                         children = id_to_readdir.get(id)
@@ -1977,16 +1974,16 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                                             if cur_id in his_ids:
                                                 n -= 1
                                                 if count - len(seen) == n:
-                                                    yield Yield(attr, may_await=False)
+                                                    yield Yield(attr)
                                                     for attr in cast(dict[int, AttrDictWithAncestors], children).values():
                                                         if attr["id"] not in seen:
-                                                            yield Yield(attr, may_await=False)
+                                                            yield Yield(attr)
                                                     done = True
                                                     return
                                                 his_ids.remove(cur_id)
                                     except Break:
                                         pass
-                                yield Yield(attr, may_await=False)
+                                yield Yield(attr)
 
                         resp = yield get_files(payload, async_=async_)
                         count = resp["count"]
@@ -2049,7 +2046,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                 values.sort(key=key, reverse=not asc)
             if not fc_mix:
                 values.sort(key=lambda attr: not attr["is_directory"], reverse=not asc)
-            return YieldFrom(values[start:stop], may_await=False)
+            return YieldFrom(values[start:stop])
         return run_gen_step_iter(gen_step, async_=async_)
 
     @overload
@@ -3010,7 +3007,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
             while True:
                 resp = yield request(payload)
                 data = check_response(resp)["data"]
-                yield YieldFrom(data, may_await=False)
+                yield YieldFrom(data)
                 if len(data) < page_size:
                     break
                 payload["offset"] += page_size
@@ -3906,7 +3903,7 @@ class P115FileSystem(P115FileSystemBase[P115Path]):
                     return
                 for attr in data:
                     attr = normalize_attr(attr, dict_cls=AttrDictWithAncestors)
-                    yield Yield(P115Path(self, attr), may_await=False)
+                    yield Yield(P115Path(self, attr))
                 offset = payload["offset"] = offset + resp["page_size"]
                 if offset >= resp["count"] or offset >= 10_000:
                     break
