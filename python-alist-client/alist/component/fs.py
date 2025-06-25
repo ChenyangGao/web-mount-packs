@@ -1673,20 +1673,20 @@ class AlistFileSystem:
     def login(
         cls, 
         /, 
-        origin: str = "http://localhost:5244", 
+        base_url: str = "http://localhost:5244", 
         username: str = "", 
         password: str = "", 
     ) -> AlistFileSystem:
-        return cls(AlistClient(origin, username, password))
+        return cls(AlistClient(base_url, username, password))
 
     @classmethod
     def from_auth(
         cls, 
         /, 
         auth_token: str, 
-        origin: str = "http://localhost:5244", 
+        base_url: str = "http://localhost:5244", 
     ):
-        return cls(AlistClient.from_auth(auth_token, origin=origin))
+        return cls(AlistClient.from_auth(auth_token, base_url=base_url))
 
     @cached_property
     def token(self, /) -> str:

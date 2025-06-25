@@ -260,7 +260,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: bool | Callable[[BaseException], Any] =True, 
         predicate: None | Callable[[Self], bool] = None, 
         *, 
         async_: Literal[False] = False, 
@@ -274,7 +274,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: bool | Callable[[BaseException], Any] =True, 
         predicate: None | Callable[[Self], bool] = None, 
         *, 
         async_: Literal[True], 
@@ -287,7 +287,7 @@ class P115PathBase(Generic[P115FSType], Mapping, PathLike[str]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: bool | Callable[[BaseException], Any] =True, 
         predicate: None | Callable[[Self], bool] = None, 
         *, 
         async_: Literal[False, True] = False, 
@@ -2149,7 +2149,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: bool | Callable[[BaseException], Any] =True, 
         predicate: None | Callable[[P115PathType], bool] = None, 
         pid: None | int = None, 
         *, 
@@ -2165,7 +2165,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: bool | Callable[[BaseException], Any] =True, 
         predicate: None | Callable[[P115PathType], bool] = None, 
         pid: None | int = None, 
         *, 
@@ -2180,7 +2180,7 @@ class P115FileSystemBase(Generic[P115PathType]):
         write_mode: Literal["a", "w", "x", "i"] = "a", 
         submit: bool | Callable[[Callable], Any] = False, 
         no_root: bool = False, 
-        onerror: None | bool | Callable[[BaseException], Any] = None, 
+        onerror: bool | Callable[[BaseException], Any] =True, 
         predicate: None | Callable[[P115PathType], bool] = None, 
         pid: None | int = None, 
         *, 
@@ -3774,6 +3774,7 @@ class P115FileSystemBase(Generic[P115PathType]):
                     yield partial(onerror, e)
                 elif onerror:
                     raise
+                return
             pred: Literal[None, 1, False, True] = True
             next_depth = _depth + 1
             for attr, nattr in pairwise(chain(subattrs, (None,))):
