@@ -110,7 +110,7 @@ class AlistClient:
     .. caution::
         有些接口是没有官方文档的
 
-    - Router.go: https://github.com/AlistGo/alist/blob/main/server/router.go
+    - Router.go: https://github.com/OpenListTeam/OpenList/blob/main/server/router.go
     - AList web api official documentation: https://docs.oplist.org/guide/api/
     - AList web api online tool: https://openlist.apifox.cn
     """
@@ -451,6 +451,50 @@ class AlistClient:
         )
 
     @overload
+    def auth_login_ldap(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def auth_login_ldap(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def auth_login_ldap(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """LDAP 登录
+
+        :payload:
+            - username: str 💡 用户名
+            - password: str = <default> 💡 密码
+            - otp_code: str = <default> 💡 二步验证码
+
+        （没有文档）
+        """
+        return self.request(
+            "/auth/login/ldap", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
     def auth_2fa_generate(
         self, 
         /, 
@@ -567,49 +611,10 @@ class AlistClient:
         )
 
     @overload
-    def auth_login_ldap(
-        self, 
-        /, 
-        payload: dict = {}, 
-        *, 
-        async_: Literal[False] = False, 
-        **request_kwargs, 
-    ) -> dict:
-        ...
-    @overload
-    def auth_login_ldap(
-        self, 
-        /, 
-        payload: dict = {}, 
-        *, 
-        async_: Literal[True], 
-        **request_kwargs, 
-    ) -> Coroutine[Any, Any, dict]:
-        ...
-    def auth_login_ldap(
-        self, 
-        /, 
-        payload: dict = {}, 
-        *, 
-        async_: Literal[False, True] = False, 
-        **request_kwargs, 
-    ) -> dict | Coroutine[Any, Any, dict]:
-        """LDAP 登录
-
-        （没有文档）
-        """
-        return self.request(
-            "/auth/login/ldap", 
-            json=payload, 
-            async_=async_, 
-            **request_kwargs, 
-        )
-
-    @overload
     def auth_sso(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict | str, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -619,7 +624,7 @@ class AlistClient:
     def auth_sso(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict | str, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -628,15 +633,20 @@ class AlistClient:
     def auth_sso(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict | str, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """认证单点登录
 
+        :payload:
+            - method: str
+
         （没有文档）
         """
+        if not isinstance(payload, dict):
+            payload = {"method": payload}
         return self.request(
             "/api/auth/sso", 
             "GET", 
@@ -649,7 +659,7 @@ class AlistClient:
     def auth_sso_callback(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -659,7 +669,7 @@ class AlistClient:
     def auth_sso_callback(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -668,12 +678,17 @@ class AlistClient:
     def auth_sso_callback(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """认证单点登录回调
+
+        :payload:
+            - method: str
+            - code: str = <default>
+            - authCode: str = <default>
 
         （没有文档）
         """
@@ -689,7 +704,7 @@ class AlistClient:
     def auth_get_sso_id(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -699,7 +714,7 @@ class AlistClient:
     def auth_get_sso_id(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -708,12 +723,17 @@ class AlistClient:
     def auth_get_sso_id(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取单点登录 id
+
+        :payload:
+            - method: str
+            - code: str = <default>
+            - authCode: str = <default>
 
         （没有文档）
         """
@@ -729,7 +749,7 @@ class AlistClient:
     def auth_sso_get_token(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -739,7 +759,7 @@ class AlistClient:
     def auth_sso_get_token(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -748,12 +768,17 @@ class AlistClient:
     def auth_sso_get_token(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
         """获取单点登录令牌
+
+        :payload:
+            - method: str
+            - code: str = <default>
+            - authCode: str = <default>
 
         （没有文档）
         """
@@ -833,8 +858,29 @@ class AlistClient:
         """更新当前用户信息
 
         :payload:
+            - id: int = <default> 💡 用户 id
             - username: str = <default> 💡 用户名
             - password: str = <default> 💡 密码
+            - base_path: str = <default> 💡 根路径
+            - role: int = <default> 💡 角色
+            - disabled: bool = <default> 💡 是否禁用
+            - permission: int = <default> 💡 权限
+
+                -  0: can see hidden files
+                -  1: can access without password
+                -  2: can add offline download tasks
+                -  3: can mkdir and upload
+                -  4: can rename
+                -  5: can move
+                -  6: can copy
+                -  7: can remove
+                -  8: webdav read
+                -  9: webdav write
+                - 10: ftp/sftp login and read
+                - 11: ftp/sftp write
+                - 12: can read archives
+                - 13: can decompress archives
+
             - sso_id: str   = <default> 💡 单点登录 id
 
         （没有文档）
@@ -1262,6 +1308,104 @@ class AlistClient:
         )
 
     @overload
+    def fs_archive_list(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_archive_list(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_archive_list(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """压缩包元数据（一次获取整个目录树）
+
+        :payload:
+            - path: str  💡 文件路径
+            - password: str = <default> 💡 访问密码
+            - archive_pass: str = <default> 💡 解压密码
+            - refresh: bool = False 💡 是否刷新
+
+        （没有文档）
+        """
+        if not isinstance(payload, dict):
+            payload = {"path": payload}
+        return self.request(
+            "/api/fs/archive/list", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def fs_archive_meta(
+        self, 
+        /, 
+        payload: dict | str, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def fs_archive_meta(
+        self, 
+        /, 
+        payload: dict | str, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def fs_archive_meta(
+        self, 
+        /, 
+        payload: dict | str, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """压缩包元数据（可以单独获取压缩包内某个目录的文件列表）
+
+        :payload:
+            - path: str                     💡 文件路径
+            - password: str = <default>     💡 访问密码
+            - archive_pass: str = <default> 💡 解压密码
+            - refresh: bool = False         💡 是否刷新
+            - page: int = 1                 💡 页数
+            - per_page: int = 0             💡 每页数目
+            - inner_path: str = ""          💡 压缩包内路径
+
+        （没有文档）
+        """
+        if not isinstance(payload, dict):
+            payload = {"path": payload}
+        dict_merge_update(payload, inner_path="", page=1, per_page=0)
+        return self.request(
+            "/api/fs/archive/meta", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
     def fs_link(
         self, 
         /, 
@@ -1310,7 +1454,7 @@ class AlistClient:
     def fs_other(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False] = False, 
         **request_kwargs, 
@@ -1320,7 +1464,7 @@ class AlistClient:
     def fs_other(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[True], 
         **request_kwargs, 
@@ -1329,12 +1473,20 @@ class AlistClient:
     def fs_other(
         self, 
         /, 
-        payload: dict = {}, 
+        payload: dict, 
         *, 
         async_: Literal[False, True] = False, 
         **request_kwargs, 
     ) -> dict | Coroutine[Any, Any, dict]:
-        """（没有文档）
+        """？？？
+
+        :payload:
+            - path: str
+            - method: str
+            - data: dict = <default>
+            - password: str = <default>
+
+        （没有文档）
         """
         return self.request(
             "/api/fs/other", 
@@ -1378,7 +1530,7 @@ class AlistClient:
 
         :payload:
             - path: str 💡 路径
-            - password: str = "" 💡 密码
+            - password: str = "" 💡 访问密码
             - page: int = 1 💡 页数
             - per_page: int = 0 💡 每页数目
             - refresh: bool = False 💡 是否强制刷新
@@ -1428,7 +1580,7 @@ class AlistClient:
 
         :payload:
             - path: str 💡 路径
-            - password: str = "" 💡 密码
+            - password: str = "" 💡 访问密码
             - refresh: bool = False 💡 是否强制刷新
         """
         if not isinstance(payload, dict):
@@ -1475,7 +1627,7 @@ class AlistClient:
 
         :payload:
             - path: str 💡 路径
-            - password: str = "" 💡 密码
+            - password: str = "" 💡 访问密码
             - force_root: bool = False
         """
         if not isinstance(payload, dict):
@@ -1526,7 +1678,7 @@ class AlistClient:
             - scope: 0 | 1 | 2 = 0 💡 范围：0:全部 1:文件夹 2:文件
             - page: int = 1 💡 页数
             - per_page: int = 0 💡 每页数目
-            - password: str = "" 💡 密码
+            - password: str = "" 💡 访问密码
         """
         if not isinstance(payload, dict):
             payload = {"keywords": payload}
@@ -1998,6 +2150,7 @@ class AlistClient:
                 - "115 Cloud"
                 - "PikPak"
                 - "Thunder"
+                - "ThunderBrowser"
                 - "PikPak"
                 - ...
 
@@ -4716,8 +4869,8 @@ class AlistClient:
         - https://openlist.apifox.cn/api-128101293
 
         :payload:
-            - url: str    💡 qBittorrent 链接
-            - secret: str 💡 做种时间
+            - url: str      💡 qBittorrent 链接
+            - seedtime: str 💡 做种时间
         """
         return self.request(
             "/api/admin/setting/set_qbit", 
@@ -4756,10 +4909,182 @@ class AlistClient:
     ) -> dict | Coroutine[Any, Any, dict]:
         """设置 Transmission
 
+        :payload:
+            - uri: str      💡 Transmission 链接
+            - seedtime: str 💡 做种时间
+
         （没有文档）
         """
         return self.request(
             "/api/admin/setting/set_transmission", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def admin_setting_set_115(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def admin_setting_set_115(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def admin_setting_set_115(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """设置 115
+
+        :payload:
+            - temp_dir: str 💡 临时目录
+
+        （没有文档）
+        """
+        return self.request(
+            "/api/admin/setting/set_115", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def admin_setting_set_pikpak(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def admin_setting_set_pikpak(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def admin_setting_set_pikpak(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """设置 PikPak
+
+        :payload:
+            - temp_dir: str 💡 临时目录
+
+        （没有文档）
+        """
+        return self.request(
+            "/api/admin/setting/set_pikpak", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def admin_setting_set_thunder(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def admin_setting_set_thunder(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def admin_setting_set_thunder(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """设置 迅雷
+
+        :payload:
+            - temp_dir: str 💡 临时目录
+
+        （没有文档）
+        """
+        return self.request(
+            "/api/admin/setting/set_thunder", 
+            json=payload, 
+            async_=async_, 
+            **request_kwargs, 
+        )
+
+    @overload
+    def admin_setting_set_thunder_browser(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False] = False, 
+        **request_kwargs, 
+    ) -> dict:
+        ...
+    @overload
+    def admin_setting_set_thunder_browser(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[True], 
+        **request_kwargs, 
+    ) -> Coroutine[Any, Any, dict]:
+        ...
+    def admin_setting_set_thunder_browser(
+        self, 
+        /, 
+        payload: dict, 
+        *, 
+        async_: Literal[False, True] = False, 
+        **request_kwargs, 
+    ) -> dict | Coroutine[Any, Any, dict]:
+        """设置 迅雷浏览器
+
+        :payload:
+            - temp_dir: str 💡 临时目录
+
+        （没有文档）
+        """
+        return self.request(
+            "/api/admin/setting/set_thunder_browser", 
             json=payload, 
             async_=async_, 
             **request_kwargs, 
