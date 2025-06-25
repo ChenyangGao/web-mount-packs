@@ -5386,18 +5386,55 @@ class AlistClient:
         ensure_ascii: bool = True, 
     ) -> str:
         """获取下载链接（非直链）
+
         - https://docs.oplist.org/guide/drivers/common.html#download-proxy-url
         """
         if self.base_path != "/":
             path = self.base_path + path
         if ensure_ascii:
-            url = self.base_url + "/d" + quote(path, safe="@[]:/!$&'()*+,;=")
+            escaped_path = quote(path, safe="@[]:/!$&'()*+,;=")
         else:
-            url = self.base_url + "/d" + path.translate({0x23: "%23", 0x3F: "%3F"})
+            escaped_path = path.translate({c: f"%{c:x}" for c in b"#?"})
+        url = self.base_url + "/d" + escaped_path
         if sign:
             url += "?sign=" + sign
         elif token:
             url += "?sign=" + self.calc_sign(path, token, f":{expire_timestamp}")
+        return url
+
+    def get_archive_url(
+        self, 
+        /, 
+        path: str, 
+        inner_path: str, 
+        archive_pass: str = "", 
+        sign: str = "", 
+        token: str = "", 
+        expire_timestamp: int = 0, 
+        ensure_ascii: bool = True, 
+    ) -> str:
+        """获取压缩包内的下载链接（非直链）
+
+        - https://docs.oplist.org/guide/drivers/common.html#download-proxy-url
+        """
+        if self.base_path != "/":
+            path = self.base_path + path
+        if ensure_ascii:
+            escaped_path = quote(path, safe="@[]:/!$&'()*+,;=")
+        else:
+            escaped_path = path.translate({c: f"%{c:x}" for c in b"#?"})
+        url = self.base_url + "/ae" + escaped_path
+        if ensure_ascii:
+            escape = lambda s: quote(s, safe=":/?#[]@!$'()*+,;=")
+        else:
+            escape = lambda s: s.replace("&", "%26")
+        url += "?inner=" + escape(inner_path)
+        if archive_pass:
+            url += "&pass=" + escape(archive_pass)
+        if sign:
+            url += "&sign=" + sign
+        elif token:
+            url += "&sign=" + self.calc_sign(path, token, f":{expire_timestamp}")
         return url
 
     # TODO: 支持异步
